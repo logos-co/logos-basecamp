@@ -107,3 +107,8 @@ The nix build system is organized into modular files in the `/nix` directory:
 - zstd
 - krb5
 - abseil-cpp
+
+## Disclaimer
+This repository forms part of an experimental development environment and is not intended for production use.
+
+See the Logos Core repository for additional information about the experimental development environment: https://github.com/logos-co/logos-liblogos
