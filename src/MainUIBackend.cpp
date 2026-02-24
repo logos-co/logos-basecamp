@@ -154,9 +154,7 @@ QVariantList MainUIBackend::uiModules() const
         module["name"] = pluginName;
         module["isLoaded"] = m_loadedUiModules.contains(pluginName) || m_qmlPluginWidgets.contains(pluginName);
         module["isMainUi"] = (pluginName == "main_ui");
-        
-        QString pluginPath = getPluginPath(pluginName);
-        module["iconPath"] = getPluginIconPath(pluginPath);
+        module["iconPath"] = getPluginIconPath(pluginName);
         
         modules.append(module);
     }
@@ -238,7 +236,7 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
         LogosQmlBridge* bridge = new LogosQmlBridge(m_logosAPI, qmlWidget);
         qmlWidget->rootContext()->setContextProperty("logos", bridge);
         qmlWidget->setSource(QUrl::fromLocalFile(qmlFilePath));
-        qmlWidget->setWindowIcon(QIcon(getPluginIconPath(pluginPath, true)));
+        qmlWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
 
         if (qmlWidget->status() == QQuickWidget::Error) {
             qWarning() << "Failed to load QML plugin" << moduleName;
@@ -290,7 +288,7 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
         return;
     }
     
-    componentWidget->setWindowIcon(QIcon(getPluginIconPath(pluginPath, true)));
+    componentWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
     m_loadedUiModules[moduleName] = component;
     m_uiModuleWidgets[moduleName] = componentWidget;
     m_loadedApps.insert(moduleName);
@@ -494,9 +492,13 @@ void MainUIBackend::refreshCoreModules()
             manifestFile.close();
             if (!doc.isObject()) continue;
             QString type = doc.object().value("type").toString();
-            if (type == "ui") continue; // Skip UI plugins
+            if ((type == "ui") || (type == "ui_qml")) continue; // Skip UI plugins
             // Use directory name to find the main library
-            QString pluginPath = subdirPath + "/" + subdir + libExtension;
+            QString mainLibrary = doc.object().value("main").toString();
+            if (mainLibrary.isEmpty()) {
+                continue;
+            }
+            QString pluginPath = subdirPath + "/" + mainLibrary + libExtension;
             if (QFile::exists(pluginPath)) {
                 logos_core_process_plugin(pluginPath.toUtf8().constData());
             }
@@ -580,9 +582,7 @@ QVariantList MainUIBackend::launcherApps() const
         QVariantMap app;
         app["name"] = pluginName;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
-        
-        QString pluginPath = getPluginPath(pluginName);
-        app["iconPath"] = getPluginIconPath(pluginPath);
+        app["iconPath"] = getPluginIconPath(pluginName);
         
         apps.append(app);
     }
@@ -642,6 +642,21 @@ QString MainUIBackend::modulesDirectory() const
     return LogosAppPaths::modulesDirectory();
 }
 
+QJsonObject MainUIBackend::readPluginManifest(const QString& pluginName) const
+{
+    QString manifestPath = pluginsDirectory() + "/" + pluginName + "/manifest.json";
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+        return QJsonObject();
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
+    manifestFile.close();
+    if (!doc.isObject()) {
+        return QJsonObject();
+    }
+    return doc.object();
+}
+
 QJsonObject MainUIBackend::readQmlPluginMetadata(const QString& pluginName) const
 {
     QString userMetadataPath = pluginsDirectory() + "/" + pluginName + "/metadata.json";
@@ -661,25 +676,35 @@ QJsonObject MainUIBackend::readQmlPluginMetadata(const QString& pluginName) cons
 
 QJsonObject MainUIBackend::readPluginMetadata(const QString& pluginName) const
 {
-    QString pluginPath = getPluginPath(pluginName);
-    QFileInfo pluginInfo(pluginPath);
-    
-    // QML plugins: directory with metadata.json file
-    if (pluginInfo.isDir()) {
+    if (isQmlPlugin(pluginName)) {
         return readQmlPluginMetadata(pluginName);
     }
-    
+
     // C++ plugins: dylib with embedded metadata
+    QString pluginPath = getPluginPath(pluginName);
     QPluginLoader loader(pluginPath);
     QJsonObject metadata = loader.metaData();
     return metadata.value("MetaData").toObject();
 }
 
+QString MainUIBackend::getPluginType(const QString& name) const
+{
+    QString manifestPath = pluginsDirectory() + "/" + name + "/manifest.json";
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
+    manifestFile.close();
+    if (!doc.isObject()) {
+        return QString();
+    }
+    return doc.object().value("type").toString();
+}
+
 bool MainUIBackend::isQmlPlugin(const QString& name) const
 {
-    QJsonObject metadata = readQmlPluginMetadata(name);
-    QString pluginType = metadata.value("pluginType").toString();
-    return pluginType.compare("qml", Qt::CaseInsensitive) == 0;
+    return getPluginType(name) == "ui_qml";
 }
 
 QStringList MainUIBackend::findAvailableUiPlugins() const
@@ -711,10 +736,7 @@ QStringList MainUIBackend::findAvailableUiPlugins() const
         // Scan subdirectories for plugins (both QML and C++ plugins are in subdirectories)
         QStringList dirEntries = pluginsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const QString& entry : dirEntries) {
-            // Check if it's a QML plugin (has metadata.json with pluginType: "qml")
-            QJsonObject metadata = readQmlPluginMetadata(entry);
-            QString pluginType = metadata.value("pluginType").toString();
-            if (pluginType.compare("qml", Qt::CaseInsensitive) == 0) {
+            if (isQmlPlugin(entry)) {
                 addPlugin(entry);
             } else {
                 // Check if it's a C++ plugin (has <dirname>.<ext> inside the subdirectory)
@@ -751,31 +773,17 @@ QString MainUIBackend::getPluginPath(const QString& name) const
     return pluginsDirectory() + "/" + name + "/" + name + libExtension;
 }
 
-QString MainUIBackend::getPluginIconPath(const QString& pluginPath, bool forWidgetIcon) const
+QString MainUIBackend::getPluginIconPath(const QString& pluginName, bool forWidgetIcon) const
 {
-    QFileInfo pluginInfo(pluginPath);
-    QDir pluginDir = pluginInfo.isDir() ? QDir(pluginInfo.filePath()) : QDir(pluginInfo.absolutePath());
-
-    QJsonObject meta;
-    if (pluginInfo.isDir()) {
-        QFile f(pluginInfo.filePath() + "/metadata.json");
-        if (!f.open(QIODevice::ReadOnly)) {
-            return "";
-        }
-        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-        if (!doc.isObject()) {
-            return "";
-        }
-        meta = doc.object();
-    } else {
-        meta = QPluginLoader(pluginPath).metaData().value("MetaData").toObject();
-    }
-    QString iconPath = meta.value("icon").toString();
+    QJsonObject manifest = readPluginManifest(pluginName);
+    QString iconPath = manifest.value("icon").toString();
     if (iconPath.isEmpty()) {
         return "";
     }
 
-    QString filePath = pluginDir.absoluteFilePath(iconPath.startsWith(":/") ? iconPath.mid(2) : iconPath);
+    QString pluginPath = pluginsDirectory() + "/" + pluginName;
+    QDir pluginDir(pluginPath);
+    QString filePath = pluginDir.filePath(iconPath.startsWith(":/") ? iconPath.mid(2) : iconPath);
     bool exists = QFile::exists(filePath);
 
     if (forWidgetIcon) {

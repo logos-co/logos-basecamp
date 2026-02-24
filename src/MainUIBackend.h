@@ -92,11 +92,13 @@ private:
     QString getPluginPath(const QString& name) const;
     QString pluginsDirectory() const;
     QString modulesDirectory() const;
+    QString getPluginType(const QString& name) const;
     bool isQmlPlugin(const QString& name) const;
+    QJsonObject readPluginManifest(const QString& pluginName) const;
     QJsonObject readQmlPluginMetadata(const QString& pluginName) const;
     QJsonObject readPluginMetadata(const QString& pluginName) const;
     void updateModuleStats();
-    QString getPluginIconPath(const QString& pluginPath, bool forWidgetIcon = false) const;
+    QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
     
     // Navigation state
     int m_currentActiveSectionIndex;
