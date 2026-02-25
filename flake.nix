@@ -5,14 +5,14 @@
     # Follow the same nixpkgs as logos-liblogos to ensure compatibility
     nixpkgs.follows = "logos-liblogos/nixpkgs";
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/properly-handle-portable-modules";
-    logos-package-manager.url = "github:logos-co/logos-package-manager-module/properly-handle-portable-modules";
+    logos-liblogos.url = "github:logos-co/logos-liblogos";
+    logos-package-manager.url = "github:logos-co/logos-package-manager-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package/add-manifest-json-getter";
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/properly-handle-portable-modules";
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-webview-app.url = "github:logos-co/logos-webview-app";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    logos-counter-qml.url = "github:logos-co/counter_qml/provide-standard-derivations";
+    logos-counter-qml.url = "github:logos-co/counter_qml";
     logos-counter.url = "github:logos-co/counter";
     nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx";
   };
