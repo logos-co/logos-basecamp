@@ -8,22 +8,27 @@
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
-    logos-package.url = "github:logos-co/logos-package";
+    logos-package.url = "github:logos-co/logos-package/add-manifest-json-getter";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-webview-app.url = "github:logos-co/logos-webview-app";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-counter-qml.url = "github:logos-co/counter_qml";
     logos-counter.url = "github:logos-co/counter";
+    nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx";
+    nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
+    nix-bundle-appimage.url = "github:logos-co/nix-bundle-appimage";
   };
 
-  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter }:
+  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
+        inherit system;
         pkgs = import nixpkgs { inherit system; };
         logosSdk = logos-cpp-sdk.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManager = logos-package-manager.packages.${system}.default;
+        logosPackageManagerLib = logos-package-manager.packages.${system}.lib;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
@@ -36,61 +41,69 @@
         logosLiblogosSrc = logos-liblogos.outPath;
         logosPackageManagerSrc = logos-package-manager.outPath;
         logosCapabilityModuleSrc = logos-capability-module.outPath;
+        bundleLgx = nix-bundle-lgx.bundlers.${system}.default;
+        bundleLgxPortable = nix-bundle-lgx.bundlers.${system}.portable;
+        dirBundler = nix-bundle-dir.bundlers.${system}.qtApp;
       });
     in
     {
-      packages = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, ... }: 
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosLiblogos, logosPackageManager, logosPackageManagerLib, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, bundleLgx, bundleLgxPortable, dirBundler, ... }:
         let
           # Common configuration
-          common = import ./nix/default.nix { 
-            inherit pkgs logosSdk logosLiblogos; 
+          common = import ./nix/default.nix {
+            inherit pkgs logosSdk logosLiblogos;
           };
           src = ./.;
-          
-          # Plugin packages (development builds)
-          # Use external counter package
-          counterPlugin = logosCounter;
 
-          # Use external counter-qml package
+          # Plugin packages (development builds)
+          counterPlugin = logosCounter;
           counterQmlPlugin = logosCounterQml;
-          
-          mainUIPlugin = import ./nix/main-ui.nix { 
-            inherit pkgs common src logosSdk logosPackageManager logosLiblogos logosPackageLib; 
+          mainUIPlugin = import ./nix/main-ui.nix {
+            inherit pkgs common src logosSdk logosPackageManager logosLiblogos;
           };
-          
-          # Use external package-manager-ui package
           packageManagerUIPlugin = logosPackageManagerUI;
-          
-          # Use external logos-webview-app package
           webviewAppPlugin = logosWebviewApp;
-          
+
           # Plugin packages (distributed builds for DMG/AppImage)
-          mainUIPluginDistributed = import ./nix/main-ui.nix { 
-            inherit pkgs common src logosSdk logosPackageManager logosLiblogos logosPackageLib;
+          mainUIPluginDistributed = import ./nix/main-ui.nix {
+            inherit pkgs common src logosSdk logosPackageManager logosLiblogos;
             distributed = true;
           };
-          
-          # Use external package-manager-ui package (distributed build with LOGOS_DISTRIBUTED_BUILD=ON)
           packageManagerUIPluginDistributed = logosPackageManagerUIDistributed;
-          
+
+          # LGX preinstall packages — installed on first app launch via the package manager.
+          # Dev build: raw derivation (depends on /nix/store at runtime).
+          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied).
+          preinstallPkgsDev = map bundleLgx [
+            logosPackageManagerLib
+            logosCapabilityModule
+            counterPlugin
+            counterQmlPlugin
+            mainUIPlugin
+            packageManagerUIPlugin
+            webviewAppPlugin
+          ];
+          preinstallPkgsDistributed = map bundleLgxPortable [
+            logosPackageManagerLib
+            logosCapabilityModule
+            counterPlugin
+            counterQmlPlugin
+            mainUIPluginDistributed
+            packageManagerUIPluginDistributed
+            webviewAppPlugin
+          ];
+
           # App package (development build)
-          app = import ./nix/app.nix { 
-            inherit pkgs common src logosLiblogos logosSdk logosPackageManager logosCapabilityModule logosDesignSystem;
-            counterPlugin = counterPlugin;
-            counterQmlPlugin = counterQmlPlugin;
-            mainUIPlugin = mainUIPlugin;
-            packageManagerUIPlugin = packageManagerUIPlugin;
-            webviewAppPlugin = webviewAppPlugin;
+          app = import ./nix/app.nix {
+            inherit pkgs common src logosLiblogos logosSdk logosDesignSystem logosPackageManager;
+            preinstallPkgs = preinstallPkgsDev;
           };
-          
+
           # App package (distributed build for DMG/AppImage)
-          appDistributed = import ./nix/app.nix { 
-            inherit pkgs common src logosLiblogos logosSdk logosPackageManager logosCapabilityModule logosDesignSystem;
-            counterPlugin = counterPlugin;
-            counterQmlPlugin = counterQmlPlugin;
-            mainUIPlugin = mainUIPluginDistributed;
-            packageManagerUIPlugin = packageManagerUIPluginDistributed;
-            webviewAppPlugin = webviewAppPlugin;
+          appDistributed = import ./nix/app.nix {
+            inherit pkgs common src logosLiblogos logosSdk logosDesignSystem logosPackageManager;
+            preinstallPkgs = preinstallPkgsDistributed;
+            portable = true;
           };
           
           # macOS distribution packages (only for Darwin)
@@ -125,9 +138,21 @@
           package-manager-ui-plugin = packageManagerUIPlugin;
           webview-app-plugin = webviewAppPlugin;
           app = app;
+          portable = appDistributed;
           
+          # Bundle outputs
+          bin-bundle-dir = dirBundler appDistributed;
+
           # Default package
           default = app;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          bin-appimage = nix-bundle-appimage.lib.${system}.mkAppImage {
+            drv = appDistributed;
+            name = "logos-app";
+            bundle = dirBundler appDistributed;
+            desktopFile = ./assets/logos-app.desktop;
+            icon = ./app/icons/logos.png;
+          };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs
           app-bundle = appBundle;

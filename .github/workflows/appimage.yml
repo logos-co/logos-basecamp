@@ -1,0 +1,70 @@
+name: AppImage Build & Release
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-appimage:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: ubuntu-latest
+          - arch: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build bin-appimage
+        run: nix build .#bin-appimage
+
+      - name: Rename AppImage with architecture
+        run: |
+          arch="${{ matrix.arch }}"
+          arch_short="${arch%%-*}"
+          src=$(find result/ -name '*.AppImage' -print -quit)
+          cp "$src" "logos-app-${arch_short}.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: logos-app-*.AppImage
+
+  release:
+    if: github.event_name == 'push'
+    needs: build-appimage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage-x86_64-linux
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage-aarch64-linux
+          path: artifacts/
+
+      - name: Generate tag
+        id: tag
+        run: echo "tag=pre-release-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Pre-release ${{ steps.tag.outputs.tag }}
+          prerelease: true
+          files: artifacts/*.AppImage

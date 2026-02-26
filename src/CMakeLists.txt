@@ -84,6 +84,9 @@ if(NOT component-interfaces_FOUND)
     target_include_directories(component-interfaces INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../app/interfaces)
 endif()
 
+# Shared utilities (LogosAppPaths, etc.)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../app/utils)
+
 set(SOURCES
     main_ui_plugin.cpp
     MainContainer.cpp
@@ -207,15 +210,9 @@ if(_liblogos_found)
     endif()
 endif()
 
-# Add lgx library
-message(STATUS "Using lgx library at: ${LGX_ROOT}")
-target_include_directories(main_ui PRIVATE ${LGX_ROOT}/include)
-find_library(LGX_LIB lgx PATHS ${LGX_ROOT}/lib NO_DEFAULT_PATH REQUIRED)
-message(STATUS "Found lgx library: ${LGX_LIB}")
-target_compile_definitions(main_ui PRIVATE HAS_LGX)
-
 # Option for distributed builds (DMG/AppImage)
 option(LOGOS_DISTRIBUTED_BUILD "Build for distribution (DMG/AppImage)" OFF)
+option(LOGOS_PORTABLE_BUILD "Build as a portable/distributed app" OFF)
 
 # Add Qt definitions
 target_compile_definitions(main_ui PRIVATE
@@ -227,6 +224,11 @@ target_compile_definitions(main_ui PRIVATE
 if(LOGOS_DISTRIBUTED_BUILD)
     target_compile_definitions(main_ui PRIVATE LOGOS_DISTRIBUTED_BUILD)
     message(STATUS "Building main_ui for distribution (LOGOS_DISTRIBUTED_BUILD enabled)")
+endif()
+
+if(LOGOS_PORTABLE_BUILD)
+    target_compile_definitions(main_ui PRIVATE LOGOS_PORTABLE_BUILD)
+    message(STATUS "Building main_ui as portable (LOGOS_PORTABLE_BUILD enabled)")
 endif()
 
 target_link_libraries(main_ui 
@@ -251,9 +253,6 @@ if(NOT _cpp_sdk_is_source)
     find_library(LOGOS_SDK_LIB logos_sdk PATHS ${LOGOS_CPP_SDK_ROOT}/lib NO_DEFAULT_PATH REQUIRED)
     target_link_libraries(main_ui PRIVATE ${LOGOS_SDK_LIB})
 endif()
-
-# Link lgx library
-target_link_libraries(main_ui PRIVATE ${LGX_LIB})
 
 # For macOS, we need to set the bundle properties
 if(APPLE)

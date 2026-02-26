@@ -52,8 +52,7 @@ pkgs.stdenv.mkDerivation rec {
     cp -rL --no-preserve=mode ${app}/bin "$appDir/usr/"
     chmod +x "$appDir/usr/bin/"*
     if [ -d ${app}/lib ]; then cp -rL --no-preserve=mode ${app}/lib "$appDir/usr/"; fi
-    if [ -d ${app}/modules ]; then cp -rL --no-preserve=mode ${app}/modules "$appDir/usr/"; fi
-    if [ -d ${app}/plugins ]; then cp -rL --no-preserve=mode ${app}/plugins "$appDir/usr/"; fi
+    if [ -d ${app}/preinstall ]; then cp -rL --no-preserve=mode ${app}/preinstall "$appDir/usr/"; fi
 
     mkdir -p "$appDir/usr/lib"
     for dep in ${runtimeLibsStr}; do

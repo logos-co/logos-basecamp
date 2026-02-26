@@ -58,23 +58,14 @@ public slots:
     void activateApp(const QString& appName);
     Q_INVOKABLE void installPluginFromPath(const QString& filePath);
     Q_INVOKABLE void openInstallPluginDialog();
-    
-    // LGX package operations
-    QString currentPlatformVariant() const;
-    bool extractLgxPackage(const QString& lgxPath, const QString& outputDir, QString& errorMsg);
-    
+
     // Core Module operations
     void loadCoreModule(const QString& moduleName);
     void unloadCoreModule(const QString& moduleName);
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
     Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
-    Q_INVOKABLE void installCoreModuleFromPath(const QString& filePath);
-    Q_INVOKABLE void openInstallCoreModuleDialog();
-    
-    // Helper to copy library files from extracted directory
-    bool copyLibraryFromExtracted(const QString& extractedDir, const QString& targetDir, bool isCoreModule, QString& errorMsg);
-    
+
     // App Launcher operations
     void onAppLauncherClicked(const QString& appName);
     void refreshLauncherApps();
@@ -100,14 +91,14 @@ private:
     QStringList findAvailableUiPlugins() const;
     QString getPluginPath(const QString& name) const;
     QString pluginsDirectory() const;
-    QString userPluginsDirectory() const;
     QString modulesDirectory() const;
-    QString userModulesDirectory() const;
+    QString getPluginType(const QString& name) const;
     bool isQmlPlugin(const QString& name) const;
+    QJsonObject readPluginManifest(const QString& pluginName) const;
     QJsonObject readQmlPluginMetadata(const QString& pluginName) const;
     QJsonObject readPluginMetadata(const QString& pluginName) const;
     void updateModuleStats();
-    QString getPluginIconPath(const QString& pluginPath, bool forWidgetIcon = false) const;
+    QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
     
     // Navigation state
     int m_currentActiveSectionIndex;

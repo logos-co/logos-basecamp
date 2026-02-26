@@ -49,28 +49,6 @@ Item {
                 }
 
                 Button {
-                    text: "Install core module from file system"
-                    onClicked: backend.openInstallCoreModuleDialog()
-
-                    contentItem: LogosText {
-                        text: parent.text
-                        font.pixelSize: 13
-                        color: "#ffffff"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
-                    background: Rectangle {
-                        implicitWidth: 180
-                        implicitHeight: 32
-                        color: parent.pressed ? "#1a7f37" : "#238636"
-                        radius: 4
-                        border.color: "#2ea043"
-                        border.width: 1
-                    }
-                }
-
-                Button {
                     text: "Reload"
                     onClicked: backend.refreshCoreModules()
 

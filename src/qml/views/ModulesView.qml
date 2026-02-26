@@ -17,11 +17,38 @@ Item {
         anchors.margins: 40
         spacing: 20
 
-        LogosText {
-            text: "Modules"
-            font.pixelSize: 24
-            font.weight: Font.Bold
-            color: "#ffffff"
+        RowLayout {
+            Layout.fillWidth: true
+
+            LogosText {
+                text: "Modules"
+                font.pixelSize: 24
+                font.weight: Font.Bold
+                color: "#ffffff"
+                Layout.fillWidth: true
+            }
+
+            Button {
+                text: "Install LGX Package"
+                onClicked: backend.openInstallPluginDialog()
+
+                contentItem: LogosText {
+                    text: parent.text
+                    font.pixelSize: 13
+                    color: "#ffffff"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                background: Rectangle {
+                    implicitWidth: 180
+                    implicitHeight: 32
+                    color: parent.pressed ? "#1a7f37" : "#238636"
+                    radius: 4
+                    border.color: "#2ea043"
+                    border.width: 1
+                }
+            }
         }
 
         TabBar {

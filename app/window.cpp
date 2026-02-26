@@ -13,7 +13,9 @@
 #include <QIcon>
 #include <QPixmap>
 #include <IComponent.h>
+#include <QStandardPaths>
 #include <QTimer>
+#include "LogosAppPaths.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
     #include "macWindowStyle.h"
@@ -62,10 +64,15 @@ void Window::setupUi()
         pluginExtension = ".so";
     #endif
 
-    QString pluginsDir = QCoreApplication::applicationDirPath() + "/../plugins/";
-    
+    QString userPluginsDir = LogosAppPaths::pluginsDirectory() + "/";
+
+    // All plugins are installed to the user data directory via preinstall/ lgx packages.
+    auto resolvePlugin = [&](const QString& subdir, const QString& name) -> QString {
+        return userPluginsDir + subdir + "/" + name + pluginExtension;
+    };
+
     // First, load the package_manager_ui plugin (now in subdirectory)
-    QString packageManagerPluginPath = pluginsDir + "package_manager_ui/package_manager_ui" + pluginExtension;
+    QString packageManagerPluginPath = resolvePlugin("package_manager_ui", "package_manager_ui");
     QPluginLoader packageManagerLoader(packageManagerPluginPath);
     QWidget* packageManagerWidget = nullptr;
     
@@ -89,7 +96,7 @@ void Window::setupUi()
     }
 
     // Load the main_ui plugin with the appropriate extension (now in subdirectory)
-    QString mainUiPluginPath = pluginsDir + "main_ui/main_ui" + pluginExtension;
+    QString mainUiPluginPath = resolvePlugin("main_ui", "main_ui");
     QPluginLoader loader(mainUiPluginPath);
 
     QWidget* mainContent = nullptr;

@@ -20,8 +20,7 @@ pkgs.stdenv.mkDerivation rec {
     mkdir -p "$out/LogosApp.app/Contents/Frameworks"
     mkdir -p "$out/LogosApp.app/Contents/Resources"
     mkdir -p "$out/LogosApp.app/Contents/PlugIns"
-    mkdir -p "$out/LogosApp.app/Contents/modules"
-    mkdir -p "$out/LogosApp.app/Contents/plugins"
+    mkdir -p "$out/LogosApp.app/Contents/preinstall"
     
     if [ -f "${app}/bin/.LogosApp-wrapped" ]; then
       cp -L "${app}/bin/.LogosApp-wrapped" "$out/LogosApp.app/Contents/MacOS/LogosApp"
@@ -88,17 +87,9 @@ pkgs.stdenv.mkDerivation rec {
       cp -RL "$qtdeclarative/lib/qt-6/plugins"/* "$out/LogosApp.app/Contents/PlugIns/" || true
     fi
     
-    if [ -d "${app}/modules" ]; then
-      cp -L "${app}/modules"/*.dylib "$out/LogosApp.app/Contents/modules/" 2>/dev/null || true
-    fi
-    
-    # Copy all plugin directories (each plugin is now in its own subdirectory)
-    if [ -d "${app}/plugins" ]; then
-      for pluginDir in "${app}/plugins"/*; do
-        if [ -d "$pluginDir" ]; then
-          cp -R "$pluginDir" "$out/LogosApp.app/Contents/plugins/"
-        fi
-      done
+    # Copy preinstall lgx packages (installed into user data dir on first launch)
+    if [ -d "${app}/preinstall" ]; then
+      cp "${app}/preinstall"/*.lgx "$out/LogosApp.app/Contents/preinstall/"
     fi
     
     cp "${appSrc}/app/macos/logos.icns" "$out/LogosApp.app/Contents/Resources/"
@@ -136,8 +127,6 @@ EOF
     done
     
     install_name_tool -add_rpath "@executable_path/../Frameworks" "$out/LogosApp.app/Contents/MacOS/LogosApp" 2>/dev/null || true
-    install_name_tool -add_rpath "@executable_path/../modules" "$out/LogosApp.app/Contents/MacOS/LogosApp" 2>/dev/null || true
-    install_name_tool -add_rpath "@executable_path/../plugins" "$out/LogosApp.app/Contents/MacOS/LogosApp" 2>/dev/null || true
     
     /usr/bin/codesign --force --deep --sign - "$out/LogosApp.app" 2>/dev/null || echo "Codesigning skipped (requires macOS)"
     

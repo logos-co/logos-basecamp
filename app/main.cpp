@@ -2,16 +2,21 @@
 #include "logos_api.h"
 #include "token_manager.h"
 #include "logos_mode.h"
+#include "LogosAppPaths.h"
 #include <QApplication>
 #include <QIcon>
 #include <QDir>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QPluginLoader>
 #include <iostream>
 #include <memory>
 #include <QStringList>
 #include <QDebug>
 #include <QMetaObject>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QFile>
 
 // Replace CoreManager with direct C API functions
 extern "C" {
@@ -23,6 +28,64 @@ extern "C" {
     int logos_core_load_plugin(const char* plugin_name);
     char* logos_core_process_plugin(const char* plugin_path);
     char* logos_core_get_module_stats();
+}
+
+// On every launch, attempt to install any preinstall lgx package that is not yet present in the
+// user's data directories at an equal-or-higher version. Uses the bundled package_manager_plugin
+// library directly (via QPluginLoader), since on first boot the package manager module itself
+// has not been installed yet and is not available through logos core.
+static void runPreinstallIfNeeded()
+{
+    QString preinstallDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../preinstall");
+    if (!QDir(preinstallDir).exists()) {
+        qInfo() << "No preinstall directory found at" << preinstallDir;
+        return;
+    }
+
+    QStringList lgxFiles = QDir(preinstallDir).entryList({"*.lgx"}, QDir::Files);
+    if (lgxFiles.isEmpty())
+        return;
+
+    QString userModulesDir = LogosAppPaths::modulesDirectory();
+    QString userPluginsDir = LogosAppPaths::pluginsDirectory();
+
+    // Load the bundled package_manager_plugin library directly.
+    QString pluginExtension;
+#if defined(Q_OS_MAC)
+    pluginExtension = ".dylib";
+#elif defined(Q_OS_WIN)
+    pluginExtension = ".dll";
+#else
+    pluginExtension = ".so";
+#endif
+
+    QString pmLibPath = QDir::cleanPath(
+        QCoreApplication::applicationDirPath() + "/../lib/package_manager_plugin" + pluginExtension);
+    QPluginLoader loader(pmLibPath);
+    if (!loader.load()) {
+        qWarning() << "Failed to load bundled package_manager_plugin for preinstall:"
+                    << loader.errorString();
+        return;
+    }
+
+    QObject* plugin = loader.instance();
+    if (!plugin) {
+        qWarning() << "Failed to get package_manager_plugin instance";
+        return;
+    }
+
+    QMetaObject::invokeMethod(plugin, "setPluginsDirectory", Q_ARG(QString, userModulesDir));
+    QMetaObject::invokeMethod(plugin, "setUiPluginsDirectory", Q_ARG(QString, userPluginsDir));
+
+    for (const QString& lgxFile : lgxFiles) {
+        QString lgxPath = preinstallDir + "/" + lgxFile;
+        qInfo() << "Preinstalling (if needed):" << lgxPath;
+        bool result = false;
+        QMetaObject::invokeMethod(plugin, "installPlugin",
+            Q_RETURN_ARG(bool, result),
+            Q_ARG(QString, lgxPath),
+            Q_ARG(bool, true));
+    }
 }
 
 // Helper function to convert C-style array to QStringList
@@ -43,32 +106,42 @@ int main(int argc, char *argv[])
 
     // Create QApplication first
     QApplication app(argc, argv);
+    app.setOrganizationName("Logos");
+    app.setApplicationName("LogosApp");
 
-    QString modulesDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../modules");
-    logos_core_set_plugins_dir(modulesDir.toUtf8().constData());
+    // Install preinstall lgx packages before starting logos core, using the bundled
+    // package_manager_plugin directly. This ensures all modules are in place when
+    // logos core scans the user directories on startup.
+    runPreinstallIfNeeded();
 
-    QFileInfo bundledDirInfo(modulesDir);
-    if (!bundledDirInfo.isWritable()) {
-        QString userModulesDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/modules";
-        logos_core_add_plugins_dir(userModulesDir.toUtf8().constData());
-    }
+    QString userModulesDir = LogosAppPaths::modulesDirectory();
+
+    // All modules are installed to the user data directory via preinstall/ lgx packages.
+    logos_core_set_plugins_dir(userModulesDir.toUtf8().constData());
 
     // Start the core
     logos_core_start();
     std::cout << "Logos Core started successfully!" << std::endl;
 
-    // TODO: this should be refactored
-    QString pluginExtension;
+    // The core scanner doesn't recurse into subdirectories, so we manually
+    // discover and process each module installed by the LGX preinstall step.
+    QString platformKey;
 #if defined(Q_OS_MAC)
-    pluginExtension = ".dylib";
+  #if defined(Q_PROCESSOR_ARM)
+    platformKey = "darwin-arm64";
+  #else
+    platformKey = "darwin-x86_64";
+  #endif
 #elif defined(Q_OS_WIN)
-    pluginExtension = ".dll";
-#else // Linux and others
-    pluginExtension = ".so";
+    platformKey = "windows-x86_64";
+#elif defined(Q_OS_LINUX)
+  #if defined(Q_PROCESSOR_ARM)
+    platformKey = "linux-arm64";
+  #else
+    platformKey = "linux-x86_64";
+  #endif
 #endif
 
-    QString pluginPath = modulesDir + "/package_manager_plugin" + pluginExtension;
-    logos_core_process_plugin(pluginPath.toUtf8().constData());
     bool loaded = logos_core_load_plugin("package_manager");
 
     if (loaded) {
@@ -92,13 +165,19 @@ int main(int argc, char *argv[])
     }
 
     LogosAPI logosAPI("core", nullptr);
+
     qDebug() << "LogosAPI: printing keys";
     QList<QString> keys = logosAPI.getTokenManager()->getTokenKeys();
     for (const QString& key : keys) {
         qDebug() << "LogosAPI: Token key:" << key << "value:" << logosAPI.getTokenManager()->getToken(key);
     }
 
-    // Set application icon
+    // Set application icon.
+#ifdef Q_OS_LINUX
+    // setDesktopFileName is required for Wayland compositors, which look up the
+    // icon via the .desktop file name rather than honouring setWindowIcon().
+    app.setDesktopFileName("logos-app");
+#endif
     app.setWindowIcon(QIcon(":/icons/logos.png"));
 
     // Don't quit when last window is closed (for system tray support)
@@ -126,4 +205,4 @@ int main(int argc, char *argv[])
     logos_core_cleanup();
 
     return result;
-} 
+}

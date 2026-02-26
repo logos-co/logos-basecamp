@@ -21,11 +21,12 @@ else()
     set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib:\$ORIGIN/lib")
 endif()
 
-find_package(Qt6 COMPONENTS Widgets REQUIRED)
+find_package(Qt6 COMPONENTS Widgets RemoteObjects Quick Qml QuickWidgets QuickControls2 REQUIRED)
 
-# Add interfaces and macos directories to include path
+# Add interfaces, utils, and macos directories to include path
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/interfaces)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macos)
 
 # Allow override from environment or command line (for nix builds)
@@ -100,14 +101,30 @@ if(APPLE)
     list(APPEND PROJECT_SOURCES macos/macWindowStyle.mm)
 endif()
 
+option(LOGOS_PORTABLE_BUILD "Build as a portable/distributed app (no /nix/store dependencies at runtime)" OFF)
+
 qt_add_executable(LogosApp
     ${PROJECT_SOURCES}
 )
 
-# Link with logos_core library using a more flexible approach
-target_link_libraries(LogosApp PRIVATE 
+if(LOGOS_PORTABLE_BUILD)
+    target_compile_definitions(LogosApp PRIVATE LOGOS_PORTABLE_BUILD)
+    message(STATUS "Building LogosApp as portable (LOGOS_PORTABLE_BUILD enabled)")
+endif()
+
+# Link with logos_core, logos_sdk, and all Qt modules needed by plugins.
+# Plugins (main_ui, package_manager_ui) are loaded at runtime and depend on
+# these Qt libraries. Linking them here ensures the portable bundler includes
+# them in the app bundle.
+target_link_libraries(LogosApp PRIVATE
     Qt6::Widgets
+    Qt6::RemoteObjects
+    Qt6::Quick
+    Qt6::Qml
+    Qt6::QuickWidgets
+    Qt6::QuickControls2
     logos_core
+    logos_sdk
 )
 
 if(APPLE)

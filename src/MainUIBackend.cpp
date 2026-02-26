@@ -1,4 +1,5 @@
 #include "MainUIBackend.h"
+#include "LogosAppPaths.h"
 #include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -18,13 +19,11 @@
 #include <QIcon>
 #include <QStandardPaths>
 #include <QFileDialog>
-#include <QTemporaryDir>
 #include "LogosQmlBridge.h"
 #include "logos_sdk.h"
 #include "token_manager.h"
 #include "restricted/DenyAllNAMFactory.h"
 #include "restricted/RestrictedUrlInterceptor.h"
-#include "lgx.h"
 
 extern "C" {
     char* logos_core_get_module_stats();
@@ -155,9 +154,7 @@ QVariantList MainUIBackend::uiModules() const
         module["name"] = pluginName;
         module["isLoaded"] = m_loadedUiModules.contains(pluginName) || m_qmlPluginWidgets.contains(pluginName);
         module["isMainUi"] = (pluginName == "main_ui");
-        
-        QString pluginPath = getPluginPath(pluginName);
-        module["iconPath"] = getPluginIconPath(pluginPath);
+        module["iconPath"] = getPluginIconPath(pluginName);
         
         modules.append(module);
     }
@@ -239,7 +236,7 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
         LogosQmlBridge* bridge = new LogosQmlBridge(m_logosAPI, qmlWidget);
         qmlWidget->rootContext()->setContextProperty("logos", bridge);
         qmlWidget->setSource(QUrl::fromLocalFile(qmlFilePath));
-        qmlWidget->setWindowIcon(QIcon(getPluginIconPath(pluginPath, true)));
+        qmlWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
 
         if (qmlWidget->status() == QQuickWidget::Error) {
             qWarning() << "Failed to load QML plugin" << moduleName;
@@ -291,7 +288,7 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
         return;
     }
     
-    componentWidget->setWindowIcon(QIcon(getPluginIconPath(pluginPath, true)));
+    componentWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
     m_loadedUiModules[moduleName] = component;
     m_uiModuleWidgets[moduleName] = componentWidget;
     m_loadedApps.insert(moduleName);
@@ -474,35 +471,42 @@ void MainUIBackend::refreshCoreModules()
 {
     QString libExtension;
 #if defined(Q_OS_MAC)
-    libExtension = "*.dylib";
+    libExtension = ".dylib";
 #elif defined(Q_OS_WIN)
-    libExtension = "*.dll";
+    libExtension = ".dll";
 #else
-    libExtension = "*.so";
+    libExtension = ".so";
 #endif
-    
-    QDir modulesDir(modulesDirectory());
-    if (modulesDir.exists()) {
-        QStringList entries = modulesDir.entryList(QStringList() << libExtension, QDir::Files);
-        for (const QString& entry : entries) {
-            QString fullPath = modulesDir.absoluteFilePath(entry);
-            logos_core_process_plugin(fullPath.toUtf8().constData());
-        }
-    }
-    
-    QFileInfo bundledDirInfo(modulesDirectory());
-    if (!bundledDirInfo.isWritable()) {
-        QString userModulesDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/modules";
-        QDir userModulesDirObj(userModulesDir);
-        if (userModulesDirObj.exists()) {
-            QStringList entries = userModulesDirObj.entryList(QStringList() << libExtension, QDir::Files);
-            for (const QString& entry : entries) {
-                QString fullPath = userModulesDirObj.absoluteFilePath(entry);
-                logos_core_process_plugin(fullPath.toUtf8().constData());
+
+    auto scanModulesDir = [&](const QString& dirPath) {
+        QDir modulesDir(dirPath);
+        if (!modulesDir.exists()) return;
+        QStringList subdirs = modulesDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString& subdir : subdirs) {
+            QString subdirPath = dirPath + "/" + subdir;
+            // Only process subdirectories that have a manifest.json
+            QString manifestPath = subdirPath + "/manifest.json";
+            QFile manifestFile(manifestPath);
+            if (!manifestFile.open(QIODevice::ReadOnly)) continue;
+            QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
+            manifestFile.close();
+            if (!doc.isObject()) continue;
+            QString type = doc.object().value("type").toString();
+            if ((type == "ui") || (type == "ui_qml")) continue; // Skip UI plugins
+            // Use directory name to find the main library
+            QString mainLibrary = doc.object().value("main").toString();
+            if (mainLibrary.isEmpty()) {
+                continue;
+            }
+            QString pluginPath = subdirPath + "/" + mainLibrary + libExtension;
+            if (QFile::exists(pluginPath)) {
+                logos_core_process_plugin(pluginPath.toUtf8().constData());
             }
         }
-    }
-    
+    };
+
+    scanModulesDir(modulesDirectory());
+
     emit coreModulesChanged();
 }
 
@@ -578,9 +582,7 @@ QVariantList MainUIBackend::launcherApps() const
         QVariantMap app;
         app["name"] = pluginName;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
-        
-        QString pluginPath = getPluginPath(pluginName);
-        app["iconPath"] = getPluginIconPath(pluginPath);
+        app["iconPath"] = getPluginIconPath(pluginName);
         
         apps.append(app);
     }
@@ -606,17 +608,10 @@ void MainUIBackend::refreshLauncherApps()
 
 void MainUIBackend::openInstallPluginDialog()
 {
-    QString filter;
-#if defined(Q_OS_MAC)
-    filter = "Plugin Files (*.dylib *.lgx);;Dynamic Library (*.dylib);;LGX Package (*.lgx);;All Files (*)";
-#elif defined(Q_OS_WIN)
-    filter = "Plugin Files (*.dll *.lgx);;Dynamic Link Library (*.dll);;LGX Package (*.lgx);;All Files (*)";
-#else
-    filter = "Plugin Files (*.so *.lgx);;Shared Object (*.so);;LGX Package (*.lgx);;All Files (*)";
-#endif
-    
+    QString filter = "LGX Package (*.lgx);;All Files (*)";
+
     QString filePath = QFileDialog::getOpenFileName(nullptr, tr("Select Plugin to Install"), QString(), filter);
-    
+
     if (!filePath.isEmpty()) {
         installPluginFromPath(filePath);
     }
@@ -624,208 +619,92 @@ void MainUIBackend::openInstallPluginDialog()
 
 void MainUIBackend::installPluginFromPath(const QString& filePath)
 {
-    QFileInfo fileInfo(filePath);
-    
-#ifdef LOGOS_DISTRIBUTED_BUILD
-    // For distributed builds (DMG/AppImage), always use Application Support
-    QString targetDir = userPluginsDirectory();
-#else
-    // For development builds (nix), use bundled plugins directory
-    QString targetDir = pluginsDirectory();
-#endif
-    
-    QDir dir;
-    
-    if (!dir.exists(targetDir)) {
-        dir.mkpath(targetDir);
-    }
-    
-    if (fileInfo.suffix().toLower() == "lgx") {
-        qDebug() << "Installing LGX package:" << filePath;
-        QTemporaryDir tempDir;
-        if (!tempDir.isValid()) {
-            qWarning() << "Failed to create temporary directory for LGX extraction";
-            return;
-        }
-        
-        QString errorMsg;
-        if (!extractLgxPackage(filePath, tempDir.path(), errorMsg)) {
-            qWarning() << "Failed to extract LGX package:" << errorMsg;
-            return;
-        }
-        
-        if (!copyLibraryFromExtracted(tempDir.path(), targetDir, false, errorMsg)) {
-            qWarning() << "Failed to copy library from extracted LGX package:" << errorMsg;
-            return;
-        }
-        
-        qDebug() << "Successfully installed plugin from LGX package to:" << targetDir;
-    } else {
-        // UI plugins: subdirectory structure
-        QString pluginName = fileInfo.completeBaseName();
-        QString pluginSubDir = targetDir + "/" + pluginName;
-        QDir().mkpath(pluginSubDir);
-        QString targetPath = pluginSubDir + "/" + fileInfo.fileName();
-        
-        if (QFile::exists(targetPath)) {
-            QFile::remove(targetPath);
-        }
-        
-        QFile::copy(filePath, targetPath);
-    }
-    
+    LogosModules logos(m_logosAPI);
+
+    logos.package_manager.setPluginsDirectory(modulesDirectory());
+    logos.package_manager.setUiPluginsDirectory(pluginsDirectory());
+
+
+    logos.package_manager.installPlugin(filePath);
+
+    refreshCoreModules();
     emit uiModulesChanged();
     emit launcherAppsChanged();
 }
 
-void MainUIBackend::openInstallCoreModuleDialog()
-{
-    QString filter;
-#if defined(Q_OS_MAC)
-    filter = "Module Files (*.dylib *.lgx);;Dynamic Library (*.dylib);;LGX Package (*.lgx);;All Files (*)";
-#elif defined(Q_OS_WIN)
-    filter = "Module Files (*.dll *.lgx);;Dynamic Link Library (*.dll);;LGX Package (*.lgx);;All Files (*)";
-#else
-    filter = "Module Files (*.so *.lgx);;Shared Object (*.so);;LGX Package (*.lgx);;All Files (*)";
-#endif
-    
-    QString filePath = QFileDialog::getOpenFileName(nullptr, tr("Select Core Module to Install"), QString(), filter);
-    
-    if (!filePath.isEmpty()) {
-        installCoreModuleFromPath(filePath);
-    }
-}
-
-void MainUIBackend::installCoreModuleFromPath(const QString& filePath)
-{
-    QFileInfo fileInfo(filePath);
-    
-#ifdef LOGOS_DISTRIBUTED_BUILD
-    // For distributed builds (DMG/AppImage), use Application Support
-    QString targetDir = userModulesDirectory();
-#else
-    // For development builds (nix), use bundled modules directory
-    QString targetDir = modulesDirectory();
-#endif
-    
-    QDir dir;
-    
-    if (!dir.exists(targetDir)) {
-        dir.mkpath(targetDir);
-    }
-    
-    if (fileInfo.suffix().toLower() == "lgx") {
-        qDebug() << "Installing LGX package as core module:" << filePath;
-        QTemporaryDir tempDir;
-        if (!tempDir.isValid()) {
-            qWarning() << "Failed to create temporary directory for LGX extraction";
-            return;
-        }
-        
-        QString errorMsg;
-        if (!extractLgxPackage(filePath, tempDir.path(), errorMsg)) {
-            qWarning() << "Failed to extract LGX package:" << errorMsg;
-            return;
-        }
-        
-        if (!copyLibraryFromExtracted(tempDir.path(), targetDir, true, errorMsg)) {
-            qWarning() << "Failed to copy library from extracted LGX package:" << errorMsg;
-            return;
-        }
-        
-        qDebug() << "Successfully installed core module from LGX package to:" << targetDir;
-    } else {
-        QString targetPath = targetDir + "/" + fileInfo.fileName();
-        
-        if (QFile::exists(targetPath)) {
-            QFile::remove(targetPath);
-        }
-        
-        QFile::copy(filePath, targetPath);
-    }
-    
-    refreshCoreModules();
-}
-
 QString MainUIBackend::pluginsDirectory() const
 {
-    return QCoreApplication::applicationDirPath() + "/../plugins";
-}
-
-QString MainUIBackend::userPluginsDirectory() const
-{
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/plugins";
+    return LogosAppPaths::pluginsDirectory();
 }
 
 QString MainUIBackend::modulesDirectory() const
 {
-    return QCoreApplication::applicationDirPath() + "/../modules";
+    return LogosAppPaths::modulesDirectory();
 }
 
-QString MainUIBackend::userModulesDirectory() const
+QJsonObject MainUIBackend::readPluginManifest(const QString& pluginName) const
 {
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/modules";
+    QString manifestPath = pluginsDirectory() + "/" + pluginName + "/manifest.json";
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+        return QJsonObject();
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
+    manifestFile.close();
+    if (!doc.isObject()) {
+        return QJsonObject();
+    }
+    return doc.object();
 }
 
 QJsonObject MainUIBackend::readQmlPluginMetadata(const QString& pluginName) const
 {
-    QFileInfo bundledPluginsDirInfo(pluginsDirectory());
-    if (!bundledPluginsDirInfo.isWritable()) {
-        QString userMetadataPath = userPluginsDirectory() + "/" + pluginName + "/metadata.json";
-        QFile userMetadataFile(userMetadataPath);
-        if (userMetadataFile.exists() && userMetadataFile.open(QIODevice::ReadOnly)) {
-            QJsonParseError parseError;
-            QJsonDocument doc = QJsonDocument::fromJson(userMetadataFile.readAll(), &parseError);
-            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-                return doc.object();
-            }
+    QString userMetadataPath = pluginsDirectory() + "/" + pluginName + "/metadata.json";
+    QFile userMetadataFile(userMetadataPath);
+    if (userMetadataFile.exists() && userMetadataFile.open(QIODevice::ReadOnly)) {
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(userMetadataFile.readAll(), &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            return doc.object();
         }
-    }
-    
-    QString metadataPath = pluginsDirectory() + "/" + pluginName + "/metadata.json";
-    QFile metadataFile(metadataPath);
-    if (!metadataFile.exists()) {
-        return QJsonObject();
+        qWarning() << "Failed to parse metadata for QML plugin" << pluginName << ":" << parseError.errorString();
     }
 
-    if (!metadataFile.open(QIODevice::ReadOnly)) {
-        qWarning() << "Failed to open metadata for plugin" << pluginName
-                   << ":" << metadataFile.errorString();
-        return QJsonObject();
-    }
-
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(metadataFile.readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        qWarning() << "Failed to parse metadata for plugin" << pluginName
-                   << ":" << parseError.errorString();
-        return QJsonObject();
-    }
-
-    return doc.object();
+    qWarning() << "No metadata found for QML plugin" << pluginName;
+    return QJsonObject();
 }
 
 QJsonObject MainUIBackend::readPluginMetadata(const QString& pluginName) const
 {
-    QString pluginPath = getPluginPath(pluginName);
-    QFileInfo pluginInfo(pluginPath);
-    
-    // QML plugins: directory with metadata.json file
-    if (pluginInfo.isDir()) {
+    if (isQmlPlugin(pluginName)) {
         return readQmlPluginMetadata(pluginName);
     }
-    
+
     // C++ plugins: dylib with embedded metadata
+    QString pluginPath = getPluginPath(pluginName);
     QPluginLoader loader(pluginPath);
     QJsonObject metadata = loader.metaData();
     return metadata.value("MetaData").toObject();
 }
 
+QString MainUIBackend::getPluginType(const QString& name) const
+{
+    QString manifestPath = pluginsDirectory() + "/" + name + "/manifest.json";
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
+    manifestFile.close();
+    if (!doc.isObject()) {
+        return QString();
+    }
+    return doc.object().value("type").toString();
+}
+
 bool MainUIBackend::isQmlPlugin(const QString& name) const
 {
-    QJsonObject metadata = readQmlPluginMetadata(name);
-    QString pluginType = metadata.value("pluginType").toString();
-    return pluginType.compare("qml", Qt::CaseInsensitive) == 0;
+    return getPluginType(name) == "ui_qml";
 }
 
 QStringList MainUIBackend::findAvailableUiPlugins() const
@@ -857,10 +736,7 @@ QStringList MainUIBackend::findAvailableUiPlugins() const
         // Scan subdirectories for plugins (both QML and C++ plugins are in subdirectories)
         QStringList dirEntries = pluginsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const QString& entry : dirEntries) {
-            // Check if it's a QML plugin (has metadata.json with pluginType: "qml")
-            QJsonObject metadata = readQmlPluginMetadata(entry);
-            QString pluginType = metadata.value("pluginType").toString();
-            if (pluginType.compare("qml", Qt::CaseInsensitive) == 0) {
+            if (isQmlPlugin(entry)) {
                 addPlugin(entry);
             } else {
                 // Check if it's a C++ plugin (has <dirname>.<ext> inside the subdirectory)
@@ -873,77 +749,41 @@ QStringList MainUIBackend::findAvailableUiPlugins() const
     };
     
     scanDirectory(pluginsDirectory());
-    
-    QFileInfo bundledPluginsDirInfo(pluginsDirectory());
-    if (!bundledPluginsDirInfo.isWritable()) {
-        scanDirectory(userPluginsDirectory());
-    }
-    
+
     return plugins;
 }
 
 QString MainUIBackend::getPluginPath(const QString& name) const
 {
-    QString libExtension;
-#if defined(Q_OS_MAC)
-    libExtension = ".dylib";
-#elif defined(Q_OS_WIN)
-    libExtension = ".dll";
-#else
-    libExtension = ".so";
-#endif
-    
-    QFileInfo bundledPluginsDirInfo(pluginsDirectory());
-    bool shouldCheckUserDir = !bundledPluginsDirInfo.isWritable();
-    
     if (isQmlPlugin(name)) {
         // QML plugins: return directory path (unchanged)
-        if (shouldCheckUserDir) {
-            QString userPath = userPluginsDirectory() + "/" + name;
-            if (QFileInfo::exists(userPath)) {
-                return userPath;
-            }
-        }
-        
         return pluginsDirectory() + "/" + name;
     }
 
     // C++ plugins: return path to dylib inside subdirectory
-    if (shouldCheckUserDir) {
-        QString userPluginPath = userPluginsDirectory() + "/" + name + "/" + name + libExtension;
-        if (QFile::exists(userPluginPath)) {
-            return userPluginPath;
-        }
-    }
-    
+    QString libExtension;
+    #if defined(Q_OS_MAC)
+        libExtension = ".dylib";
+    #elif defined(Q_OS_WIN)
+        libExtension = ".dll";
+    #else
+        libExtension = ".so";
+    #endif
+
     return pluginsDirectory() + "/" + name + "/" + name + libExtension;
 }
 
-QString MainUIBackend::getPluginIconPath(const QString& pluginPath, bool forWidgetIcon) const
+QString MainUIBackend::getPluginIconPath(const QString& pluginName, bool forWidgetIcon) const
 {
-    QFileInfo pluginInfo(pluginPath);
-    QDir pluginDir = pluginInfo.isDir() ? QDir(pluginInfo.filePath()) : QDir(pluginInfo.absolutePath());
-
-    QJsonObject meta;
-    if (pluginInfo.isDir()) {
-        QFile f(pluginInfo.filePath() + "/metadata.json");
-        if (!f.open(QIODevice::ReadOnly)) {
-            return "";
-        }
-        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-        if (!doc.isObject()) {
-            return "";
-        }
-        meta = doc.object();
-    } else {
-        meta = QPluginLoader(pluginPath).metaData().value("MetaData").toObject();
-    }
-    QString iconPath = meta.value("icon").toString();
+    QJsonObject manifest = readPluginManifest(pluginName);
+    QString iconPath = manifest.value("icon").toString();
     if (iconPath.isEmpty()) {
         return "";
     }
 
-    QString filePath = pluginDir.absoluteFilePath(iconPath.startsWith(":/") ? iconPath.mid(2) : iconPath);
+    QString pluginPath = pluginsDirectory() + "/" + pluginName;
+    QDir pluginDir(pluginPath);
+    QString filePath = pluginDir.filePath(iconPath.startsWith(":/") ? iconPath.mid(2) : iconPath);
     bool exists = QFile::exists(filePath);
 
     if (forWidgetIcon) {
@@ -1006,116 +846,3 @@ void MainUIBackend::updateModuleStats()
     emit coreModulesChanged();
 }
 
-QString MainUIBackend::currentPlatformVariant() const
-{
-#if defined(Q_OS_MAC)
-  #if defined(__aarch64__) || defined(__arm64__)
-    return "darwin-arm64";
-  #else
-    return "darwin-amd64";
-  #endif
-#elif defined(Q_OS_LINUX)
-  #if defined(__aarch64__) || defined(__arm64__)
-    return "linux-arm64";
-  #else
-    return "linux-amd64";
-  #endif
-#elif defined(Q_OS_WIN)
-  #if defined(__aarch64__) || defined(__arm64__)
-    return "windows-arm64";
-  #else
-    return "windows-amd64";
-  #endif
-#else
-    return "unknown";
-#endif
-}
-
-bool MainUIBackend::extractLgxPackage(const QString& lgxPath, const QString& outputDir, QString& errorMsg)
-{
-    lgx_package_t pkg = lgx_load(lgxPath.toUtf8().constData());
-    if (!pkg) {
-        errorMsg = QString("Failed to load LGX package: %1").arg(lgx_get_last_error());
-        return false;
-    }
-    
-    QString variant = currentPlatformVariant();
-    qDebug() << "Extracting variant:" << variant << "from LGX package";
-    
-    if (!lgx_has_variant(pkg, variant.toUtf8().constData())) {
-        errorMsg = QString("Package does not contain variant for platform: %1").arg(variant);
-        lgx_free_package(pkg);
-        return false;
-    }
-    
-    lgx_result_t result = lgx_extract(pkg, variant.toUtf8().constData(), outputDir.toUtf8().constData());
-    
-    if (!result.success) {
-        errorMsg = QString("Failed to extract variant: %1").arg(result.error ? result.error : "unknown error");
-        lgx_free_package(pkg);
-        return false;
-    }
-    
-    lgx_free_package(pkg);
-    return true;
-}
-
-bool MainUIBackend::copyLibraryFromExtracted(const QString& extractedDir, const QString& targetDir, bool isCoreModule, QString& errorMsg)
-{
-    QString variant = currentPlatformVariant();
-    QString variantDir = extractedDir + "/" + variant;
-    
-    if (!QDir(variantDir).exists()) {
-        errorMsg = QString("Extracted variant directory not found: %1").arg(variantDir);
-        return false;
-    }
-    
-    QDir dir(variantDir);
-    QStringList filters;
-#if defined(Q_OS_MAC)
-    filters << "*.dylib";
-#elif defined(Q_OS_WIN)
-    filters << "*.dll";
-#else
-    filters << "*.so";
-#endif
-    
-    QFileInfoList libraryFiles = dir.entryInfoList(filters, QDir::Files, QDir::Name);
-    
-    if (libraryFiles.isEmpty()) {
-        errorMsg = QString("No library files found in extracted variant directory: %1").arg(variantDir);
-        return false;
-    }
-    
-    for (const QFileInfo& fileInfo : libraryFiles) {
-        QString sourceFile = fileInfo.absoluteFilePath();
-        QString targetPath;
-        
-        if (isCoreModule) {
-            // Core modules: flat structure
-            targetPath = targetDir + "/" + fileInfo.fileName();
-        } else {
-            // UI plugins: subdirectory structure
-            QString pluginName = fileInfo.completeBaseName();
-            QString pluginSubDir = targetDir + "/" + pluginName;
-            QDir().mkpath(pluginSubDir);
-            targetPath = pluginSubDir + "/" + fileInfo.fileName();
-        }
-        
-        if (QFile::exists(targetPath)) {
-            if (!QFile::remove(targetPath)) {
-                errorMsg = QString("Failed to remove existing file: %1").arg(targetPath);
-                return false;
-            }
-        }
-        
-        if (!QFile::copy(sourceFile, targetPath)) {
-            errorMsg = QString("Failed to copy library from %1 to %2").arg(sourceFile, targetPath);
-            return false;
-        }
-        
-        qDebug() << "Copied library file:" << targetPath;
-    }
-    
-    return true;
-}

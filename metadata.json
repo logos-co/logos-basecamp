@@ -1,0 +1,42 @@
+{
+  "name": "main_ui",
+  "version": "1.0.0",
+  "description": "Main user interface for the Logos application",
+  "author": "Logos Core Team",
+  "type": "ui",
+  "main": "main_ui",
+  "dependencies": [
+    "package_manager"
+  ],
+  "category": "ui",
+  "build": {
+    "type": "cmake",
+    "files": [
+      "src/main_ui_plugin.cpp",
+      "src/main_ui_plugin.h",
+      "src/mainwindow.cpp",
+      "src/mainwindow.h",
+      "src/sidebarbutton.cpp",
+      "src/sidebarbutton.h",
+      "src/mdichild.cpp",
+      "src/mdichild.h",
+      "src/mdiview.cpp",
+      "src/mdiview.h",
+      "src/modulesview.cpp",
+      "src/modulesview.h",
+      "src/dashboardview.cpp",
+      "src/dashboardview.h",
+      "src/coremoduleview.cpp",
+      "src/coremoduleview.h",
+      "src/pluginmethodsview.cpp",
+      "src/pluginmethodsview.h",
+      "src/packagemanagerview.cpp",
+      "src/packagemanagerview.h",
+      "src/main_ui_resources.qrc"
+    ]
+  },
+  "capabilities": [
+    "ui_components",
+    "package_management"
+  ]
+} 
