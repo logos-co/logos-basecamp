@@ -172,7 +172,12 @@ int main(int argc, char *argv[])
         qDebug() << "LogosAPI: Token key:" << key << "value:" << logosAPI.getTokenManager()->getToken(key);
     }
 
-    // Set application icon
+    // Set application icon.
+#ifdef Q_OS_LINUX
+    // setDesktopFileName is required for Wayland compositors, which look up the
+    // icon via the .desktop file name rather than honouring setWindowIcon().
+    app.setDesktopFileName("logos-app");
+#endif
     app.setWindowIcon(QIcon(":/icons/logos.png"));
 
     // Don't quit when last window is closed (for system tray support)

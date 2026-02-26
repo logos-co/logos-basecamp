@@ -234,6 +234,13 @@ pkgs.stdenv.mkDerivation rec {
 
     # Note: webview_app QML and HTML files are now embedded in the plugin via qrc
 
+    # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
+    if [ "$(uname)" = "Linux" ]; then
+      mkdir -p $out/share/applications $out/share/icons/hicolor/256x256/apps
+      cp ${src}/assets/logos-app.desktop $out/share/applications/
+      cp ${src}/app/icons/logos.png $out/share/icons/hicolor/256x256/apps/logos-app.png
+    fi
+
     # Create launcher script (sets Qt env, execs binary - process name stays "LogosApp" for Dock)
     cat > $out/bin/logos-app << 'EOF'
 #!/bin/sh
@@ -242,6 +249,10 @@ EOF
     echo "export QML2_IMPORT_PATH=\"${qmlImportPath}\"" >> $out/bin/logos-app
     echo "export DYLD_LIBRARY_PATH=\"${qtLibPath}:\$DYLD_LIBRARY_PATH\"" >> $out/bin/logos-app
     echo "export LD_LIBRARY_PATH=\"${qtLibPath}:\$LD_LIBRARY_PATH\"" >> $out/bin/logos-app
+    echo 'APPDIR="$(cd "$(dirname "$0")/.." && pwd)"' >> $out/bin/logos-app
+    echo 'if [ "$(uname)" = "Linux" ]; then' >> $out/bin/logos-app
+    echo '  export XDG_DATA_DIRS="$APPDIR/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"' >> $out/bin/logos-app
+    echo 'fi' >> $out/bin/logos-app
     echo 'exec "$(dirname "$0")/LogosApp" "$@"' >> $out/bin/logos-app
     chmod +x $out/bin/logos-app
 
