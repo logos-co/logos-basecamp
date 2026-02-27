@@ -1,4 +1,4 @@
 module controls
 SidebarIconButton 1.0 SidebarIconButton.qml
 SidebarCircleButton 1.0 SidebarCircleButton.qml
-SidebarCircleButtonContainer 1.0 SidebarCircleButtonContainer.qml
+SidebarAppDelegate 1.0 SidebarAppDelegate.qml

@@ -7,13 +7,14 @@
         <file>icons/module.png</file>
         <file>icons/basecamp.png</file>
         <file>icons/tent.png</file>
+        <file>icons/workspace.png</file>
         <file>icons/close.png</file>
         <file>icons/add-button.png</file>
         <file>qml/panels/SidebarPanel.qml</file>
         <file>qml/panels/qmldir</file>
         <file>qml/controls/SidebarIconButton.qml</file>
         <file>qml/controls/SidebarCircleButton.qml</file>
-        <file>qml/controls/SidebarCircleButtonContainer.qml</file>
+        <file>qml/controls/SidebarAppDelegate.qml</file>
         <file>qml/controls/qmldir</file>
         <file>qml/views/ContentViews.qml</file>
         <file>qml/views/DashboardView.qml</file>

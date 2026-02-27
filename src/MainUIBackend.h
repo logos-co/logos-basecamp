@@ -30,6 +30,7 @@ class MainUIBackend : public QObject {
     
     // App Launcher
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
+    Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
 
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
@@ -47,6 +48,7 @@ public:
     
     // App Launcher
     QVariantList launcherApps() const;
+    QString currentVisibleApp() const;
 
 public slots:
     // Navigation
@@ -72,12 +74,15 @@ public slots:
     
     // Called when a plugin window is closed from MdiView
     void onPluginWindowClosed(const QString& pluginName);
+    // Called when the active tab in MdiView changes (for launcher isVisible)
+    void setCurrentVisibleApp(const QString& pluginName);
 
 signals:
     void currentActiveSectionIndexChanged();
     void uiModulesChanged();
     void coreModulesChanged();
     void launcherAppsChanged();
+    void currentVisibleAppChanged();
     void navigateToApps();
     
     // Signals for C++ MdiView coordination
@@ -115,6 +120,7 @@ private:
     
     // App Launcher state
     QSet<QString> m_loadedApps;
+    QString m_currentVisibleApp;
     
     // LogosAPI
     LogosAPI* m_logosAPI;

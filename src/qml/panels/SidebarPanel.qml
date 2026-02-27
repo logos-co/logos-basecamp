@@ -18,6 +18,7 @@ Control {
     signal updateLauncherIndex(int index)
 
     padding: 0
+    bottomPadding: Theme.spacing.large
     topPadding: Theme.spacing.large + _d.systemTitleBarPadding
     topInset: _d.systemTitleBarPadding
 
@@ -90,8 +91,6 @@ Control {
         ScrollView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.leftMargin: 3
-            Layout.rightMargin: 3
 
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
@@ -108,24 +107,38 @@ Control {
                     id: appsColumn
 
                     width: parent.width
-                    spacing: Theme.spacing.large
+                    spacing: 2
                     
                     // Loaded apps
-                    SidebarCircleButtonContainer {
-                        Layout.fillWidth: true
-                        contentModel: _d.loadedApps
-                        visible: _d.loadedApps && _d.loadedApps.length > 0
-                        onModuleClicked: (name, index) => root.launchUIModule(name)
+                    Repeater {
+                        id: loadedAppsRepeater
+                        model: _d.loadedApps
+                        delegate: SidebarAppDelegate {
+                            Layout.fillWidth: true
+                            loaded: true
+                            checked: modelData.name === (backend.currentVisibleApp || "")
+                            text: modelData.name
+                            icon.source: modelData.iconPath
+                            onClicked: root.launchUIModule(modelData.name)
+                        }
+                    }
+
+                    SeparatorLine {
+                        Layout.topMargin: Theme.spacing.small
+                        Layout.bottomMargin: Theme.spacing.small
+                        visible: loadedAppsRepeater.count > 0
                     }
 
                     // Unloaded apps
-                    SidebarCircleButtonContainer {
-                        Layout.fillWidth: true
-                        // no background on unloaded apps
-                        background: null
-                        contentModel: _d.unloadedApps
-                        visible: _d.unloadedApps && _d.unloadedApps.length > 0
-                        onModuleClicked: (name, index) => root.launchUIModule(name)
+                    Repeater {
+                        model: _d.unloadedApps
+                        delegate: SidebarAppDelegate {
+                            Layout.fillWidth: true
+                            loaded: false
+                            text: modelData.name
+                            icon.source: modelData.iconPath
+                            onClicked: root.launchUIModule(modelData.name)
+                        }
                     }
                 }
             }
@@ -134,15 +147,18 @@ Control {
         SeparatorLine {}
 
         // View sections (Dashboard, Modules, Settings)
-        SidebarCircleButtonContainer {
-            Layout.alignment: Qt.AlignBottom
-            Layout.fillWidth: true
-            Layout.leftMargin: 3
-            Layout.rightMargin: 3
-            Layout.bottomMargin: Theme.spacing.large
-            contentModel: _d.viewSections
-            // Calculate correct index: workspace sections count + view index
-            onModuleClicked: (name, index) => root.updateLauncherIndex(_d.workspaceSections.length + index)
+        ColumnLayout {
+            spacing: Theme.spacing.medium
+            Layout.alignment: Qt.AlignBottom | Qt.AlignHCenter
+            Repeater {
+                model: _d.viewSections
+                delegate: SidebarCircleButton {
+                    checked: backend.currentActiveSectionIndex -1 === index
+                    text: modelData.name
+                    icon.source: modelData.iconPath
+                    onClicked: root.updateLauncherIndex(_d.workspaceSections.length + index)
+                }
+            }
         }
     }
 

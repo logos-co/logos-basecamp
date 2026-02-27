@@ -36,6 +36,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     , m_logosAPI(logosAPI)
     , m_ownsLogosAPI(false)
     , m_statsTimer(nullptr)
+    , m_currentVisibleApp("")
 {
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
@@ -354,6 +355,20 @@ void MainUIBackend::activateApp(const QString& appName)
     }
 }
 
+void MainUIBackend::setCurrentVisibleApp(const QString& pluginName)
+{
+    if (m_currentVisibleApp != pluginName) {
+        m_currentVisibleApp = pluginName;
+        emit currentVisibleAppChanged();
+        emit launcherAppsChanged();
+    }
+}
+
+QString MainUIBackend::currentVisibleApp() const
+{
+    return m_currentVisibleApp;
+}
+
 void MainUIBackend::onPluginWindowClosed(const QString& pluginName)
 {
     qDebug() << "Plugin window closed:" << pluginName;
@@ -593,7 +608,8 @@ QVariantList MainUIBackend::launcherApps() const
 void MainUIBackend::onAppLauncherClicked(const QString& appName)
 {
     qDebug() << "App launcher clicked:" << appName;
-    
+
+    setCurrentVisibleApp(appName);
     if (m_loadedApps.contains(appName)) {
         activateApp(appName);
     } else {

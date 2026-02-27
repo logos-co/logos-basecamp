@@ -1,20 +1,25 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
+
 import Logos.Theme
 import Logos.Controls
 
 AbstractButton {
     id: root
 
-    implicitHeight: 38
-    implicitWidth: 38
+    property bool loaded : false
 
-    // Dark gray pill background extending to left edge when active/highlighted
+    implicitHeight: 50
+
     background: Rectangle {
-        radius: width / 2
-        color: Theme.palette.surface
-        border.width: root.hovered ? 1 : 0
-        border.color: Theme.palette.borderSecondary
+        color: root.loaded ? Theme.palette.backgroundTertiary: Theme.palette.overlayDark
+        Rectangle {
+            anchors.left: parent.left
+            width: 3
+            height: parent.height
+            color: root.checked ? Theme.palette.accentOrange: "transparent"
+        }
     }
 
     contentItem: Item {
@@ -28,6 +33,13 @@ AbstractButton {
             visible: !!root.icon.source &&
                      !(appIcon.status === Image.Null ||
                        appIcon.status === Image.Error)
+        }
+        MultiEffect {
+            anchors.fill: appIcon
+            source: appIcon
+            colorization: 1.0
+            colorizationColor: "transparent"
+            brightness: root.checked ? 0.5: 0
         }
         LogosText {
             anchors.centerIn: parent

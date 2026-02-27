@@ -5,27 +5,16 @@ import Logos.Theme
 AbstractButton {
     id: root
 
-    implicitHeight: 56
+    implicitHeight: 46
     checkable: true
     autoExclusive: true
 
-    // Dark gray pill background extending to left edge when active/highlighted
-    background: Item {
-        // Allow pill to extend beyond button bounds
-        clip: false  
-        
-        Rectangle {
-            id: highlightPill
-            anchors.left: parent.left
-            anchors.leftMargin: Theme.spacing.small
-            width: parent.width + Theme.spacing.xlarge
-            height: parent.height
-            radius: height / 2
-            visible: root.checked || root.hovered
-            color: Theme.palette.backgroundTertiary
-            border.color: Theme.palette.borderSecondary
-            border.width: 1
-        }
+    background: Image {
+        width: 56
+        height: 46
+        anchors.centerIn: parent
+        source: "qrc:/icons/workspace.png"
+        fillMode: Image.PreserveAspectFit
     }
 
     contentItem: Item {
