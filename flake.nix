@@ -165,6 +165,7 @@
             bundle = dirBundler appDistributed;
             icon = ./app/macos/logos.icns;
             infoPlist = ./app/macos/Info.plist.in;
+            entitlements = ./app/macos/LogosApp.entitlements;
           };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs
