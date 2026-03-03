@@ -1184,11 +1184,11 @@
         "nixpkgs": "nixpkgs_6"
       },
       "locked": {
-        "lastModified": 1772100797,
-        "narHash": "sha256-IGf1mWOiQZfBWxkIlwUPGogSDHuKyBEBUgUNx0dYFEs=",
+        "lastModified": 1772213764,
+        "narHash": "sha256-bI0fb9t+q5OUCYN+gWF7GDI/0u+DFFsCAImQF61U0DA=",
         "owner": "logos-co",
         "repo": "logos-design-system",
-        "rev": "e0101f17e38eebee5a551651206d371e5b0bc647",
+        "rev": "c20e95590a744785047a9d868c04b42cd773e970",
         "type": "github"
       },
       "original": {
@@ -2416,11 +2416,11 @@
         "nixpkgs": "nixpkgs_58"
       },
       "locked": {
-        "lastModified": 1772130893,
-        "narHash": "sha256-HscCYHz12J/kcZ+8GnRFITIAF4+xTgWxlQv383C05dI=",
+        "lastModified": 1772471819,
+        "narHash": "sha256-9Ce1/XdtOhOYHZuAtOwMtHVSys3dnkIOd4nnXIHKe9M=",
         "owner": "logos-co",
         "repo": "nix-bundle-lgx",
-        "rev": "68a23fb83089c845ca6c11bd301ce96bc13e7277",
+        "rev": "63a176612549a63baab146a4e0c7f1c713b5e972",
         "type": "github"
       },
       "original": {
@@ -2439,11 +2439,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1772193038,
-        "narHash": "sha256-OL+lwazlU2krfl/gCbF4eevCL/9IWS4uJFXR4rMC77w=",
+        "lastModified": 1772577708,
+        "narHash": "sha256-iVbAyyiaZHTA4Rkf3HmVKOT/H1NBkafkQ5QbDNo7aqg=",
         "owner": "logos-co",
         "repo": "nix-bundle-macos-app",
-        "rev": "9083bfdd94c413bccbe4971d30e6222d759b6c03",
+        "rev": "10023066a8b198b10e17379144e9f54271aaca29",
         "type": "github"
       },
       "original": {
