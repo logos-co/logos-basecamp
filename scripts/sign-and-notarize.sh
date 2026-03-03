@@ -77,98 +77,7 @@ echo "==> Available identities:"
 security find-identity -v -p codesigning
 
 ###############################################################################
-# 2. Strip extended attributes & clean up unsignable files
-###############################################################################
-echo "==> Stripping extended attributes..."
-xattr -cr "${APP_BUNDLE}"
-
-echo "==> Removing static libraries..."
-find "${APP_BUNDLE}" -name "*.a" -delete
-
-###############################################################################
-# 3. Move Qt resources out of Frameworks/ into Resources/
-#    Frameworks/ is deep-inspected by codesign — text files, QML, images etc.
-#    in there cause "code object is not signed" errors.
-###############################################################################
-echo "==> Moving Qt resources out of Frameworks..."
-mkdir -p "${CONTENTS}/Resources"
-if [[ -d "${CONTENTS}/Frameworks/qt" ]]; then
-    mv "${CONTENTS}/Frameworks/qt" "${CONTENTS}/Resources/qt"
-fi
-# Move Logos QML modules into the qt/qml tree
-if [[ -d "${CONTENTS}/Frameworks/Logos" ]]; then
-    # Remove the old symlink-based Logos dir that came with qt/
-    rm -rf "${CONTENTS}/Resources/qt/qml/Logos"
-    # Move the actual Logos modules into place
-    mv "${CONTENTS}/Frameworks/Logos" "${CONTENTS}/Resources/qt/qml/Logos"
-fi
-
-echo "==> Cleaning up broken symlinks..."
-# Remove broken symlinks left over from the Logos move
-find "${CONTENTS}/Resources" -type l ! -exec test -e {} \; -delete 2>/dev/null || true
-
-echo "==> Fixing @loader_path references in Resources/qt plugins..."
-find "${CONTENTS}/Resources/qt" -name "*.dylib" -type f | while read -r dylib; do
-    # Get all @loader_path dependencies
-    otool -L "$dylib" | grep '@loader_path' | awk '{print $1}' | while read -r dep; do
-        lib_name=$(basename "$dep")
-        # Calculate correct relative path from this dylib's location to Frameworks/
-        dylib_dir=$(dirname "$dylib")
-        rel_path=$(python3 -c "import os; print(os.path.relpath('${CONTENTS}/Frameworks', '$dylib_dir'))")
-        new_path="@loader_path/${rel_path}/${lib_name}"
-        install_name_tool -change "$dep" "$new_path" "$dylib" 2>/dev/null || true
-    done
-done
-
-###############################################################################
-# 4. Fix Qt framework bundle structure
-#    Qt frameworks ship without Resources/Info.plist which makes codesign
-#    reject them as "bundle format unrecognized". Add a minimal Info.plist
-#    and the required Resources symlink.
-###############################################################################
-echo "==> Fixing Qt framework bundle structure..."
-for fw in "${CONTENTS}/Frameworks/"*.framework; do
-    name=$(basename "$fw" .framework)
-    resources="$fw/Versions/A/Resources"
-    mkdir -p "$resources"
-    cat > "$resources/Info.plist" <<FWEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIdentifier</key>
-    <string>org.qt-project.${name}</string>
-    <key>CFBundleName</key>
-    <string>${name}</string>
-    <key>CFBundlePackageType</key>
-    <string>FMWK</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-</dict>
-</plist>
-FWEOF
-    if [[ ! -e "$fw/Resources" ]]; then
-        ln -s "Versions/Current/Resources" "$fw/Resources"
-    fi
-done
-
-###############################################################################
-# 5. Update the shell wrapper to use Resources/qt instead of Frameworks/qt
-###############################################################################
-echo "==> Updating LogosApp wrapper script..."
-cat > "${CONTENTS}/MacOS/LogosApp" <<'WRAPPER'
-#!/usr/bin/env bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-export QT_PLUGIN_PATH="$DIR/../Resources/qt/plugins"
-export QML2_IMPORT_PATH="$DIR/../Resources/qt/qml"
-exec "$DIR/LogosApp.bin" "$@"
-WRAPPER
-chmod +x "${CONTENTS}/MacOS/LogosApp"
-
-###############################################################################
-# Sign + repack .lgx archives in Contents/preinstall/
+# 2. Sign + repack .lgx archives in Contents/preinstall/
 ###############################################################################
 echo "==> Signing dylibs inside .lgx archives..."
 find "${CONTENTS}/preinstall" -name "*.lgx" | while read -r lgx; do
@@ -183,7 +92,7 @@ find "${CONTENTS}/preinstall" -name "*.lgx" | while read -r lgx; do
 done
 
 ###############################################################################
-# 6. Sign all dylibs in Frameworks/
+# 3. Sign all dylibs in Frameworks/
 ###############################################################################
 echo "==> Signing dylibs in Frameworks..."
 find "${CONTENTS}/Frameworks" -name '*.dylib' -type f | while read -r dylib; do
@@ -192,7 +101,7 @@ find "${CONTENTS}/Frameworks" -name '*.dylib' -type f | while read -r dylib; do
 done
 
 ###############################################################################
-# 7. Sign all dylibs in Resources/qt/
+# 4. Sign all dylibs in Resources/qt/
 ###############################################################################
 echo "==> Signing dylibs in Resources/qt..."
 find "${CONTENTS}/Resources/qt" -type f -name '*.dylib' | while read -r dylib; do
@@ -201,7 +110,7 @@ find "${CONTENTS}/Resources/qt" -type f -name '*.dylib' | while read -r dylib; d
 done
 
 ###############################################################################
-# 8. Sign Qt frameworks (binary inside Versions/A/ then the .framework dir)
+# 5. Sign Qt frameworks (binary inside Versions/A/ then the .framework dir)
 ###############################################################################
 echo "==> Signing Qt frameworks..."
 find "${CONTENTS}/Frameworks" -name '*.framework' -type d -maxdepth 1 | sort | while read -r fw; do
@@ -218,7 +127,7 @@ find "${CONTENTS}/Frameworks" -name '*.framework' -type d -maxdepth 1 | sort | w
 done
 
 ###############################################################################
-# 9. Sign executables in Contents/MacOS/
+# 6. Sign executables in Contents/MacOS/
 ###############################################################################
 echo "==> Signing executables..."
 # Sign all Mach-O binaries first (with entitlements)
@@ -237,13 +146,13 @@ echo "  Signing wrapper: ${CONTENTS}/MacOS/LogosApp"
 codesign --force --timestamp --sign "${MACOS_CODESIGN_IDENT}" "${CONTENTS}/MacOS/LogosApp"
 
 ###############################################################################
-# 10. Sign the top-level app bundle
+# 7. Sign the top-level app bundle
 ###############################################################################
 echo "==> Signing app bundle..."
 codesign "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${APP_BUNDLE}"
 
 ###############################################################################
-# 11. Verify
+# 8. Verify
 ###############################################################################
 echo "==> Verifying signature..."
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
@@ -252,14 +161,14 @@ echo "==> Checking Gatekeeper assessment..."
 spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
 
 ###############################################################################
-# 12. Create ZIP for notarization
+# 9. Create ZIP for notarization
 ###############################################################################
 echo "==> Creating ZIP for notarization..."
 NOTARIZE_ZIP="LogosApp.zip"
 ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARIZE_ZIP}"
 
 ###############################################################################
-# 13. Submit for notarization
+# 10. Submit for notarization
 ###############################################################################
 echo "==> Submitting for notarization..."
 xcrun notarytool submit "${NOTARIZE_ZIP}" \
@@ -270,20 +179,20 @@ xcrun notarytool submit "${NOTARIZE_ZIP}" \
     --timeout 30m
 
 ###############################################################################
-# 14. Staple the notarization ticket
+# 11. Staple the notarization ticket
 ###############################################################################
 echo "==> Stapling notarization ticket..."
 xcrun stapler staple "${APP_BUNDLE}"
 
 ###############################################################################
-# 15. Final verification
+# 12. Final verification
 ###############################################################################
 echo "==> Final verification..."
 spctl --assess --type execute --verbose=2 "${APP_BUNDLE}"
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 
 ###############################################################################
-# 16. Cleanup
+# 13. Cleanup
 ###############################################################################
 echo "==> Cleaning up keychain..."
 security delete-keychain "${KEYCHAIN_NAME}"
