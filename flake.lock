@@ -2416,11 +2416,11 @@
         "nixpkgs": "nixpkgs_58"
       },
       "locked": {
-        "lastModified": 1772130893,
-        "narHash": "sha256-HscCYHz12J/kcZ+8GnRFITIAF4+xTgWxlQv383C05dI=",
+        "lastModified": 1772471819,
+        "narHash": "sha256-9Ce1/XdtOhOYHZuAtOwMtHVSys3dnkIOd4nnXIHKe9M=",
         "owner": "logos-co",
         "repo": "nix-bundle-lgx",
-        "rev": "68a23fb83089c845ca6c11bd301ce96bc13e7277",
+        "rev": "63a176612549a63baab146a4e0c7f1c713b5e972",
         "type": "github"
       },
       "original": {
