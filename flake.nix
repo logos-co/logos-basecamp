@@ -6,7 +6,7 @@
     nixpkgs.follows = "logos-liblogos/nixpkgs";
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
-    logos-package-manager.url = "github:logos-co/logos-package-manager-module";
+    logos-package-manager.url = "github:logos-co/logos-package-manager-module?ref=fix/permissions-update";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package/add-manifest-json-getter";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
