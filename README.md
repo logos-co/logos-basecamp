@@ -4,80 +4,68 @@
 
 ### Using Nix (Recommended)
 
-#### Build Complete Application
+#### Local Build
+
+The local build produces a standard Nix derivation whose dependencies live in `/nix/store`. It is the fastest way to iterate during development but is **not portable** — it only runs on the machine that built it.
 
 ```bash
-# Build everything (default)
-nix build
-
-# Or explicitly
-nix build '.#default'
-```
-
-The result will include:
-- `/bin/logos-app` - The main Logos application executable
-- All required modules and dependencies
-
-#### Build Individual Components
-
-```bash
-# Build only the main application
 nix build '.#app'
+./result/bin/logos-app
 ```
+
+Local builds require **local** `.lgx` packages, generated with:
+
+```bash
+nix bundle --bundler github:logos-co/nix-bundle-lgx github:your-user/your-module#lib
+```
+
+#### Portable Builds
+
+Portable builds are fully self-contained — no `/nix/store` references at runtime. They work with **portable** `.lgx` packages. That is, releases from [logos-modules](https://github.com/logos-co/logos-modules), downloads from the Package Manager UI, or generated with:
+```bash
+nix bundle --bundler github:logos-co/nix-bundle-lgx#portable github:your-user/your-module#lib
+```
+
+| Output | Platform | Format |
+|---|---|---|
+| `bin-bundle-dir` | Linux, macOS | Flat directory with `bin/` and `lib/` |
+| `bin-appimage` | Linux | Single-file `.AppImage` executable |
+| `bin-macos-app` | macOS | `.app` bundle (ad-hoc signed, unsigned for distribution) |
+
+##### Self-contained directory bundle (all platforms)
+```bash
+nix build '.#bin-bundle-dir'
+./result/bin/LogosApp
+```
+
+##### Linux AppImage (Linux only)
+```bash
+nix build '.#bin-appimage'
+./result/logos-app.AppImage
+```
+
+
+##### MacOS App bundle (macOS only)
+
+```bash
+nix build '.#bin-macos-app'
+open result/LogosApp.app
+```
+
 
 #### Development Shell
 
 ```bash
-# Enter development shell with all dependencies
 nix develop
 ```
 
-**Note:** In zsh, you need to quote the target (e.g., `'.#default'`) to prevent glob expansion.
+**Note:** In zsh, quote the target (e.g., `'.#app'`) to prevent glob expansion.
 
-If you don't have flakes enabled globally, add experimental flags:
+If you don't have flakes enabled globally:
 
 ```bash
 nix build --extra-experimental-features 'nix-command flakes'
 ```
-
-The compiled artifacts can be found at `result/`
-
-#### Running the Application
-
-After building with `nix build`, you can run the application:
-
-```bash
-# Run the main Logos application
-./result/bin/logos-app
-```
-
-The application will automatically load all required modules and dependencies. All components are bundled in the Nix store layout.
-
-#### macOS Distribution (Experimental)
-
-Build a standalone `.app` bundle or DMG installer for macOS. This is experimental and intended for testing purposes.
-
-```bash
-# Build .app bundle
-nix build '.#app-bundle'
-
-# Build DMG installer
-nix build '.#dmg'
-```
-
-The outputs will be at:
-- `result/LogosApp.app/` - Application bundle
-- `result/LogosApp.dmg` - DMG installer
-
-#### Linux AppImage (Experimental)
-
-Build a self-contained AppImage on Linux hosts:
-
-```bash
-nix build '.#appimage'
-```
-
-The output will be at `result/LogosApp-<version>.AppImage`.
 
 #### Nix Organization
 
@@ -85,9 +73,6 @@ The nix build system is organized into modular files in the `/nix` directory:
 - `nix/default.nix` - Common configuration and main application build
 - `nix/app.nix` - Application-specific compilation settings
 - `nix/main-ui.nix` - UI components compilation
-- `nix/counter.nix` - Counter module compilation
-- `nix/macos-bundle.nix` - macOS .app bundle (darwin only)
-- `nix/macos-dmg.nix` - macOS DMG installer (darwin only)
 
 ## Modules
 

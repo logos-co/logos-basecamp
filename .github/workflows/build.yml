@@ -1,4 +1,4 @@
-name: AppImage Build & Release
+name: Build & Release
 
 on:
   push:
@@ -40,9 +40,30 @@ jobs:
           name: appimage-${{ matrix.arch }}
           path: logos-app-*.AppImage
 
+  build-macos-app:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build bin-macos-app
+        run: nix build .#bin-macos-app
+
+      - name: Package app bundle as tarball
+        run: |
+          app=$(find result/ -name '*.app' -maxdepth 1 -print -quit)
+          tar -czf logos-app-aarch64-unsigned.app.tar.gz -C result "$(basename "$app")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-aarch64-darwin
+          path: logos-app-aarch64-unsigned.app.tar.gz
+
   release:
     if: github.event_name == 'push'
-    needs: build-appimage
+    needs: [build-appimage, build-macos-app]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,6 +79,11 @@ jobs:
           name: appimage-aarch64-linux
           path: artifacts/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-app-aarch64-darwin
+          path: artifacts/
+
       - name: Generate tag
         id: tag
         run: echo "tag=pre-release-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -67,4 +93,6 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Pre-release ${{ steps.tag.outputs.tag }}
           prerelease: true
-          files: artifacts/*.AppImage
+          files: |
+            artifacts/*.AppImage
+            artifacts/*.app.tar.gz

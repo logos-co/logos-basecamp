@@ -17,9 +17,14 @@
     nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
     nix-bundle-appimage.url = "github:logos-co/nix-bundle-appimage";
+    nix-bundle-macos-app = {
+      url = "github:logos-co/nix-bundle-macos-app";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nix-bundle-dir.follows = "nix-bundle-dir";
+    };
   };
 
-  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage }:
+  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -152,6 +157,15 @@
             bundle = dirBundler appDistributed;
             desktopFile = ./assets/logos-app.desktop;
             icon = ./app/icons/logos.png;
+          };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+          bin-macos-app = nix-bundle-macos-app.lib.${system}.mkMacOSApp {
+            drv = appDistributed;
+            name = "LogosApp";
+            bundle = dirBundler appDistributed;
+            icon = ./app/macos/logos.icns;
+            infoPlist = ./app/macos/Info.plist.in;
+            entitlements = ./app/macos/LogosApp.entitlements;
           };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs

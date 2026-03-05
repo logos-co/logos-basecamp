@@ -2123,11 +2123,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1771887671,
-        "narHash": "sha256-eIzmR3N5QnR5lcBT3N58v49ggl9MzUYSRgQznex1ayM=",
+        "lastModified": 1772710235,
+        "narHash": "sha256-QJgetqq0PWKbQXuMw8Z+SHqyk+40P3830lUhgVVL4Kc=",
         "owner": "logos-co",
         "repo": "logos-package",
-        "rev": "d9a741359b17b928afae59cf3c6ee00057b7d93e",
+        "rev": "02fae070cc5e404f6447cc57760b748d246357ab",
         "type": "github"
       },
       "original": {
@@ -2602,16 +2602,39 @@
         "nixpkgs": "nixpkgs_64"
       },
       "locked": {
-        "lastModified": 1772471819,
-        "narHash": "sha256-9Ce1/XdtOhOYHZuAtOwMtHVSys3dnkIOd4nnXIHKe9M=",
+        "lastModified": 1772710643,
+        "narHash": "sha256-PP/gXPF5oomX1Up8QHWiVhCdTw8QF9he2FnzugcjDFE=",
         "owner": "logos-co",
         "repo": "nix-bundle-lgx",
-        "rev": "63a176612549a63baab146a4e0c7f1c713b5e972",
+        "rev": "6c29284f49f2d11df8d4ccb369bcd4d05a22ffb7",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
         "repo": "nix-bundle-lgx",
+        "type": "github"
+      }
+    },
+    "nix-bundle-macos-app": {
+      "inputs": {
+        "nix-bundle-dir": [
+          "nix-bundle-dir"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1772630001,
+        "narHash": "sha256-NLE2uIZOSVb84lWXpybiUieV0Ngfn0Gelert83dqYuI=",
+        "owner": "logos-co",
+        "repo": "nix-bundle-macos-app",
+        "rev": "18d7b2e144d56bf6eecc2c0b3614770d3bf494a0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "logos-co",
+        "repo": "nix-bundle-macos-app",
         "type": "github"
       }
     },
@@ -3577,11 +3600,11 @@
     },
     "nixpkgs_64": {
       "locked": {
-        "lastModified": 1771848320,
-        "narHash": "sha256-0MAd+0mun3K/Ns8JATeHT1sX28faLII5hVLq0L3BdZU=",
+        "lastModified": 1772542754,
+        "narHash": "sha256-WGV2hy+VIeQsYXpsLjdr4GvHv5eECMISX1zKLTedhdg=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
+        "rev": "8c809a146a140c5c8806f13399592dbcb1bb5dc4",
         "type": "github"
       },
       "original": {
@@ -3654,6 +3677,7 @@
         "nix-bundle-appimage": "nix-bundle-appimage_7",
         "nix-bundle-dir": "nix-bundle-dir_14",
         "nix-bundle-lgx": "nix-bundle-lgx",
+        "nix-bundle-macos-app": "nix-bundle-macos-app",
         "nixpkgs": [
           "logos-liblogos",
           "nixpkgs"
