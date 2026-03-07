@@ -2280,11 +2280,11 @@
         "nixpkgs": "nixpkgs_57"
       },
       "locked": {
-        "lastModified": 1772063926,
-        "narHash": "sha256-aJ2cU1p8WsxIVE101bkn67z3cR/WL+kkYHQr9OX1R9Y=",
+        "lastModified": 1772881966,
+        "narHash": "sha256-St49mpGrHh5UW1JAxHeqY49DvmubdVrG+H88tKG6jRg=",
         "owner": "logos-co",
         "repo": "nix-bundle-appimage",
-        "rev": "a6deb2dfdd8d061eb09924fe1a0b02c483bd2b4e",
+        "rev": "5952460727bbfdb83446f24dc974460039a8a325",
         "type": "github"
       },
       "original": {
