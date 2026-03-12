@@ -53,7 +53,7 @@ pipeline {
     stage('Publish') {
       when { expression { params.PUBLISH } }
       steps { script {
-        github.publishReleaseFiles(user: 'logos-co', repo: 'logos-app-poc')
+        github.publishReleaseFiles(user: 'logos-co', repo: 'logos-app')
       } }
     }
   }
