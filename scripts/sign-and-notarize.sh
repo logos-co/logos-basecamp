@@ -97,7 +97,7 @@ else
 fi
 
 CONTENTS="${APP_BUNDLE}/Contents"
-ENTITLEMENTS="entitlements.plist"
+ENTITLEMENTS="${TEMP_DIR}/entitlements.plist"
 KEYCHAIN_NAME="build.keychain"
 
 # Codesign options — hardened runtime required for notarization
