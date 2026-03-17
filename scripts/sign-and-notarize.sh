@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -uxo pipefail
 
 ###############################################################################
 # macOS Code Signing & Notarization for LogosApp.app
@@ -101,6 +101,7 @@ ENTITLEMENTS="entitlements.plist"
 KEYCHAIN_NAME="build.keychain"
 
 # Codesign options — hardened runtime required for notarization
+# Try to extract identity from env var or use the full identity string
 CODESIGN_OPTS=(
     --force
     --timestamp
@@ -158,6 +159,12 @@ EOF
       "${KEYCHAIN_NAME}" \
       "$HOME/Library/Keychains/login.keychain-db" \
       "/Library/Keychains/System.keychain"
+
+  echo "Debug: Keychain contents"
+  security dump-keychain "${KEYCHAIN_NAME}" 2>&1 | grep -i "label\|subject" | head -10 || true
+  
+  echo "Debug: All identities available"
+  security find-identity -v -p codesigning || echo "No identities found"
 
   ###############################################################################
   # 2. Sign + repack .lgx archives in Contents/preinstall/
