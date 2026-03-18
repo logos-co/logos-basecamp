@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uxo pipefail
 
 ###############################################################################
 # macOS Code Signing & Notarization for LogosApp.app
-# Based on proven working laptop script
+#
+# Supports modes:
+#   --mode sign      - Sign only
+#   --mode notarize  - Notarize only (requires pre-signed app)
+#   --mode both      - Sign and notarize (default)
+#
+# Usage:
+#   ./scripts/sign-and-notarize.sh [--dmg PATH] [--bundle PATH] [--output PATH] [--mode MODE] [--timeout TIMEOUT]
 #
 # Required env vars:
 #   MACOS_CODESIGN_IDENT       - Developer ID Application identity
@@ -14,16 +21,87 @@ set -euo pipefail
 #   MACOS_KEYCHAIN_FILE        - Path to the .p12 certificate file
 ###############################################################################
 
+# Parse arguments
+DMG_PATH=""
+BUNDLE_PATH=""
+OUTPUT_PATH=""
+MODE="both"
+TIMEOUT="30m"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dmg)
+      DMG_PATH="$2"
+      shift 2
+      ;;
+    --bundle)
+      BUNDLE_PATH="$2"
+      shift 2
+      ;;
+    --output)
+      OUTPUT_PATH="$2"
+      shift 2
+      ;;
+    --mode)
+      MODE="$2"
+      shift 2
+      ;;
+    --timeout)
+      TIMEOUT="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Validate mode
+if [[ ! "$MODE" =~ ^(sign|notarize|both)$ ]]; then
+  echo "Error: --mode must be 'sign', 'notarize', or 'both'" >&2
+  exit 1
+fi
+
+# Create temp directory for all operations (needed for Nix read-only store paths)
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf '$TEMP_DIR'" EXIT
 
-APP_BUNDLE="./result/LogosApp.app"
+# Determine APP_BUNDLE path and copy to writable temp directory
+if [[ -n "$DMG_PATH" ]]; then
+  [[ -f "$DMG_PATH" ]] || { echo "Error: DMG not found: $DMG_PATH" >&2; exit 1; }
+  
+  echo "Extracting DMG."
+  MOUNT_POINT="${TEMP_DIR}/mnt"
+  APP_BUNDLE="${TEMP_DIR}/LogosApp.app"
+  
+  mkdir -p "$MOUNT_POINT"
+  hdiutil attach -readonly -mountpoint "$MOUNT_POINT" "$DMG_PATH"
+  cp -a "$MOUNT_POINT/LogosApp.app" "$APP_BUNDLE"
+  hdiutil detach "$MOUNT_POINT"
+elif [[ -n "$BUNDLE_PATH" ]]; then
+  [[ -d "$BUNDLE_PATH" ]] || { echo "Error: Bundle not found: $BUNDLE_PATH" >&2; exit 1; }
+  
+  echo "Copying bundle to temp directory."
+  APP_BUNDLE="${TEMP_DIR}/LogosApp.app"
+  cp -a "$BUNDLE_PATH" "$APP_BUNDLE"
+  chmod -R u+w "$APP_BUNDLE"
+else
+  # Default: current directory
+  [[ -d "./LogosApp.app" ]] || { echo "Error: Bundle not found at ./LogosApp.app" >&2; exit 1; }
+  
+  echo "Copying bundle to temp directory."
+  APP_BUNDLE="${TEMP_DIR}/LogosApp.app"
+  cp -a "./LogosApp.app" "$APP_BUNDLE"
+  chmod -R u+w "$APP_BUNDLE"
+fi
+
 CONTENTS="${APP_BUNDLE}/Contents"
 ENTITLEMENTS="${TEMP_DIR}/entitlements.plist"
 KEYCHAIN_NAME="build.keychain"
-DMG_NAME="LogosApp.dmg"
 
 # Codesign options — hardened runtime required for notarization
+# Try to extract identity from env var or use the full identity string
 CODESIGN_OPTS=(
     --force
     --timestamp
@@ -32,21 +110,15 @@ CODESIGN_OPTS=(
 )
 
 ###############################################################################
-# 0. Copy app to temp directory and fix permissions (critical!)
+# SIGN MODE
 ###############################################################################
-echo "==> Copying app bundle to temp directory..."
-cp -a "${APP_BUNDLE}" "${TEMP_DIR}/"
-APP_BUNDLE="${TEMP_DIR}/LogosApp.app"
-CONTENTS="${APP_BUNDLE}/Contents"
-
-echo "==> Setting write permissions..."
-chmod -R u+w "${APP_BUNDLE}"
-
-###############################################################################
-# 1. Create entitlements file
-###############################################################################
-echo "==> Creating entitlements..."
-cat > "${ENTITLEMENTS}" <<'EOF'
+if [[ "$MODE" =~ ^(sign|both)$ ]]; then
+  echo "Starting signing phase."
+  
+  ###############################################################################
+  # 0. Create entitlements file
+  ###############################################################################
+  cat > "${ENTITLEMENTS}" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -63,178 +135,213 @@ cat > "${ENTITLEMENTS}" <<'EOF'
 </plist>
 EOF
 
-###############################################################################
-# 1. Set up keychain
-###############################################################################
-echo "==> Setting up keychain..."
-security delete-keychain "${KEYCHAIN_NAME}" 2>/dev/null || true
-security create-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
-security unlock-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+  ###############################################################################
+  # 0.5 Remove all existing signatures (critical!)
+  ###############################################################################
+  echo "Removing existing signatures..."
+  find "${APP_BUNDLE}" -type f -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
+  find "${APP_BUNDLE}" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
 
-security import "${MACOS_KEYCHAIN_FILE}" \
-    -k "${KEYCHAIN_NAME}" \
-    -P "${MACOS_KEYCHAIN_PASS}" \
-    -T /usr/bin/codesign \
-    -T /usr/bin/security
+  ###############################################################################
+  # 1. Set up a temporary keychain and import the certificate
+  ###############################################################################
+  echo "Setting up keychain."
+  security delete-keychain "${KEYCHAIN_NAME}" 2>/dev/null || true
+  security create-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+  security unlock-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
 
-security set-key-partition-list \
-    -S apple-tool:,apple:,codesign: \
-    -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+  # Ensure Apple root certs are available
+  echo "Ensuring Apple root certificates..."
+  curl -s https://www.apple.com/appleca/AppleIncRootCertificate.cer -o /tmp/AppleIncRootCertificate.cer
+  security add-certificates -k /Library/Keychains/System.keychain /tmp/AppleIncRootCertificate.cer 2>/dev/null || true
+  rm -f /tmp/AppleIncRootCertificate.cer
 
-security list-keychains -d user -s \
+  # Import cert
+  security import "${MACOS_KEYCHAIN_FILE}" \
+      -k "${KEYCHAIN_NAME}" \
+      -P "${MACOS_KEYCHAIN_PASS}" \
+      -T /usr/bin/codesign \
+      -T /usr/bin/security
+
+  security set-key-partition-list \
+      -S apple-tool:,apple:,codesign: \
+      -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+
+  # Trust the certificate for codesigning
+  echo "Setting certificate trust..."
+  security find-certificate -a -c "Developer ID Application" -p "${KEYCHAIN_NAME}" | \
+    security add-certificates -k "${KEYCHAIN_NAME}" -T /usr/bin/codesign 2>/dev/null || true
+  
+  # Set trust settings
+  security set-certificate-trust \
     "${KEYCHAIN_NAME}" \
-    "$HOME/Library/Keychains/login.keychain-db" \
-    "/Library/Keychains/System.keychain"
+    -c "Developer ID Application" \
+    -p basic -p smimeEncrypt -p smimeDecrypt -p codeSign 2>/dev/null || true
 
-echo "==> Available identities:"
-security find-identity -v -p codesigning || echo "Warning: No identities found"
+  # CRITICAL: Explicitly include login + System keychains so Apple root certs are found
+  security list-keychains -d user -s \
+      "${KEYCHAIN_NAME}" \
+      "$HOME/Library/Keychains/login.keychain-db" \
+      "/Library/Keychains/System.keychain"
 
-###############################################################################
-# 2. Sign .lgx archives in Contents/preinstall/
-###############################################################################
-echo "==> Signing dylibs inside .lgx archives..."
-find "${CONTENTS}/preinstall" -name "*.lgx" 2>/dev/null | while read -r lgx; do
-    echo "  Processing: ${lgx}"
-    tmpdir=$(mktemp -d)
-    tar -xzf "$lgx" -C "$tmpdir"
-    find "$tmpdir" -name "*.dylib" -exec \
-        codesign --force --options runtime --sign "${MACOS_CODESIGN_IDENT}" --timestamp {} \;
-    tar -czf "$lgx" -C "$tmpdir" .
-    rm -rf "$tmpdir"
-    echo "  Repacked: ${lgx}"
-done
+  echo "Debug: Keychain contents"
+  echo "Available keys in ${KEYCHAIN_NAME}:"
+  security find-identity -v "${KEYCHAIN_NAME}" || echo "No identities in build.keychain"
+  
+  echo "Debug: All codesigning identities in all keychains"
+  security find-identity -v -p codesigning || echo "No codesigning identities found"
+  
+  echo "Debug: Dump of build.keychain"
+  security dump-keychain "${KEYCHAIN_NAME}" 2>&1 | head -50 || true
 
-###############################################################################
-# 3. Sign all dylibs in Frameworks/
-###############################################################################
-echo "==> Signing dylibs in Frameworks..."
-find "${CONTENTS}/Frameworks" -name '*.dylib' -type f 2>/dev/null | while read -r dylib; do
-    echo "  Signing: ${dylib}"
-    codesign "${CODESIGN_OPTS[@]}" "${dylib}"
-done
+  ###############################################################################
+  # 2. Sign + repack .lgx archives in Contents/preinstall/
+  ###############################################################################
+  echo "Signing dylibs inside .lgx archives."
+  find "${CONTENTS}/preinstall" -name "*.lgx" 2>/dev/null | while read -r lgx; do
+      echo "  Processing: ${lgx}"
+      tmpdir=$(mktemp -d)
+      gtar -xzf "$lgx" -C "$tmpdir"
+      find "$tmpdir" -name "*.dylib" -exec \
+          codesign --force --options runtime --sign "${MACOS_CODESIGN_IDENT}" --timestamp {} \;
+      gtar -czf "$lgx" -C "$tmpdir" --transform 's|^\./||' .
+      rm -rf "$tmpdir"
+      echo "  Repacked: ${lgx}"
+  done
 
-###############################################################################
-# 4. Sign all dylibs in Resources/qt/
-###############################################################################
-echo "==> Signing dylibs in Resources/qt..."
-find "${CONTENTS}/Resources/qt" -type f -name '*.dylib' 2>/dev/null | while read -r dylib; do
-    echo "  Signing: ${dylib}"
-    codesign "${CODESIGN_OPTS[@]}" "${dylib}"
-done
+  ###############################################################################
+  # 3. Sign all dylibs in Frameworks/
+  ###############################################################################
+  echo "Signing dylibs in Frameworks."
+  while IFS= read -r dylib; do
+      [[ -n "$dylib" ]] || continue
+      echo "  Signing: ${dylib}"
+      codesign "${CODESIGN_OPTS[@]}" "$dylib"
+  done < <(find "${CONTENTS}/Frameworks" -name '*.dylib' -type f)
 
-###############################################################################
-# 5. Sign Qt frameworks
-###############################################################################
-echo "==> Signing Qt frameworks..."
-find "${CONTENTS}/Frameworks" -name '*.framework' -type d -maxdepth 1 2>/dev/null | sort | while read -r fw; do
-    fw_name=$(basename "${fw}" .framework)
-    fw_binary="${fw}/Versions/A/${fw_name}"
+  ###############################################################################
+  # 4. Sign all dylibs in Resources/qt/
+  ###############################################################################
+  echo "Signing dylibs in Resources/qt."
+  while IFS= read -r dylib; do
+      [[ -n "$dylib" ]] || continue
+      echo "  Signing: ${dylib}"
+      codesign "${CODESIGN_OPTS[@]}" "$dylib"
+  done < <(find "${CONTENTS}/Resources/qt" -type f -name '*.dylib' 2>/dev/null)
 
-    if [[ -f "${fw_binary}" ]]; then
-        echo "  Signing framework binary: ${fw_binary}"
-        codesign "${CODESIGN_OPTS[@]}" "${fw_binary}"
-    fi
+  ###############################################################################
+  # 5. Sign Qt frameworks (binary inside Versions/A/ then the .framework dir)
+  ###############################################################################
+  echo "Signing Qt frameworks."
+  find "${CONTENTS}/Frameworks" -name '*.framework' -type d -maxdepth 1 2>/dev/null | sort | while read -r fw; do
+      fw_name=$(basename "${fw}" .framework)
+      fw_binary="${fw}/Versions/A/${fw_name}"
 
-    echo "  Signing framework bundle: ${fw}"
-    codesign "${CODESIGN_OPTS[@]}" "${fw}"
-done
+      if [[ -f "${fw_binary}" ]]; then
+          echo "  Signing framework binary: ${fw_binary}"
+          codesign "${CODESIGN_OPTS[@]}" "${fw_binary}"
+      fi
+  done
 
-###############################################################################
-# 6. Sign executables in Contents/MacOS/
-###############################################################################
-echo "==> Signing executables..."
-for exe in "${CONTENTS}/MacOS/LogosApp.bin" \
-           "${CONTENTS}/MacOS/logos-app" \
-           "${CONTENTS}/MacOS/logos_host" \
-           "${CONTENTS}/MacOS/logoscore"; do
-    if [[ -f "${exe}" ]]; then
-        echo "  Signing: ${exe}"
-        codesign "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${exe}"
-    fi
-done
+  ###############################################################################
+  # 6. Sign executables in Contents/MacOS/
+  ###############################################################################
+  echo "Signing executables."
+  # Sign all Mach-O binaries first (with entitlements)
+  for exe in "${CONTENTS}/MacOS/LogosApp.bin" \
+             "${CONTENTS}/MacOS/logos-app" \
+             "${CONTENTS}/MacOS/logos_host" \
+             "${CONTENTS}/MacOS/logoscore"; do
+      if [[ -f "${exe}" ]]; then
+          echo "  Signing: ${exe}"
+          codesign "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${exe}"
+      fi
+  done
 
-# Sign the shell script wrapper last (no --options runtime for scripts)
-if [[ -f "${CONTENTS}/MacOS/LogosApp" ]]; then
+  # Sign the shell script wrapper last (no --options runtime for scripts)
+  if [[ -f "${CONTENTS}/MacOS/LogosApp" ]]; then
     echo "  Signing wrapper: ${CONTENTS}/MacOS/LogosApp"
     codesign --force --timestamp --sign "${MACOS_CODESIGN_IDENT}" "${CONTENTS}/MacOS/LogosApp"
+  fi
+
+  ###############################################################################
+  # 7. Sign the top-level app bundle
+  ###############################################################################
+  echo "Signing app bundle."
+  codesign "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${APP_BUNDLE}"
+
+  ###############################################################################
+  # 8. Verify
+  ###############################################################################
+  echo "Verifying signature."
+  codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+
+  echo "Checking Gatekeeper assessment."
+  spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
+
+  # Cleanup keychain after signing
+  echo "Cleaning up keychain."
+  security delete-keychain "${KEYCHAIN_NAME}"
+  rm -f "${ENTITLEMENTS}"
+
+  echo "Signing phase complete"
 fi
 
 ###############################################################################
-# 7. Sign the top-level app bundle
+# NOTARIZE MODE
 ###############################################################################
-echo "==> Signing app bundle..."
-codesign "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${APP_BUNDLE}"
+if [[ "$MODE" =~ ^(notarize|both)$ ]]; then
+  echo "Starting notarization phase."
+  
+  ###############################################################################
+  # 9. Create ZIP for notarization
+  ###############################################################################
+  echo "Creating ZIP for notarization."
+  NOTARIZE_ZIP="${TEMP_DIR:-/tmp}/LogosApp-$$.zip"
+  ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARIZE_ZIP}"
+
+  ###############################################################################
+  # 10. Submit for notarization
+  ###############################################################################
+  echo "Submitting for notarization."
+  xcrun notarytool submit "${NOTARIZE_ZIP}" \
+      --issuer "${MACOS_NOTARY_ISSUER_ID}" \
+      --key-id "${MACOS_NOTARY_KEY_ID}" \
+      --key "${MACOS_NOTARY_KEY_FILE}" \
+      --wait \
+      --timeout "${TIMEOUT}"
+
+  ###############################################################################
+  # 11. Staple the notarization ticket
+  ###############################################################################
+  echo "Stapling notarization ticket."
+  xcrun stapler staple "${APP_BUNDLE}"
+
+  ###############################################################################
+  # 12. Final verification
+  ###############################################################################
+  echo "Final verification."
+  spctl --assess --type execute --verbose=2 "${APP_BUNDLE}"
+  codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+
+  # Cleanup ZIP
+  rm -f "${NOTARIZE_ZIP}"
+
+  echo "Notarization phase complete"
+fi
 
 ###############################################################################
-# 8. Verify
+# OUTPUT
 ###############################################################################
-echo "==> Verifying signature..."
-codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" || {
-    echo "WARNING: Signature verification failed, but continuing..."
-}
-
-echo "==> Checking Gatekeeper assessment..."
-spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
-
-###############################################################################
-# 9. Create DMG
-###############################################################################
-echo "==> Creating DMG..."
-DMG_TEMP="LogosApp_temp.dmg"
-DMG_VOLUME="LogosApp"
-
-# Create temporary read-write DMG
-hdiutil create -srcfolder "${APP_BUNDLE}" \
-    -volname "${DMG_VOLUME}" \
-    -fs HFS+ \
-    -format UDRW \
-    -ov "${DMG_TEMP}"
-
-# Add Applications symlink
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify "${DMG_TEMP}" | grep '/Volumes/' | awk '{print $NF}')
-ln -s /Applications "${MOUNT_DIR}/Applications" || true
-hdiutil detach "${MOUNT_DIR}"
-
-# Convert to compressed DMG
-hdiutil convert "${DMG_TEMP}" -format UDZO -o "${DMG_NAME}"
-rm -f "${DMG_TEMP}"
-
-###############################################################################
-# 10. Sign the DMG
-###############################################################################
-echo "==> Signing DMG..."
-codesign --force --timestamp --sign "${MACOS_CODESIGN_IDENT}" "${DMG_NAME}"
-
-###############################################################################
-# 11. Notarize the DMG
-###############################################################################
-echo "==> Submitting DMG for notarization..."
-xcrun notarytool submit "${DMG_NAME}" \
-    --issuer "${MACOS_NOTARY_ISSUER_ID}" \
-    --key-id "${MACOS_NOTARY_KEY_ID}" \
-    --key "${MACOS_NOTARY_KEY_FILE}" \
-    --wait \
-    --timeout 30m
-
-###############################################################################
-# 12. Staple the DMG
-###############################################################################
-echo "==> Stapling notarization ticket to DMG..."
-xcrun stapler staple "${DMG_NAME}"
-
-###############################################################################
-# 13. Final verification
-###############################################################################
-echo "==> Final verification..."
-codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" || true
-spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
-spctl --assess --type open --context context:primary-signature --verbose=2 "${DMG_NAME}" || true
-
-###############################################################################
-# 14. Cleanup
-###############################################################################
-echo "==> Cleaning up keychain..."
-security delete-keychain "${KEYCHAIN_NAME}" 2>/dev/null || true
-rm -f "${ENTITLEMENTS}"
-
-echo "==> Done! DMG is signed and notarized: ${DMG_NAME}"
+if [[ -n "$OUTPUT_PATH" ]]; then
+  echo "Creating output DMG."
+  mkdir -p "$(dirname "$OUTPUT_PATH")"
+  hdiutil create -volname "LogosApp" \
+                 -srcfolder "${APP_BUNDLE}" \
+                 -ov -format UDZO \
+                 -puppetstrings \
+                 "${OUTPUT_PATH}"
+  echo "Output DMG created: $OUTPUT_PATH"
+else
+  echo "Done! Bundle signed/notarized: ${APP_BUNDLE}"
+fi
