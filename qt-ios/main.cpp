@@ -193,10 +193,10 @@ public:
         setTestPluginCallResult("Calling package_manager:testPluginCall...");
         
         LogosModules logos(m_logosAPI);
-        QString result = logos.package_manager.testPluginCall("hello24");
+        std::string result = logos.package_manager.testPluginCall("hello24");
         
-        if (!result.isEmpty()) {
-            setTestPluginCallResult(QString("Success: %1").arg(result));
+        if (!result.empty()) {
+            setTestPluginCallResult(QString("Success: %1").arg(QString::fromStdString(result)));
         } else {
             setTestPluginCallResult("Error: Method call failed or returned empty result");
         }

@@ -18,6 +18,7 @@
 #include <QFile>
 #include "logos_provider_object.h"
 #include "qt_provider_object.h"
+#include "logos_native_adapter.h"
 
 // Replace CoreManager with direct C API functions
 extern "C" {
@@ -75,10 +76,17 @@ static void runPreinstallIfNeeded()
         return;
     }
 
-    LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(plugin);
-    LogosProviderObject* provider = providerPlugin
-        ? providerPlugin->createProviderObject()
-        : new QtProviderObject(plugin);
+    LogosProviderObject* provider = nullptr;
+    NativeProviderPlugin* nativePlugin = qobject_cast<NativeProviderPlugin*>(plugin);
+    if (nativePlugin) {
+        NativeProviderObject* native = nativePlugin->createNativeProviderObject();
+        provider = new NativeProviderAdapter(native);
+    } else {
+        LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(plugin);
+        provider = providerPlugin
+            ? providerPlugin->createProviderObject()
+            : new QtProviderObject(plugin);
+    }
 
     provider->callMethod("setPluginsDirectory", {userModulesDir});
     provider->callMethod("setUiPluginsDirectory", {userPluginsDir});
@@ -195,7 +203,7 @@ int main(int argc, char *argv[])
     QObject::connect(statsTimer, &QTimer::timeout, [&]() {
         char* stats_json = logos_core_get_module_stats();
         if (stats_json) {
-            std::cout << "Module stats: " << stats_json << std::endl;
+            // std::cout << "Module stats: " << stats_json << std::endl;
             delete[] stats_json;
         }
     });

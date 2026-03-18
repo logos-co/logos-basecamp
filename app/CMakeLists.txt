@@ -82,6 +82,7 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
         ${LOGOS_CPP_SDK_ROOT}/include/core
+        ${LOGOS_CPP_SDK_ROOT}/include/cpp/native
     )
     link_directories(${LOGOS_CPP_SDK_ROOT}/lib)
 endif()

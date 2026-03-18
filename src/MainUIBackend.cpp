@@ -21,6 +21,7 @@
 #include <QFileDialog>
 #include "LogosQmlBridge.h"
 #include "logos_sdk.h"
+#include "logos_value.h"
 #include "token_manager.h"
 #include "restricted/DenyAllNAMFactory.h"
 #include "restricted/RestrictedUrlInterceptor.h"
@@ -88,12 +89,13 @@ void MainUIBackend::subscribeToPackageInstallationEvents()
     }
     
     LogosModules logos(m_logosAPI);
-    logos.package_manager.on("packageInstallationFinished", [this](const QVariantList& data) {
+    logos.package_manager.on("packageInstallationFinished",
+        [this](const std::string&, const std::vector<LogosValue>& data) {
         if (data.size() < 3) {
             return;
         }
         bool success = data[1].toBool();
-        
+
         if (success) {
             QTimer::singleShot(100, this, [this]() {
                 refreshUiModules();
@@ -103,16 +105,17 @@ void MainUIBackend::subscribeToPackageInstallationEvents()
         }
     });
 
-    logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        QString pluginPath = data[0].toString();
-        qDebug() << "Processing installed core plugin:" << pluginPath;
-        char* result = logos_core_process_plugin(pluginPath.toUtf8().constData());
+    logos.package_manager.on("corePluginFileInstalled",
+        [](const std::string&, const std::vector<LogosValue>& data) {
+        if (data.empty()) return;
+        std::string pluginPath = data[0].toString();
+        qDebug() << "Processing installed core plugin:" << QString::fromStdString(pluginPath);
+        char* result = logos_core_process_plugin(pluginPath.c_str());
         if (result) {
             qDebug() << "Successfully processed plugin:" << QString::fromUtf8(result);
             delete[] result;
         } else {
-            qWarning() << "Failed to process plugin:" << pluginPath;
+            qWarning() << "Failed to process plugin:" << QString::fromStdString(pluginPath);
         }
     });
 }
@@ -634,11 +637,10 @@ void MainUIBackend::installPluginFromPath(const QString& filePath)
 {
     LogosModules logos(m_logosAPI);
 
-    logos.package_manager.setPluginsDirectory(modulesDirectory());
-    logos.package_manager.setUiPluginsDirectory(pluginsDirectory());
+    logos.package_manager.setPluginsDirectory(modulesDirectory().toStdString());
+    logos.package_manager.setUiPluginsDirectory(pluginsDirectory().toStdString());
 
-
-    logos.package_manager.installPlugin(filePath, false);
+    logos.package_manager.installPlugin(filePath.toStdString(), false);
 
     refreshCoreModules();
     emit uiModulesChanged();
