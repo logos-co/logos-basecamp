@@ -641,7 +641,7 @@ void MainUIBackend::installPluginFromPath(const QString& filePath)
     logos.package_manager.setUiPluginsDirectory(pluginsDirectory());
 
 
-    logos.package_manager.installPlugin(filePath);
+    logos.package_manager.installPlugin(filePath, false);
 
     refreshCoreModules();
     emit uiModulesChanged();
