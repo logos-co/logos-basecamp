@@ -167,17 +167,6 @@ EOF
       -S apple-tool:,apple:,codesign: \
       -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
 
-  # Trust the certificate for codesigning
-  echo "Setting certificate trust..."
-  security find-certificate -a -c "Developer ID Application" -p "${KEYCHAIN_NAME}" | \
-    security add-certificates -k "${KEYCHAIN_NAME}" -T /usr/bin/codesign 2>/dev/null || true
-  
-  # Set trust settings
-  security set-certificate-trust \
-    "${KEYCHAIN_NAME}" \
-    -c "Developer ID Application" \
-    -p basic -p smimeEncrypt -p smimeDecrypt -p codeSign 2>/dev/null || true
-
   # CRITICAL: Explicitly include login + System keychains so Apple root certs are found
   security list-keychains -d user -s \
       "${KEYCHAIN_NAME}" \
