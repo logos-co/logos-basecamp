@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(LogosApp LANGUAGES CXX)
+project(LogosBasecamp LANGUAGES CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -103,20 +103,20 @@ endif()
 
 option(LOGOS_PORTABLE_BUILD "Build as a portable/distributed app (no /nix/store dependencies at runtime)" OFF)
 
-qt_add_executable(LogosApp
+qt_add_executable(LogosBasecamp
     ${PROJECT_SOURCES}
 )
 
 if(LOGOS_PORTABLE_BUILD)
-    target_compile_definitions(LogosApp PRIVATE LOGOS_PORTABLE_BUILD)
-    message(STATUS "Building LogosApp as portable (LOGOS_PORTABLE_BUILD enabled)")
+    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_PORTABLE_BUILD)
+    message(STATUS "Building LogosBasecamp as portable (LOGOS_PORTABLE_BUILD enabled)")
 endif()
 
 # Link with logos_core, logos_sdk, and all Qt modules needed by plugins.
 # Plugins (main_ui, package_manager_ui) are loaded at runtime and depend on
 # these Qt libraries. Linking them here ensures the portable bundler includes
 # them in the app bundle.
-target_link_libraries(LogosApp PRIVATE
+target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Widgets
     Qt6::RemoteObjects
     Qt6::Quick
@@ -128,40 +128,40 @@ target_link_libraries(LogosApp PRIVATE
 )
 
 if(APPLE)
-    target_link_libraries(LogosApp PRIVATE "-framework Cocoa" "-framework QuartzCore")
+    target_link_libraries(LogosBasecamp PRIVATE "-framework Cocoa" "-framework QuartzCore")
 endif()
 
 # Copy the core library to the app's lib directory and fix its install name
 if(APPLE)
     if(_liblogos_is_source)
-        add_custom_command(TARGET LogosApp POST_BUILD
+        add_custom_command(TARGET LogosBasecamp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lib
             COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/build/lib/liblogos_core.dylib ${CMAKE_CURRENT_BINARY_DIR}/lib/
             COMMAND install_name_tool -id @rpath/liblogos_core.dylib ${CMAKE_CURRENT_BINARY_DIR}/lib/liblogos_core.dylib
             # Add additional rpath entries for flexibility when moving the binary
-            COMMAND install_name_tool -add_rpath "@executable_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosApp
-            COMMAND install_name_tool -add_rpath "@loader_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosApp
+            COMMAND install_name_tool -add_rpath "@executable_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosBasecamp
+            COMMAND install_name_tool -add_rpath "@loader_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosBasecamp
             COMMENT "Copying logos_core library and fixing installation paths"
         )
     else()
-        add_custom_command(TARGET LogosApp POST_BUILD
+        add_custom_command(TARGET LogosBasecamp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lib
             COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/lib/liblogos_core.dylib ${CMAKE_CURRENT_BINARY_DIR}/lib/
             COMMAND install_name_tool -id @rpath/liblogos_core.dylib ${CMAKE_CURRENT_BINARY_DIR}/lib/liblogos_core.dylib
             # Add additional rpath entries for flexibility when moving the binary
-            COMMAND install_name_tool -add_rpath "@executable_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosApp
-            COMMAND install_name_tool -add_rpath "@loader_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosApp
+            COMMAND install_name_tool -add_rpath "@executable_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosBasecamp
+            COMMAND install_name_tool -add_rpath "@loader_path/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosBasecamp
             COMMENT "Copying logos_core library and fixing installation paths"
         )
     endif()
 elseif(UNIX AND NOT APPLE)
     if(_liblogos_is_source)
-        add_custom_command(TARGET LogosApp POST_BUILD
+        add_custom_command(TARGET LogosBasecamp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lib
             COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/build/lib/liblogos_core.so ${CMAKE_CURRENT_BINARY_DIR}/lib/
         )
     else()
-        add_custom_command(TARGET LogosApp POST_BUILD
+        add_custom_command(TARGET LogosBasecamp POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lib
             COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/lib/liblogos_core.so ${CMAKE_CURRENT_BINARY_DIR}/lib/
         )
@@ -171,9 +171,9 @@ elseif(UNIX AND NOT APPLE)
     # Check if patchelf is available as an alternative for more complex cases
     find_program(PATCHELF_PROGRAM patchelf)
     if(PATCHELF_PROGRAM)
-        add_custom_command(TARGET LogosApp POST_BUILD
+        add_custom_command(TARGET LogosBasecamp POST_BUILD
             # Properly escape $ORIGIN for shell command
-            COMMAND ${PATCHELF_PROGRAM} --set-rpath "\$ORIGIN/lib:\$ORIGIN/../lib:${CMAKE_CURRENT_BINARY_DIR}/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosApp
+            COMMAND ${PATCHELF_PROGRAM} --set-rpath "\$ORIGIN/lib:\$ORIGIN/../lib:${CMAKE_CURRENT_BINARY_DIR}/lib" ${CMAKE_CURRENT_BINARY_DIR}/LogosBasecamp
             COMMENT "Setting RPATH with patchelf for Linux"
         )
     else()
@@ -183,19 +183,19 @@ endif()
 
 # Copy the logos_host executable from the core build directory
 if(_liblogos_is_source)
-    add_custom_command(TARGET LogosApp POST_BUILD
+    add_custom_command(TARGET LogosBasecamp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/build/bin/logos_host ${CMAKE_CURRENT_BINARY_DIR}/logos_host
         COMMENT "Copying logos_host executable to app directory"
     )
 else()
-    add_custom_command(TARGET LogosApp POST_BUILD
+    add_custom_command(TARGET LogosBasecamp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/bin/logos_host ${CMAKE_CURRENT_BINARY_DIR}/logos_host
         COMMENT "Copying logos_host executable to app directory"
     )
 endif()
 
 # Create bin/plugins directory in build folder
-add_custom_command(TARGET LogosApp POST_BUILD
+add_custom_command(TARGET LogosBasecamp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/bin/plugins
     COMMAND ${CMAKE_COMMAND} -E echo "Creating plugins directory at ${CMAKE_CURRENT_BINARY_DIR}/bin/plugins"
 

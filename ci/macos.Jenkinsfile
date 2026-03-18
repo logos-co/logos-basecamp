@@ -28,12 +28,12 @@ pipeline {
       abortPrevious: isPRBuild
     )
     /* Allows combined build to copy */
-    copyArtifactPermission('/logos-app/*')
+    copyArtifactPermission('/logos-basecamp/*')
   }
 
   environment {
     PLATFORM = "macos/${getArch()}"
-    ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosApp', ext: 'dmg', arch: getArch())}"
+    ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosBasecamp', ext: 'dmg', arch: getArch())}"
   }
 
   stages {
@@ -53,7 +53,7 @@ pipeline {
     stage('Package') {
       steps {
         sh 'mkdir -p pkg'
-        sh "cp result/LogosApp-*.dmg '${env.ARTIFACT}'"
+        sh "cp result/LogosBasecamp-*.dmg '${env.ARTIFACT}'"
       }
     }
 

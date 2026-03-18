@@ -1,4 +1,4 @@
-# Builds the logos-app standalone application
+# Builds the logos-basecamp standalone application
 { pkgs, common, src, logosLiblogos, logosSdk, logosDesignSystem, logosPackageManager, preinstallPkgs ? [], portable ? false }:
 
 let
@@ -7,7 +7,7 @@ let
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
 in
 pkgs.stdenv.mkDerivation rec {
-  pname = "logos-app";
+  pname = "logos-basecamp";
   version = common.version;
 
   inherit src;
@@ -94,8 +94,8 @@ pkgs.stdenv.mkDerivation rec {
   # This is an aggregate runtime layout; avoid stripping to prevent hook errors
   dontStrip = true;
 
-  # Skip wrapQtApps: wrapper renames binary to .LogosApp-wrapped; macOS Dock uses executable filename
-  # We create a custom launcher that execs the binary (keeps process name "LogosApp")
+  # Skip wrapQtApps: wrapper renames binary to .LogosBasecamp-wrapped; macOS Dock uses executable filename
+  # We create a custom launcher that execs the binary (keeps process name "LogosBasecamp")
   dontWrapQtApps = true;
 
   # Additional environment variables for Qt and RPATH cleanup
@@ -115,7 +115,7 @@ pkgs.stdenv.mkDerivation rec {
           patchelf --remove-rpath "$1" 2>/dev/null || true
         fi
         # Set proper RPATH for the main binary
-        if echo "$1" | grep -q "/LogosApp$"; then
+        if echo "$1" | grep -q "/LogosBasecamp$"; then
           echo "Setting RPATH for $1"
           patchelf --set-rpath "$out/lib" "$1" 2>/dev/null || true
         fi
@@ -136,7 +136,7 @@ pkgs.stdenv.mkDerivation rec {
   configurePhase = ''
     runHook preConfigure
 
-    echo "Configuring logos-app..."
+    echo "Configuring logos-basecamp..."
     echo "liblogos: ${logosLiblogos}"
     echo "cpp-sdk: ${logosSdk}"
     echo "logos-design-system: ${logosDesignSystem}"
@@ -164,7 +164,7 @@ pkgs.stdenv.mkDerivation rec {
     runHook preBuild
 
     cmake --build build
-    echo "logos-app built successfully!"
+    echo "logos-basecamp built successfully!"
 
     runHook postBuild
   '';
@@ -176,9 +176,9 @@ pkgs.stdenv.mkDerivation rec {
     mkdir -p $out/bin $out/lib $out/preinstall
 
     # Install our app binary (real binary, so Qt hook can wrap it)
-    if [ -f "build/LogosApp" ]; then
-      cp build/LogosApp "$out/bin/LogosApp"
-      echo "Installed LogosApp binary"
+    if [ -f "build/LogosBasecamp" ]; then
+      cp build/LogosBasecamp "$out/bin/LogosBasecamp"
+      echo "Installed LogosBasecamp binary"
     fi
 
     # Copy the core binaries from liblogos
@@ -237,24 +237,24 @@ pkgs.stdenv.mkDerivation rec {
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then
       mkdir -p $out/share/applications $out/share/icons/hicolor/256x256/apps
-      cp ${src}/assets/logos-app.desktop $out/share/applications/
-      cp ${src}/app/icons/logos.png $out/share/icons/hicolor/256x256/apps/logos-app.png
+      cp ${src}/assets/logos-basecamp.desktop $out/share/applications/
+      cp ${src}/app/icons/logos.png $out/share/icons/hicolor/256x256/apps/logos-basecamp.png
     fi
 
-    # Create launcher script (sets Qt env, execs binary - process name stays "LogosApp" for Dock)
-    cat > $out/bin/logos-app << 'EOF'
+    # Create launcher script (sets Qt env, execs binary - process name stays "LogosBasecamp" for Dock)
+    cat > $out/bin/logos-basecamp << 'EOF'
 #!/bin/sh
 EOF
-    echo "export QT_PLUGIN_PATH=\"${qtPluginPath}\"" >> $out/bin/logos-app
-    echo "export QML2_IMPORT_PATH=\"${qmlImportPath}\"" >> $out/bin/logos-app
-    echo "export DYLD_LIBRARY_PATH=\"${qtLibPath}:\$DYLD_LIBRARY_PATH\"" >> $out/bin/logos-app
-    echo "export LD_LIBRARY_PATH=\"${qtLibPath}:\$LD_LIBRARY_PATH\"" >> $out/bin/logos-app
-    echo 'APPDIR="$(cd "$(dirname "$0")/.." && pwd)"' >> $out/bin/logos-app
-    echo 'if [ "$(uname)" = "Linux" ]; then' >> $out/bin/logos-app
-    echo '  export XDG_DATA_DIRS="$APPDIR/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"' >> $out/bin/logos-app
-    echo 'fi' >> $out/bin/logos-app
-    echo 'exec "$(dirname "$0")/LogosApp" "$@"' >> $out/bin/logos-app
-    chmod +x $out/bin/logos-app
+    echo "export QT_PLUGIN_PATH=\"${qtPluginPath}\"" >> $out/bin/logos-basecamp
+    echo "export QML2_IMPORT_PATH=\"${qmlImportPath}\"" >> $out/bin/logos-basecamp
+    echo "export DYLD_LIBRARY_PATH=\"${qtLibPath}:\$DYLD_LIBRARY_PATH\"" >> $out/bin/logos-basecamp
+    echo "export LD_LIBRARY_PATH=\"${qtLibPath}:\$LD_LIBRARY_PATH\"" >> $out/bin/logos-basecamp
+    echo 'APPDIR="$(cd "$(dirname "$0")/.." && pwd)"' >> $out/bin/logos-basecamp
+    echo 'if [ "$(uname)" = "Linux" ]; then' >> $out/bin/logos-basecamp
+    echo '  export XDG_DATA_DIRS="$APPDIR/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"' >> $out/bin/logos-basecamp
+    echo 'fi' >> $out/bin/logos-basecamp
+    echo 'exec "$(dirname "$0")/LogosBasecamp" "$@"' >> $out/bin/logos-basecamp
+    chmod +x $out/bin/logos-basecamp
 
     # Create a README for reference
     cat > $out/README.txt <<EOF
@@ -265,12 +265,12 @@ cpp-sdk: ${logosSdk}
 logos-design-system: ${logosDesignSystem}
 
 Runtime Layout:
-    - Binary: $out/bin/LogosApp
+    - Binary: $out/bin/LogosBasecamp
 - Libraries: $out/lib
 - Preinstall packages: $out/preinstall (installed to user data dir on first launch)
 
 Usage:
-  $out/bin/LogosApp
+  $out/bin/LogosBasecamp
 EOF
 
     runHook postInstall

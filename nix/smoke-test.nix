@@ -1,4 +1,4 @@
-# Smoke-tests the logos-app binary.
+# Smoke-tests the logos-basecamp binary.
 # Launches the app with -platform offscreen and fails if:
 #   - the app emits critical QML errors (engine failure, missing module, etc.)
 #   - the app emits runtime QML errors (TypeError, ReferenceError, etc.)
@@ -9,12 +9,12 @@
 # If the app crashes it exits immediately — the timeout is only ever waited out
 # on the happy path (app stays alive and healthy).
 #
-# The logos-app launcher script (bin/logos-app) already bakes in the correct
+# The logos-basecamp launcher script (bin/logos-basecamp) already bakes in the correct
 # QT_PLUGIN_PATH and LD_LIBRARY_PATH at build time, so we only need to add
 # the offscreen platform plugin and GL stubs on Linux.
-{ pkgs, appPkg, appBin ? "${appPkg}/bin/logos-app", timeoutSec ? 5 }:
+{ pkgs, appPkg, appBin ? "${appPkg}/bin/logos-basecamp", timeoutSec ? 5 }:
 
-pkgs.runCommand "logos-app-smoke-test" {
+pkgs.runCommand "logos-basecamp-smoke-test" {
   nativeBuildInputs = [ pkgs.coreutils ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.qt6.qtbase   # provides the offscreen platform plugin
@@ -38,7 +38,7 @@ pkgs.runCommand "logos-app-smoke-test" {
 
   LOG="$out/smoke-test.log"
 
-  echo "Running logos-app smoke test (timeout: ${toString timeoutSec}s)..."
+  echo "Running logos-basecamp smoke test (timeout: ${toString timeoutSec}s)..."
   set +e
   START=$(date +%s)
   timeout ${toString timeoutSec} ${appBin} -platform offscreen > "$LOG" 2>&1

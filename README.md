@@ -1,8 +1,8 @@
-# logos-app
+# logos-basecamp
 
 ## Download
 
-Prebuilt binaries are available for Linux (AppImage) and macOS (DMG) from the [latest release](https://github.com/logos-co/logos-app/releases/latest).
+Prebuilt binaries are available for Linux (AppImage) and macOS (DMG) from the [latest release](https://github.com/logos-co/logos-basecamp/releases/latest).
 
 ## How to Build
 
@@ -14,7 +14,7 @@ The local build produces a standard Nix derivation whose dependencies live in `/
 
 ```bash
 nix build '.#app'
-./result/bin/logos-app
+./result/bin/logos-basecamp
 ```
 
 Local builds require **local** `.lgx` packages, generated with:
@@ -39,13 +39,13 @@ nix bundle --bundler github:logos-co/nix-bundle-lgx#portable github:your-user/yo
 ##### Self-contained directory bundle (all platforms)
 ```bash
 nix build '.#bin-bundle-dir'
-./result/bin/LogosApp
+./result/bin/LogosBasecamp
 ```
 
 ##### Linux AppImage (Linux only)
 ```bash
 nix build '.#bin-appimage'
-./result/logos-app.AppImage
+./result/logos-basecamp.AppImage
 ```
 
 
@@ -53,7 +53,7 @@ nix build '.#bin-appimage'
 
 ```bash
 nix build '.#bin-macos-app'
-open result/LogosApp.app
+open result/LogosBasecamp.app
 ```
 
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ###############################################################################
-# macOS Code Signing & Notarization for LogosApp.app
+# macOS Code Signing & Notarization for LogosBasecamp.app
 #
 # Required env vars:
 #   MACOS_CODESIGN_IDENT       - Developer ID Application identity
@@ -13,7 +13,7 @@ set -euo pipefail
 #   MACOS_KEYCHAIN_FILE        - Path to the .p12 certificate file
 ###############################################################################
 
-APP_BUNDLE="./LogosApp.app"
+APP_BUNDLE="./LogosBasecamp.app"
 CONTENTS="${APP_BUNDLE}/Contents"
 ENTITLEMENTS="entitlements.plist"
 KEYCHAIN_NAME="build.keychain"
@@ -131,8 +131,8 @@ done
 ###############################################################################
 echo "==> Signing executables..."
 # Sign all Mach-O binaries first (with entitlements)
-for exe in "${CONTENTS}/MacOS/LogosApp.bin" \
-           "${CONTENTS}/MacOS/logos-app" \
+for exe in "${CONTENTS}/MacOS/LogosBasecamp.bin" \
+           "${CONTENTS}/MacOS/logos-basecamp" \
            "${CONTENTS}/MacOS/logos_host" \
            "${CONTENTS}/MacOS/logoscore"; do
     if [[ -f "${exe}" ]]; then
@@ -142,8 +142,8 @@ for exe in "${CONTENTS}/MacOS/LogosApp.bin" \
 done
 
 # Sign the shell script wrapper last (no --options runtime for scripts)
-echo "  Signing wrapper: ${CONTENTS}/MacOS/LogosApp"
-codesign --force --timestamp --sign "${MACOS_CODESIGN_IDENT}" "${CONTENTS}/MacOS/LogosApp"
+echo "  Signing wrapper: ${CONTENTS}/MacOS/LogosBasecamp"
+codesign --force --timestamp --sign "${MACOS_CODESIGN_IDENT}" "${CONTENTS}/MacOS/LogosBasecamp"
 
 ###############################################################################
 # 7. Sign the top-level app bundle
@@ -164,7 +164,7 @@ spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
 # 9. Create ZIP for notarization
 ###############################################################################
 echo "==> Creating ZIP for notarization..."
-NOTARIZE_ZIP="LogosApp.zip"
+NOTARIZE_ZIP="LogosBasecamp.zip"
 ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARIZE_ZIP}"
 
 ###############################################################################

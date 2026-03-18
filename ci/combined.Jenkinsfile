@@ -39,12 +39,12 @@ pipeline {
       parallel {
         stage('Linux/x86_64') { steps { script {
           linux_x86_64 = getArtifacts(
-            'Linux', jenkins.Build('logos-app/systems/linux/x86_64/package')
+            'Linux', jenkins.Build('logos-basecamp/systems/linux/x86_64/package')
           )
         } } }
         stage('macOS/aarch64') { steps { script {
           macos_aarch64 = getArtifacts(
-            'macOS', jenkins.Build('logos-app/systems/macos/aarch64/package')
+            'macOS', jenkins.Build('logos-basecamp/systems/macos/aarch64/package')
           )
         } } }
       }
@@ -53,7 +53,7 @@ pipeline {
     stage('Publish') {
       when { expression { params.PUBLISH } }
       steps { script {
-        github.publishReleaseFiles(user: 'logos-co', repo: 'logos-app')
+        github.publishReleaseFiles(user: 'logos-co', repo: 'logos-basecamp')
       } }
     }
   }
@@ -61,7 +61,7 @@ pipeline {
   post {
     always { script {
       dir('pkg') {
-        sha = "./${utils.pkgFilename(name: 'LogosApp', ext: 'sha256')}"
+        sha = "./${utils.pkgFilename(name: 'LogosBasecamp', ext: 'sha256')}"
         sh "sha256sum * | tee ${sha}"
         urls['SHA'] = s5cmd.upload(sha)
         jenkins.setBuildDesc(urls)
@@ -80,7 +80,7 @@ pipeline {
  * - A user explicitly specified a value
  * Since release builds create and re-create GitHub drafts every time. */
 def Boolean getPublishDefault(Boolean previousValue) {
-  if (env.JOB_NAME.startsWith('logos-app/release')) { return true }
+  if (env.JOB_NAME.startsWith('logos-basecamp/release')) { return true }
   if (previousValue != null) { return previousValue }
   return false
 }

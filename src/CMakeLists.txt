@@ -84,7 +84,7 @@ if(NOT component-interfaces_FOUND)
     target_include_directories(component-interfaces INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/../app/interfaces)
 endif()
 
-# Shared utilities (LogosAppPaths, etc.)
+# Shared utilities (LogosBasecampPaths, etc.)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../app/utils)
 
 set(SOURCES

@@ -2,7 +2,7 @@
 { pkgs, logosSdk, logosLiblogos }:
 
 {
-  pname = "logos-app";
+  pname = "logos-basecamp";
   version = "1.0.0";
   
   # Common native build inputs

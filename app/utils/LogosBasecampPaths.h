@@ -5,7 +5,7 @@
 #include <QString>
 #include <QProcessEnvironment>
 
-namespace LogosAppPaths {
+namespace LogosBasecampPaths {
 
 constexpr bool isPortableBuild()
 {
@@ -57,4 +57,4 @@ inline QString modulesDirectory()
     return isPortableBuild() ? portableModulesDirectory() : nonPortableModulesDirectory();
 }
 
-} // namespace LogosAppPaths
+} // namespace LogosBasecampPaths

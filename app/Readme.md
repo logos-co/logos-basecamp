@@ -28,5 +28,5 @@
 
 4. Run the application:
    ```
-   ./LogosApp
+   ./LogosBasecamp
    ```

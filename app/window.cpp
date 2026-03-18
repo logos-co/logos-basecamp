@@ -15,7 +15,7 @@
 #include <IComponent.h>
 #include <QStandardPaths>
 #include <QTimer>
-#include "LogosAppPaths.h"
+#include "LogosBasecampPaths.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
     #include "macWindowStyle.h"
@@ -64,7 +64,7 @@ void Window::setupUi()
         pluginExtension = ".so";
     #endif
 
-    QString userPluginsDir = LogosAppPaths::pluginsDirectory() + "/";
+    QString userPluginsDir = LogosBasecampPaths::pluginsDirectory() + "/";
 
     // All plugins are installed to the user data directory via preinstall/ lgx packages.
     auto resolvePlugin = [&](const QString& subdir, const QString& name) -> QString {

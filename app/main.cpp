@@ -2,7 +2,7 @@
 #include "logos_api.h"
 #include "token_manager.h"
 #include "logos_mode.h"
-#include "LogosAppPaths.h"
+#include "LogosBasecampPaths.h"
 #include <QApplication>
 #include <QIcon>
 #include <QDir>
@@ -46,8 +46,8 @@ static void runPreinstallIfNeeded()
     if (lgxFiles.isEmpty())
         return;
 
-    QString userModulesDir = LogosAppPaths::modulesDirectory();
-    QString userPluginsDir = LogosAppPaths::pluginsDirectory();
+    QString userModulesDir = LogosBasecampPaths::modulesDirectory();
+    QString userPluginsDir = LogosBasecampPaths::pluginsDirectory();
 
     // Load the bundled package_manager_plugin library directly.
     QString pluginExtension;
@@ -107,14 +107,14 @@ int main(int argc, char *argv[])
     // Create QApplication first
     QApplication app(argc, argv);
     app.setOrganizationName("Logos");
-    app.setApplicationName("LogosApp");
+    app.setApplicationName("LogosBasecamp");
 
     // Install preinstall lgx packages before starting logos core, using the bundled
     // package_manager_plugin directly. This ensures all modules are in place when
     // logos core scans the user directories on startup.
     runPreinstallIfNeeded();
 
-    QString userModulesDir = LogosAppPaths::modulesDirectory();
+    QString userModulesDir = LogosBasecampPaths::modulesDirectory();
 
     // All modules are installed to the user data directory via preinstall/ lgx packages.
     logos_core_set_plugins_dir(userModulesDir.toUtf8().constData());
@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_LINUX
     // setDesktopFileName is required for Wayland compositors, which look up the
     // icon via the .desktop file name rather than honouring setWindowIcon().
-    app.setDesktopFileName("logos-app");
+    app.setDesktopFileName("logos-basecamp");
 #endif
     app.setWindowIcon(QIcon(":/icons/logos.png"));
 

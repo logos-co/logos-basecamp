@@ -41,11 +41,11 @@ echo "================================================"
 echo ""
 
 # Run the app from the nix result
-# Use logos-app launcher (sets Qt env, execs LogosApp binary - Dock shows "LogosApp")
-if [ -f "./result/bin/logos-app" ]; then
-    ./result/bin/logos-app "$@"
-elif [ -f "./result/bin/LogosApp" ]; then
-    ./result/bin/LogosApp "$@"
+# Use logos-basecamp launcher (sets Qt env, execs LogosBasecamp binary - Dock shows "LogosBasecamp")
+if [ -f "./result/bin/logos-basecamp" ]; then
+    ./result/bin/logos-basecamp "$@"
+elif [ -f "./result/bin/LogosBasecamp" ]; then
+    ./result/bin/LogosBasecamp "$@"
 else
     echo "Error: Application binary not found in ./result/bin/"
     echo "Please build the app first with: nix build"

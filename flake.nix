@@ -129,11 +129,11 @@
           macosApp = if pkgs.stdenv.isDarwin then
             nix-bundle-macos-app.lib.${system}.mkMacOSApp {
               drv = appDistributed;
-              name = "LogosApp";
+              name = "LogosBasecamp";
               bundle = dirBundler appDistributed;
               icon = ./app/macos/logos.icns;
               infoPlist = ./app/macos/Info.plist.in;
-              entitlements = ./app/macos/LogosApp.entitlements;
+              entitlements = ./app/macos/LogosBasecamp.entitlements;
             }
           else null;
 
@@ -167,9 +167,9 @@
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           bin-appimage = nix-bundle-appimage.lib.${system}.mkAppImage {
             drv = appDistributed;
-            name = "logos-app";
+            name = "logos-basecamp";
             bundle = dirBundler appDistributed;
-            desktopFile = ./assets/logos-app.desktop;
+            desktopFile = ./assets/logos-basecamp.desktop;
             icon = ./app/icons/logos.png;
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
@@ -177,7 +177,7 @@
           smoke-test-bundle = import ./nix/smoke-test.nix {
             inherit pkgs;
             appPkg = macosApp;
-            appBin = "${macosApp}/LogosApp.app/Contents/MacOS/LogosApp";
+            appBin = "${macosApp}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs

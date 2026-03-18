@@ -1,5 +1,5 @@
 #include "MainUIBackend.h"
-#include "LogosAppPaths.h"
+#include "LogosBasecampPaths.h"
 #include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -650,12 +650,12 @@ void MainUIBackend::installPluginFromPath(const QString& filePath)
 
 QString MainUIBackend::pluginsDirectory() const
 {
-    return LogosAppPaths::pluginsDirectory();
+    return LogosBasecampPaths::pluginsDirectory();
 }
 
 QString MainUIBackend::modulesDirectory() const
 {
-    return LogosAppPaths::modulesDirectory();
+    return LogosBasecampPaths::modulesDirectory();
 }
 
 QJsonObject MainUIBackend::readPluginManifest(const QString& pluginName) const

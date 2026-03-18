@@ -38,12 +38,12 @@ jobs:
           arch="${{ matrix.arch }}"
           arch_short="${arch%%-*}"
           src=$(find result/ -name '*.AppImage' -print -quit)
-          cp "$src" "logos-app-${arch_short}.AppImage"
+          cp "$src" "logos-basecamp-${arch_short}.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:
           name: appimage-${{ matrix.arch }}
-          path: logos-app-*.AppImage
+          path: logos-basecamp-*.AppImage
 
   build-macos-app:
     runs-on: macos-latest
@@ -64,12 +64,12 @@ jobs:
       - name: Package app bundle as tarball
         run: |
           app=$(find result/ -name '*.app' -maxdepth 1 -print -quit)
-          tar -czf logos-app-aarch64-unsigned.app.tar.gz -C result "$(basename "$app")"
+          tar -czf logos-basecamp-aarch64-unsigned.app.tar.gz -C result "$(basename "$app")"
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-app-aarch64-darwin
-          path: logos-app-aarch64-unsigned.app.tar.gz
+          path: logos-basecamp-aarch64-unsigned.app.tar.gz
 
   release:
     if: github.event_name == 'push'
