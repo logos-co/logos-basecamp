@@ -16,10 +16,11 @@
 #include <memory>
 #include <QStringList>
 #include <QDebug>
-#include <QMetaObject>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
+#include "logos_provider_object.h"
+#include "qt_provider_object.h"
 
 // Replace CoreManager with direct C API functions
 extern "C" {
@@ -77,18 +78,20 @@ static void runPreinstallIfNeeded()
         return;
     }
 
-    QMetaObject::invokeMethod(plugin, "setPluginsDirectory", Q_ARG(QString, userModulesDir));
-    QMetaObject::invokeMethod(plugin, "setUiPluginsDirectory", Q_ARG(QString, userPluginsDir));
+    LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(plugin);
+    LogosProviderObject* provider = providerPlugin
+        ? providerPlugin->createProviderObject()
+        : new QtProviderObject(plugin);
+
+    provider->callMethod("setPluginsDirectory", {userModulesDir});
+    provider->callMethod("setUiPluginsDirectory", {userPluginsDir});
 
     for (const QString& lgxFile : lgxFiles) {
         QString lgxPath = preinstallDir + "/" + lgxFile;
         qInfo() << "Preinstalling (if needed):" << lgxPath;
-        bool result = false;
-        QMetaObject::invokeMethod(plugin, "installPlugin",
-            Q_RETURN_ARG(bool, result),
-            Q_ARG(QString, lgxPath),
-            Q_ARG(bool, true));
+        provider->callMethod("installPlugin", {lgxPath, true});
     }
+    delete provider;
 }
 
 // Helper function to convert C-style array to QStringList
