@@ -98,6 +98,19 @@ void MainUIBackend::subscribeToPackageInstallationEvents()
             });
         }
     });
+
+    logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data) {
+        if (data.isEmpty()) return;
+        QString pluginPath = data[0].toString();
+        qDebug() << "Processing installed core plugin:" << pluginPath;
+        char* result = logos_core_process_plugin(pluginPath.toUtf8().constData());
+        if (result) {
+            qDebug() << "Successfully processed plugin:" << QString::fromUtf8(result);
+            delete[] result;
+        } else {
+            qWarning() << "Failed to process plugin:" << pluginPath;
+        }
+    });
 }
 
 void MainUIBackend::initializeSections()
