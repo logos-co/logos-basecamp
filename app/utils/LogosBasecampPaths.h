@@ -39,12 +39,12 @@ inline QString portableModulesDirectory()
 
 inline QString nonPortablePluginsDirectory()
 {
-    return dataDirectory() + "Nix" + "/plugins";
+    return dataDirectory() + "Dev" + "/plugins";
 }
 
 inline QString nonPortableModulesDirectory()
 {
-    return dataDirectory() + "Nix" + "/modules";
+    return dataDirectory() + "Dev" + "/modules";
 }
 
 inline QString pluginsDirectory()

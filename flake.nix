@@ -34,6 +34,8 @@
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManager = logos-package-manager.packages.${system}.default;
         logosPackageManagerLib = logos-package-manager.packages.${system}.lib;
+        logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
+        logosPackageManagerPortable = logos-package-manager.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
@@ -52,7 +54,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosLiblogos, logosPackageManager, logosPackageManagerLib, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, bundleLgx, bundleLgxPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosLiblogos, logosLiblogosPortable, logosPackageManager, logosPackageManagerLib, logosPackageManagerPortable, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, bundleLgx, bundleLgxPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -89,7 +91,7 @@
             webviewAppPlugin
           ];
           preinstallPkgsDistributed = map bundleLgxPortable [
-            logosPackageManagerLib
+            logosPackageManagerPortable
             logosCapabilityModule
             counterPlugin
             counterQmlPlugin
@@ -105,8 +107,11 @@
           };
 
           # App package (distributed build for DMG/AppImage)
+          # Uses portable-compiled liblogos and package-manager for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosLiblogos logosSdk logosDesignSystem logosPackageManager;
+            inherit pkgs common src logosSdk logosDesignSystem;
+            logosLiblogos = logosLiblogosPortable;
+            logosPackageManager = logosPackageManagerPortable;
             preinstallPkgs = preinstallPkgsDistributed;
             portable = true;
           };
