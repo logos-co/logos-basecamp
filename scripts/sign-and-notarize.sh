@@ -186,11 +186,15 @@ EOF
   # This is the 'magic' command for Sequoia to allow codesign access
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_DB_PATH}"
 
-  ###############################################################################
-  # 4. Final Validation
-  ###############################################################################
-  echo "Final Identity check:"
-  security find-identity -v "${KEYCHAIN_DB_PATH}"
+  echo "Debug: Keychain contents"
+  echo "Available keys in ${KEYCHAIN_NAME}:"
+  security find-identity -v "${KEYCHAIN_NAME}" || echo "No identities in build.keychain"
+  
+  echo "Debug: All codesigning identities in all keychains"
+  security find-identity -v -p codesigning || echo "No codesigning identities found"
+  
+  echo "Debug: Dump of build.keychain"
+  security dump-keychain "${KEYCHAIN_NAME}" 2>&1 | head -50 || true
 
   ###############################################################################
   # 2. Sign + repack .lgx archives in Contents/preinstall/
@@ -277,11 +281,6 @@ EOF
   echo "Checking Gatekeeper assessment."
   spctl --assess --type execute --verbose=2 "${APP_BUNDLE}" || true
 
-  # Cleanup keychain after signing
-  echo "Cleaning up keychain."
-  security delete-keychain "${KEYCHAIN_NAME}"
-  rm -f "${ENTITLEMENTS}"
-
   echo "Signing phase complete"
 fi
 
@@ -292,14 +291,14 @@ if [[ "$MODE" =~ ^(notarize|both)$ ]]; then
   echo "Starting notarization phase."
   
   ###############################################################################
-  # 9. Create ZIP for notarization
+  # 12. Create ZIP for notarization
   ###############################################################################
   echo "Creating ZIP for notarization."
   NOTARIZE_ZIP="${TEMP_DIR:-/tmp}/LogosApp-$$.zip"
   ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARIZE_ZIP}"
 
   ###############################################################################
-  # 10. Submit for notarization
+  # 13. Submit for notarization
   ###############################################################################
   echo "Submitting for notarization."
   xcrun notarytool submit "${NOTARIZE_ZIP}" \
@@ -310,20 +309,22 @@ if [[ "$MODE" =~ ^(notarize|both)$ ]]; then
       --timeout "${TIMEOUT}"
 
   ###############################################################################
-  # 11. Staple the notarization ticket
+  # 14. Staple the notarization ticket
   ###############################################################################
   echo "Stapling notarization ticket."
   xcrun stapler staple "${APP_BUNDLE}"
 
   ###############################################################################
-  # 12. Final verification
+  # 15. Final verification
   ###############################################################################
   echo "Final verification."
   spctl --assess --type execute --verbose=2 "${APP_BUNDLE}"
   codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 
-  # Cleanup ZIP
+  # Cleanup ZIP and keychain
   rm -f "${NOTARIZE_ZIP}"
+  rm -f "${ENTITLEMENTS}"
+  security delete-keychain "${KEYCHAIN_NAME}"
 
   echo "Notarization phase complete"
 fi
