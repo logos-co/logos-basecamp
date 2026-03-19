@@ -99,6 +99,7 @@ fi
 CONTENTS="${APP_BUNDLE}/Contents"
 ENTITLEMENTS="${TEMP_DIR}/entitlements.plist"
 KEYCHAIN_NAME="build.keychain"
+KEYCHAIN_PATH="${HOME}/Library/Keychains/${KEYCHAIN_NAME}-db"
 
 # Codesign options — hardened runtime required for notarization
 # Try to extract identity from env var or use the full identity string
@@ -146,42 +147,50 @@ EOF
   # 1. Set up a temporary keychain and import the certificate
   ###############################################################################
   echo "Setting up keychain."
-  security delete-keychain "${KEYCHAIN_NAME}" 2>/dev/null || true
-  security create-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
-  security unlock-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+  security delete-keychain "${KEYCHAIN_PATH}" 2>/dev/null || true
+
+  # Create and unlock
+  security create-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_PATH}"
+  security unlock-keychain -p "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_PATH}"
+  # Prevent the keychain from locking during the build
+  security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
 
   # Ensure Apple root certs are available
-  echo "Ensuring Apple root certificates..."
-  curl -s https://www.apple.com/appleca/AppleIncRootCertificate.cer -o /tmp/AppleIncRootCertificate.cer
-  security add-certificates -k /Library/Keychains/System.keychain /tmp/AppleIncRootCertificate.cer 2>/dev/null || true
-  rm -f /tmp/AppleIncRootCertificate.cer
+  echo "Ensuring Apple Root and Intermediate (WWDR) certificates..."
+  # We need BOTH the Root and the WWDR Intermediate for Sequoia to validate the cert
+  curl -s https://www.apple.com/appleca/AppleIncRootCertificate.cer -o /tmp/AppleRoot.cer
+  curl -s https://developer.apple.com/certificationauthority/AppleWWDRCA.cer -o /tmp/AppleWWDR.cer
+
+  # Import them into your SPECIFIC build keychain
+  security import /tmp/AppleRoot.cer -k "${KEYCHAIN_PATH}" -A
+  security import /tmp/AppleWWDR.cer -k "${KEYCHAIN_PATH}" -A
 
   # CRITICAL: Set keychain search list BEFORE importing cert
-  security list-keychains -d user -s \
-      "${KEYCHAIN_NAME}" \
-      "$HOME/Library/Keychains/login.keychain-db" \
-      "/Library/Keychains/System.keychain"
+  security list-keychains -d user -s "${KEYCHAIN_PATH}" \
+    "$HOME/Library/Keychains/login.keychain-db" \
+    "/Library/Keychains/System.keychain"
 
   # Import cert
   security import "${MACOS_KEYCHAIN_FILE}" \
-      -k "${KEYCHAIN_NAME}" \
+      -k "${KEYCHAIN_PATH}" \
       -P "${MACOS_KEYCHAIN_PASS}" \
       -T /usr/bin/codesign \
-      -T /usr/bin/security
+      -T /usr/bin/security \
+      -A
 
   security set-key-partition-list \
       -S apple-tool:,apple:,codesign: \
-      -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_NAME}"
+      -s -k "${MACOS_KEYCHAIN_PASS}" "${KEYCHAIN_PATH}"
 
   echo "Debug: Keychain contents"
   echo "Available keys in ${KEYCHAIN_NAME}:"
-  security find-identity -v "${KEYCHAIN_NAME}" || echo "No identities in build.keychain"
+  security find-identity -v "${KEYCHAIN_PATH}" || echo "No identities in build.keychain"
   
   echo "Debug: All codesigning identities in all keychains"
   security find-identity -v -p codesigning || echo "No codesigning identities found"
   
   echo "Debug: Dump of build.keychain"
-  security dump-keychain "${KEYCHAIN_NAME}" 2>&1 | head -50 || true
+  security dump-keychain "${KEYCHAIN_PATH}" 2>&1 | head -50 || true
 
   ###############################################################################
   # 2. Sign + repack .lgx archives in Contents/preinstall/
