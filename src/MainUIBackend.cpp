@@ -723,6 +723,79 @@ bool MainUIBackend::isQmlPlugin(const QString& name) const
     return getPluginType(name) == "ui_qml";
 }
 
+// Returns the primary platform variant key for the current build target
+// (e.g. "darwin-arm64", "linux-x86_64"). Used as the base for platformVariantsToTry().
+static QString currentPlatformVariant()
+{
+#if defined(Q_OS_MAC)
+  #if defined(Q_PROCESSOR_ARM)
+    return QStringLiteral("darwin-arm64");
+  #else
+    return QStringLiteral("darwin-x86_64");
+  #endif
+#elif defined(Q_OS_WIN)
+    return QStringLiteral("windows-x86_64");
+#elif defined(Q_OS_LINUX)
+  #if defined(Q_PROCESSOR_X86_64)
+    return QStringLiteral("linux-x86_64");
+  #elif defined(Q_PROCESSOR_ARM_64)
+    return QStringLiteral("linux-arm64");
+  #else
+    return QStringLiteral("linux-x86");
+  #endif
+#else
+    // Fallback for other OSes: preserve existing default behavior.
+    return QStringLiteral("linux-x86");
+#endif
+}
+
+// Returns the ordered list of platform variant keys to try when resolving the
+// "main" object in an LGX manifest.json. Mirrors plugin_manager.cpp::platformVariantsToTry().
+static QStringList platformVariantsToTry()
+{
+    QString primary = currentPlatformVariant();
+    QStringList variants;
+    variants << primary;
+
+    // Linux architecture aliases
+    if (primary == QLatin1String("linux-x86_64"))
+        variants << QStringLiteral("linux-amd64");
+    else if (primary == QLatin1String("linux-amd64"))
+        variants << QStringLiteral("linux-x86_64");
+    else if (primary == QLatin1String("linux-arm64"))
+        variants << QStringLiteral("linux-aarch64");
+    else if (primary == QLatin1String("linux-aarch64"))
+        variants << QStringLiteral("linux-arm64");
+
+#ifndef LOGOS_PORTABLE_BUILD
+    QStringList devVariants;
+    for (const QString& variant : variants)
+        devVariants << (variant + QStringLiteral("-dev"));
+    variants = devVariants;
+#endif
+
+    return variants;
+}
+
+// Resolves the "main" field from a plugin manifest/metadata object
+static QString resolveMainField(const QJsonObject& info, const QString& fallback)
+{
+    QJsonValue mainVal = info.value("main");
+    if (mainVal.isString()) {
+        QString s = mainVal.toString();
+        return s.isEmpty() ? fallback : s;
+    }
+    if (mainVal.isObject()) {
+        QJsonObject mainObj = mainVal.toObject();
+        for (const QString& variant : platformVariantsToTry()) {
+            QString v = mainObj.value(variant).toString();
+            if (!v.isEmpty())
+                return v;
+        }
+    }
+    return fallback;
+}
+
 QStringList MainUIBackend::findAvailableUiPlugins() const
 {
     QStringList plugins;
@@ -740,23 +813,16 @@ QStringList MainUIBackend::findAvailableUiPlugins() const
             }
         };
 
-        QString libExtension;
-#if defined(Q_OS_MAC)
-        libExtension = ".dylib";
-#elif defined(Q_OS_WIN)
-        libExtension = ".dll";
-#else
-        libExtension = ".so";
-#endif
-
         // Scan subdirectories for plugins (both QML and C++ plugins are in subdirectories)
         QStringList dirEntries = pluginsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const QString& entry : dirEntries) {
             if (isQmlPlugin(entry)) {
                 addPlugin(entry);
             } else {
-                // Check if it's a C++ plugin (has <dirname>.<ext> inside the subdirectory)
-                QString pluginLibPath = dirPath + "/" + entry + "/" + entry + libExtension;
+                // "main" in manifest.json is the full filename including extension.
+                QJsonObject info = readPluginManifest(entry);
+                QString mainFile = resolveMainField(info, entry);
+                QString pluginLibPath = dirPath + "/" + entry + "/" + mainFile;
                 if (QFile::exists(pluginLibPath)) {
                     addPlugin(entry);
                 }
@@ -776,17 +842,9 @@ QString MainUIBackend::getPluginPath(const QString& name) const
         return pluginsDirectory() + "/" + name;
     }
 
-    // C++ plugins: return path to dylib inside subdirectory
-    QString libExtension;
-    #if defined(Q_OS_MAC)
-        libExtension = ".dylib";
-    #elif defined(Q_OS_WIN)
-        libExtension = ".dll";
-    #else
-        libExtension = ".so";
-    #endif
-
-    return pluginsDirectory() + "/" + name + "/" + name + libExtension;
+    // C++ plugins: "main" in manifest.json is the full filename including extension.
+    QString mainFile = resolveMainField(readPluginManifest(name), name);
+    return pluginsDirectory() + "/" + name + "/" + mainFile;
 }
 
 QString MainUIBackend::getPluginIconPath(const QString& pluginName, bool forWidgetIcon) const
