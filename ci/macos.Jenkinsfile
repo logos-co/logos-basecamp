@@ -1,6 +1,6 @@
 #!/usr/bin/env groovy
 
-library 'status-jenkins-lib@v1.9.41'
+library 'status-jenkins-lib@add-logos-app-macos-signing-credentials'
 
 def isPRBuild = utils.isPRBuild()
 
@@ -34,40 +34,71 @@ pipeline {
   environment {
     PLATFORM = "macos/${getArch()}"
     ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosBasecamp', ext: 'dmg', arch: getArch())}"
+    NOTARIZED_ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosBasecamp-notarized', ext: 'dmg', arch: getArch())}"
   }
 
   stages {
-    stage('Build DMG') {
+    stage('Smoke Test') {
       steps { script {
-        nix.flake("dmg")
+        nix.flake('smoke-test-bundle')
+        sh 'cat ./result/smoke-test.log'
       } }
     }
 
-    stage('Smoke Test') {
-      steps {
-        sh 'nix build .#smoke-test-bundle --out-link result-smoke -L --extra-experimental-features "nix-command flakes"'
-        sh 'cat result-smoke/smoke-test.log'
-      }
+    stage('Build MacOS App Bundle') {
+      steps { script {
+        nix.flake('bin-macos-app')
+      } }
     }
 
     stage('Package') {
+      when {
+        expression { !utils.isReleaseBuild() }
+      }
       steps {
         sh 'mkdir -p pkg'
-        sh "cp result/LogosBasecamp-*.dmg '${env.ARTIFACT}'"
+        sh """
+          TMPDIR=\$(mktemp -d)
+          cp -a result/LogosBasecamp.app "\$TMPDIR/LogosBasecamp.app"
+          chmod -R u+w "\$TMPDIR/LogosBasecamp.app"
+          hdiutil create -volname "LogosBasecamp" \
+            -srcfolder "\$TMPDIR/LogosBasecamp.app" \
+            -ov -format UDZO \
+            -puppetstrings \
+            "${env.ARTIFACT}"
+          rm -rf "\$TMPDIR"
+        """
+      }
+    }
+
+    stage('Sign & Notarize') {
+      when {
+        expression { utils.isReleaseBuild() }
+      }
+      steps {
+        script {
+          logos.signAndNotarizeApp(
+            bundlePath: 'result/LogosBasecamp.app',
+            outputPath: env.NOTARIZED_ARTIFACT,
+            timeout: '30m'
+          )
+        }
       }
     }
 
     stage('Upload') {
       steps { script {
-        env.PKG_URL = s5cmd.upload(env.ARTIFACT)
+        def uploadFile = utils.isReleaseBuild() ? env.NOTARIZED_ARTIFACT : env.ARTIFACT
+        env.PKG_URL = s5cmd.upload(uploadFile)
         jenkins.setBuildDesc(DMG: env.PKG_URL)
       } }
     }
 
     stage('Archive') {
-      steps {
-        archiveArtifacts(env.ARTIFACT)
-      }
+      steps { script {
+        def uploadFile = utils.isReleaseBuild() ? env.NOTARIZED_ARTIFACT : env.ARTIFACT
+        archiveArtifacts(uploadFile)
+      } }
     }
   }
 
