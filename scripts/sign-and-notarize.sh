@@ -179,22 +179,6 @@ EOF
   security import "${CERT_DIR}/AppleWWDRCAG2.cer"    -k "${KEYCHAIN_DB_PATH}" -t cert
   security import "${CERT_DIR}/DeveloperIDG2CA.cer"  -k "${KEYCHAIN_DB_PATH}" -t cert
 
-  echo "Setting trust for CA certs..."
-  security add-trusted-cert -r trustRoot \
-      -p codeSign \
-      -k "${KEYCHAIN_DB_PATH}" \
-      "${CERT_DIR}/AppleRootCA-G2.cer"
-
-  security add-trusted-cert -r trustAsRoot \
-      -p codeSign \
-      -k "${KEYCHAIN_DB_PATH}" \
-      "${CERT_DIR}/AppleWWDRCAG2.cer"
-
-  security add-trusted-cert -r trustAsRoot \
-      -p codeSign \
-      -k "${KEYCHAIN_DB_PATH}" \
-      "${CERT_DIR}/DeveloperIDG2CA.cer"
-
   # Ensure the system looks at our build keychain first
   security list-keychains -d user -s "${KEYCHAIN_DB_PATH}" /Library/Keychains/System.keychain
 
