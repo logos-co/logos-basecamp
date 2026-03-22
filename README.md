@@ -146,6 +146,59 @@ Sent messages appear in the `Messages` section of the UI once they have been suc
 Mix Demo Chat can also be run as a standalone app.
 To do so, or for more information, refer to the module repo and instructions [here](https://github.com/logos-co/logos-chat-legacy-ui/tree/logos-testnet-mix-demo).
 
+## Testing
+
+### Smoke Test
+
+Validates the app starts without QML errors or crashes:
+
+```bash
+nix build .#smoke-test -L
+cat result/smoke-test.log
+```
+
+### UI Integration Tests
+
+End-to-end tests that open apps, click buttons, and verify visible text using the [QML Inspector](https://github.com/logos-co/logos-qt-mcp).
+
+**Run via Nix** (fully hermetic, suitable for CI — no Node.js or npm required):
+
+```bash
+nix build .#integration-test -L
+cat result/integration-test.log
+```
+
+**Run with Node.js** (requires Node.js and a built app):
+
+```bash
+# Build the app and test framework (one-time):
+nix build
+nix build .#logos-qt-mcp -o result-mcp
+
+# Run headless (launches the app, runs tests, kills the app):
+node tests/ui-tests.mjs --ci ./result/bin/logos-basecamp
+
+# Or run against an already-running app:
+node tests/ui-tests.mjs
+
+# Run a subset:
+node tests/ui-tests.mjs counter
+```
+
+Tests are defined in [`tests/ui-tests.mjs`](./tests/ui-tests.mjs) using the test framework from [logos-qt-mcp](https://github.com/logos-co/logos-qt-mcp). See the [logos-qt-mcp README](https://github.com/logos-co/logos-qt-mcp#readme) for the full test API.
+
+### AI Agent Interaction (MCP)
+
+An MCP server allows AI assistants (Claude, etc.) to interact with a running instance of the app — inspecting the UI, clicking elements, reading properties, and taking screenshots.
+
+Build the logos-qt-mcp package (one-time, includes the MCP server, test framework, and Qt plugin):
+
+```bash
+nix build .#logos-qt-mcp -o result-mcp
+```
+
+The `.mcp.json` in this repo is pre-configured to use the MCP server from `result-mcp/mcp-server/`. Start the app (inspector is enabled by default in debug/dev builds), and the agent can use tools like `qml_find_and_click`, `qml_screenshot`, `qml_list_interactive`, etc. See the [logos-qt-mcp README](https://github.com/logos-co/logos-qt-mcp#readme) for the full list of available tools.
+
 ## Requirements
 
 ### Build Tools

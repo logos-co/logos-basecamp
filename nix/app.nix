@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosLiblogos, logosSdk, logosDesignSystem, logosPackageManager, preinstallPkgs ? [], portable ? false }:
+{ pkgs, common, src, logosLiblogos, logosSdk, logosDesignSystem, logosPackageManager, logosQtMcp ? null, preinstallPkgs ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -146,6 +146,12 @@ pkgs.stdenv.mkDerivation rec {
     test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
     test -d "${logosDesignSystem}" || (echo "logos-design-system not found" && exit 1)
 
+    ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) ''
+      echo "Copying logos-qt-mcp source for inspector..."
+      mkdir -p ./logos-qt-mcp
+      cp -r ${logosQtMcp}/* ./logos-qt-mcp/
+    ''}
+
     cmake -S app -B build \
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
@@ -155,7 +161,9 @@ pkgs.stdenv.mkDerivation rec {
       -DCMAKE_SKIP_BUILD_RPATH=TRUE \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
-      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"}
+      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
+      -DENABLE_QML_INSPECTOR=${if enableInspector then "ON" else "OFF"} \
+      ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
 
     runHook postConfigure
   '';

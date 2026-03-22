@@ -17,6 +17,7 @@
     logos-counter.url = "github:logos-co/counter";
     nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
+    logos-qt-mcp.url = "github:logos-co/logos-qt-mcp";
     nix-bundle-appimage.url = "github:logos-co/nix-bundle-appimage";
     nix-bundle-macos-app = {
       url = "github:logos-co/nix-bundle-macos-app";
@@ -25,7 +26,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, logos-qt-mcp, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -45,6 +46,7 @@
         logosDesignSystem = logos-design-system.packages.${system}.default;
         logosCounterQml = logos-counter-qml.packages.${system}.default;
         logosCounter = logos-counter.packages.${system}.default;
+        logosQtMcp = logos-qt-mcp.packages.${system}.default;
         logosCppSdkSrc = logos-cpp-sdk.outPath;
         logosLiblogosSrc = logos-liblogos.outPath;
         logosPackageManagerSrc = logos-package-manager.outPath;
@@ -55,7 +57,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosLiblogos, logosLiblogosPortable, logosPackageManager, logosPackageManagerLib, logosPackageManagerPortable, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, bundleLgx, bundleLgxPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosLiblogos, logosLiblogosPortable, logosPackageManager, logosPackageManagerLib, logosPackageManagerPortable, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, logosQtMcp, bundleLgx, bundleLgxPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -104,6 +106,7 @@
           # App package (development build)
           app = import ./nix/app.nix {
             inherit pkgs common src logosLiblogos logosSdk logosDesignSystem logosPackageManager;
+            inherit logosQtMcp;
             preinstallPkgs = preinstallPkgsDev;
           };
 
@@ -115,6 +118,7 @@
             logosPackageManager = logosPackageManagerPortable;
             preinstallPkgs = preinstallPkgsDistributed;
             portable = true;
+            enableInspector = false;
           };
 
           # macOS distribution packages (only for Darwin)
@@ -129,6 +133,29 @@
             import ./nix/macos-dmg.nix {
               inherit pkgs;
               appBundle = appBundle;
+            }
+          else null;
+
+          # Distributed build with inspector enabled (for macOS integration tests)
+          appDistributedWithInspector = import ./nix/app.nix {
+            inherit pkgs common src logosSdk logosDesignSystem;
+            inherit logosQtMcp;
+            logosLiblogos = logosLiblogosPortable;
+            logosPackageManager = logosPackageManagerPortable;
+            preinstallPkgs = preinstallPkgsDistributed;
+            portable = true;
+            enableInspector = true;
+          };
+
+          # macOS app for testing (distributed build with inspector enabled)
+          macosAppTest = if pkgs.stdenv.isDarwin then
+            nix-bundle-macos-app.lib.${system}.mkMacOSApp {
+              drv = appDistributedWithInspector;
+              name = "LogosBasecamp";
+              bundle = dirBundler appDistributedWithInspector;
+              icon = ./app/macos/logos.icns;
+              infoPlist = ./app/macos/Info.plist.in;
+              entitlements = ./app/macos/LogosBasecamp.entitlements;
             }
           else null;
 
@@ -165,8 +192,19 @@
           # Bundle outputs
           bin-bundle-dir = dirBundler appDistributed;
 
+          # QML Inspector MCP server: nix build .#mcp-server -o result-mcp
+          mcp-server = logos-qt-mcp.packages.${system}.mcp-server;
+
+          # Full logos-qt-mcp package (includes test-framework, mcp-server, qt-plugin)
+          # Use: nix build .#logos-qt-mcp -o result-mcp
+          # Then: LOGOS_QT_MCP=./result-mcp node tests/ui-tests.mjs --ci ./result/bin/logos-basecamp
+          logos-qt-mcp = logosQtMcp;
+
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
+
+          # Integration test (UI tests via Qt Inspector)
+          integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
           # Default package
           default = app;
@@ -185,6 +223,12 @@
             appPkg = macosApp;
             appBin = "${macosApp}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
+          integration-test-bundle = import ./nix/integration-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs
           app-bundle = appBundle;
@@ -197,6 +241,7 @@
 
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
+        integration-test = self.packages.${system}.integration-test;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerSrc, logosCapabilityModuleSrc }: {
