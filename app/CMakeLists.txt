@@ -21,7 +21,30 @@ else()
     set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib:\$ORIGIN/lib")
 endif()
 
-find_package(Qt6 COMPONENTS Widgets RemoteObjects Quick Qml QuickWidgets QuickControls2 REQUIRED)
+find_package(Qt6 COMPONENTS Widgets RemoteObjects Quick Qml QuickWidgets QuickControls2 Network REQUIRED)
+
+# QML Inspector (Qt DevTools-like inspection over TCP)
+# Enabled by default in Debug builds, disabled in Release.
+# Override with -DENABLE_QML_INSPECTOR=ON/OFF
+if(NOT DEFINED ENABLE_QML_INSPECTOR)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        set(ENABLE_QML_INSPECTOR OFF)
+    else()
+        set(ENABLE_QML_INSPECTOR ON)
+    endif()
+endif()
+
+if(ENABLE_QML_INSPECTOR)
+    if(NOT DEFINED LOGOS_QT_MCP_ROOT)
+        # Default: workspace layout (repos/logos-qt-mcp alongside repos/logos-basecamp)
+        get_filename_component(LOGOS_QT_MCP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../logos-qt-mcp" REALPATH)
+    endif()
+    if(NOT EXISTS "${LOGOS_QT_MCP_ROOT}/qt-plugin/CMakeLists.txt")
+        message(FATAL_ERROR "logos-qt-mcp not found at ${LOGOS_QT_MCP_ROOT}. "
+                            "Set LOGOS_QT_MCP_ROOT or clone https://github.com/logos-co/logos-qt-mcp")
+    endif()
+    add_subdirectory(${LOGOS_QT_MCP_ROOT}/qt-plugin ${CMAKE_CURRENT_BINARY_DIR}/qml-inspector)
+endif()
 
 # Add interfaces, utils, and macos directories to include path
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -112,6 +135,11 @@ if(LOGOS_PORTABLE_BUILD)
     message(STATUS "Building LogosBasecamp as portable (LOGOS_PORTABLE_BUILD enabled)")
 endif()
 
+if(ENABLE_QML_INSPECTOR)
+    target_compile_definitions(LogosBasecamp PRIVATE ENABLE_QML_INSPECTOR)
+    message(STATUS "QML Inspector enabled")
+endif()
+
 # Link with logos_core, logos_sdk, and all Qt modules needed by plugins.
 # Plugins (main_ui, package_manager_ui) are loaded at runtime and depend on
 # these Qt libraries. Linking them here ensures the portable bundler includes
@@ -125,6 +153,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickControls2
     logos_core
     logos_sdk
+    $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
 )
 
 if(APPLE)

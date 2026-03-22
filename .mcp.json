@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "qml-inspector": {
+      "command": "node",
+      "args": ["result-mcp/mcp-server/index.mjs"],
+      "env": {
+        "QML_INSPECTOR_HOST": "localhost",
+        "QML_INSPECTOR_PORT": "3768"
+      }
+    }
+  }
+}

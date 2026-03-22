@@ -3,6 +3,9 @@
 #include "token_manager.h"
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
+#ifdef ENABLE_QML_INSPECTOR
+#include "inspectorserver.h"
+#endif
 #include <QApplication>
 #include <QIcon>
 #include <QDir>
@@ -186,6 +189,11 @@ int main(int argc, char *argv[])
     // Create and show the main window
     Window mainWindow(&logosAPI);
     mainWindow.show();
+
+#ifdef ENABLE_QML_INSPECTOR
+    // Start QML Inspector server (controlled by QML_INSPECTOR_PORT env var, default 3768)
+    InspectorServer::attach(&mainWindow);
+#endif
 
     // Set up timer to poll module stats every 2 seconds
     QTimer* statsTimer = new QTimer(&app);
