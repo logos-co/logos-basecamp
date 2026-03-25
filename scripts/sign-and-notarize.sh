@@ -86,7 +86,7 @@ trap "rm -rf '${TEMP_DIR}' '${CERTS_DIR}'" EXIT
 
 APP_BUNDLE="${TEMP_DIR}/LogosBasecamp.app"
 CONTENTS="${APP_BUNDLE}/Contents"
-ENTITLEMENTS="${TEMP_DIR}/entitlements.plist"
+ENTITLEMENTS="./app/macos/LogosBasecamp.entitlements"
 KEYCHAIN_NAME="build.keychain"
 KEYCHAIN_DB_PATH="${HOME}/Library/Keychains/${KEYCHAIN_NAME}-db"
 
@@ -131,25 +131,10 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
   echo "Starting signing phase."
 
   ###############################################################################
-  # 0. Create entitlements file
-  ###############################################################################
-  cat > "${ENTITLEMENTS}" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-  ###############################################################################
   # 1. Remove all existing signatures
   ###############################################################################
   echo "Removing existing signatures..."
-  find "${APP_BUNDLE}" -type f -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
-  find "${APP_BUNDLE}" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
+  find "${APP_BUNDLE}" -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
 
   ###############################################################################
   # 2. Set up a temporary keychain and import the certificate

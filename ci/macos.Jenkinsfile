@@ -77,9 +77,10 @@ pipeline {
       }
       steps {
         script {
-          logos.signAndNotarizeApp(
+          logos.codesignApp(
             bundlePath: 'result/LogosBasecamp.app',
             outputPath: env.NOTARIZED_ARTIFACT,
+            mode: 'both',
             timeout: '30m'
           )
         }
