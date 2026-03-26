@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QString>
+#include <QDir>
 #include <QProcessEnvironment>
 
 namespace LogosBasecampPaths {
@@ -55,6 +56,21 @@ inline QString pluginsDirectory()
 inline QString modulesDirectory()
 {
     return isPortableBuild() ? portableModulesDirectory() : nonPortableModulesDirectory();
+}
+
+// Embedded directories — read-only, pre-installed at build time alongside the binary.
+inline QString embeddedModulesDirectory()
+{
+    QDir appDir(QCoreApplication::applicationDirPath());
+    appDir.cdUp();
+    return QDir::cleanPath(appDir.absolutePath() + "/modules");
+}
+
+inline QString embeddedPluginsDirectory()
+{
+    QDir appDir(QCoreApplication::applicationDirPath());
+    appDir.cdUp();
+    return QDir::cleanPath(appDir.absolutePath() + "/plugins");
 }
 
 } // namespace LogosBasecampPaths

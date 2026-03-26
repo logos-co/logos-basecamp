@@ -11,7 +11,6 @@
 #include <QDir>
 #include <QTimer>
 #include <QStandardPaths>
-#include <QPluginLoader>
 #include <iostream>
 #include <memory>
 #include <QStringList>
@@ -32,66 +31,6 @@ extern "C" {
     int logos_core_load_plugin(const char* plugin_name);
     char* logos_core_process_plugin(const char* plugin_path);
     char* logos_core_get_module_stats();
-}
-
-// On every launch, attempt to install any preinstall lgx package that is not yet present in the
-// user's data directories at an equal-or-higher version. Uses the bundled package_manager_plugin
-// library directly (via QPluginLoader), since on first boot the package manager module itself
-// has not been installed yet and is not available through logos core.
-static void runPreinstallIfNeeded()
-{
-    QString preinstallDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../preinstall");
-    if (!QDir(preinstallDir).exists()) {
-        qInfo() << "No preinstall directory found at" << preinstallDir;
-        return;
-    }
-
-    QStringList lgxFiles = QDir(preinstallDir).entryList({"*.lgx"}, QDir::Files);
-    if (lgxFiles.isEmpty())
-        return;
-
-    QString userModulesDir = LogosBasecampPaths::modulesDirectory();
-    QString userPluginsDir = LogosBasecampPaths::pluginsDirectory();
-
-    // Load the bundled package_manager_plugin library directly.
-    QString pluginExtension;
-#if defined(Q_OS_MAC)
-    pluginExtension = ".dylib";
-#elif defined(Q_OS_WIN)
-    pluginExtension = ".dll";
-#else
-    pluginExtension = ".so";
-#endif
-
-    QString pmLibPath = QDir::cleanPath(
-        QCoreApplication::applicationDirPath() + "/../lib/package_manager_plugin" + pluginExtension);
-    QPluginLoader loader(pmLibPath);
-    if (!loader.load()) {
-        qWarning() << "Failed to load bundled package_manager_plugin for preinstall:"
-                    << loader.errorString();
-        return;
-    }
-
-    QObject* plugin = loader.instance();
-    if (!plugin) {
-        qWarning() << "Failed to get package_manager_plugin instance";
-        return;
-    }
-
-    LogosProviderPlugin* providerPlugin = qobject_cast<LogosProviderPlugin*>(plugin);
-    LogosProviderObject* provider = providerPlugin
-        ? providerPlugin->createProviderObject()
-        : new QtProviderObject(plugin);
-
-    provider->callMethod("setPluginsDirectory", {userModulesDir});
-    provider->callMethod("setUiPluginsDirectory", {userPluginsDir});
-
-    for (const QString& lgxFile : lgxFiles) {
-        QString lgxPath = preinstallDir + "/" + lgxFile;
-        qInfo() << "Preinstalling (if needed):" << lgxPath;
-        provider->callMethod("installPlugin", {lgxPath, true});
-    }
-    delete provider;
 }
 
 // Helper function to convert C-style array to QStringList
@@ -115,38 +54,18 @@ int main(int argc, char *argv[])
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
 
-    // Install preinstall lgx packages before starting logos core, using the bundled
-    // package_manager_plugin directly. This ensures all modules are in place when
-    // logos core scans the user directories on startup.
-    runPreinstallIfNeeded();
+    // Set up module directories for logos core.
+    // 1. Embedded modules directory (pre-installed at build time, read-only)
+    QString embeddedModulesDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../modules");
+    logos_core_set_plugins_dir(embeddedModulesDir.toUtf8().constData());
 
+    // 2. User-writable modules directory (for runtime installs via the package store)
     QString userModulesDir = LogosBasecampPaths::modulesDirectory();
-
-    // All modules are installed to the user data directory via preinstall/ lgx packages.
-    logos_core_set_plugins_dir(userModulesDir.toUtf8().constData());
+    logos_core_add_plugins_dir(userModulesDir.toUtf8().constData());
 
     // Start the core
     logos_core_start();
     std::cout << "Logos Core started successfully!" << std::endl;
-
-    // The core scanner doesn't recurse into subdirectories, so we manually
-    // discover and process each module installed by the LGX preinstall step.
-    QString platformKey;
-#if defined(Q_OS_MAC)
-  #if defined(Q_PROCESSOR_ARM)
-    platformKey = "darwin-arm64";
-  #else
-    platformKey = "darwin-x86_64";
-  #endif
-#elif defined(Q_OS_WIN)
-    platformKey = "windows-x86_64";
-#elif defined(Q_OS_LINUX)
-  #if defined(Q_PROCESSOR_ARM)
-    platformKey = "linux-arm64";
-  #else
-    platformKey = "linux-x86_64";
-  #endif
-#endif
 
     bool loaded = logos_core_load_plugin("package_manager");
 

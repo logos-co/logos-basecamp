@@ -255,6 +255,7 @@ target_link_libraries(main_ui
         component-interfaces
 )
 
+
 # Link logos_core library if available (for logos_core_get_module_stats)
 if(_liblogos_found)
     target_link_libraries(main_ui PRIVATE logos_core)

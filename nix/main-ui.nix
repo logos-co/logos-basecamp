@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosModule, logosPackageManager, logosLiblogos, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosModule, logosPackageManagerModule, logosLiblogos, distributed ? false }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-main-ui-plugin";
@@ -50,15 +50,15 @@ pkgs.stdenv.mkDerivation {
       cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
     fi
     
-    # Copy module-generated API files from logos-package-manager
-    echo "Copying include files from logos-package-manager..."
-    if [ -d "${logosPackageManager}/include" ]; then
-      echo "Found include directory in logos-package-manager"
-      cp -r "${logosPackageManager}/include"/* ./src/generated_code/
+    # Copy module-generated API files from logos-package-manager-module
+    echo "Copying include files from logos-package-manager-module..."
+    if [ -d "${logosPackageManagerModule}/include" ]; then
+      echo "Found include directory in logos-package-manager-module"
+      cp -r "${logosPackageManagerModule}/include"/* ./src/generated_code/
       echo "Copied include files:"
       ls -la ./src/generated_code/
     else
-      echo "Warning: No include directory found in logos-package-manager"
+      echo "Warning: No include directory found in logos-package-manager-module"
     fi
 
     # Run logos-cpp-generator with metadata.json and --general-only flag

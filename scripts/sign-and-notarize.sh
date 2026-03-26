@@ -77,18 +77,18 @@ echo "==> Available identities:"
 security find-identity -v -p codesigning
 
 ###############################################################################
-# 2. Sign + repack .lgx archives in Contents/preinstall/
+# 2. Sign dylibs in pre-installed modules/ and plugins/ directories
 ###############################################################################
-echo "==> Signing dylibs inside .lgx archives..."
-find "${CONTENTS}/preinstall" -name "*.lgx" | while read -r lgx; do
-    echo "  Processing: ${lgx}"
-    tmpdir=$(mktemp -d)
-    tar -xzf "$lgx" -C "$tmpdir"
-    find "$tmpdir" -name "*.dylib" -exec \
-        codesign --force --options runtime --sign "${MACOS_CODESIGN_IDENT}" --timestamp {} \;
-    gtar -czf "$lgx" -C "$tmpdir" --transform 's|^\./||' .
-    rm -rf "$tmpdir"
-    echo "  Repacked: ${lgx}"
+echo "==> Signing dylibs in modules/..."
+find "${CONTENTS}/modules" -name '*.dylib' -type f 2>/dev/null | while read -r dylib; do
+    echo "  Signing: ${dylib}"
+    codesign --force --options runtime --sign "${MACOS_CODESIGN_IDENT}" --timestamp "${dylib}"
+done
+
+echo "==> Signing dylibs in plugins/..."
+find "${CONTENTS}/plugins" -name '*.dylib' -type f 2>/dev/null | while read -r dylib; do
+    echo "  Signing: ${dylib}"
+    codesign --force --options runtime --sign "${MACOS_CODESIGN_IDENT}" --timestamp "${dylib}"
 done
 
 ###############################################################################

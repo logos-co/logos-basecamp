@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosPackageManager, logosQtMcp ? null, preinstallPkgs ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosQtMcp ? null, lgpm, lgxPkgs ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -25,7 +25,7 @@ pkgs.stdenv.mkDerivation rec {
   inherit (common) meta;
 
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
-  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk pkgs.patchelf pkgs.removeReferencesTo ];
+  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk lgpm pkgs.patchelf pkgs.removeReferencesTo ];
 
   # Provide Qt/GL runtime paths so the wrapper can inject them
   qtLibPath = pkgs.lib.makeLibraryPath (
@@ -88,8 +88,8 @@ pkgs.stdenv.mkDerivation rec {
     runHook postPreConfigure
   '';
 
-  # preinstall/ is carried into portable bundles by nix-bundle-dir
-  passthru = { extraDirs = [ "preinstall" ]; };
+  # modules/ and plugins/ are carried into portable bundles by nix-bundle-dir
+  passthru = { extraDirs = [ "modules" "plugins" ]; };
 
   # This is an aggregate runtime layout; avoid stripping to prevent hook errors
   dontStrip = true;
@@ -184,7 +184,7 @@ pkgs.stdenv.mkDerivation rec {
     runHook preInstall
 
     # Create output directories
-    mkdir -p $out/bin $out/lib $out/preinstall
+    mkdir -p $out/bin $out/lib $out/modules $out/plugins
 
     # Install our app binary (real binary, so Qt hook can wrap it)
     if [ -f "build/LogosBasecamp" ]; then
@@ -202,34 +202,27 @@ pkgs.stdenv.mkDerivation rec {
       echo "Installed logos_host binary"
     fi
 
-    # Copy required shared libraries from liblogos
-    if ls "${logosLiblogos}/lib/"liblogos_core.* >/dev/null 2>&1; then
-      cp -L "${logosLiblogos}/lib/"liblogos_core.* "$out/lib/" || true
-    fi
+    # Copy shared libraries from liblogos (includes logos_core and its dependency package_manager_lib)
+    for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so; do
+      if [ -f "$f" ]; then
+        cp -L "$f" "$out/lib/" || true
+      fi
+    done
 
     # Copy SDK library if it exists
     if ls "${logosSdk}/lib/"liblogos_sdk.* >/dev/null 2>&1; then
       cp -L "${logosSdk}/lib/"liblogos_sdk.* "$out/lib/" || true
     fi
 
-    # Bundle the package_manager_plugin library for direct use during preinstall.
-    # On first boot, logos core can't load the package_manager module (it hasn't been
-    # installed yet), so the app loads this bundled copy directly via QPluginLoader.
-    if [ -d "${logosPackageManager}/lib" ]; then
-      for f in "${logosPackageManager}/lib/"*; do
-        if [ -f "$f" ]; then
-          cp -L "$f" "$out/lib/" || true
-        fi
+    # Pre-install LGX packages at build time via lgpm.
+    # Core modules go to $out/modules, UI plugins go to $out/plugins.
+    for pkg in ${pkgs.lib.concatStringsSep " " (map toString lgxPkgs)}; do
+      for lgxFile in "$pkg"/*.lgx; do
+        echo "Installing $lgxFile via lgpm..."
+        lgpm --modules-dir "$out/modules" --ui-plugins-dir "$out/plugins" install --file "$lgxFile"
       done
-      echo "Bundled package_manager_plugin library"
-    fi
-
-    # Copy preinstall lgx packages — installed into the user's data directory on first launch.
-    # Includes core modules (package_manager, capability_module) and all UI plugins.
-    for pkg in ${pkgs.lib.concatStringsSep " " (map toString preinstallPkgs)}; do
-      cp "$pkg"/*.lgx "$out/preinstall/"
     done
-    echo "Populated preinstall/ with lgx packages"
+    echo "Pre-installed modules and plugins via lgpm"
 
     # Copy design system QML modules (Logos.Theme, Logos.Controls) for runtime
     if [ -d "${logosDesignSystem}/lib/Logos/Theme" ]; then
@@ -242,8 +235,6 @@ pkgs.stdenv.mkDerivation rec {
       cp -R "${logosDesignSystem}/lib/Logos/Controls" "$out/lib/Logos/"
       echo "Copied Logos.Controls to lib/Logos/Controls/"
     fi
-
-    # Note: webview_app QML and HTML files are now embedded in the plugin via qrc
 
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then
@@ -276,9 +267,10 @@ cpp-sdk: ${logosSdk}
 logos-design-system: ${logosDesignSystem}
 
 Runtime Layout:
-    - Binary: $out/bin/LogosBasecamp
+- Binary: $out/bin/LogosBasecamp
 - Libraries: $out/lib
-- Preinstall packages: $out/preinstall (installed to user data dir on first launch)
+- Embedded modules: $out/modules (pre-installed at build time)
+- Embedded plugins: $out/plugins (pre-installed at build time)
 
 Usage:
   $out/bin/LogosBasecamp

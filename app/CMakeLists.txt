@@ -153,7 +153,7 @@ if(ENABLE_QML_INSPECTOR)
 endif()
 
 # Link with logos_core, logos_sdk, and all Qt modules needed by plugins.
-# Plugins (main_ui, package_manager_ui) are loaded at runtime and depend on
+# Plugins (main_ui) are loaded at runtime and depend on
 # these Qt libraries. Linking them here ensures the portable bundler includes
 # them in the app bundle.
 target_link_libraries(LogosBasecamp PRIVATE

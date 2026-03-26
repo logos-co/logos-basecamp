@@ -47,7 +47,7 @@ test("webview_app: click Local File", async (app) => {
 test("package_manager_ui: open and verify categories", async (app) => {
   await app.click("package_manager_ui");
 
-  await app.expectTexts(["Reload", "Test Call2"]);
+  await app.expectTexts(["Reload", "Install"]);
 });
 
 // --- Counter ---

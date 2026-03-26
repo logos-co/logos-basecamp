@@ -8,7 +8,9 @@
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
     logos-module.url = "github:logos-co/logos-module";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
-    logos-package-manager.url = "github:logos-co/logos-package-manager-module";
+    logos-package-manager.url = "github:logos-co/logos-package-manager";
+    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
@@ -27,7 +29,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, logos-qt-mcp, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, logos-qt-mcp, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -36,10 +38,15 @@
         logosSdk = logos-cpp-sdk.packages.${system}.default;
         logosModule = logos-module.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
-        logosPackageManager = logos-package-manager.packages.${system}.default;
-        logosPackageManagerLib = logos-package-manager.packages.${system}.lib;
+        logosPackageManagerLibrary = logos-package-manager.packages.${system}.lib;
+        lgpm = logos-package-manager.packages.${system}.cli;
+        lgpmPortable = logos-package-manager.packages.${system}.cli-portable;
+        logosPackageManagerModule = logos-package-manager-module.packages.${system}.default;
+        logosPackageManagerModuleLib = logos-package-manager-module.packages.${system}.lib;
+        logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.default;
+        logosPackageDownloaderModuleLib = logos-package-downloader-module.packages.${system}.lib;
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
-        logosPackageManagerPortable = logos-package-manager.packages.${system}.lib-portable;
+        logosPackageManagerModulePortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
@@ -51,7 +58,7 @@
         logosQtMcp = logos-qt-mcp.packages.${system}.default;
         logosCppSdkSrc = logos-cpp-sdk.outPath;
         logosLiblogosSrc = logos-liblogos.outPath;
-        logosPackageManagerSrc = logos-package-manager.outPath;
+        logosPackageManagerModuleSrc = logos-package-manager-module.outPath;
         logosCapabilityModuleSrc = logos-capability-module.outPath;
         bundleLgx = nix-bundle-lgx.bundlers.${system}.default;
         bundleLgxPortable = nix-bundle-lgx.bundlers.${system}.portable;
@@ -59,7 +66,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManager, logosPackageManagerLib, logosPackageManagerPortable, logosCapabilityModule, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, logosQtMcp, bundleLgx, bundleLgxPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, lgpm, lgpmPortable, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModulePortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageManagerUI, logosPackageManagerUIDistributed, logosCapabilityModule, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, logosQtMcp, bundleLgx, bundleLgxPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -71,23 +78,24 @@
           counterPlugin = logosCounter;
           counterQmlPlugin = logosCounterQml;
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManager logosLiblogos;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
           webviewAppPlugin = logosWebviewApp;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManager logosLiblogos;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos;
             distributed = true;
           };
           packageManagerUIPluginDistributed = logosPackageManagerUIDistributed;
 
-          # LGX preinstall packages — installed on first app launch via the package manager.
+          # LGX packages — pre-installed at build time via lgpm.
           # Dev build: raw derivation (depends on /nix/store at runtime).
           # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied).
-          preinstallPkgsDev = map bundleLgx [
-            logosPackageManagerLib
+          lgxPkgsDev = map bundleLgx [
+            logosPackageManagerModuleLib
+            logosPackageDownloaderModuleLib
             logosCapabilityModule
             counterPlugin
             counterQmlPlugin
@@ -95,8 +103,9 @@
             packageManagerUIPlugin
             webviewAppPlugin
           ];
-          preinstallPkgsDistributed = map bundleLgxPortable [
-            logosPackageManagerPortable
+          lgxPkgsDistributed = map bundleLgxPortable [
+            logosPackageManagerModulePortable
+            logosPackageDownloaderModuleLib
             logosCapabilityModule
             counterPlugin
             counterQmlPlugin
@@ -107,18 +116,18 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem logosPackageManager;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem lgpm;
             inherit logosQtMcp;
-            preinstallPkgs = preinstallPkgsDev;
+            lgxPkgs = lgxPkgsDev;
           };
 
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos and package-manager for portable variant selection
           appDistributed = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosDesignSystem;
+            lgpm = lgpmPortable;
             logosLiblogos = logosLiblogosPortable;
-            logosPackageManager = logosPackageManagerPortable;
-            preinstallPkgs = preinstallPkgsDistributed;
+            lgxPkgs = lgxPkgsDistributed;
             portable = true;
             enableInspector = false;
           };
@@ -142,9 +151,9 @@
           appDistributedWithInspector = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosDesignSystem;
             inherit logosQtMcp;
+            lgpm = lgpmPortable;
             logosLiblogos = logosLiblogosPortable;
-            logosPackageManager = logosPackageManagerPortable;
-            preinstallPkgs = preinstallPkgsDistributed;
+            lgxPkgs = lgxPkgsDistributed;
             portable = true;
             enableInspector = true;
           };
@@ -246,7 +255,7 @@
         integration-test = self.packages.${system}.integration-test;
       });
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosModule, logosLiblogos, logosPackageManager, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerSrc, logosCapabilityModuleSrc }: {
+      devShells = forAllSystems ({ pkgs, logosSdk, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.cmake
@@ -266,7 +275,7 @@
             export LOGOS_CPP_SDK_ROOT="${logosSdk}"
             export LOGOS_MODULE_ROOT="${logosModule}"
             export LOGOS_LIBLOGOS_ROOT="${logosLiblogos}"
-            export LOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManager}"
+            export LOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}"
             export LOGOS_CAPABILITY_MODULE_ROOT="${logosCapabilityModule}"
             export LGX_ROOT="${logosPackageLib}"
             export LOGOS_DESIGN_SYSTEM_ROOT="${logosDesignSystem}"
@@ -274,7 +283,7 @@
             # Source paths for iOS builds (from flake inputs)
             export LOGOS_CPP_SDK_SRC="${logosCppSdkSrc}"
             export LOGOS_LIBLOGOS_SRC="${logosLiblogosSrc}"
-            export LOGOS_PACKAGE_MANAGER_SRC="${logosPackageManagerSrc}"
+            export LOGOS_PACKAGE_MANAGER_MODULE_SRC="${logosPackageManagerModuleSrc}"
             export LOGOS_CAPABILITY_MODULE_SRC="${logosCapabilityModuleSrc}"
             
             echo "Logos App development environment"
@@ -291,7 +300,7 @@
             echo "Source paths (for iOS builds):"
             echo "  LOGOS_CPP_SDK_SRC: $LOGOS_CPP_SDK_SRC"
             echo "  LOGOS_LIBLOGOS_SRC: $LOGOS_LIBLOGOS_SRC"
-            echo "  LOGOS_PACKAGE_MANAGER_SRC: $LOGOS_PACKAGE_MANAGER_SRC"
+            echo "  LOGOS_PACKAGE_MANAGER_MODULE_SRC: $LOGOS_PACKAGE_MANAGER_MODULE_SRC"
             echo "  LOGOS_CAPABILITY_MODULE_SRC: $LOGOS_CAPABILITY_MODULE_SRC"
           '';
         };

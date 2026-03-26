@@ -4,7 +4,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonParseError>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -18,6 +18,7 @@
 #include <QUrl>
 #include <QIcon>
 #include <QStandardPaths>
+#include <QPointer>
 #include <QFileDialog>
 #include "LogosQmlBridge.h"
 #include "logos_sdk.h"
@@ -32,6 +33,7 @@ extern "C" {
     char** logos_core_get_loaded_plugins();
     int logos_core_load_plugin_with_dependencies(const char* plugin_name);
     int logos_core_unload_plugin(const char* plugin_name);
+    void logos_core_refresh_plugins();
 }
 
 MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
@@ -53,11 +55,12 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     connect(m_statsTimer, &QTimer::timeout, this, &MainUIBackend::updateModuleStats);
     m_statsTimer->start(2000);
     
-    refreshUiModules();
     refreshCoreModules();
-    refreshLauncherApps();
-    
+
     subscribeToPackageInstallationEvents();
+
+    // Initial async fetch of UI plugin metadata (emits uiModulesChanged + launcherAppsChanged when done)
+    fetchUiPluginMetadata();
     
     qDebug() << "MainUIBackend created";
 }
@@ -88,32 +91,27 @@ void MainUIBackend::subscribeToPackageInstallationEvents()
     }
     
     LogosModules logos(m_logosAPI);
-    logos.package_manager.on("packageInstallationFinished", [this](const QVariantList& data) {
-        if (data.size() < 3) {
-            return;
-        }
-        bool success = data[1].toBool();
-        
-        if (success) {
-            QTimer::singleShot(100, this, [this]() {
-                refreshUiModules();
-                refreshCoreModules();
-                refreshLauncherApps();
-            });
-        }
+
+    // Configure the package_manager module's directories so it knows where to install
+    logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
+    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
+    logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
+    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+
+    logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
+        if (data.isEmpty()) return;
+        qDebug() << "Core module file installed:" << data[0].toString();
+        QTimer::singleShot(100, this, [this]() {
+            refreshCoreModules();
+        });
     });
 
-    logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data) {
+    logos.package_manager.on("uiPluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
-        QString pluginPath = data[0].toString();
-        qDebug() << "Processing installed core plugin:" << pluginPath;
-        char* result = logos_core_process_plugin(pluginPath.toUtf8().constData());
-        if (result) {
-            qDebug() << "Successfully processed plugin:" << QString::fromUtf8(result);
-            delete[] result;
-        } else {
-            qWarning() << "Failed to process plugin:" << pluginPath;
-        }
+        qDebug() << "UI plugin file installed:" << data[0].toString();
+        QTimer::singleShot(100, this, [this]() {
+            fetchUiPluginMetadata();
+        });
     });
 }
 
@@ -151,7 +149,7 @@ void MainUIBackend::setCurrentActiveSectionIndex(int index)
         const QVariantMap section = m_sections[index].toMap();
         const QString name = section.value("name").toString();
         if (name == "Modules") {
-            refreshUiModules();
+            fetchUiPluginMetadata();
             refreshCoreModules();
         }
     }
@@ -190,11 +188,10 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
         return;
     }
     
-    // Load core module dependencies from metadata
-    QJsonObject metadata = readPluginMetadata(moduleName);
-    QJsonArray dependencies = metadata.value("dependencies").toArray();
-    if (!dependencies.isEmpty()) {
-        for (const QJsonValue& dep : dependencies) {
+    // Load core module dependencies from cached metadata
+    if (m_uiPluginMetadata.contains(moduleName)) {
+        QVariantList dependencies = m_uiPluginMetadata[moduleName].value("dependencies").toList();
+        for (const QVariant& dep : dependencies) {
             QString depName = dep.toString();
             if (!depName.isEmpty()) {
                 qDebug() << "Loading core module dependency for UI module" << moduleName << ":" << depName;
@@ -211,9 +208,9 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
     qDebug() << "Loading plugin from:" << pluginPath;
 
     if (isQmlPlugin(moduleName)) {
-        QJsonObject metadata = readQmlPluginMetadata(moduleName);
-        QString mainFile = metadata.value("main").toString("Main.qml");
-        QString qmlFilePath = QDir(pluginPath).filePath(mainFile);
+        QString qmlFilePath = m_uiPluginMetadata.contains(moduleName)
+            ? m_uiPluginMetadata[moduleName].value("mainFilePath").toString()
+            : QDir(pluginPath).filePath("Main.qml");
 
         if (!QFile::exists(qmlFilePath)) {
             qWarning() << "Main QML file does not exist for plugin" << moduleName << ":" << qmlFilePath;
@@ -361,10 +358,6 @@ void MainUIBackend::unloadUiModule(const QString& moduleName)
     qDebug() << "Successfully unloaded UI module:" << moduleName;
 }
 
-void MainUIBackend::refreshUiModules()
-{
-    emit uiModulesChanged();
-}
 
 void MainUIBackend::activateApp(const QString& appName)
 {
@@ -485,43 +478,8 @@ void MainUIBackend::unloadCoreModule(const QString& moduleName)
 
 void MainUIBackend::refreshCoreModules()
 {
-    QString libExtension;
-#if defined(Q_OS_MAC)
-    libExtension = ".dylib";
-#elif defined(Q_OS_WIN)
-    libExtension = ".dll";
-#else
-    libExtension = ".so";
-#endif
-
-    auto scanModulesDir = [&](const QString& dirPath) {
-        QDir modulesDir(dirPath);
-        if (!modulesDir.exists()) return;
-        QStringList subdirs = modulesDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QString& subdir : subdirs) {
-            QString subdirPath = dirPath + "/" + subdir;
-            // Only process subdirectories that have a manifest.json
-            QString manifestPath = subdirPath + "/manifest.json";
-            QFile manifestFile(manifestPath);
-            if (!manifestFile.open(QIODevice::ReadOnly)) continue;
-            QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
-            manifestFile.close();
-            if (!doc.isObject()) continue;
-            QString type = doc.object().value("type").toString();
-            if ((type == "ui") || (type == "ui_qml")) continue; // Skip UI plugins
-            // Use directory name to find the main library
-            QString mainLibrary = doc.object().value("main").toString();
-            if (mainLibrary.isEmpty()) {
-                continue;
-            }
-            QString pluginPath = subdirPath + "/" + mainLibrary + libExtension;
-            if (QFile::exists(pluginPath)) {
-                logos_core_process_plugin(pluginPath.toUtf8().constData());
-            }
-        }
-    };
-
-    scanModulesDir(modulesDirectory());
+    // Re-scan all plugin directories via logos_core C API
+    logos_core_refresh_plugins();
 
     emit coreModulesChanged();
 }
@@ -618,10 +576,6 @@ void MainUIBackend::onAppLauncherClicked(const QString& appName)
     }
 }
 
-void MainUIBackend::refreshLauncherApps()
-{
-    emit launcherAppsChanged();
-}
 
 void MainUIBackend::openInstallPluginDialog()
 {
@@ -638,85 +592,23 @@ void MainUIBackend::installPluginFromPath(const QString& filePath)
 {
     LogosModules logos(m_logosAPI);
 
-    logos.package_manager.setPluginsDirectory(modulesDirectory());
-    logos.package_manager.setUiPluginsDirectory(pluginsDirectory());
-
-
-    logos.package_manager.installPlugin(filePath, false);
-
-    refreshCoreModules();
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+    QPointer<MainUIBackend> self(this);
+    logos.package_manager.installPluginAsync(filePath, false, [self](QVariant result) {
+        if (!self) return;
+        Q_UNUSED(result);
+        self->refreshCoreModules();
+        self->fetchUiPluginMetadata();
+    });
 }
 
-QString MainUIBackend::pluginsDirectory() const
-{
-    return LogosBasecampPaths::pluginsDirectory();
-}
-
-QString MainUIBackend::modulesDirectory() const
-{
-    return LogosBasecampPaths::modulesDirectory();
-}
-
-QJsonObject MainUIBackend::readPluginManifest(const QString& pluginName) const
-{
-    QString manifestPath = pluginsDirectory() + "/" + pluginName + "/manifest.json";
-    QFile manifestFile(manifestPath);
-    if (!manifestFile.open(QIODevice::ReadOnly)) {
-        return QJsonObject();
-    }
-    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
-    manifestFile.close();
-    if (!doc.isObject()) {
-        return QJsonObject();
-    }
-    return doc.object();
-}
-
-QJsonObject MainUIBackend::readQmlPluginMetadata(const QString& pluginName) const
-{
-    QString userMetadataPath = pluginsDirectory() + "/" + pluginName + "/metadata.json";
-    QFile userMetadataFile(userMetadataPath);
-    if (userMetadataFile.exists() && userMetadataFile.open(QIODevice::ReadOnly)) {
-        QJsonParseError parseError;
-        QJsonDocument doc = QJsonDocument::fromJson(userMetadataFile.readAll(), &parseError);
-        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-            return doc.object();
-        }
-        qWarning() << "Failed to parse metadata for QML plugin" << pluginName << ":" << parseError.errorString();
-    }
-
-    qWarning() << "No metadata found for QML plugin" << pluginName;
-    return QJsonObject();
-}
-
-QJsonObject MainUIBackend::readPluginMetadata(const QString& pluginName) const
-{
-    if (isQmlPlugin(pluginName)) {
-        return readQmlPluginMetadata(pluginName);
-    }
-
-    // C++ plugins: dylib with embedded metadata
-    QString pluginPath = getPluginPath(pluginName);
-    QPluginLoader loader(pluginPath);
-    QJsonObject metadata = loader.metaData();
-    return metadata.value("MetaData").toObject();
-}
 
 QString MainUIBackend::getPluginType(const QString& name) const
 {
-    QString manifestPath = pluginsDirectory() + "/" + name + "/manifest.json";
-    QFile manifestFile(manifestPath);
-    if (!manifestFile.open(QIODevice::ReadOnly)) {
-        return QString();
+    const auto it = m_uiPluginMetadata.constFind(name);
+    if (it != m_uiPluginMetadata.cend()) {
+        return it->value("type").toString();
     }
-    QJsonDocument doc = QJsonDocument::fromJson(manifestFile.readAll());
-    manifestFile.close();
-    if (!doc.isObject()) {
-        return QString();
-    }
-    return doc.object().value("type").toString();
+    return QString();
 }
 
 bool MainUIBackend::isQmlPlugin(const QString& name) const
@@ -724,140 +616,63 @@ bool MainUIBackend::isQmlPlugin(const QString& name) const
     return getPluginType(name) == "ui_qml";
 }
 
-// Returns the primary platform variant key for the current build target
-// (e.g. "darwin-arm64", "linux-x86_64"). Used as the base for platformVariantsToTry().
-static QString currentPlatformVariant()
-{
-#if defined(Q_OS_MAC)
-  #if defined(Q_PROCESSOR_ARM)
-    return QStringLiteral("darwin-arm64");
-  #else
-    return QStringLiteral("darwin-x86_64");
-  #endif
-#elif defined(Q_OS_WIN)
-    return QStringLiteral("windows-x86_64");
-#elif defined(Q_OS_LINUX)
-  #if defined(Q_PROCESSOR_X86_64)
-    return QStringLiteral("linux-x86_64");
-  #elif defined(Q_PROCESSOR_ARM_64)
-    return QStringLiteral("linux-arm64");
-  #else
-    return QStringLiteral("linux-x86");
-  #endif
-#else
-    // Fallback for other OSes: preserve existing default behavior.
-    return QStringLiteral("linux-x86");
-#endif
-}
-
-// Returns the ordered list of platform variant keys to try when resolving the
-// "main" object in an LGX manifest.json. Mirrors plugin_manager.cpp::platformVariantsToTry().
-static QStringList platformVariantsToTry()
-{
-    QString primary = currentPlatformVariant();
-    QStringList variants;
-    variants << primary;
-
-    // Linux architecture aliases
-    if (primary == QLatin1String("linux-x86_64"))
-        variants << QStringLiteral("linux-amd64");
-    else if (primary == QLatin1String("linux-amd64"))
-        variants << QStringLiteral("linux-x86_64");
-    else if (primary == QLatin1String("linux-arm64"))
-        variants << QStringLiteral("linux-aarch64");
-    else if (primary == QLatin1String("linux-aarch64"))
-        variants << QStringLiteral("linux-arm64");
-
-#ifndef LOGOS_PORTABLE_BUILD
-    QStringList devVariants;
-    for (const QString& variant : variants)
-        devVariants << (variant + QStringLiteral("-dev"));
-    variants = devVariants;
-#endif
-
-    return variants;
-}
-
-// Resolves the "main" field from a plugin manifest/metadata object
-static QString resolveMainField(const QJsonObject& info, const QString& fallback)
-{
-    QJsonValue mainVal = info.value("main");
-    if (mainVal.isString()) {
-        QString s = mainVal.toString();
-        return s.isEmpty() ? fallback : s;
-    }
-    if (mainVal.isObject()) {
-        QJsonObject mainObj = mainVal.toObject();
-        for (const QString& variant : platformVariantsToTry()) {
-            QString v = mainObj.value(variant).toString();
-            if (!v.isEmpty())
-                return v;
-        }
-    }
-    return fallback;
-}
-
 QStringList MainUIBackend::findAvailableUiPlugins() const
 {
-    QStringList plugins;
+    return m_uiPluginMetadata.keys();
+}
 
-    auto scanDirectory = [&](const QString& dirPath) {
-        QDir pluginsDir(dirPath);
-        
-        if (!pluginsDir.exists()) {
-            return;
-        }
+void MainUIBackend::fetchUiPluginMetadata()
+{
+    if (!m_logosAPI) return;
 
-        auto addPlugin = [&](const QString& name) {
-            if (!plugins.contains(name)) {
-                plugins.append(name);
-            }
-        };
-
-        // Scan subdirectories for plugins (both QML and C++ plugins are in subdirectories)
-        QStringList dirEntries = pluginsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QString& entry : dirEntries) {
-            if (isQmlPlugin(entry)) {
-                addPlugin(entry);
-            } else {
-                // "main" in manifest.json is the full filename including extension.
-                QJsonObject info = readPluginManifest(entry);
-                QString mainFile = resolveMainField(info, entry);
-                QString pluginLibPath = dirPath + "/" + entry + "/" + mainFile;
-                if (QFile::exists(pluginLibPath)) {
-                    addPlugin(entry);
-                }
+    LogosModules logos(m_logosAPI);
+    QPointer<MainUIBackend> self(this);
+    logos.package_manager.getInstalledUiPluginsAsync([self](QVariantList uiPlugins) {
+        if (!self) return;
+        self->m_uiPluginMetadata.clear();
+        for (const QVariant& item : uiPlugins) {
+            QVariantMap pluginInfo = item.toMap();
+            QString name = pluginInfo.value("name").toString();
+            QString mainFilePath = pluginInfo.value("mainFilePath").toString();
+            if (!name.isEmpty() && !mainFilePath.isEmpty()) {
+                self->m_uiPluginMetadata[name] = pluginInfo;
             }
         }
-    };
-    
-    scanDirectory(pluginsDirectory());
-
-    return plugins;
+        emit self->uiModulesChanged();
+        emit self->launcherAppsChanged();
+    });
 }
 
 QString MainUIBackend::getPluginPath(const QString& name) const
 {
-    if (isQmlPlugin(name)) {
-        // QML plugins: return directory path (unchanged)
-        return pluginsDirectory() + "/" + name;
+    const auto it = m_uiPluginMetadata.constFind(name);
+    if (it != m_uiPluginMetadata.cend()) {
+        QString mainFilePath = it->value("mainFilePath").toString();
+        // For QML plugins, the caller needs the directory, not the file
+        if (isQmlPlugin(name)) {
+            return QFileInfo(mainFilePath).absolutePath();
+        }
+        return mainFilePath;
     }
 
-    // C++ plugins: "main" in manifest.json is the full filename including extension.
-    QString mainFile = resolveMainField(readPluginManifest(name), name);
-    return pluginsDirectory() + "/" + name + "/" + mainFile;
+    return QString();
 }
 
 QString MainUIBackend::getPluginIconPath(const QString& pluginName, bool forWidgetIcon) const
 {
-    QJsonObject manifest = readPluginManifest(pluginName);
-    QString iconPath = manifest.value("icon").toString();
+    if (!m_uiPluginMetadata.contains(pluginName)) {
+        return "";
+    }
+
+    const QVariantMap& meta = m_uiPluginMetadata[pluginName];
+    QString iconPath = meta.value("icon").toString();
+    QString installDir = meta.value("installDir").toString();
+
     if (iconPath.isEmpty()) {
         return "";
     }
 
-    QString pluginPath = pluginsDirectory() + "/" + pluginName;
-    QDir pluginDir(pluginPath);
+    QDir pluginDir(installDir);
     QString filePath = pluginDir.filePath(iconPath.startsWith(":/") ? iconPath.mid(2) : iconPath);
     bool exists = QFile::exists(filePath);
 

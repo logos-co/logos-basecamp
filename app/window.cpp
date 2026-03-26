@@ -6,6 +6,7 @@
 #include <QVBoxLayout>
 #include <QPluginLoader>
 #include <QDir>
+#include <QFile>
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QAction>
@@ -64,36 +65,16 @@ void Window::setupUi()
         pluginExtension = ".so";
     #endif
 
+    QString embeddedPluginsDir = LogosBasecampPaths::embeddedPluginsDirectory() + "/";
     QString userPluginsDir = LogosBasecampPaths::pluginsDirectory() + "/";
 
-    // All plugins are installed to the user data directory via preinstall/ lgx packages.
+    // Search embedded (pre-installed at build time) first, then user-writable directory.
     auto resolvePlugin = [&](const QString& subdir, const QString& name) -> QString {
+        QString embeddedPath = embeddedPluginsDir + subdir + "/" + name + pluginExtension;
+        if (QFile::exists(embeddedPath))
+            return embeddedPath;
         return userPluginsDir + subdir + "/" + name + pluginExtension;
     };
-
-    // First, load the package_manager_ui plugin (now in subdirectory)
-    QString packageManagerPluginPath = resolvePlugin("package_manager_ui", "package_manager_ui");
-    QPluginLoader packageManagerLoader(packageManagerPluginPath);
-    QWidget* packageManagerWidget = nullptr;
-    
-    if (packageManagerLoader.load()) {
-        QObject* pmPlugin = packageManagerLoader.instance();
-        if (pmPlugin) {
-            IComponent* component = qobject_cast<IComponent*>(pmPlugin);
-            if (component) {
-                packageManagerWidget = component->createWidget(m_logosAPI);
-                if (packageManagerWidget) {
-                    qDebug() << "Loaded package_manager_ui plugin successfully";
-                } else {
-                    qWarning() << "package_manager_ui plugin createWidget returned null";
-                }
-            } else {
-                qWarning() << "package_manager_ui plugin does not implement IComponent";
-            }
-        }
-    } else {
-        qWarning() << "Failed to load package_manager_ui plugin:" << packageManagerLoader.errorString();
-    }
 
     // Load the main_ui plugin with the appropriate extension (now in subdirectory)
     QString mainUiPluginPath = resolvePlugin("main_ui", "main_ui");
@@ -115,12 +96,6 @@ void Window::setupUi()
 
     if (mainContent) {
         setCentralWidget(mainContent);
-        // Pass the package manager widget to main_ui if it was loaded
-        if (packageManagerWidget && mainUiPlugin) {
-            QMetaObject::invokeMethod(mainUiPlugin, "setPackageManagerWidget",
-                                    Qt::DirectConnection,
-                                    Q_ARG(QWidget*, packageManagerWidget));
-        }
     } else {
         qWarning() << "================================================";
         qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;

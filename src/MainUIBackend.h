@@ -5,7 +5,6 @@
 #include <QVariantMap>
 #include <QStringList>
 #include <QMap>
-#include <QJsonObject>
 #include <QSet>
 #include <QTimer>
 #include <QPluginLoader>
@@ -56,7 +55,6 @@ public slots:
     // UI Module operations
     void loadUiModule(const QString& moduleName);
     void unloadUiModule(const QString& moduleName);
-    void refreshUiModules();
     void activateApp(const QString& appName);
     Q_INVOKABLE void installPluginFromPath(const QString& filePath);
     Q_INVOKABLE void openInstallPluginDialog();
@@ -70,7 +68,6 @@ public slots:
 
     // App Launcher operations
     void onAppLauncherClicked(const QString& appName);
-    void refreshLauncherApps();
     
     // Called when a plugin window is closed from MdiView
     void onPluginWindowClosed(const QString& pluginName);
@@ -93,15 +90,11 @@ signals:
 private:
     void initializeSections();
     void subscribeToPackageInstallationEvents();
+    void fetchUiPluginMetadata();
     QStringList findAvailableUiPlugins() const;
     QString getPluginPath(const QString& name) const;
-    QString pluginsDirectory() const;
-    QString modulesDirectory() const;
     QString getPluginType(const QString& name) const;
     bool isQmlPlugin(const QString& name) const;
-    QJsonObject readPluginManifest(const QString& pluginName) const;
-    QJsonObject readQmlPluginMetadata(const QString& pluginName) const;
-    QJsonObject readPluginMetadata(const QString& pluginName) const;
     void updateModuleStats();
     QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
     
@@ -125,4 +118,7 @@ private:
     // LogosAPI
     LogosAPI* m_logosAPI;
     bool m_ownsLogosAPI;
+
+    // Cache of UI plugin name → full metadata from package_manager.getInstalledUiPlugins()
+    QMap<QString, QVariantMap> m_uiPluginMetadata;
 };
