@@ -116,6 +116,8 @@ Control {
                         delegate: SidebarAppDelegate {
                             Layout.fillWidth: true
                             loaded: true
+                            loading: backend.loadingModule === modelData.name
+                            enabled: !backend.loadingModule
                             checked: modelData.name === (backend.currentVisibleApp || "")
                             text: modelData.name
                             icon.source: modelData.iconPath
@@ -135,6 +137,8 @@ Control {
                         delegate: SidebarAppDelegate {
                             Layout.fillWidth: true
                             loaded: false
+                            loading: backend.loadingModule === modelData.name
+                            enabled: !backend.loadingModule
                             text: modelData.name
                             icon.source: modelData.iconPath
                             onClicked: root.launchUIModule(modelData.name)

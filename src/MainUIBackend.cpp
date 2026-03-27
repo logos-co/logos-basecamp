@@ -11,10 +11,12 @@
 #include <QFileInfo>
 #include <QLibraryInfo>
 #include <QTimer>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickWidget>
 #include <QQmlEngine>
 #include <QQmlError>
+#include <QThread>
 #include <QUrl>
 #include <QIcon>
 #include <QStandardPaths>
@@ -181,14 +183,31 @@ QVariantList MainUIBackend::uiModules() const
 void MainUIBackend::loadUiModule(const QString& moduleName)
 {
     qDebug() << "Loading UI module:" << moduleName;
-    
+
     if (m_loadedUiModules.contains(moduleName) || m_qmlPluginWidgets.contains(moduleName)) {
         qDebug() << "Module" << moduleName << "is already loaded";
         activateApp(moduleName);
         return;
     }
-    
-    // Load core module dependencies from cached metadata
+
+    if (!m_loadingModule.isEmpty()) {
+        qDebug() << "Already loading" << m_loadingModule << "- ignoring" << moduleName;
+        return;
+    }
+
+    m_loadingModule = moduleName;
+    emit loadingModuleChanged();
+
+    // Yield to the event loop so the UI can paint the loading spinner
+    // before any blocking work begins
+    QTimer::singleShot(0, this, [this, moduleName]() {
+        loadUiModuleImpl(moduleName);
+    });
+}
+
+void MainUIBackend::loadUiModuleImpl(const QString& moduleName)
+{
+    // Load core module dependencies (on main thread — C API thread-safety is unknown)
     if (m_uiPluginMetadata.contains(moduleName)) {
         QVariantList dependencies = m_uiPluginMetadata[moduleName].value("dependencies").toList();
         for (const QVariant& dep : dependencies) {
@@ -198,126 +217,188 @@ void MainUIBackend::loadUiModule(const QString& moduleName)
                 bool success = logos_core_load_plugin_with_dependencies(depName.toUtf8().constData()) == 1;
                 if (!success) {
                     qWarning() << "Failed to load core module dependency" << depName << "for UI module" << moduleName;
+                    clearLoadingState();
                     return;
                 }
             }
         }
     }
-    
+
     QString pluginPath = getPluginPath(moduleName);
     qDebug() << "Loading plugin from:" << pluginPath;
 
     if (isQmlPlugin(moduleName)) {
-        QString qmlFilePath = m_uiPluginMetadata.contains(moduleName)
-            ? m_uiPluginMetadata[moduleName].value("mainFilePath").toString()
-            : QDir(pluginPath).filePath("Main.qml");
-
-        if (!QFile::exists(qmlFilePath)) {
-            qWarning() << "Main QML file does not exist for plugin" << moduleName << ":" << qmlFilePath;
-            return;
-        }
-
-        QQuickWidget* qmlWidget = new QQuickWidget;
-        qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-        QQmlEngine* engine = qmlWidget->engine();
-        if (engine) {
-            QStringList importPaths;
-            importPaths << QStringLiteral("qrc:/qt-project.org/imports");
-            importPaths << QStringLiteral("qrc:/qt/qml");
-            importPaths << pluginPath;     // Plugin-local imports only
-            // Add app lib/ directory for Logos design system (Logos.Theme, Logos.Controls)
-            QString appLibPath = QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/../lib")).absolutePath();
-            if (QDir(appLibPath).exists())
-                importPaths << appLibPath;
-            qDebug() << "=======================> QML import paths:" << importPaths;
-            engine->setImportPathList(importPaths);
-
-            QStringList pluginPaths;
-            // note: commented out to keep this list empty to lock the plugin down
-            // could cause issues with other QML components but it's unclear the moment
-            //const QString qtPluginPath = QLibraryInfo::path(QLibraryInfo::PluginsPath);
-            //if (!qtPluginPath.isEmpty()) {
-            //    pluginPaths << qtPluginPath;  // Required for QtQuick C++ backends
-            //}
-            qDebug() << "=======================> QML plugin paths:" << pluginPaths;
-            engine->setPluginPathList(pluginPaths);
-
-            engine->setNetworkAccessManagerFactory(new DenyAllNAMFactory());
-            QStringList allowedRoots;
-            // allowedRoots << QStringLiteral("qrc:/qt/qml");
-            allowedRoots << pluginPath;
-            qDebug() << "=======================> QML allowed roots:" << allowedRoots;
-            engine->addUrlInterceptor(new RestrictedUrlInterceptor(allowedRoots));
-            qDebug() << "=======================> QML base url:" << QUrl::fromLocalFile(pluginPath + "/");
-            engine->setBaseUrl(QUrl::fromLocalFile(pluginPath + "/"));
-        }
-        LogosQmlBridge* bridge = new LogosQmlBridge(m_logosAPI, qmlWidget);
-        qmlWidget->rootContext()->setContextProperty("logos", bridge);
-        qmlWidget->setSource(QUrl::fromLocalFile(qmlFilePath));
-        qmlWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
-
-        if (qmlWidget->status() == QQuickWidget::Error) {
-            qWarning() << "Failed to load QML plugin" << moduleName;
-            const auto errors = qmlWidget->errors();
-            for (const QQmlError& error : errors) {
-                qWarning() << error.toString();
-            }
-            qmlWidget->deleteLater();
-            return;
-        }
-
-        m_qmlPluginWidgets[moduleName] = qmlWidget;
-        m_uiModuleWidgets[moduleName] = qmlWidget;
-        m_loadedApps.insert(moduleName);
-
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
-
-        emit pluginWindowRequested(qmlWidget, moduleName);
-        emit navigateToApps();
-
-        qDebug() << "Successfully loaded QML UI module:" << moduleName;
-        return;
+        loadQmlPluginAsync(moduleName, pluginPath);
+    } else {
+        loadCppPluginAsync(moduleName, pluginPath);
     }
-    
+}
+
+void MainUIBackend::loadCppPluginAsync(const QString& moduleName, const QString& pluginPath)
+{
+    // Pre-load the shared library in a background thread.
+    // Qt's QLibraryStore caches loaded libraries globally, so the subsequent
+    // QPluginLoader::load() on the main thread will be instant.
+    QThread* thread = QThread::create([pluginPath]() {
+        QPluginLoader loader(pluginPath);
+        loader.load();
+    });
+
+    connect(thread, &QThread::finished, this, [this, thread, moduleName, pluginPath]() {
+        thread->deleteLater();
+        finishCppPluginLoad(moduleName, pluginPath);
+    });
+
+    thread->start();
+}
+
+void MainUIBackend::finishCppPluginLoad(const QString& moduleName, const QString& pluginPath)
+{
     QPluginLoader loader(pluginPath);
     if (!loader.load()) {
         qDebug() << "Failed to load plugin:" << moduleName << "-" << loader.errorString();
+        clearLoadingState();
         return;
     }
-    
+
     QObject* plugin = loader.instance();
     if (!plugin) {
         qDebug() << "Failed to get plugin instance:" << moduleName << "-" << loader.errorString();
+        clearLoadingState();
         return;
     }
-    
+
     IComponent* component = qobject_cast<IComponent*>(plugin);
     if (!component) {
         qDebug() << "Failed to cast plugin to IComponent:" << moduleName;
         loader.unload();
+        clearLoadingState();
         return;
     }
-    
+
     QWidget* componentWidget = component->createWidget(m_logosAPI);
     if (!componentWidget) {
         qDebug() << "Component returned null widget:" << moduleName;
         loader.unload();
+        clearLoadingState();
         return;
     }
-    
+
     componentWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
     m_loadedUiModules[moduleName] = component;
     m_uiModuleWidgets[moduleName] = componentWidget;
     m_loadedApps.insert(moduleName);
-    
+
     emit uiModulesChanged();
     emit launcherAppsChanged();
-    
+
     emit pluginWindowRequested(componentWidget, moduleName);
     emit navigateToApps();
-    
+
     qDebug() << "Successfully loaded UI module:" << moduleName;
+    clearLoadingState();
+}
+
+void MainUIBackend::loadQmlPluginAsync(const QString& moduleName, const QString& pluginPath)
+{
+    QString qmlFilePath = m_uiPluginMetadata.contains(moduleName)
+        ? m_uiPluginMetadata[moduleName].value("mainFilePath").toString()
+        : QDir(pluginPath).filePath("Main.qml");
+
+    if (!QFile::exists(qmlFilePath)) {
+        qWarning() << "Main QML file does not exist for plugin" << moduleName << ":" << qmlFilePath;
+        clearLoadingState();
+        return;
+    }
+
+    QQuickWidget* qmlWidget = new QQuickWidget;
+    qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    QQmlEngine* engine = qmlWidget->engine();
+    if (engine) {
+        QStringList importPaths;
+        importPaths << QStringLiteral("qrc:/qt-project.org/imports");
+        importPaths << QStringLiteral("qrc:/qt/qml");
+        importPaths << pluginPath;
+        QString appLibPath = QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/../lib")).absolutePath();
+        if (QDir(appLibPath).exists())
+            importPaths << appLibPath;
+        qDebug() << "=======================> QML import paths:" << importPaths;
+        engine->setImportPathList(importPaths);
+
+        QStringList pluginPaths;
+        qDebug() << "=======================> QML plugin paths:" << pluginPaths;
+        engine->setPluginPathList(pluginPaths);
+
+        engine->setNetworkAccessManagerFactory(new DenyAllNAMFactory());
+        QStringList allowedRoots;
+        allowedRoots << pluginPath;
+        qDebug() << "=======================> QML allowed roots:" << allowedRoots;
+        engine->addUrlInterceptor(new RestrictedUrlInterceptor(allowedRoots));
+        qDebug() << "=======================> QML base url:" << QUrl::fromLocalFile(pluginPath + "/");
+        engine->setBaseUrl(QUrl::fromLocalFile(pluginPath + "/"));
+    }
+
+    // Use QQmlComponent::Asynchronous to compile the QML in a background thread.
+    // Once ready, the engine caches the compiled type, so setSource() will be fast.
+    QUrl sourceUrl = QUrl::fromLocalFile(qmlFilePath);
+    auto* preloader = new QQmlComponent(engine, sourceUrl, QQmlComponent::Asynchronous);
+
+    auto finishOrCleanup = [this, preloader, qmlWidget, moduleName, qmlFilePath](QQmlComponent::Status status) {
+        preloader->deleteLater();
+        if (status == QQmlComponent::Ready) {
+            finishQmlPluginLoad(qmlWidget, moduleName, qmlFilePath);
+        } else {
+            qWarning() << "Failed to pre-compile QML plugin" << moduleName;
+            for (const auto& error : preloader->errors())
+                qWarning() << error.toString();
+            qmlWidget->deleteLater();
+            clearLoadingState();
+        }
+    };
+
+    if (preloader->isReady() || preloader->isError()) {
+        finishOrCleanup(preloader->status());
+    } else {
+        connect(preloader, &QQmlComponent::statusChanged, this, finishOrCleanup);
+    }
+}
+
+void MainUIBackend::finishQmlPluginLoad(QQuickWidget* qmlWidget, const QString& moduleName, const QString& qmlFilePath)
+{
+    LogosQmlBridge* bridge = new LogosQmlBridge(m_logosAPI, qmlWidget);
+    qmlWidget->rootContext()->setContextProperty("logos", bridge);
+    qmlWidget->setSource(QUrl::fromLocalFile(qmlFilePath));
+    qmlWidget->setWindowIcon(QIcon(getPluginIconPath(moduleName, true)));
+
+    if (qmlWidget->status() == QQuickWidget::Error) {
+        qWarning() << "Failed to load QML plugin" << moduleName;
+        const auto errors = qmlWidget->errors();
+        for (const QQmlError& error : errors) {
+            qWarning() << error.toString();
+        }
+        qmlWidget->deleteLater();
+        clearLoadingState();
+        return;
+    }
+
+    m_qmlPluginWidgets[moduleName] = qmlWidget;
+    m_uiModuleWidgets[moduleName] = qmlWidget;
+    m_loadedApps.insert(moduleName);
+
+    emit uiModulesChanged();
+    emit launcherAppsChanged();
+
+    emit pluginWindowRequested(qmlWidget, moduleName);
+    emit navigateToApps();
+
+    qDebug() << "Successfully loaded QML UI module:" << moduleName;
+    clearLoadingState();
+}
+
+void MainUIBackend::clearLoadingState()
+{
+    m_loadingModule.clear();
+    emit loadingModuleChanged();
 }
 
 void MainUIBackend::unloadUiModule(const QString& moduleName)
@@ -562,6 +643,11 @@ QVariantList MainUIBackend::launcherApps() const
     }
     
     return apps;
+}
+
+QString MainUIBackend::loadingModule() const
+{
+    return m_loadingModule;
 }
 
 void MainUIBackend::onAppLauncherClicked(const QString& appName)

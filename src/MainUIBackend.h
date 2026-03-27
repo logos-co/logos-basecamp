@@ -30,6 +30,7 @@ class MainUIBackend : public QObject {
     // App Launcher
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
+    Q_PROPERTY(QString loadingModule READ loadingModule NOTIFY loadingModuleChanged)
 
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
@@ -48,6 +49,7 @@ public:
     // App Launcher
     QVariantList launcherApps() const;
     QString currentVisibleApp() const;
+    QString loadingModule() const;
 
 public slots:
     // Navigation
@@ -80,6 +82,7 @@ signals:
     void coreModulesChanged();
     void launcherAppsChanged();
     void currentVisibleAppChanged();
+    void loadingModuleChanged();
     void navigateToApps();
     
     // Signals for C++ MdiView coordination
@@ -97,6 +100,14 @@ private:
     bool isQmlPlugin(const QString& name) const;
     void updateModuleStats();
     QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
+
+    // Async plugin loading helpers
+    void loadUiModuleImpl(const QString& moduleName);
+    void loadCppPluginAsync(const QString& moduleName, const QString& pluginPath);
+    void loadQmlPluginAsync(const QString& moduleName, const QString& pluginPath);
+    void finishCppPluginLoad(const QString& moduleName, const QString& pluginPath);
+    void finishQmlPluginLoad(QQuickWidget* qmlWidget, const QString& moduleName, const QString& qmlFilePath);
+    void clearLoadingState();
     
     // Navigation state
     int m_currentActiveSectionIndex;
@@ -114,6 +125,7 @@ private:
     // App Launcher state
     QSet<QString> m_loadedApps;
     QString m_currentVisibleApp;
+    QString m_loadingModule;
     
     // LogosAPI
     LogosAPI* m_logosAPI;
