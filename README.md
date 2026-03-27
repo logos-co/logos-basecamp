@@ -1,5 +1,12 @@
 # logos-basecamp
 
+## Quick Start (OOP mode)
+
+```bash
+nix build
+LOGOS_UI_HOSTING_MODE=oop ./result/bin/logos-basecamp
+```
+
 ## Download
 
 Prebuilt binaries are available for Linux (AppImage) and macOS (DMG) from the [latest release](https://github.com/logos-co/logos-basecamp/releases/latest).
