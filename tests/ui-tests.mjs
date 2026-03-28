@@ -50,6 +50,58 @@ test("package_manager_ui: open and verify categories", async (app) => {
   await app.expectTexts(["Reload", "Install"]);
 });
 
+// --- Accounts (portable/distributed builds only) ---
+
+test("accounts: install via package manager", async (app) => {
+  if (!process.env.LOGOS_PORTABLE) {
+    console.log("    (skipped — not a portable build)");
+    return;
+  }
+
+  // Open package manager and filter to Accounts
+  await app.click("package_manager_ui");
+  await app.click("Accounts");
+
+  // Select both accounts packages via checkboxes
+  const res = await app.inspector.send("findByProperty", { property: "checkState", value: "Unchecked" });
+  const ids = [...new Set(res.matches.map(m => m.id))];
+  for (const id of ids) {
+    await app.inspector.send("click", { objectId: id });
+  }
+
+  // Install selected packages
+  await app.click("Install", { exact: true });
+
+  // Wait for installation to complete
+  await app.waitFor(async () => {
+    const r = await app.inspector.send("findByProperty", { property: "text", value: "Installed" });
+    return r.matches && r.matches.length >= 2;
+  }, { timeout: 60000, interval: 1000, description: "accounts packages installed" });
+
+  await app.expectTexts(["Installed"]);
+
+  // Navigate to Modules view (sidebar button is icon-only, find by property)
+  const modulesBtn = await app.inspector.send("findByProperty", { property: "text", value: "Modules" });
+  const btn = modulesBtn.matches.find(m => m.type.includes("SidebarCircleButton"));
+  await app.inspector.send("click", { objectId: btn.id });
+  await new Promise(r => setTimeout(r, 2000));
+
+  // Load accounts_ui from the UI Modules list
+  await app.click("accounts_ui");
+  await new Promise(r => setTimeout(r, 1000));
+  // Click the Load button next to accounts_ui
+  await app.click("Load");
+  await new Promise(r => setTimeout(r, 5000));
+
+  // Open accounts UI from sidebar
+  await app.click("accounts_ui");
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Generate a mnemonic
+  await app.click("Create Random Mnemonic");
+  await app.expectTexts(["Mnemonic created successfully"]);
+}, { skip: ["normal"] });
+
 // --- Counter ---
 
 test("counter: open app", async (app) => {

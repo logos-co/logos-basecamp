@@ -229,6 +229,7 @@
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
           bin-macos-app = macosApp;
+          bin-macos-app-test = macosAppTest;
           smoke-test-bundle = import ./nix/smoke-test.nix {
             inherit pkgs;
             appPkg = macosApp;
@@ -239,6 +240,7 @@
             appPkg = macosAppTest;
             inherit logosQtMcp;
             appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+            portable = true;
           };
         } // (if pkgs.stdenv.isDarwin then {
           # macOS distribution outputs
