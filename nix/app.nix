@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosQtMcp ? null, lgpm, lgxPkgs ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -25,7 +25,7 @@ pkgs.stdenv.mkDerivation rec {
   inherit (common) meta;
 
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
-  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk lgpm pkgs.patchelf pkgs.removeReferencesTo ];
+  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk pkgs.patchelf pkgs.removeReferencesTo ];
 
   # Provide Qt/GL runtime paths so the wrapper can inject them
   qtLibPath = pkgs.lib.makeLibraryPath (
@@ -214,15 +214,17 @@ pkgs.stdenv.mkDerivation rec {
       cp -L "${logosSdk}/lib/"liblogos_sdk.* "$out/lib/" || true
     fi
 
-    # Pre-install LGX packages at build time via lgpm.
-    # Core modules go to $out/modules, UI plugins go to $out/plugins.
-    for pkg in ${pkgs.lib.concatStringsSep " " (map toString lgxPkgs)}; do
-      for lgxFile in "$pkg"/*.lgx; do
-        echo "Installing $lgxFile via lgpm..."
-        lgpm --modules-dir "$out/modules" --ui-plugins-dir "$out/plugins" install --file "$lgxFile"
-      done
+    # Copy pre-installed modules and plugins from bundled install outputs.
+    # Each entry in installedModules has modules/ and/or plugins/ subdirectories.
+    for installed in ${pkgs.lib.concatStringsSep " " (map toString installedModules)}; do
+      if [ -d "$installed/modules" ]; then
+        cp -rn "$installed/modules/." "$out/modules/"
+      fi
+      if [ -d "$installed/plugins" ]; then
+        cp -rn "$installed/plugins/." "$out/plugins/"
+      fi
     done
-    echo "Pre-installed modules and plugins via lgpm"
+    echo "Pre-installed modules and plugins from install bundles"
 
     # Copy design system QML modules (Logos.Theme, Logos.Controls) for runtime
     if [ -d "${logosDesignSystem}/lib/Logos/Theme" ]; then
