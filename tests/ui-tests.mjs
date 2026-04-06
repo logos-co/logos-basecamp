@@ -19,24 +19,33 @@ const projectRoot = resolve(__dirname, "..");
 const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp");
 const { test, run } = await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
 
+// Helper: click a plugin's sidebar icon and wait for its UI to load.
+// Plugins load asynchronously after clicking, so we wait for expected
+// content to appear before proceeding.
+async function openPlugin(app, name, expectedTexts, opts = {}) {
+  await app.click(name);
+  await app.waitFor(
+    async () => { await app.expectTexts(expectedTexts); },
+    { timeout: 10000, interval: 500, description: `"${name}" UI to load` }
+  );
+}
+
 // --- Webview App ---
 // Skipped in offscreen mode: QWebEngine requires a display (GPU/compositor)
 
 test("webview_app: open and verify buttons", async (app) => {
-  await app.click("webview_app");
-
-  await app.expectTexts(["Wikipedia", "Local File", "Send Event to WebApp"]);
+  await openPlugin(app, "webview_app", ["Wikipedia", "Local File", "Send Event to WebApp"]);
 }, { skip: ["offscreen"] });
 
 test("webview_app: click Wikipedia", async (app) => {
-  await app.click("webview_app");
+  await openPlugin(app, "webview_app", ["Wikipedia", "Local File"]);
   await app.click("Wikipedia", { type: "QPushButton" });
 
   await app.expectTexts(["Wikipedia", "Local File"]);
 }, { skip: ["offscreen"] });
 
 test("webview_app: click Local File", async (app) => {
-  await app.click("webview_app");
+  await openPlugin(app, "webview_app", ["Wikipedia", "Local File"]);
   await app.click("Local File", { type: "QPushButton" });
 
   await app.expectTexts(["Wikipedia", "Local File"]);
@@ -45,9 +54,7 @@ test("webview_app: click Local File", async (app) => {
 // --- Package Manager ---
 
 test("package_manager_ui: open and verify categories", async (app) => {
-  await app.click("package_manager_ui");
-
-  await app.expectTexts(["Reload", "Install"]);
+  await openPlugin(app, "package_manager_ui", ["Reload", "Install"]);
 });
 
 // --- Counter ---
@@ -57,10 +64,7 @@ test("counter: open app", async (app) => {
 });
 
 test("counter: increment twice and expect value 2", async (app) => {
-  await app.click("counter");
-
-  // Verify counter starts at 0
-  await app.expectTexts(["0"]);
+  await openPlugin(app, "counter", ["0"]);
 
   // Click increment twice
   await app.click("Increment me");

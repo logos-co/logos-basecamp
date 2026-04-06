@@ -99,6 +99,7 @@ set(SOURCES
     main_ui_plugin.cpp
     MainContainer.cpp
     MainUIBackend.cpp
+    PluginLoader.cpp
     LogosQmlBridge.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp

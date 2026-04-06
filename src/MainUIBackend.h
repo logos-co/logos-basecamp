@@ -7,12 +7,12 @@
 #include <QMap>
 #include <QSet>
 #include <QTimer>
-#include <QPluginLoader>
 #include "logos_api.h"
 #include "logos_api_client.h"
 #include "IComponent.h"
 
 class QQuickWidget;
+class PluginLoader;
 
 class MainUIBackend : public QObject {
     Q_OBJECT
@@ -30,6 +30,7 @@ class MainUIBackend : public QObject {
     // App Launcher
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
+    Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
 
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
@@ -48,6 +49,7 @@ public:
     // App Launcher
     QVariantList launcherApps() const;
     QString currentVisibleApp() const;
+    QStringList loadingModules() const;
 
 public slots:
     // Navigation
@@ -80,12 +82,18 @@ signals:
     void coreModulesChanged();
     void launcherAppsChanged();
     void currentVisibleAppChanged();
+    void loadingModulesChanged();
     void navigateToApps();
     
     // Signals for C++ MdiView coordination
     void pluginWindowRequested(QWidget* widget, const QString& title);
     void pluginWindowRemoveRequested(QWidget* widget);
     void pluginWindowActivateRequested(QWidget* widget);
+
+private slots:
+    void onPluginLoaded(const QString& name, QWidget* widget,
+                        IComponent* component, bool isQml);
+    void onPluginLoadFailed(const QString& name, const QString& error);
 
 private:
     void initializeSections();
@@ -109,11 +117,14 @@ private:
     
     // Core Modules state
     QTimer* m_statsTimer;
-    QMap<QString, QVariantMap> m_moduleStats;  // Stores per-module CPU/memory stats
+    QMap<QString, QVariantMap> m_moduleStats;
     
     // App Launcher state
     QSet<QString> m_loadedApps;
     QString m_currentVisibleApp;
+    
+    // Plugin loading
+    PluginLoader* m_pluginLoader;
     
     // LogosAPI
     LogosAPI* m_logosAPI;
