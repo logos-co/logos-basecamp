@@ -28,34 +28,39 @@ inline QString dataDirectory()
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
-inline QString portablePluginsDirectory()
+// Portable vs non-portable base: portable uses dataDirectory(),
+// non-portable appends "Dev" (e.g. for side-by-side dev installs).
+inline QString portableBaseDirectory()
 {
-    return dataDirectory() + "/plugins";
+    return dataDirectory();
 }
 
-inline QString portableModulesDirectory()
+inline QString nonPortableBaseDirectory()
 {
-    return dataDirectory() + "/modules";
+    return dataDirectory() + "Dev";
 }
 
-inline QString nonPortablePluginsDirectory()
+inline QString baseDirectory()
 {
-    return dataDirectory() + "Dev" + "/plugins";
+    return isPortableBuild() ? portableBaseDirectory() : nonPortableBaseDirectory();
 }
 
-inline QString nonPortableModulesDirectory()
-{
-    return dataDirectory() + "Dev" + "/modules";
-}
-
+// Plugin and module install directories
 inline QString pluginsDirectory()
 {
-    return isPortableBuild() ? portablePluginsDirectory() : nonPortablePluginsDirectory();
+    return baseDirectory() + "/plugins";
 }
 
 inline QString modulesDirectory()
 {
-    return isPortableBuild() ? portableModulesDirectory() : nonPortableModulesDirectory();
+    return baseDirectory() + "/modules";
+}
+
+// Persistence directories for module instance state.
+// Core modules (process-isolated) persist under module_data/.
+inline QString moduleDataDirectory()
+{
+    return baseDirectory() + "/module_data";
 }
 
 // Embedded directories — read-only, pre-installed at build time alongside the binary.

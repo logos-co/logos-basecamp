@@ -25,6 +25,7 @@
 extern "C" {
     void logos_core_set_plugins_dir(const char* plugins_dir);
     void logos_core_add_plugins_dir(const char* plugins_dir);
+    void logos_core_set_persistence_base_path(const char* path);
     void logos_core_start();
     void logos_core_cleanup();
     char** logos_core_get_loaded_plugins();
@@ -62,6 +63,10 @@ int main(int argc, char *argv[])
     // 2. User-writable modules directory (for runtime installs via the package store)
     QString userModulesDir = LogosBasecampPaths::modulesDirectory();
     logos_core_add_plugins_dir(userModulesDir.toUtf8().constData());
+
+    // Set persistence base path for core modules
+    logos_core_set_persistence_base_path(
+        LogosBasecampPaths::moduleDataDirectory().toUtf8().constData());
 
     // Start the core
     logos_core_start();
