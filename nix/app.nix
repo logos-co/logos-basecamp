@@ -88,8 +88,14 @@ pkgs.stdenv.mkDerivation rec {
     runHook postPreConfigure
   '';
 
-  # modules/ and plugins/ are carried into portable bundles by nix-bundle-dir
-  passthru = { extraDirs = [ "modules" "plugins" ]; };
+  # modules/ and plugins/ are carried into portable bundles by nix-bundle-dir.
+  # extraClosurePaths lists Qt modules whose plugins/frameworks must be in
+  # the bundle even though the app binary doesn't link against them directly
+  # (they're used by portable-bundled plugins whose nix-store refs are stripped).
+  passthru = {
+    extraDirs = [ "modules" "plugins" ];
+    extraClosurePaths = [ pkgs.qt6.qtwebview ];
+  };
 
   # This is an aggregate runtime layout; avoid stripping to prevent hook errors
   dontStrip = true;
