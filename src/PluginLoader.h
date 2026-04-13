@@ -39,7 +39,7 @@ signals:
 
 private:
     void startLoad(const PluginLoadRequest& request);
-    void loadCoreDependenciesAsync(const PluginLoadRequest& request);
+    void loadCoreDependencies(const PluginLoadRequest& request);
     void continueLoad(const PluginLoadRequest& request);
     void loadCppPluginAsync(const PluginLoadRequest& request);
     void loadQmlPluginAsync(const PluginLoadRequest& request);

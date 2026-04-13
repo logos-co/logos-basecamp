@@ -16,7 +16,6 @@
 #include <QTimer>
 #include <QUrl>
 
-#include <atomic>
 #include <memory>
 
 #include "IComponent.h"
@@ -81,40 +80,27 @@ void PluginLoader::startLoad(const PluginLoadRequest& request)
         return;
     }
 
-    loadCoreDependenciesAsync(request);
+    loadCoreDependencies(request);
 }
 
-void PluginLoader::loadCoreDependenciesAsync(const PluginLoadRequest& request)
+void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
 {
-    auto success = std::make_shared<std::atomic<bool>>(true);
-
-    QThread* thread = QThread::create([success, request]() {
-        for (const QVariant& dep : request.coreDependencies) {
-            QString depName = dep.toString();
-            if (!depName.isEmpty()) {
-                qDebug() << "Loading core dependency for" << request.name << ":" << depName;
-                if (logos_core_load_plugin_with_dependencies(depName.toUtf8().constData()) != 1) {
-                    qWarning() << "Failed to load core dependency" << depName
-                               << "for" << request.name;
-                    success->store(false);
-                    return;
-                }
+    // liblogos is not thread-safe for plugin loading; call only from the GUI thread.
+    for (const QVariant& dep : request.coreDependencies) {
+        QString depName = dep.toString();
+        if (!depName.isEmpty()) {
+            qDebug() << "Loading core dependency for" << request.name << ":" << depName;
+            if (logos_core_load_plugin_with_dependencies(depName.toUtf8().constData()) != 1) {
+                qWarning() << "Failed to load core dependency" << depName
+                           << "for" << request.name;
+                setLoading(request.name, false);
+                emit pluginLoadFailed(request.name,
+                    QStringLiteral("Failed to load core dependencies for ") + request.name);
+                return;
             }
         }
-    });
-
-    connect(thread, &QThread::finished, this, [this, thread, request, success]() {
-        thread->deleteLater();
-        if (!success->load()) {
-            setLoading(request.name, false);
-            emit pluginLoadFailed(request.name,
-                QStringLiteral("Failed to load core dependencies for ") + request.name);
-            return;
-        }
-        continueLoad(request);
-    });
-
-    thread->start();
+    }
+    continueLoad(request);
 }
 
 void PluginLoader::continueLoad(const PluginLoadRequest& request)
