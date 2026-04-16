@@ -24,6 +24,9 @@ QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType)
 
     if (url.isLocalFile()) {
         const QString local = QDir(url.toLocalFile()).canonicalPath();
+        if (local.isEmpty()) {
+            return url;
+        }
         for (const QString& root : m_allowedRoots) {
             if (!root.isEmpty() && (local == root || local.startsWith(root + QLatin1Char('/')))) {
                 return url;
