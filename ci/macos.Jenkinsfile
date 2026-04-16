@@ -1,6 +1,6 @@
 #!/usr/bin/env groovy
 
-library 'status-jenkins-lib@v1.9.41'
+library 'status-jenkins-lib@v1.9.43'
 
 def isPRBuild = utils.isPRBuild()
 
@@ -37,23 +37,37 @@ pipeline {
   }
 
   stages {
-    stage('Build DMG') {
+    stage('Smoke Test') {
       steps { script {
-        nix.flake("dmg")
+        nix.flake('smoke-test-bundle')
       } }
     }
 
-    stage('Smoke Test') {
+    stage('Build MacOS App Bundle') {
+      steps { script {
+        nix.flake('bin-macos-app')
+      } }
+    }
+
+    stage('Sign & Notarize') {
+      when {
+        expression { utils.isReleaseBuild() }
+      }
       steps {
-        sh 'nix build .#smoke-test-bundle --out-link result-smoke -L --extra-experimental-features "nix-command flakes"'
-        sh 'cat result-smoke/smoke-test.log'
+        script {
+          logos.codesignApp(
+            bundlePath: 'result/LogosBasecamp.app',
+            outputPath: env.ARTIFACT,
+            mode: 'both',
+            timeout: '30m'
+          )
+        }
       }
     }
 
     stage('Package') {
       steps {
-        sh 'mkdir -p pkg'
-        sh "cp result/LogosBasecamp-*.dmg '${env.ARTIFACT}'"
+        sh "./scripts/create-dmg.sh --bundle result/LogosBasecamp.app --output ${env.ARTIFACT}"
       }
     }
 
@@ -65,9 +79,9 @@ pipeline {
     }
 
     stage('Archive') {
-      steps {
+      steps { script {
         archiveArtifacts(env.ARTIFACT)
-      }
+      } }
     }
   }
 
