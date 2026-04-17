@@ -331,50 +331,86 @@ void UIPluginManager::onPluginWindowClosed(const QString& pluginName)
 
 void UIPluginManager::loadCoreModule(const QString& moduleName)
 {
-    qDebug() << "Loading core module:" << moduleName;
+    // Defer the ENTIRE body — not just the emit. Callers are typically
+    // QML Button.onClicked handlers, and m_coreModuleManager->loadPlugin
+    // ultimately calls logos_core_load_plugin_with_dependencies, which
+    // internally spins a nested Qt event loop (via
+    // QConnectedReplicaImplementation::waitForSource during the
+    // informModuleToken round-trip, see liblogos_core). Running that
+    // nested loop while a QML signal handler is still on the stack lets
+    // Qt deliver a pending DeferredDelete for the firing Button/Repeater
+    // delegate, and then the destructor trips "Object destroyed while
+    // one of its QML signal handlers is in progress" → qFatal.
+    // Queueing through the event loop lets the click handler unwind
+    // first; the nested loop is then harmless.
+    QMetaObject::invokeMethod(this, [this, moduleName]{
+        qDebug() << "Loading core module:" << moduleName;
 
-    bool success = m_coreModuleManager
-                 ? m_coreModuleManager->loadPlugin(moduleName)
-                 : false;
+        bool success = m_coreModuleManager
+                     ? m_coreModuleManager->loadPlugin(moduleName)
+                     : false;
 
-    if (success) {
-        qDebug() << "Successfully loaded core module:" << moduleName;
-        emit coreModulesChanged();
-    } else {
-        qDebug() << "Failed to load core module:" << moduleName;
-    }
+        if (success) {
+            qDebug() << "Successfully loaded core module:" << moduleName;
+            emit coreModulesChanged();
+        } else {
+            qDebug() << "Failed to load core module:" << moduleName;
+        }
+    }, Qt::QueuedConnection);
 }
 
 void UIPluginManager::unloadCoreModule(const QString& moduleName)
 {
-    qDebug() << "Unloading core module:" << moduleName;
-
-    // Cascade check — mirror unloadUiModule. Without this, clicking "Unload"
-    // on a core module with loaded dependents (core or UI) silently orphans
-    // them. The confirmation dialog path is only engaged when there's at
-    // least one loaded dependent, so leaf unloads still take the fast path.
-    // See unloadUiModule for why shutdown bypasses this.
-    if (!m_shuttingDown && !m_pendingUnload.active) {
-        const QStringList loadedDeps = loadedDependentsOf(moduleName);
-        if (!loadedDeps.isEmpty()) {
-            m_pendingUnload = {true, moduleName};
-            qDebug() << "Unload cascade needed for core module" << moduleName
-                     << "dependents:" << loadedDeps;
-            emit unloadCascadeConfirmationRequested(moduleName, loadedDeps);
-            return;
+    // Shutdown path runs synchronously (no QML on the stack to worry about)
+    // and must not defer — we need the teardown to happen before Qt child
+    // destruction continues past our destructor body.
+    if (m_shuttingDown) {
+        qDebug() << "Unloading core module:" << moduleName;
+        if (m_coreModuleManager) {
+            bool success = m_coreModuleManager->unloadPlugin(moduleName);
+            if (success) qDebug() << "Successfully unloaded core module:" << moduleName;
+            else         qDebug() << "Failed to unload core module:" << moduleName;
         }
+        return;
     }
 
-    bool success = m_coreModuleManager
-                 ? m_coreModuleManager->unloadPlugin(moduleName)
-                 : false;
+    // Normal path: defer the whole body — same rationale as loadCoreModule.
+    // m_coreModuleManager->unloadPlugin → logos_core_unload_plugin spins a
+    // nested event loop inside the QRemoteObjects teardown handshake, and
+    // this slot is typically invoked from a QML Button.onClicked. Running
+    // the nested loop while the click handler is still on the stack is
+    // what trips QQmlData::destroyed's "Object destroyed while one of its
+    // QML signal handlers is in progress" qFatal.
+    QMetaObject::invokeMethod(this, [this, moduleName]{
+        qDebug() << "Unloading core module:" << moduleName;
 
-    if (success) {
-        qDebug() << "Successfully unloaded core module:" << moduleName;
-        emit coreModulesChanged();
-    } else {
-        qDebug() << "Failed to unload core module:" << moduleName;
-    }
+        // Cascade check — mirror unloadUiModule. Without this, clicking
+        // "Unload" on a core module with loaded dependents (core or UI)
+        // silently orphans them. The confirmation dialog path is only
+        // engaged when there's at least one loaded dependent, so leaf
+        // unloads still take the fast path.
+        if (!m_pendingUnload.active) {
+            const QStringList loadedDeps = loadedDependentsOf(moduleName);
+            if (!loadedDeps.isEmpty()) {
+                m_pendingUnload = {true, moduleName};
+                qDebug() << "Unload cascade needed for core module" << moduleName
+                         << "dependents:" << loadedDeps;
+                emit unloadCascadeConfirmationRequested(moduleName, loadedDeps);
+                return;
+            }
+        }
+
+        bool success = m_coreModuleManager
+                     ? m_coreModuleManager->unloadPlugin(moduleName)
+                     : false;
+
+        if (success) {
+            qDebug() << "Successfully unloaded core module:" << moduleName;
+            emit coreModulesChanged();
+        } else {
+            qDebug() << "Failed to unload core module:" << moduleName;
+        }
+    }, Qt::QueuedConnection);
 }
 
 void UIPluginManager::refreshUiModules()
@@ -438,42 +474,57 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
                    << "but pending unload is" << m_pendingUnload.name;
         return;
     }
+    // Clear pending synchronously so a second click on the dialog's Continue
+    // (or a racing cancel) sees the slot as free. The actual unload work is
+    // deferred below.
     m_pendingUnload = {};
 
-    // Snapshot the loaded-dependents list BEFORE the cascade runs. Once
-    // unloadPluginWithDependents returns, the target is off the loaded-
-    // plugins list and loadedDependentsOf would come up empty. UI-plugin
-    // dependents need teardown here in-process — the core cascade only
-    // kills core plugins (QProcess termination). Without this pass,
-    // accounts_ui stays wired to a now-dead accounts_module.
-    const QStringList loadedDeps = loadedDependentsOf(moduleName);
+    // Defer the cascade body — same rationale as loadCoreModule /
+    // unloadCoreModule. confirmUnloadCascade is invoked from the cascade
+    // dialog's "Continue" Button.onClicked, and unloadPluginWithDependents
+    // spins a nested Qt event loop inside the QRemoteObjects teardown.
+    // Running that while the click handler is still on the stack would
+    // trip the QQmlData::destroyed qFatal.
+    QMetaObject::invokeMethod(this, [this, moduleName]{
+        // Snapshot the loaded-dependents list BEFORE the cascade runs. Once
+        // unloadPluginWithDependents returns, the target is off the loaded-
+        // plugins list and loadedDependentsOf would come up empty. UI-plugin
+        // dependents need teardown here in-process — the core cascade only
+        // kills core plugins (QProcess termination). Without this pass,
+        // accounts_ui stays wired to a now-dead accounts_module.
+        const QStringList loadedDeps = loadedDependentsOf(moduleName);
 
-    qDebug() << "Cascade-unloading" << moduleName;
-    bool ok = m_coreModuleManager
-            ? m_coreModuleManager->unloadPluginWithDependents(moduleName)
-            : false;
-    if (!ok) {
-        qWarning() << "unloadPluginWithDependents failed for" << moduleName;
-        // Don't tear down the UI widget either — the core plugin is still
-        // running somewhere and the widget would end up orphaned.
-        return;
-    }
+        qDebug() << "Cascade-unloading" << moduleName;
+        bool ok = m_coreModuleManager
+                ? m_coreModuleManager->unloadPluginWithDependents(moduleName)
+                : false;
+        if (!ok) {
+            qWarning() << "unloadPluginWithDependents failed for" << moduleName;
+            // Don't tear down the UI widget either — the core plugin is
+            // still running somewhere and the widget would end up orphaned.
+            return;
+        }
 
-    // Tear down any UI-plugin dependents whose backing core module just died.
-    // Iterate the cached dependents (even pure-UI ones that the core cascade
-    // didn't touch) and drop their widgets.
-    for (const QString& dep : loadedDeps) {
-        teardownUiPluginWidget(dep);
-    }
+        // Tear down any UI-plugin dependents whose backing core module just
+        // died. Iterate the cached dependents (even pure-UI ones that the
+        // core cascade didn't touch) and drop their widgets.
+        for (const QString& dep : loadedDeps) {
+            teardownUiPluginWidget(dep);
+        }
 
-    // The UI widget for the target itself still needs to be unloaded. Re-enter
-    // the normal path — m_pendingUnload is inactive, so the guard won't re-trigger.
-    unloadUiModule(moduleName);
+        // The UI widget for the target itself still needs to be unloaded.
+        // Re-enter the normal path — m_pendingUnload is inactive, so the
+        // guard won't re-trigger. unloadUiModule itself defers to the next
+        // tick internally too, which is fine: the widget teardown just
+        // lands one more tick later.
+        unloadUiModule(moduleName);
 
-    // Stats may have shifted; push a refresh.
-    emit coreModulesChanged();
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+        // Stats may have shifted; the deferred-emit block that followed
+        // below handles the QML-notification side.
+        emit coreModulesChanged();
+        emit uiModulesChanged();
+        emit launcherAppsChanged();
+    }, Qt::QueuedConnection);
 }
 
 void UIPluginManager::cancelUnloadCascade(const QString& moduleName)
