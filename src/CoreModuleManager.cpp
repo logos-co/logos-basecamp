@@ -112,7 +112,7 @@ QString CoreModuleManager::getMethods(const QString& moduleName)
         return "[]";
     }
 
-    QVariant result = client->invokeRemoteMethod(moduleName, "getMethods");
+    QVariant result = client->invokeRemoteMethod(moduleName, "getPluginMethods");
     if (result.canConvert<QJsonArray>()) {
         QJsonArray methods = result.toJsonArray();
         QJsonDocument doc(methods);
