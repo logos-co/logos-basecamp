@@ -243,9 +243,9 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 
 // --- Build info -----------------------------------------------------------
 //
-// Values come from a nix-generated logos_build_info.h; missing in non-nix
-// builds, in which case the accessors return empty / "dirty" sentinels so
-// QML can still render the panel without crashing.
+// Values come from a nix-generated logos_build_info.h; it is missing in
+// non-nix builds, in which case these accessors return empty values so QML
+// can still render the panel without crashing.
 
 QString MainUIBackend::buildVersion() const {
 #if LOGOS_BASECAMP_HAS_BUILD_INFO

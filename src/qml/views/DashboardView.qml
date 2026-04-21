@@ -12,12 +12,13 @@ Item {
     }
 
     ScrollView {
+        id: scroll
         anchors.fill: parent
         anchors.margins: 40
         clip: true
 
         ColumnLayout {
-            width: root.width - 80
+            width: scroll.availableWidth
             spacing: 20
 
             LogosText {
