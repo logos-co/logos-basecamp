@@ -2,18 +2,9 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
+#include "BuildInfo.h"
 
 #include <QDebug>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-
-#if __has_include("logos_build_info.h")
-#  include "logos_build_info.h"
-#  define LOGOS_BASECAMP_HAS_BUILD_INFO 1
-#else
-#  define LOGOS_BASECAMP_HAS_BUILD_INFO 0
-#endif
 
 MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     : QObject(parent)
@@ -243,41 +234,9 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 
 // --- Build info -----------------------------------------------------------
 //
-// Values come from a nix-generated logos_build_info.h; it is missing in
-// non-nix builds, in which case these accessors return empty values so QML
-// can still render the panel without crashing.
+// Thin QML-facing wrappers over the shared LogosBasecampBuildInfo helper
+// (app/utils/BuildInfo.h), which reads the nix-generated logos_build_info.h.
 
-QString MainUIBackend::buildVersion() const {
-#if LOGOS_BASECAMP_HAS_BUILD_INFO
-    return QStringLiteral(LOGOS_BASECAMP_VERSION);
-#else
-    return {};
-#endif
-}
-
-bool MainUIBackend::isPortableBuild() const {
-#ifdef LOGOS_PORTABLE_BUILD
-    return true;
-#else
-    return false;
-#endif
-}
-
-QVariantList MainUIBackend::buildCommits() const {
-    QVariantList out;
-#if LOGOS_BASECAMP_HAS_BUILD_INFO
-    const auto doc = QJsonDocument::fromJson(
-        QByteArray::fromRawData(logos_basecamp_build_info::kCommitsJson,
-                                 qstrlen(logos_basecamp_build_info::kCommitsJson)));
-    if (doc.isArray()) {
-        for (const QJsonValue& v : doc.array()) {
-            const QJsonObject obj = v.toObject();
-            QVariantMap entry;
-            entry["name"] = obj.value("name").toString();
-            entry["commit"] = obj.value("commit").toString();
-            out.append(entry);
-        }
-    }
-#endif
-    return out;
-}
+QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
+bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
+QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }

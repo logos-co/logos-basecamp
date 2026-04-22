@@ -24,6 +24,7 @@
 #include <QFile>
 #include "logos_provider_object.h"
 #include "qt_provider_object.h"
+#include "BuildInfo.h"
 
 // Replace CoreManager with direct C API functions
 extern "C" {
@@ -68,6 +69,10 @@ int main(int argc, char *argv[])
         qWarning() << "Failed to start log redirection; continuing without file logs."
                    << "Logs directory:" << logsDir;
     }
+
+    // Print build metadata (version, dev/portable, commit hashes) so the
+    // per-session log captures exactly which sources produced this binary.
+    LogosBasecampBuildInfo::logStartupBanner();
 
     // Set up module directories for logos core.
     // 1. Embedded modules directory (pre-installed at build time, read-only)
