@@ -9,8 +9,11 @@
 #endif
 #include <QAccessible>
 #include <QApplication>
+#include <QCommandLineOption>
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QFileInfo>
 #include <QIcon>
 #include <QDir>
 #include <QTimer>
@@ -60,10 +63,32 @@ int main(int argc, char *argv[])
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
 
+    // Parse --user-dir / -u and set LOGOS_DATA_DIR before anything else resolves
+    // a path. This lets multiple Basecamp instances run side-by-side against
+    // isolated data trees (plugins, modules, module_data, logs). parse() rather
+    // than process() so unrecognised flags (e.g. Qt's own -platform, -style)
+    // don't abort startup.
+    {
+        QCommandLineParser parser;
+        QCommandLineOption userDirOption({"u", "user-dir"},
+            QStringLiteral("Override the data directory (isolates plugins, "
+                           "modules, module_data, logs for this instance)."),
+            QStringLiteral("path"));
+        parser.addOption(userDirOption);
+        parser.parse(app.arguments());
+        if (parser.isSet(userDirOption)) {
+            const QString absUserDir =
+                QFileInfo(parser.value(userDirOption)).absoluteFilePath();
+            QDir().mkpath(absUserDir);
+            qputenv("LOGOS_DATA_DIR", absUserDir.toUtf8());
+        }
+    }
+
     // Redirect stdout/stderr to a rotating per-session log file under
     // <baseDirectory>/logs. Must happen after setOrganizationName/setApplicationName
-    // so baseDirectory() resolves to the right location. Terminal output is
-    // preserved by mirroring to the original stdout.
+    // and after the --user-dir override is applied so baseDirectory() resolves
+    // to the right location. Terminal output is preserved by mirroring to the
+    // original stdout.
     const QString logsDir = LogosBasecampPaths::logsDirectory();
     if (!LogosBasecampLog::LogRedirector::instance().start(logsDir)) {
         qWarning() << "Failed to start log redirection; continuing without file logs."
@@ -73,6 +98,7 @@ int main(int argc, char *argv[])
     // Print build metadata (version, dev/portable, commit hashes) so the
     // per-session log captures exactly which sources produced this binary.
     LogosBasecampBuildInfo::logStartupBanner();
+    qInfo().noquote() << "Base data directory:" << LogosBasecampPaths::baseDirectory();
 
     // Set up module directories for logos core.
     // 1. Embedded modules directory (pre-installed at build time, read-only)
