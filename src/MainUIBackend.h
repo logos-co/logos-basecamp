@@ -59,6 +59,14 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
     Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
 
+    // Build info (baked in at nix build time). See Dashboard view.
+    //   * buildVersion: VERSION file contents (empty when not baked in).
+    //   * isPortableBuild: true for distributed/release builds, false for dev.
+    //   * buildCommits: list of { name, commit } for basecamp + each flake input.
+    Q_PROPERTY(QString buildVersion READ buildVersion CONSTANT)
+    Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
+    Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -75,6 +83,11 @@ public:
 
     // Composed from multiple managers.
     QVariantList coreModules() const;
+
+    // Build info accessors (see Q_PROPERTY declarations above).
+    QString buildVersion() const;
+    bool isPortableBuild() const;
+    QVariantList buildCommits() const;
 
     // Accessors for C++ coordination code (MdiView etc.) that needs a handle
     // to the managers directly. QML goes through the delegating slots/signals.

@@ -2,6 +2,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
+#include "BuildInfo.h"
 
 #include <QDebug>
 
@@ -230,3 +231,12 @@ QString MainUIBackend::getCoreModuleMethods(const QString& n)       { return m_c
 QString MainUIBackend::callCoreModuleMethod(const QString& n,
                                              const QString& m,
                                              const QString& a)      { return m_coreModuleManager->callMethod(n, m, a); }
+
+// --- Build info -----------------------------------------------------------
+//
+// Thin QML-facing wrappers over the shared LogosBasecampBuildInfo helper
+// (app/utils/BuildInfo.h), which reads the nix-generated logos_build_info.h.
+
+QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
+bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
+QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }

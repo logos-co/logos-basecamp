@@ -51,6 +51,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/interfaces)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macos)
+# Auto-generated build info header (dropped in by nix/app.nix); absent in
+# non-nix builds — main.cpp guards the include with __has_include.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
 
 # Allow override from environment or command line (for nix builds)
 get_filename_component(REAL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)

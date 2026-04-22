@@ -1,10 +1,12 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosViewModuleRuntime, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
   # compatible with older nixpkgs where the unversioned attribute still exists.
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
+
+  buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
 in
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-basecamp";
@@ -85,6 +87,12 @@ pkgs.stdenv.mkDerivation rec {
     elif [ -f "${logosSdk}/lib/liblogos_sdk.a" ]; then
       cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
     fi
+
+    # Drop the auto-generated build info header (version + commit hashes) so
+    # main.cpp can log it at startup.
+    mkdir -p ./app/generated
+    cp ${buildInfoHeader} ./app/generated/logos_build_info.h
+    chmod +w ./app/generated/logos_build_info.h
 
     runHook postPreConfigure
   '';

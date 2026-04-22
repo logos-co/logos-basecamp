@@ -1,6 +1,9 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosModule, logosPackageManagerModule, logosLiblogos, logosViewModuleRuntime, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosModule, logosPackageManagerModule, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
 
+let
+  buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
+in
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-main-ui-plugin";
   version = common.version;
@@ -19,6 +22,11 @@ pkgs.stdenv.mkDerivation {
     
     # Create generated_code directory for generated files
     mkdir -p ./src/generated_code
+
+    # Drop the auto-generated build info header (version + commit hashes) so
+    # MainUIBackend can expose it to QML for the Dashboard.
+    cp ${buildInfoHeader} ./src/generated_code/logos_build_info.h
+    chmod +w ./src/generated_code/logos_build_info.h
     
     # Copy logos-cpp-sdk source files to expected location for CMakeLists.txt
     echo "Copying logos-cpp-sdk source files..."

@@ -37,6 +37,41 @@
   outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+      # Build info (version + commit hashes) baked into the main UI plugin so
+      # the Dashboard can render it. Commits come from the flake inputs'
+      # locked revs; self's rev is "dirty" when the checkout has uncommitted
+      # changes or is overridden via a path input.
+      revOf = input: input.rev or input.dirtyRev or "dirty";
+      buildInfo = {
+        # VERSION is only present on release branches; absent = empty string
+        # (Dashboard hides the version line when empty).
+        version = if builtins.pathExists ./VERSION
+          then nixpkgs.lib.removeSuffix "\n" (builtins.readFile ./VERSION)
+          else "";
+        commits = [
+          { name = "logos-basecamp"; commit = revOf self; }
+          { name = "logos-nix"; commit = revOf logos-nix; }
+          { name = "logos-cpp-sdk"; commit = revOf logos-cpp-sdk; }
+          { name = "logos-module"; commit = revOf logos-module; }
+          { name = "logos-liblogos"; commit = revOf logos-liblogos; }
+          { name = "logos-package-manager"; commit = revOf logos-package-manager; }
+          { name = "logos-package-manager-module"; commit = revOf logos-package-manager-module; }
+          { name = "logos-package-downloader-module"; commit = revOf logos-package-downloader-module; }
+          { name = "logos-capability-module"; commit = revOf logos-capability-module; }
+          { name = "logos-package"; commit = revOf logos-package; }
+          { name = "logos-package-manager-ui"; commit = revOf logos-package-manager-ui; }
+          { name = "logos-webview-app"; commit = revOf logos-webview-app; }
+          { name = "logos-design-system"; commit = revOf logos-design-system; }
+          { name = "logos-counter-qml"; commit = revOf logos-counter-qml; }
+          { name = "logos-counter"; commit = revOf logos-counter; }
+          { name = "logos-view-module-runtime"; commit = revOf logos-view-module-runtime; }
+          { name = "logos-qt-mcp"; commit = revOf logos-qt-mcp; }
+          { name = "nix-bundle-logos-module-install"; commit = revOf nix-bundle-logos-module-install; }
+          { name = "nix-bundle-dir"; commit = revOf nix-bundle-dir; }
+          { name = "nix-bundle-appimage"; commit = revOf nix-bundle-appimage; }
+          { name = "nix-bundle-macos-app"; commit = revOf nix-bundle-macos-app; }
+        ];
+      };
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         inherit system;
         pkgs = import nixpkgs { inherit system; };
@@ -81,14 +116,14 @@
           counterPlugin = logosCounter;
           counterQmlPlugin = logosCounterQml;
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime buildInfo;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
           webviewAppPlugin = logosWebviewApp;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime buildInfo;
             distributed = true;
           };
 
@@ -118,7 +153,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem logosViewModuleRuntime;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -126,7 +161,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime;
+            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -150,7 +185,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime;
+            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
