@@ -40,7 +40,7 @@ pipeline {
 
   environment {
     PLATFORM = "linux/${getArch()}"
-    ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosBasecamp', ext: 'AppImage', arch: getArch())}"
+    ARTIFACT = "pkg/${utils.pkgFilename(name: 'LogosBasecamp', type: 'Desktop', ext: 'AppImage', arch: getArch())}"
   }
 
   stages {
