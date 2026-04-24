@@ -29,8 +29,11 @@ extern "C" {
 
 namespace {
 
-// Drain a NULL-terminated char** handed back by the lib and free every entry
-// plus the outer array. Used by the knownModules / loadedModules wrappers.
+// Drain a NULL-terminated char** handed back by the lib and release every
+// entry plus the outer array. liblogos allocates these with new char[] /
+// new char*[] (see module_manager.cpp::toNullTerminatedArray), so delete[]
+// is the correct deallocator — do NOT use free(). Used by the knownModules
+// / loadedModules wrappers.
 QStringList drainCStringArray(char** arr)
 {
     QStringList out;
@@ -95,7 +98,7 @@ QVariantMap CoreModuleManager::moduleStats(const QString& name) const
 
 void CoreModuleManager::refresh()
 {
-    // Re-scan all plugin directories via the lib, then let the Modules tab
+    // Re-scan all module directories via the lib, then let the Modules tab
     // re-read the composed list through Q_PROPERTY.
     logos_core_refresh_modules();
     emit coreModulesChanged();

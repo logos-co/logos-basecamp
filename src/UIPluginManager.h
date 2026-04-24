@@ -171,7 +171,7 @@ private:
     QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
 
     // Cascade helpers
-    QStringList loadedCorePlugins() const;
+    QStringList loadedCoreModules() const;
     QStringList loadedDependentsOf(const QString& name) const;
 
     // Synchronous unload implementation — called directly from the shutdown

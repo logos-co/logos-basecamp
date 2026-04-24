@@ -364,7 +364,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
         : QStringList{};
 
     // Core cascade: terminate the target process (if it's a loaded core
-    // plugin) plus any loaded core-plugin dependents. Local-mode / pure-UI
+    // module) plus any loaded core-module dependents. Local-mode / pure-UI
     // targets aren't in loadedModules and the function will return
     // non-zero; we tolerate that and proceed to the UI teardown and module-
     // side confirm call — the user-visible action (deleting the package /

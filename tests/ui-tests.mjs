@@ -96,10 +96,10 @@ test("counter_qml: open app", async (app) => {
 // auto-loaded core modules (package_manager, capability_module) as
 // "(Loaded)", not "(Not Loaded)". The bug we hit was that
 // MainUIBackend::refreshCoreModules() called logos_core_refresh_modules(),
-// which re-ran PluginRegistry::discoverInstalledModules() and wiped the
-// `loaded` flag of every plugin via `m_plugins.insert(qName, freshInfo)`.
+// which re-ran ModuleRegistry::discoverInstalledModules() and wiped the
+// `loaded` flag of every module via `m_modules.insert(qName, freshInfo)`.
 // The whole list then rendered as Not Loaded with no CPU/Mem stats.
-test("modules: core tab shows auto-loaded plugins as Loaded", async (app) => {
+test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
   await app.click("Modules");
   await app.click("Core Modules");
 

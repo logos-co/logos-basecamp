@@ -663,7 +663,7 @@ QStringList UIPluginManager::findAvailableUiPlugins() const
     return m_uiPluginMetadata.keys();
 }
 
-QStringList UIPluginManager::loadedCorePlugins() const
+QStringList UIPluginManager::loadedCoreModules() const
 {
     return m_coreModuleManager ? m_coreModuleManager->loadedModules() : QStringList{};
 }
@@ -675,14 +675,14 @@ QStringList UIPluginManager::loadedDependentsOf(const QString& name) const
         : QStringList{};
     if (dependents.isEmpty()) return {};
 
-    // A dependent is "loaded" if it's running as a core plugin (tracked by
+    // A dependent is "loaded" if it's running as a core module (tracked by
     // liblogos) OR currently mounted as a UI plugin in this Basecamp instance
     // (tracked by m_loadedUiModules / m_qmlPluginWidgets). Without this
     // second source, a UI plugin like wallet_ui that depends on wallet_module
     // never registered in `logos_core_get_loaded_modules()` would silently
     // disappear from the cascade dialog — making the unload look "safe"
     // when in fact wallet_ui is still mounted and would orphan.
-    const QStringList loadedCore = loadedCorePlugins();
+    const QStringList loadedCore = loadedCoreModules();
     QSet<QString> loadedSet(loadedCore.cbegin(), loadedCore.cend());
     for (auto it = m_loadedUiModules.cbegin(); it != m_loadedUiModules.cend(); ++it) {
         loadedSet.insert(it.key());
@@ -744,11 +744,11 @@ QStringList UIPluginManager::intersectWithLoaded(const QStringList& moduleNames)
 {
     if (moduleNames.isEmpty()) return {};
 
-    // Build the same "loaded set" used by loadedDependentsOf: core plugins
+    // Build the same "loaded set" used by loadedDependentsOf: core modules
     // reported by liblogos plus UI-plugin widgets mounted in this process.
-    // A UI-only plugin (ui_qml) won't show up in loadedCorePlugins, so we
+    // A UI-only plugin (ui_qml) won't show up in loadedCoreModules, so we
     // must merge both sources or we'd under-report what's actually loaded.
-    const QStringList loadedCore = loadedCorePlugins();
+    const QStringList loadedCore = loadedCoreModules();
     QSet<QString> loadedSet(loadedCore.cbegin(), loadedCore.cend());
     for (auto it = m_loadedUiModules.cbegin(); it != m_loadedUiModules.cend(); ++it) {
         loadedSet.insert(it.key());

@@ -42,14 +42,17 @@ extern "C" {
     char* logos_core_get_module_stats();
 }
 
-// Helper function to convert C-style array to QStringList
-QStringList convertPluginsToStringList(char** plugins) {
+// Drain a NULL-terminated char** from liblogos: copy each entry into the
+// returned QStringList and release the heap memory. liblogos allocates with
+// new char[] / new char*[], so delete[] is the correct deallocator.
+QStringList drainModuleNameArray(char** modules) {
     QStringList result;
-    if (plugins) {
-        for (int i = 0; plugins[i] != nullptr; i++) {
-            result.append(plugins[i]);
-        }
+    if (!modules) return result;
+    for (char** p = modules; *p != nullptr; ++p) {
+        result.append(QString::fromUtf8(*p));
+        delete[] *p;
     }
+    delete[] modules;
     return result;
 }
 
@@ -134,23 +137,22 @@ int main(int argc, char *argv[])
     bool loaded = logos_core_load_module("package_manager");
 
     if (loaded) {
-        qInfo() << "package_manager plugin loaded by default.";
+        qInfo() << "package_manager module loaded by default.";
     } else {
-        qWarning() << "Failed to load package_manager plugin by default.";
+        qWarning() << "Failed to load package_manager module by default.";
     }
 
-    // Print loaded plugins initially
-    char** loadedPlugins = logos_core_get_loaded_modules();
-    QStringList plugins = convertPluginsToStringList(loadedPlugins);
+    // Log the initial loaded-module list.
+    const QStringList modules = drainModuleNameArray(logos_core_get_loaded_modules());
 
-    if (plugins.isEmpty()) {
-        qInfo() << "No plugins loaded.";
+    if (modules.isEmpty()) {
+        qInfo() << "No modules loaded.";
     } else {
-        qInfo() << "Currently loaded plugins:";
-        foreach (const QString &plugin, plugins) {
-            qInfo() << "  -" << plugin;
+        qInfo() << "Currently loaded modules:";
+        for (const QString& name : modules) {
+            qInfo() << "  -" << name;
         }
-        qInfo() << "Total plugins:" << plugins.size();
+        qInfo() << "Total modules:" << modules.size();
     }
 
     LogosAPI logosAPI("core", nullptr);

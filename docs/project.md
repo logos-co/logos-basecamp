@@ -133,7 +133,7 @@ All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/sh
 |------|---------|
 | `logos_core_set_modules_dir(embeddedDir)` | Set the primary modules directory (read-only embedded modules) |
 | `logos_core_add_modules_dir(userDir)` | Add the user-writable modules directory for runtime installs |
-| `logos_core_start()` | Scan plugin directories, initialize the capability module, start the remote object registry |
+| `logos_core_start()` | Scan module directories, initialize the capability module, start the remote object registry |
 | `logos_core_load_module("package_manager")` | Auto-load the package manager module at startup |
 | `logos_core_get_loaded_modules()` | Query loaded module names for initial status display |
 
