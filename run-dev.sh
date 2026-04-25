@@ -13,6 +13,11 @@ export QML2_IMPORT_PATH="$QML_UI/qml:$QML_UI:$QML2_IMPORT_PATH"
 export QML_DISABLE_DISK_CACHE=1
 export QML_NO_CACHE=1
 
+# If running on Wayland and QT_QPA_PLATFORM is not set explicitly, use wayland
+if [ -S "/run/user/$(id -u)/wayland-0" ] && [ -z "$QT_QPA_PLATFORM" ]; then
+    export QT_QPA_PLATFORM=wayland
+fi
+
 # Add design system to import path if available
 if [ -n "$LOGOS_DESIGN_SYSTEM_ROOT" ]; then
     # Use design system from environment variable (typically from nix shell)

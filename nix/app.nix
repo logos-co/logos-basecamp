@@ -19,8 +19,8 @@ pkgs.stdenv.mkDerivation rec {
     pkgs.qt6.qtdeclarative
   ] ++ (
     if pkgs.stdenv.isLinux then
-      # Linux: WebKitGTK as backend
-      [ webkitgtk ]
+      # Linux: WebKitGTK as backend + Wayland platform plugin
+      [ webkitgtk pkgs.qt6.qtwayland ]
     else
       []
   );
@@ -56,9 +56,16 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.xorg.libXi
       pkgs.xorg.libXfixes
       pkgs.xorg.libxcb
+      pkgs.qt6.qtwayland
     ]
   );
-  qtPluginPath = "${pkgs.qt6.qtbase}/lib/qt-6/plugins:${pkgs.qt6.qtwebview}/lib/qt-6/plugins:${pkgs.qt6.qtsvg}/lib/qt-6/plugins";
+  qtPluginPath = pkgs.lib.concatStringsSep ":" ([
+    "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
+    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
+    "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
+  ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+    "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
+  ]);
   qmlImportPath = "${placeholder "out"}/lib:${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml";
 
   preConfigure = ''
