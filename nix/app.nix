@@ -19,8 +19,8 @@ pkgs.stdenv.mkDerivation rec {
     pkgs.qt6.qtdeclarative
   ] ++ (
     if pkgs.stdenv.isLinux then
-      # Linux: WebKitGTK as backend
-      [ webkitgtk ]
+      # Linux: WebKitGTK as backend + Wayland platform plugin
+      [ webkitgtk pkgs.qt6.qtwayland ]
     else
       []
   );
@@ -56,9 +56,16 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.xorg.libXi
       pkgs.xorg.libXfixes
       pkgs.xorg.libxcb
+      pkgs.qt6.qtwayland
     ]
   );
-  qtPluginPath = "${pkgs.qt6.qtbase}/lib/qt-6/plugins:${pkgs.qt6.qtwebview}/lib/qt-6/plugins:${pkgs.qt6.qtsvg}/lib/qt-6/plugins";
+  qtPluginPath = pkgs.lib.concatStringsSep ":" ([
+    "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
+    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
+    "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
+  ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+    "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
+  ]);
   qmlImportPath = "${placeholder "out"}/lib:${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml";
 
   preConfigure = ''
@@ -103,7 +110,8 @@ pkgs.stdenv.mkDerivation rec {
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
     extraDirs = [ "modules" "plugins" ];
-    extraClosurePaths = [ pkgs.qt6.qtwebview pkgs.qt6.qtsvg ];
+    extraClosurePaths = [ pkgs.qt6.qtwebview pkgs.qt6.qtsvg ]
+      ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ];
   };
 
   # This is an aggregate runtime layout; avoid stripping to prevent hook errors
@@ -118,7 +126,7 @@ pkgs.stdenv.mkDerivation rec {
     runHook prePreFixup
 
     # Set up Qt environment variables
-    export QT_PLUGIN_PATH="${pkgs.qt6.qtbase}/lib/qt-6/plugins:${pkgs.qt6.qtwebview}/lib/qt-6/plugins:${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
+    export QT_PLUGIN_PATH="${qtPluginPath}"
     export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml"
 
     # Remove any remaining references to /build/ in binaries and set proper RPATH
@@ -223,6 +231,9 @@ WRAPPER_EOF
         cat >> $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 if [ "$(uname)" = "Linux" ]; then
   export XDG_DATA_DIRS="$APPDIR/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+  if [ -n "$WAYLAND_DISPLAY" ] && [ -z "$QT_QPA_PLATFORM" ]; then
+    export QT_QPA_PLATFORM=wayland
+  fi
 fi
 exec "$BINDIR/.LogosBasecamp" "$@"
 WRAPPER_EOF
