@@ -269,6 +269,10 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
       	const QStringList qtDefaultPaths = engine->importPathList();                                                                                                                                                               
         QStringList importPaths = qtDefaultPaths;
         importPaths.prepend(request.installDir);
+        const QString qmlEntryDir =
+            QFileInfo(request.qmlViewPath).absolutePath();
+        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir)
+            importPaths.prepend(qmlEntryDir);
         QString appLibDir = QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
         if (!appLibDir.isEmpty())
             importPaths.prepend(appLibDir);
@@ -282,11 +286,15 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
 
         QStringList allowedRoots;
         allowedRoots << request.installDir;
+        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir
+            && !allowedRoots.contains(qmlEntryDir))
+            allowedRoots << qmlEntryDir;
         // Allow only an explicit set of shared Logos QML modules.
         if (!appLibDir.isEmpty()) {
             static const QStringList kAllowedLogosModules = {
                 QStringLiteral("Theme"),
                 QStringLiteral("Controls"),
+                QStringLiteral("Icons"),
             };
             for (const QString& mod : kAllowedLogosModules) {
                 const QString modDir = QDir(appLibDir + "/Logos/" + mod).canonicalPath();
