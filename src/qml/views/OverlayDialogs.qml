@@ -50,6 +50,8 @@ Item {
         mode: "uninstallCascade"
         onContinueClicked: (name) => backend.confirmUninstallCascade(name)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
+        onContinueClickedMulti: (names) => backend.confirmUninstallMultiCascade(names)
+        onCancelClickedMulti: (names) => backend.cancelMultiUninstall(names)
     }
 
     ConfirmationDialog {
@@ -81,6 +83,10 @@ Item {
         function onUninstallCascadeConfirmationRequested(name, installedDependents, loadedDependents) {
             uninstallCascadeDialog.openWithTwoLists("uninstallCascade", name,
                                                     installedDependents, loadedDependents);
+        }
+
+        function onUninstallMultiCascadeConfirmationRequested(names, installedDependents, loadedDependents) {
+            uninstallCascadeDialog.openWithMultiTargets(names, installedDependents, loadedDependents);
         }
 
         function onInstallConfirmationRequested(metadata) {

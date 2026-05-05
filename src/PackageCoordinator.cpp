@@ -148,6 +148,29 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
         }
         onBeforeUpgrade(name, releaseTag, mode, installedDeps);
     });
+
+    // Multi-uninstall is a separate event so existing single-uninstall handlers
+    // don't have to peek at the payload shape to disambiguate.
+    logos.package_manager.on("beforeMultiUninstall", [this](const QVariantList& data) {
+        if (data.isEmpty()) return;
+        const QByteArray payload = data.first().toString().toUtf8();
+        QJsonParseError err{};
+        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            qWarning() << "beforeMultiUninstall payload parse error:" << err.errorString();
+            return;
+        }
+        const QJsonObject obj = doc.object();
+        QStringList names;
+        for (const QJsonValue& v : obj.value("names").toArray()) {
+            if (v.isString()) names.append(v.toString());
+        }
+        QStringList installedDeps;
+        for (const QJsonValue& v : obj.value("installedDependents").toArray()) {
+            if (v.isString()) installedDeps.append(v.toString());
+        }
+        onBeforeMultiUninstall(names, installedDeps);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -556,12 +579,131 @@ void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& rel
             const QStringList loadedDeps = self->m_uiPluginManager
                 ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
                 : QStringList{};
-            self->m_pendingAction = {PendingOp::UpgradeCascade, name, releaseTag, mode};
+            self->m_pendingAction = {PendingOp::UpgradeCascade, name, releaseTag, mode, {}};
             // Reuse the uninstall cascade dialog — the copy applies verbatim
             // ("these things depend on X; X is about to go away"). Phase B
             // intentionally collapses upgrade/uninstall into one dialog.
             emit self->uninstallCascadeConfirmationRequested(name, installedDeps, loadedDeps);
         });
+}
+
+void PackageCoordinator::onBeforeMultiUninstall(const QStringList& names,
+                                                const QStringList& installedDeps)
+{
+    if (!m_logosAPI) return;
+    if (names.isEmpty()) {
+        qWarning() << "PackageCoordinator::onBeforeMultiUninstall received empty name list — ignoring";
+        return;
+    }
+
+    // Ack with any name from the batch — the module's ackPendingAction accepts
+    // any member of the pending batch's names for MultiUninstall (single-op
+    // ack still requires exact-match against m_pendingAction.name). Picking
+    // names.first() is convention; one ack closes the 3s timer for the whole
+    // batch.
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    const QString ackName = names.first();
+    logos.package_manager.ackPendingActionAsync(ackName,
+        [self, names, installedDeps, ackName](QVariantMap result) {
+            if (!self) return;
+            if (!result.value("success", false).toBool()) {
+                qWarning() << "ackPendingAction (multi) rejected for" << ackName << ":"
+                           << result.value("error").toString();
+                return;
+            }
+            const QStringList loadedDeps = self->m_uiPluginManager
+                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
+                : QStringList{};
+            self->m_pendingAction = {PendingOp::MultiUninstallCascade, QString{}, QString{}, 0, names};
+            emit self->uninstallMultiCascadeConfirmationRequested(names, installedDeps, loadedDeps);
+        });
+}
+
+void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleNames)
+{
+    if (m_pendingAction.op != PendingOp::MultiUninstallCascade
+        || m_pendingAction.names != moduleNames) {
+        qWarning() << "confirmUninstallMultiCascade: no matching pending action — ignoring";
+        return;
+    }
+    m_pendingAction = {};
+
+    // Mirror of confirmUninstallCascade's cascade-unload, looped over each
+    // batch member. Snapshot loaded UI dependents per name BEFORE the core
+    // unload so the UI teardown pass can find them. Per-name dependents are
+    // already deduped within each list, but a single dep could appear under
+    // multiple targets — that's harmless because both teardownUiPluginWidget
+    // and unloadModuleWithDependents are idempotent on already-gone modules.
+    QStringList loadedCore = m_coreModuleManager
+        ? m_coreModuleManager->loadedModules()
+        : QStringList{};
+
+    for (const QString& moduleName : moduleNames) {
+        QStringList loadedDeps;
+        if (m_uiPluginManager) {
+            loadedDeps = m_uiPluginManager->intersectWithLoaded(
+                m_dependentsByModule.value(moduleName));
+        }
+        if (loadedCore.contains(moduleName) || !loadedDeps.isEmpty()) {
+            qDebug() << "Cascade-unloading before multi-uninstall:" << moduleName;
+            bool ok = m_coreModuleManager
+                    ? m_coreModuleManager->unloadModuleWithDependents(moduleName)
+                    : false;
+            if (!ok) {
+                qWarning() << "Cascade unload failed during multi-uninstall of" << moduleName
+                           << "— proceeding";
+            }
+            // Refresh the loaded snapshot so the next iteration sees the
+            // post-cascade state (dependents that were also batch members
+            // are already gone after their own cascade ran).
+            loadedCore = m_coreModuleManager
+                ? m_coreModuleManager->loadedModules()
+                : QStringList{};
+        }
+        if (m_uiPluginManager) {
+            for (const QString& dep : loadedDeps) {
+                m_uiPluginManager->teardownUiPluginWidget(dep);
+            }
+            m_uiPluginManager->teardownUiPluginWidget(moduleName);
+        }
+    }
+
+    // Hand the destructive work back to the module under one confirm call.
+    // No rollback path on rejection: at this point the cascade-unload above
+    // has already run, so a `success: false` here means the modules are
+    // unloaded but their packages remain on disk. Rejection is rare in
+    // normal flow (we just acked, the module's pending state is ours) — most
+    // commonly it'd indicate a name-list mismatch we should never construct.
+    // The user can re-load via the Modules tab if they hit this.
+    if (!m_logosAPI) return;
+    LogosModules logos(m_logosAPI);
+    logos.package_manager.confirmMultiUninstallAsync(moduleNames,
+        [moduleNames](QVariantMap r) {
+            if (!r.value("success", false).toBool()) {
+                qWarning() << "confirmMultiUninstall rejected:"
+                           << r.value("error").toString();
+            }
+        });
+
+    emit coreModulesChanged();
+    emit uiModulesChanged();
+    emit launcherAppsChanged();
+}
+
+void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
+{
+    if (m_pendingAction.op != PendingOp::MultiUninstallCascade
+        || m_pendingAction.names != moduleNames) {
+        // Cancel was fanned out from MainUIBackend or arrived after another
+        // path already cleared the slot — treat as no-op rather than warning.
+        return;
+    }
+    m_pendingAction = {};
+    if (!m_logosAPI) return;
+    LogosModules logos(m_logosAPI);
+    logos.package_manager.cancelMultiUninstallAsync(moduleNames,
+        [](QVariantMap){});
 }
 
 // ---------------------------------------------------------------------------

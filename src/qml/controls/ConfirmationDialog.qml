@@ -45,6 +45,8 @@ Dialog {
     property var loadedItems: []
     // Only used in installConfirm mode — full QVariantMap from inspectPackage.
     property var metadata: ({})
+    // Only used in uninstallCascade for the multi-package variant
+    property var targets: []
 
     // Internal: tracks whether a button explicitly handled the close
     // so the onClosed handler doesn't double-fire cancelClicked. Set
@@ -53,6 +55,8 @@ Dialog {
 
     signal continueClicked(string name)
     signal cancelClicked(string name)
+    signal continueClickedMulti(var names)
+    signal cancelClickedMulti(var names)
 
     modal: true
     anchors.centerIn: parent
@@ -66,6 +70,7 @@ Dialog {
         root.moduleName = name_ || "";
         root.items = items_ || [];
         root.loadedItems = [];
+        root.targets = [];
         root._explicitClose = false;
         open();
     }
@@ -78,6 +83,19 @@ Dialog {
         root.moduleName = name_ || "";
         root.items = installedDeps_ || [];
         root.loadedItems = loadedDeps_ || [];
+        root.targets = [];
+        root._explicitClose = false;
+        open();
+    }
+
+    // Multi-target variant for uninstallCascade. Continue / Cancel emit the
+    // *Multi signals so callers route to confirmMultiUninstall / cancelMultiUninstall.
+    function openWithMultiTargets(targets_, installedDeps_, loadedDeps_) {
+        root.mode = "uninstallCascade";
+        root.moduleName = "";
+        root.items = installedDeps_ || [];
+        root.loadedItems = loadedDeps_ || [];
+        root.targets = targets_ || [];
         root._explicitClose = false;
         open();
     }
@@ -90,6 +108,7 @@ Dialog {
         root.metadata = metadata_ || {};
         root.items = [];
         root.loadedItems = [];
+        root.targets = [];
         root._explicitClose = false;
         open();
     }
@@ -111,8 +130,11 @@ Dialog {
                     return "Missing Dependencies";
                 if (root.mode === "unloadCascade")
                     return "Unload Dependent Modules?";
-                if (root.mode === "uninstallCascade")
+                if (root.mode === "uninstallCascade") {
+                    if (root.targets.length > 1)
+                        return "Uninstall " + root.targets.length + " packages?";
                     return "Uninstall and Unload Dependents?";
+                }
                 if (root.mode === "installConfirm") {
                     if (root.metadata.isAlreadyInstalled)
                         return "Upgrade Package?";
@@ -138,6 +160,12 @@ Dialog {
                     return "The following modules are currently loaded and depend on '"
                          + root.moduleName + "'. Unloading will terminate them:";
                 if (root.mode === "uninstallCascade") {
+                    if (root.targets.length > 1) {
+                        if (root.items.length === 0 && root.loadedItems.length === 0)
+                            return "The following packages will be removed from disk:";
+                        return "The following packages will be removed from disk "
+                             + "and affect the listed dependents:";
+                    }
                     // Collapse to a simple destructive-action confirmation
                     // when neither list is populated.
                     if (root.items.length === 0 && root.loadedItems.length === 0)
@@ -178,6 +206,46 @@ Dialog {
                     text: "• " + modelData
                     color: "#e0e0e0"
                     font.pixelSize: 13
+                }
+            }
+        }
+
+        // Targets list — only rendered for the multi-package variant of
+        // uninstallCascade. Lists the packages the user explicitly selected
+        // for uninstallation. The two-list block below renders the *dependents*
+        // affected by removing them.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            visible: root.mode === "uninstallCascade" && root.targets.length > 1
+
+            LogosText {
+                Layout.fillWidth: true
+                text: "Packages to uninstall:"
+                color: "#c0c0c0"
+                font.pixelSize: 13
+                font.weight: Font.Bold
+                wrapMode: Text.Wrap
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(150, Math.max(30, root.targets.length * 24))
+                color: "#1e1e1e"
+                radius: 4
+                border.color: "#3d3d3d"
+                border.width: 1
+
+                ListView {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    model: root.targets
+                    clip: true
+                    delegate: LogosText {
+                        text: "• " + modelData
+                        color: "#e0e0e0"
+                        font.pixelSize: 13
+                    }
                 }
             }
         }
@@ -469,7 +537,10 @@ Dialog {
 
                 onClicked: {
                     root._explicitClose = true;
-                    root.cancelClicked(root.moduleName);
+                    if (root.targets.length > 0)
+                        root.cancelClickedMulti(root.targets);
+                    else
+                        root.cancelClicked(root.moduleName);
                     root.close();
                 }
             }
@@ -478,7 +549,11 @@ Dialog {
                 text: {
                     if (root.mode === "missingDeps") return "OK";
                     if (root.mode === "unloadCascade") return "Unload All";
-                    if (root.mode === "uninstallCascade") return "Uninstall";
+                    if (root.mode === "uninstallCascade") {
+                        if (root.targets.length > 1)
+                            return "Uninstall " + root.targets.length;
+                        return "Uninstall";
+                    }
                     if (root.mode === "installConfirm") {
                         if (root.metadata.isAlreadyInstalled) return "Upgrade";
                         return "Install";
@@ -514,7 +589,10 @@ Dialog {
 
                 onClicked: {
                     root._explicitClose = true;
-                    root.continueClicked(root.moduleName);
+                    if (root.targets.length > 0)
+                        root.continueClickedMulti(root.targets);
+                    else
+                        root.continueClicked(root.moduleName);
                     root.close();
                 }
             }
@@ -536,7 +614,10 @@ Dialog {
         }
         if (root.mode === "unloadCascade" || root.mode === "uninstallCascade"
             || root.mode === "installConfirm") {
-            root.cancelClicked(root.moduleName);
+            if (root.targets.length > 0)
+                root.cancelClickedMulti(root.targets);
+            else
+                root.cancelClicked(root.moduleName);
         }
     }
 }

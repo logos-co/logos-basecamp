@@ -77,6 +77,13 @@ public slots:
     // PendingOp the current state holds.
     Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
 
+    // Multi-uninstall counterparts. Same gated protocol as the single-package
+    // path but for the batch initiated by package_manager.requestMultiUninstall.
+    // confirm runs the cascade-unload for every name in the batch and then
+    // calls confirmMultiUninstall. cancel forwards to cancelMultiUninstall.
+    Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
+    Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
+
     // Cancel counterpart — a no-op when the pending action's name doesn't
     // match (MainUIBackend fans out cancelPendingAction to both managers so
     // one of them will always be a no-op).
@@ -119,6 +126,15 @@ signals:
                                                const QStringList& installedDependents,
                                                const QStringList& loadedDependents);
 
+    // Multi-uninstall cascade dialog trigger. `names` is the full batch of
+    // packages being uninstalled. `installedDependents` is the union of each
+    // name's recursive reverse dependents minus the names already in the batch
+    // (the module computed it that way; we just pass through). `loadedDependents`
+    // is the subset of installedDependents currently running.
+    void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
+                                                    const QStringList& installedDependents,
+                                                    const QStringList& loadedDependents);
+
 private slots:
     // beforeUninstall / beforeUpgrade handlers. Both ack synchronously (to
     // cancel the module's 3s ack timer) then — if the ack landed — set the
@@ -129,18 +145,24 @@ private slots:
     void onBeforeUpgrade(const QString& name, const QString& releaseTag,
                          int mode, const QStringList& installedDeps);
 
+    // Multi-uninstall variant — same ack-then-emit-dialog shape, but holds the
+    // batch's full name list in m_pendingAction.names so confirm/cancel can
+    // forward the same list back to the module.
+    void onBeforeMultiUninstall(const QStringList& names, const QStringList& installedDeps);
+
 private:
     // The gated-cascade pending slot. UnloadCascade (local, no IPC) lives on
     // UIPluginManager. Here we only track the ops that the package_manager
     // module itself gates (uninstall / upgrade) plus the local LGX-upgrade
     // variant that shares the cascade dialog but runs without module-side
     // gating (it's just uninstallPackage + installPlugin chained).
-    enum class PendingOp { None, UninstallCascade, UpgradeCascade, InstallUpgradeCascade };
+    enum class PendingOp { None, UninstallCascade, UpgradeCascade, InstallUpgradeCascade, MultiUninstallCascade };
     struct PendingAction {
         PendingOp op = PendingOp::None;
         QString   name;
-        QString   releaseTag;      // UpgradeCascade only
-        int       upgradeMode = 0; // UpgradeCascade only
+        QString   releaseTag;       // UpgradeCascade only
+        int       upgradeMode = 0;  // UpgradeCascade only
+        QStringList names;          // MultiUninstallCascade only — full batch (kept last so existing positional initialisers stay valid)
     };
 
     // Subscribe to corePluginFileInstalled/uiPluginFileInstalled/
