@@ -284,10 +284,17 @@ if(_liblogos_found)
     target_link_libraries(main_ui PRIVATE logos_core)
 endif()
 
-# Link SDK library if using installed layout
+# Link the SDK via its exported CMake target so the consumer inherits
+# INTERFACE_LINK_LIBRARIES (OpenSSL::SSL, OpenSSL::Crypto, Boost::system,
+# nlohmann_json). Bare `find_library` only puts liblogos_sdk.a on the
+# link line — every Boost.Asio TLS symbol it pulls in (X509_check_host,
+# SSL_*, ...) ends up undefined at link time on Linux as soon as the
+# SDK adds any code path that references the ssl transports.
 if(NOT _cpp_sdk_is_source)
-    find_library(LOGOS_SDK_LIB logos_sdk PATHS ${LOGOS_CPP_SDK_ROOT}/lib NO_DEFAULT_PATH REQUIRED)
-    target_link_libraries(main_ui PRIVATE ${LOGOS_SDK_LIB})
+    find_package(logos-cpp-sdk REQUIRED CONFIG
+        PATHS ${LOGOS_CPP_SDK_ROOT}/lib/cmake/logos-cpp-sdk
+        NO_DEFAULT_PATH)
+    target_link_libraries(main_ui PRIVATE logos-cpp-sdk::logos_sdk)
 endif()
 
 # For macOS, we need to set the bundle properties

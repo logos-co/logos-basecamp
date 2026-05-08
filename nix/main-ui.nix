@@ -16,10 +16,10 @@ pkgs.stdenv.mkDerivation {
   
   preConfigure = ''
     runHook prePreConfigure
-    
+
     # Set macOS deployment target to match Qt frameworks
     export MACOSX_DEPLOYMENT_TARGET=12.0
-    
+
     # Create generated_code directory for generated files
     mkdir -p ./src/generated_code
 
@@ -27,37 +27,16 @@ pkgs.stdenv.mkDerivation {
     # MainUIBackend can expose it to QML for the Dashboard.
     cp ${buildInfoHeader} ./src/generated_code/logos_build_info.h
     chmod +w ./src/generated_code/logos_build_info.h
-    
-    # Copy logos-cpp-sdk source files to expected location for CMakeLists.txt
-    echo "Copying logos-cpp-sdk source files..."
-    # Don't create cpp directory structure - this confuses layout detection
-    # Instead, just create the include structure that CMake expects for installed layout
-    
-    # Create the include/cpp structure that CMake expects
-    echo "Creating include/cpp structure..."
-    mkdir -p ./logos-cpp-sdk/include/cpp
-    cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
-    echo "Files in logos-cpp-sdk/include/cpp/:"
-    ls -la ./logos-cpp-sdk/include/cpp/
-    
-    # Also copy core headers to fix relative includes
-    echo "Copying core headers..."
-    mkdir -p ./logos-cpp-sdk/include/core
-    cp -r ${logosSdk}/include/core/* ./logos-cpp-sdk/include/core/
-    echo "Files in logos-cpp-sdk/include/core/:"
-    ls -la ./logos-cpp-sdk/include/core/
-    
-    # Copy SDK library files to lib directory
-    echo "Copying SDK library files..."
-    mkdir -p ./logos-cpp-sdk/lib
-    if [ -f "${logosSdk}/lib/liblogos_sdk.dylib" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.dylib" ./logos-cpp-sdk/lib/
-    elif [ -f "${logosSdk}/lib/liblogos_sdk.so" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.so" ./logos-cpp-sdk/lib/
-    elif [ -f "${logosSdk}/lib/liblogos_sdk.a" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
-    fi
-    
+
+    # Note: we deliberately do NOT stage a partial cpp-sdk copy under
+    # ./logos-cpp-sdk/ any more. The CMakeLists now uses
+    # `find_package(logos-cpp-sdk CONFIG PATHS
+    # $LOGOS_CPP_SDK_ROOT/lib/cmake/logos-cpp-sdk)`, which carries
+    # include dirs + the link interface (OpenSSL, Boost, nlohmann_json)
+    # via the imported target. Pointing LOGOS_CPP_SDK_ROOT directly at
+    # the SDK store path (set in configurePhase below) means the
+    # *Config.cmake files are present where find_package looks.
+
     # Copy module-generated API files from logos-package-manager-module
     echo "Copying include files from logos-package-manager-module..."
     if [ -d "${logosPackageManagerModule}/include" ]; then
@@ -108,7 +87,7 @@ pkgs.stdenv.mkDerivation {
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
       -DLOGOS_DISTRIBUTED_BUILD=${if distributed then "ON" else "OFF"} \
       -DLOGOS_PORTABLE_BUILD=${if distributed then "ON" else "OFF"} \
-      -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
+      -DLOGOS_CPP_SDK_ROOT=${logosSdk} \
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime}
