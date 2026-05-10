@@ -108,6 +108,8 @@ endif()
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../app/utils)
 
 set(SOURCES
+    SkinConfig.h\
+    SkinConfig.cpp
     main_ui_plugin.cpp
     MainContainer.cpp
     MainUIBackend.cpp

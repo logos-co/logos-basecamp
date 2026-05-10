@@ -51,6 +51,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/interfaces)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macos)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/windowdecorations)
 # Auto-generated build info header (dropped in by nix/app.nix); absent in
 # non-nix builds — main.cpp guards the include with __has_include.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
@@ -132,6 +133,8 @@ set(PROJECT_SOURCES
     utils/LogRedirector.cpp
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
+    windowdecorations/TrafficLightsTitleBar.h\
+    windowdecorations/TrafficLightsTitleBar.cpp
     macos/macWindowStyle.h
     interfaces/IComponent.h
     resources.qrc
