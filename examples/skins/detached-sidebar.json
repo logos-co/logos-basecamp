@@ -1,0 +1,21 @@
+{
+  "name": "detached-sidebar",
+  "version": "0.1.0",
+  "window": {
+    "frameless": true,
+    "titleBarHeight": 32
+  },
+  "sidebar": {
+    "detached": true,
+    "defaultWidth": 60,
+    "defaultPosition": {
+      "x": -76,
+      "y": 200
+    }
+  },
+  "theme": {
+    "background": "#171717",
+    "surface": "#262626",
+    "border": "#434343"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "default",
+  "version": "0.1.0",
+  "window": {
+    "frameless": true,
+    "titleBarHeight": 32
+  },
+  "sidebar": {
+    "detached": false,
+    "defaultWidth": 60
+  },
+  "theme": {
+    "background": "#171717",
+    "surface": "#262626",
+    "border": "#434343"
+  }
+}
