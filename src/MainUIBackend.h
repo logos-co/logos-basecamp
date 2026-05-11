@@ -117,6 +117,8 @@ public slots:
     // cancelPendingAction fans out to both so the un-involved one no-ops.
     Q_INVOKABLE void confirmUnloadCascade(const QString& moduleName);
     Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
+    Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
+    Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
 
     // Install confirmation flow — delegated to PackageCoordinator.
@@ -159,6 +161,9 @@ signals:
     void uninstallCascadeConfirmationRequested(const QString& name,
                                                const QStringList& installedDependents,
                                                const QStringList& loadedDependents);
+    void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
+                                                    const QStringList& installedDependents,
+                                                    const QStringList& loadedDependents);
 
     // Install confirmation — emitted when the user picks an LGX file and we've
     // inspected it. metadata contains name, version, type, signatureStatus, etc.

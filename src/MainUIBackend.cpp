@@ -73,6 +73,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::installConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallCascadeConfirmationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
+            this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
 
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
@@ -211,6 +213,8 @@ void MainUIBackend::openInstallPluginDialog()                 { m_packageCoordin
 void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }
 void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
 void MainUIBackend::confirmUninstallCascade(const QString& n) { m_packageCoordinator->confirmUninstallCascade(n); }
+void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
+void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::confirmInstall()                          { m_packageCoordinator->confirmInstall(); }
 void MainUIBackend::cancelInstall()                           { m_packageCoordinator->cancelInstall(); }
 
