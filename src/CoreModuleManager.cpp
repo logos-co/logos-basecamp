@@ -17,13 +17,8 @@ extern "C" {
     char* logos_core_get_module_stats();
     char** logos_core_get_known_modules();
     char** logos_core_get_loaded_modules();
-    int logos_core_load_module_with_dependencies(const char* module_name);
-    int logos_core_unload_module(const char* module_name);
-    // Cascade unload: tears down `module_name` and all currently-loaded
-    // modules that depend on it, in leaves-first order. Returns 1 on full
-    // success, 0 on any failure. Remote mode only — a no-op in Local mode
-    // today (Basecamp gates the UI off there).
-    int logos_core_unload_module_with_dependents(const char* module_name);
+    int logos_core_load_module(const char* module_name, bool with_dependencies);
+    int logos_core_unload_module(const char* module_name, bool with_dependents);
     void logos_core_refresh_modules();
 }
 
@@ -78,17 +73,17 @@ QStringList CoreModuleManager::loadedModules() const
 
 bool CoreModuleManager::loadModule(const QString& name)
 {
-    return logos_core_load_module_with_dependencies(name.toUtf8().constData()) == 1;
+    return logos_core_load_module(name.toUtf8().constData(), true) == 1;
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData()) == 1;
+    return logos_core_unload_module(name.toUtf8().constData(), false) == 1;
 }
 
 bool CoreModuleManager::unloadModuleWithDependents(const QString& name)
 {
-    return logos_core_unload_module_with_dependents(name.toUtf8().constData()) == 1;
+    return logos_core_unload_module(name.toUtf8().constData(), true) == 1;
 }
 
 QVariantMap CoreModuleManager::moduleStats(const QString& name) const

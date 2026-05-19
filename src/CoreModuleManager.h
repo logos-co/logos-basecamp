@@ -36,7 +36,7 @@ public:
     // cooked Qt types; they never see a raw C string.
     QStringList knownModules() const;
     QStringList loadedModules() const;
-    // Returns true on success. Wraps logos_core_load_module_with_dependencies
+    // Returns true on success. Wraps logos_core_load_module(name, true)
     // (the C API function that also resolves forward deps before loading).
     bool loadModule(const QString& name);
     // Returns true on success. Wraps logos_core_unload_module — this does NOT
