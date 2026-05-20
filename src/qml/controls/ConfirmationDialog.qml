@@ -233,9 +233,19 @@ Dialog {
                     var head = verb + " '" + root.moduleName + "'" + verPhrase
                              + ". The current version will be removed first, "
                              + "then the new one downloaded and installed.";
-                    if (root.items.length === 0 && root.loadedItems.length === 0)
+                    // We only surface the *loaded* dependents here — the
+                    // installed-but-not-running set picks up the new
+                    // version on their next load and isn't "affected" in
+                    // any user-visible way, so listing them implies
+                    // alarm that doesn't exist (this was the
+                    // pre-existing copy bug). If nothing is currently
+                    // running on top of the module, the head sentence
+                    // stands on its own.
+                    if (root.loadedItems.length === 0)
                         return head;
-                    return head + " This will affect the following:";
+                    return head + " The modules below are running on top of it and "
+                                + "will be unloaded for the swap — they keep working "
+                                + "with the new version once it lands.";
                 }
                 if (root.mode === "installConfirm") {
                     if (root.metadata.isAlreadyInstalled)
@@ -318,14 +328,22 @@ Dialog {
         // the section headers and lists share the dialog's vertical spacing.
         // Each sub-list is only shown when it has entries — a pure loaded-only
         // or installed-only case still renders cleanly as one labelled list.
+        //
+        // upgradeCascade reuses the loaded-list half only: installed-not-
+        // running dependents pick up the new version on their next load and
+        // aren't user-visibly affected, so listing them under "Will stop
+        // working" would be a lie. The body sentence above already covers
+        // the "running dependents get a brief unload" story, the list below
+        // just names them.
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 8
-            visible: (root.mode === "uninstallCascade"
-                      || root.mode === "upgradeCascade")
-                     && (root.items.length > 0 || root.loadedItems.length > 0)
+            visible: (root.mode === "uninstallCascade" && (root.items.length > 0 || root.loadedItems.length > 0))
+                  || (root.mode === "upgradeCascade"   && root.loadedItems.length > 0)
 
             // Installed dependents (full impact — will break on next load).
+            // Hidden for upgradeCascade: the new version replaces the old
+            // before they next load, so they're not breaking.
             LogosText {
                 Layout.fillWidth: true
                 text: "Will stop working (installed but not running):"
@@ -333,7 +351,7 @@ Dialog {
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 wrapMode: Text.Wrap
-                visible: root.items.length > 0
+                visible: root.mode === "uninstallCascade" && root.items.length > 0
             }
 
             Rectangle {
@@ -343,7 +361,7 @@ Dialog {
                 radius: 4
                 border.color: "#3d3d3d"
                 border.width: 1
-                visible: root.items.length > 0
+                visible: root.mode === "uninstallCascade" && root.items.length > 0
 
                 ListView {
                     anchors.fill: parent
@@ -358,11 +376,16 @@ Dialog {
                 }
             }
 
-            // Loaded dependents (will be unloaded now).
+            // Loaded dependents — wording differs by mode. uninstallCascade
+            // unloads them permanently (the module they hang off is going
+            // away); upgradeCascade unloads them only for the swap (they
+            // resume against the new version once it's installed).
             LogosText {
                 Layout.fillWidth: true
                 Layout.topMargin: 4
-                text: "Will be unloaded now:"
+                text: root.mode === "upgradeCascade"
+                      ? "Currently running (will be temporarily unloaded):"
+                      : "Will be unloaded now:"
                 color: "#c0c0c0"
                 font.pixelSize: 13
                 font.weight: Font.Bold
