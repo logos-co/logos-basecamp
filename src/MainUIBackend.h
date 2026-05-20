@@ -172,6 +172,15 @@ signals:
     void uninstallCascadeConfirmationRequested(const QString& name,
                                                const QStringList& installedDependents,
                                                const QStringList& loadedDependents);
+    // Distinct signal for upgrade/downgrade/reinstall — see
+    // PackageCoordinator::upgradeCascadeConfirmationRequested for why we
+    // can't reuse the uninstall variant (the dialog needs the target
+    // version + UpgradeMode to label itself correctly).
+    void upgradeCascadeConfirmationRequested(const QString& name,
+                                             const QString& releaseTag,
+                                             int mode,
+                                             const QStringList& installedDependents,
+                                             const QStringList& loadedDependents);
     void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
                                                     const QStringList& installedDependents,
                                                     const QStringList& loadedDependents);

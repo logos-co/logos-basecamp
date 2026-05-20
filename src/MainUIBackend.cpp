@@ -73,6 +73,14 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::installConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallCascadeConfirmationRequested);
+    // Distinct upgrade/downgrade/reinstall cascade signal — the dialog
+    // shape is the same as the uninstall variant, but the title + body
+    // need the target releaseTag + UpgradeMode (so a downgrade doesn't
+    // look like a bare uninstall). PackageCoordinator emits this from
+    // onBeforeUpgrade; OverlayDialogs.qml renders it via the
+    // "upgradeCascade" mode of ConfirmationDialog.
+    connect(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
+            this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
 
