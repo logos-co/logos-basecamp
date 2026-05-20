@@ -6,7 +6,7 @@ import Logos.Theme
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
-// Four display variants, selected via `mode`:
+// Five display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
 //                       dependencies aren't installed. Primary action is a
 //                       "Continue" that closes the dialog (the primary
@@ -23,6 +23,17 @@ import Logos.Theme
 //                       When only `items` is populated and `loadedItems` is
 //                       empty, we still show the installed list so the user
 //                       sees what will break next time those are loaded.
+//  - "upgradeCascade" — confirmation; upgrading/downgrading/reinstalling
+//                       this module. Same two-list shape as uninstallCascade
+//                       (the package_manager performs an uninstall step
+//                       first, with the same dependent-impact set), but
+//                       title and body lead with the new version + the
+//                       UpgradeMode (Upgrade / Downgrade / Reinstall) so
+//                       the user knows the operation isn't a bare uninstall.
+//                       Confirm/Cancel still flow through `continueClicked`
+//                       / `cancelClicked`; the receiver disambiguates from
+//                       its own pending state (UpgradeCascade vs
+//                       UninstallCascade).
 //  - "installConfirm" — confirmation before installing / upgrading an LGX
 //                       file. Renders package metadata (name, version, type,
 //                       signature status). For upgrades, shows the installed
@@ -30,23 +41,31 @@ import Logos.Theme
 //
 // The dialog is controlled by calling `openWith(mode, name, items)` for the
 // one-list modes, `openWithTwoLists(mode, name, items, loadedItems)` for
-// uninstallCascade, or `openWithMetadata(metadata)` for installConfirm.
+// uninstallCascade, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps)`
+// for upgradeCascade, or `openWithMetadata(metadata)` for installConfirm.
 // Backend wiring listens for continueClicked/cancelClicked and calls the
 // appropriate slot with `name`.
 Dialog {
     id: root
 
-    // "missingDeps" | "unloadCascade" | "uninstallCascade" | "installConfirm"
+    // "missingDeps" | "unloadCascade" | "uninstallCascade" | "upgradeCascade" | "installConfirm"
     property string mode: "missingDeps"
     property string moduleName: ""
     property var items: []
-    // Only used in uninstallCascade mode — the subset of `items` that is
-    // currently loaded and will be torn down as part of the cascade.
+    // Only used in uninstall/upgrade cascade modes — the subset of `items`
+    // that is currently loaded and will be torn down as part of the
+    // cascade.
     property var loadedItems: []
     // Only used in installConfirm mode — full QVariantMap from inspectPackage.
     property var metadata: ({})
     // Only used in uninstallCascade for the multi-package variant
     property var targets: []
+    // Only used in upgradeCascade mode. `upgradeTargetVersion` is the
+    // pinned target (e.g. "1.0.0") supplied by the caller's requestUpgrade
+    // call; `upgradeModeKind` mirrors PackageTypes/UpgradeMode —
+    //   0 = Upgrade, 1 = Downgrade, 2 = Sidegrade (Reinstall).
+    property string upgradeTargetVersion: ""
+    property int upgradeModeKind: 0
 
     // Internal: tracks whether a button explicitly handled the close
     // so the onClosed handler doesn't double-fire cancelClicked. Set
@@ -100,6 +119,23 @@ Dialog {
         open();
     }
 
+    // Upgrade/Downgrade/Reinstall variant. Reuses the two-list dependent
+    // impact shape (the upgrade flow does an uninstall step first, with
+    // the same cascade semantics) but the title + body line lead with
+    // the target version and the UpgradeMode so the user sees the full
+    // operation, not just "Uninstall and Unload Dependents?".
+    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_) {
+        root.mode = "upgradeCascade";
+        root.moduleName = name_ || "";
+        root.upgradeTargetVersion = version_ || "";
+        root.upgradeModeKind = upgradeMode_ | 0;
+        root.items = installedDeps_ || [];
+        root.loadedItems = loadedDeps_ || [];
+        root.targets = [];
+        root._explicitClose = false;
+        open();
+    }
+
     // Metadata variant for installConfirm — metadata is the QVariantMap from
     // inspectPackage containing name, version, type, signatureStatus, etc.
     function openWithMetadata(metadata_) {
@@ -134,6 +170,14 @@ Dialog {
                     if (root.targets.length > 1)
                         return "Uninstall " + root.targets.length + " packages?";
                     return "Uninstall and Unload Dependents?";
+                }
+                if (root.mode === "upgradeCascade") {
+                    // Title leads with the operation. The target version
+                    // goes in the body (below) so the title stays short
+                    // when the version string is long (e.g. "1.0.0-rc.1").
+                    if (root.upgradeModeKind === 1) return "Downgrade Package?";
+                    if (root.upgradeModeKind === 2) return "Reinstall Package?";
+                    return "Upgrade Package?";
                 }
                 if (root.mode === "installConfirm") {
                     if (root.metadata.isAlreadyInstalled)
@@ -174,6 +218,25 @@ Dialog {
                     return "Uninstalling '" + root.moduleName + "' will remove the "
                          + "package files from disk and affect the following:";
                 }
+                if (root.mode === "upgradeCascade") {
+                    // Lead with the operation in plain English so the
+                    // user sees this isn't a bare uninstall — the
+                    // package_manager removes the current version as the
+                    // first phase of the swap, which is why this dialog
+                    // fires at all. Target version goes here (not in the
+                    // title) so long version strings don't truncate.
+                    var verb = "Upgrade";
+                    if (root.upgradeModeKind === 1) verb = "Downgrade";
+                    else if (root.upgradeModeKind === 2) verb = "Reinstall";
+                    var verPhrase = root.upgradeTargetVersion.length > 0
+                                    ? " to v" + root.upgradeTargetVersion : "";
+                    var head = verb + " '" + root.moduleName + "'" + verPhrase
+                             + ". The current version will be removed first, "
+                             + "then the new one downloaded and installed.";
+                    if (root.items.length === 0 && root.loadedItems.length === 0)
+                        return head;
+                    return head + " This will affect the following:";
+                }
                 if (root.mode === "installConfirm") {
                     if (root.metadata.isAlreadyInstalled)
                         return "An existing version is installed. Review the details "
@@ -193,6 +256,7 @@ Dialog {
             border.color: "#3d3d3d"
             border.width: 1
             visible: root.mode !== "uninstallCascade"
+                     && root.mode !== "upgradeCascade"
                      && root.mode !== "installConfirm"
                      && root.items.length > 0
 
@@ -257,7 +321,8 @@ Dialog {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 8
-            visible: root.mode === "uninstallCascade"
+            visible: (root.mode === "uninstallCascade"
+                      || root.mode === "upgradeCascade")
                      && (root.items.length > 0 || root.loadedItems.length > 0)
 
             // Installed dependents (full impact — will break on next load).
@@ -554,6 +619,11 @@ Dialog {
                             return "Uninstall " + root.targets.length;
                         return "Uninstall";
                     }
+                    if (root.mode === "upgradeCascade") {
+                        if (root.upgradeModeKind === 1) return "Downgrade";
+                        if (root.upgradeModeKind === 2) return "Reinstall";
+                        return "Upgrade";
+                    }
                     if (root.mode === "installConfirm") {
                         if (root.metadata.isAlreadyInstalled) return "Upgrade";
                         return "Install";
@@ -579,7 +649,12 @@ Dialog {
                             return parent.pressed ? "#da190b" : "#f44336";
                         if (root.mode === "unloadCascade")
                             return parent.pressed ? "#da190b" : "#f44336";
-                        // Upgrade gets an amber accent; fresh install gets green.
+                        // Upgrade-family: not destructive (a new version
+                        // lands at the end), but not "fresh install"
+                        // green either. Amber matches the per-row pill's
+                        // Reinstall / installConfirm-upgrade accents.
+                        if (root.mode === "upgradeCascade")
+                            return parent.pressed ? "#e68900" : "#FF9800";
                         if (root.mode === "installConfirm" && root.metadata.isAlreadyInstalled)
                             return parent.pressed ? "#e68900" : "#FF9800";
                         return parent.pressed ? "#45a049" : "#4CAF50";
@@ -613,7 +688,7 @@ Dialog {
             return;
         }
         if (root.mode === "unloadCascade" || root.mode === "uninstallCascade"
-            || root.mode === "installConfirm") {
+            || root.mode === "upgradeCascade" || root.mode === "installConfirm") {
             if (root.targets.length > 0)
                 root.cancelClickedMulti(root.targets);
             else
