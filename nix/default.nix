@@ -45,7 +45,7 @@
   
   # Metadata
   meta = with pkgs.lib; {
-    description = "Logos App - Qt application with UI plugins";
+    description = "Logos Basecamp - Qt application with UI plugins";
     platforms = platforms.unix;
   };
 }

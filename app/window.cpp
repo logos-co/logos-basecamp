@@ -117,7 +117,7 @@ void Window::setupUi()
     }
 
     // Set window title and size
-    setWindowTitle("Logos App");
+    setWindowTitle("Logos Basecamp");
     resize(1024, 768);
 
 #ifdef Q_OS_MAC
@@ -198,7 +198,7 @@ void Window::createTrayIcon()
     // Create tray icon
     m_trayIcon = new QSystemTrayIcon(this);
     setIcon();
-    m_trayIcon->setToolTip("Logos App");
+    m_trayIcon->setToolTip("Logos Basecamp");
 
     // Create context menu
     m_trayIconMenu = new QMenu(this);
@@ -261,7 +261,7 @@ void Window::closeEvent(QCloseEvent *event)
         // Show a message to inform the user
         if (m_trayIcon->supportsMessages()) {
             m_trayIcon->showMessage(
-                tr("Logos App"),
+                tr("Logos Basecamp"),
                 tr("The application will continue to run in the system tray. "
                    "Click the tray icon to restore the window."),
                 QSystemTrayIcon::Information,

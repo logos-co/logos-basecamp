@@ -101,7 +101,7 @@ The app currently supports:
 2. Participating in consensus (chain-following and proposing blocks)
 3. Making and receiving transfers
 
-You can run the Blockchain App through the Logos App, or standalone by building and running the app from source, instructions [here](https://github.com/logos-blockchain/logos-blockchain-ui?tab=readme-ov-file#how-to-build).
+You can run the Blockchain App through Logos Basecamp, or standalone by building and running the app from source, instructions [here](https://github.com/logos-blockchain/logos-blockchain-ui?tab=readme-ov-file#how-to-build).
 
 ### LEZ Wallet
 
@@ -113,11 +113,11 @@ The wallet currently supports:
 3. Public to Public transfers
 4. Private to Private transfers
 
-You can run the LEZ Wallet through Logos App, or standalone by building and running from source, see instructions [here](https://github.com/logos-blockchain/logos-execution-zone-wallet-ui?tab=readme-ov-file#how-to-build).
+You can run the LEZ Wallet through Logos Basecamp, or standalone by building and running from source, see instructions [here](https://github.com/logos-blockchain/logos-execution-zone-wallet-ui?tab=readme-ov-file#how-to-build).
 
 ### Storage
 
-The Logos Storage App allows you to publish, download, and share files with other Logos users. You can run it both in standalone mode, or as part of the main Logos App.
+The Logos Storage App allows you to publish, download, and share files with other Logos users. You can run it both in standalone mode, or as part of the main Logos Basecamp.
 
 Sharing files requires direct connection across nodes, so you will need to set up your router to allow NAT traversal either via UPnP, or manual port forwarding. The app will help you figure out if your NAT traversal is working with a reachability check.
 
@@ -125,7 +125,7 @@ Check [the app's README file](https://github.com/logos-co/logos-storage-ui) for 
 
 ### Chat
 
-The Logos Chat App lets you send and receive private 1:1 messages, where messages are transferred over Logos Delivery, the decentralised transport layer. You can run it both in standalone mode, or as part of the main Logos App.
+The Logos Chat App lets you send and receive private 1:1 messages, where messages are transferred over Logos Delivery, the decentralised transport layer. You can run it both in standalone mode, or as part of the main Logos Basecamp.
 
 In the current testnet demo, the app supports:
 - Creating and sharing your intro bundle (a contact identifier others can use to reach you)
@@ -145,7 +145,7 @@ This demonstrates two core primitives working end-to-end:
 
 Your chat client will first discover the necessary addresses and keys for a pool of mix nodes (using the [capability discovery API](https://lip.logos.co/ift-ts/raw/extended-kad-disco.html#api-specification)) and then proceed to route every published message through this libp2p [mix overlay network](https://lip.logos.co/ift-ts/raw/mix.html).
 
-You can run Mix Demo Chat inside the Logos App.
+You can run Mix Demo Chat inside Logos Basecamp.
 On loading, the UI will show the following:
 - Status is shown as *Ready*
 - LP Peer count increasing over time before stabilising
