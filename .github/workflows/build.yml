@@ -2,7 +2,9 @@ name: Build & Release
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
+      - 'release/**'
   pull_request:
     branches: [master]
 
@@ -124,7 +126,7 @@ jobs:
         run: nix build .#integration-test-bundle -L
 
   release:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     needs: [build-appimage, build-macos-app]
     runs-on: ubuntu-latest
     permissions:
