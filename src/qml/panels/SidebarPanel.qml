@@ -61,6 +61,19 @@ Control {
             source: "qrc:/icons/basecamp.png"
         }
 
+        // Pre-release version badge — only shown for builds whose version
+        // string carries a pre-release suffix (-rc, -alpha, -beta, -dev).
+        // Stable releases show nothing. Keeps screenshots and bug reports
+        // self-documenting without cluttering the production UI.
+        Text {
+            visible: /(-rc|-alpha|-beta|-dev)/i.test(backend.buildVersion)
+            text: backend.buildVersion
+            color: "#4B5563"
+            font.pixelSize: 10
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: -Theme.spacing.large + 2
+        }
+
         SeparatorLine {}
 
         // Workspaces
