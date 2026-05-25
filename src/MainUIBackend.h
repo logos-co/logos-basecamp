@@ -67,6 +67,11 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
 
+    // Sidebar tooltip — bridged to the overlay widget so it can render
+    // outside the narrow sidebar QQuickWidget.
+    Q_PROPERTY(QString sidebarTooltipText READ sidebarTooltipText WRITE setSidebarTooltipText NOTIFY sidebarTooltipChanged)
+    Q_PROPERTY(qreal sidebarTooltipY READ sidebarTooltipY WRITE setSidebarTooltipY NOTIFY sidebarTooltipChanged)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -88,6 +93,12 @@ public:
     QString buildVersion() const;
     bool isPortableBuild() const;
     QVariantList buildCommits() const;
+
+    // Sidebar tooltip accessors.
+    QString sidebarTooltipText() const { return m_sidebarTooltipText; }
+    qreal sidebarTooltipY() const { return m_sidebarTooltipY; }
+    void setSidebarTooltipText(const QString& text);
+    void setSidebarTooltipY(qreal y);
 
     // Accessors for C++ coordination code (MdiView etc.) that needs a handle
     // to the managers directly. QML goes through the delegating slots/signals.
@@ -173,6 +184,7 @@ signals:
     void pluginWindowRequested(QWidget* widget, const QString& title);
     void pluginWindowRemoveRequested(QWidget* widget);
     void pluginWindowActivateRequested(QWidget* widget);
+    void sidebarTooltipChanged();
 
 private:
     void initializeSections();
@@ -191,4 +203,7 @@ private:
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;
+
+    QString m_sidebarTooltipText;
+    qreal m_sidebarTooltipY = 0;
 };

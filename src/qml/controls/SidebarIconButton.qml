@@ -9,6 +9,16 @@ AbstractButton {
     checkable: true
     autoExclusive: true
 
+    onHoveredChanged: {
+        if (hovered && text) {
+            var pos = root.mapToItem(null, root.width, root.height / 2)
+            backend.sidebarTooltipY = pos.y
+            backend.sidebarTooltipText = root.text
+        } else {
+            backend.sidebarTooltipText = ""
+        }
+    }
+
     background: Image {
         width: 56
         height: 46

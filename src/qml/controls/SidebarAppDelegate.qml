@@ -17,6 +17,16 @@ AbstractButton {
 
     implicitHeight: 50
 
+    onHoveredChanged: {
+        if (hovered && text) {
+            var pos = root.mapToItem(null, root.width, root.height / 2)
+            backend.sidebarTooltipY = pos.y
+            backend.sidebarTooltipText = root.text
+        } else {
+            backend.sidebarTooltipText = ""
+        }
+    }
+
     background: Rectangle {
         color: root.loaded ? Theme.palette.backgroundTertiary : Theme.palette.overlayDark
         Rectangle {

@@ -1,5 +1,7 @@
 import QtQuick
 import QtQuick.Controls
+import Logos.Theme
+import Logos.Controls
 import controls
 
 // Global dialog layer hosted in a transparent top-level QQuickWidget
@@ -59,6 +61,47 @@ Item {
         mode: "installConfirm"
         onContinueClicked: backend.confirmInstall()
         onCancelClicked: backend.cancelInstall()
+    }
+
+    Rectangle {
+        id: sidebarTooltip
+        visible: opacity > 0
+        opacity: tooltipTimer.showIt ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+        x: 68
+        y: backend.sidebarTooltipY - height / 2
+        width: tooltipLabel.implicitWidth + 16
+        height: tooltipLabel.implicitHeight + 8
+        radius: 4
+        color: Theme.palette.surface
+
+        LogosText {
+            id: tooltipLabel
+            anchors.centerIn: parent
+            text: backend.sidebarTooltipText
+            font.pixelSize: 12
+            color: Theme.palette.textSecondary
+        }
+
+        Timer {
+            id: tooltipTimer
+            property bool showIt: false
+            interval: 500
+            onTriggered: showIt = true
+        }
+    }
+
+    Connections {
+        target: backend
+        function onSidebarTooltipChanged() {
+            if (backend.sidebarTooltipText !== "") {
+                tooltipTimer.showIt = false
+                tooltipTimer.restart()
+            } else {
+                tooltipTimer.stop()
+                tooltipTimer.showIt = false
+            }
+        }
     }
 
     Connections {
