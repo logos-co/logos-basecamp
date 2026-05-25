@@ -107,15 +107,12 @@ logos-basecamp/
 | `package_manager` | Package management (auto-loaded at startup) |
 | `package_downloader` | Online catalog browsing and download |
 | `capability_module` | Inter-module authorization and token management |
-| `counter` | C++ counter demo module |
 
 **UI Apps** (Qt plugins loaded directly by Basecamp, displayed as MDI tabs):
 
 | App | Type | Purpose |
 |-----|------|---------|
-| `counter_qml` | QML | QML-based counter demo app |
 | `package_manager_ui` | QML | Package management UI |
-| `webview_app` | QML | Web browsing app |
 
 ## How liblogos Is Used
 
@@ -602,7 +599,7 @@ nix build '.#smoke-test' -L
 
 End-to-end UI tests using the `logos-qt-mcp` framework:
 - Clicks buttons, verifies visible text
-- Tests counter, package manager, and webview app modules
+- Tests package manager and core modules
 - Supports CI mode (headless) and interactive mode
 - Skips GPU-dependent tests in offscreen mode
 

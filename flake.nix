@@ -14,10 +14,7 @@
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
-    logos-webview-app.url = "github:logos-co/logos-webview-app";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    logos-counter-qml.url = "github:logos-co/counter_qml";
-    logos-counter.url = "github:logos-co/counter";
     logos-view-module-runtime = {
       url = "github:logos-co/logos-view-module-runtime";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -34,7 +31,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-webview-app, logos-design-system, logos-counter-qml, logos-counter, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the main UI plugin so
@@ -60,10 +57,7 @@
           { name = "logos-capability-module"; commit = revOf logos-capability-module; }
           { name = "logos-package"; commit = revOf logos-package; }
           { name = "logos-package-manager-ui"; commit = revOf logos-package-manager-ui; }
-          { name = "logos-webview-app"; commit = revOf logos-webview-app; }
           { name = "logos-design-system"; commit = revOf logos-design-system; }
-          { name = "logos-counter-qml"; commit = revOf logos-counter-qml; }
-          { name = "logos-counter"; commit = revOf logos-counter; }
           { name = "logos-view-module-runtime"; commit = revOf logos-view-module-runtime; }
           { name = "logos-qt-mcp"; commit = revOf logos-qt-mcp; }
           { name = "nix-bundle-logos-module-install"; commit = revOf nix-bundle-logos-module-install; }
@@ -88,10 +82,7 @@
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
-        logosWebviewApp = logos-webview-app.packages.${system}.default;
         logosDesignSystem = logos-design-system.packages.${system}.default;
-        logosCounterQml = logos-counter-qml.packages.${system}.default;
-        logosCounter = logos-counter.packages.${system}.default;
         logosViewModuleRuntime = logos-view-module-runtime.packages.${system}.default;
         logosQtMcp = logos-qt-mcp.packages.${system}.default;
         logosCppSdkSrc = logos-cpp-sdk.outPath;
@@ -104,7 +95,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageManagerUI, logosCapabilityModule, logosWebviewApp, logosDesignSystem, logosCounterQml, logosCounter, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -113,13 +104,10 @@
           src = ./.;
 
           # Plugin packages (development builds)
-          counterPlugin = logosCounter;
-          counterQmlPlugin = logosCounterQml;
           mainUIPlugin = import ./nix/main-ui.nix {
             inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime buildInfo;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
-          webviewAppPlugin = logosWebviewApp;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
@@ -134,21 +122,15 @@
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            counterPlugin
-            counterQmlPlugin
             mainUIPlugin
             packageManagerUIPlugin
-            webviewAppPlugin
           ];
           installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            counterPlugin
-            counterQmlPlugin
             mainUIPluginDistributed
             packageManagerUIPlugin
-            webviewAppPlugin
           ];
 
           # App package (development build)
@@ -227,11 +209,8 @@
         in
         {
           # Individual outputs
-          counter-plugin = counterPlugin;
-          counter-qml-plugin = counterQmlPlugin;
           main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
-          webview-app-plugin = webviewAppPlugin;
           app = app;
           portable = appDistributed;
           

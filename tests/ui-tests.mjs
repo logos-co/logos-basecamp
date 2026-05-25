@@ -4,7 +4,7 @@
 //
 // Usage:
 //   node tests/ui-tests.mjs                       # run all (app must be running)
-//   node tests/ui-tests.mjs counter               # run tests matching "counter"
+//   node tests/ui-tests.mjs modules               # run tests matching "modules"
 //   node tests/ui-tests.mjs --ci <app-binary>     # CI mode: launch app, test, kill
 //
 // Set LOGOS_QT_MCP to override the framework path (nix builds set this automatically).
@@ -30,64 +30,12 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
   );
 }
 
-// --- Webview App ---
-// Skipped in offscreen mode: QWebEngine requires a display (GPU/compositor)
-
-test("webview_app: open and verify buttons", async (app) => {
-  await openPlugin(app, "webview_app", ["Wikipedia", "Local File", "Send Event to WebApp"]);
-}, { skip: ["offscreen"] });
-
-test("webview_app: click Wikipedia", async (app) => {
-  await openPlugin(app, "webview_app", ["Wikipedia", "Local File"]);
-  await app.click("Wikipedia", { type: "QPushButton" });
-
-  await app.expectTexts(["Wikipedia", "Local File"]);
-}, { skip: ["offscreen"] });
-
-test("webview_app: click Local File", async (app) => {
-  await openPlugin(app, "webview_app", ["Wikipedia", "Local File"]);
-  await app.click("Local File", { type: "QPushButton" });
-
-  await app.expectTexts(["Wikipedia", "Local File"]);
-}, { skip: ["offscreen"] });
-
 // --- Package Manager ---
 
 test("package_manager_ui: open and verify categories", async (app) => {
   // Offscreen CI: logos-qt-mcp findByProperty sees "Reload" but not the Install label
   // (Row contentItem). Assert Reload only; the UI itself is unchanged.
   await openPlugin(app, "package_manager_ui", ["Reload"]);
-});
-
-// --- Counter ---
-
-test("counter: open app", async (app) => {
-  await app.click("counter");
-});
-
-test("counter: increment twice and expect value 2", async (app) => {
-  await openPlugin(app, "counter", ["0"]);
-
-  // Click increment twice
-  await app.click("Increment me");
-  await app.click("Increment me");
-
-  // Verify counter shows 2. Use waitFor rather than a bare expectTexts —
-  // Qt click → slot → widget repaint is asynchronous, and the click-to-
-  // paint latency varies between Linux (QCocoa absent) and macOS (QCocoa
-  // in the dispatch path even under -platform offscreen). On macOS we
-  // were racing the paint and the assertion occasionally fired before
-  // the "2" had landed in the rendered tree.
-  await app.waitFor(
-    async () => { await app.expectTexts(["2"]); },
-    { timeout: 5000, interval: 200, description: "counter value to reach 2" }
-  );
-});
-
-// --- Counter QML ---
-
-test("counter_qml: open app", async (app) => {
-  await app.click("counter_qml");
 });
 
 // --- Modules section ---
@@ -180,11 +128,7 @@ test("modules: leaving and returning to Core Modules preserves loaded state", as
 // still reachable by switching back to each one.
 
 test("sidebar: open multiple plugins sequentially without failure", async (app) => {
-  // Plugins available in the default fixture build (excluding webview_app
-  // which requires a real display / GPU compositor).
   const plugins = [
-    { name: "counter",              expect: ["0"] },
-    { name: "counter_qml",         expect: ["0"] },
     { name: "package_manager_ui",  expect: ["Reload"] },
   ];
 
