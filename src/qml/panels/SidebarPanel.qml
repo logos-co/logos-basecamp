@@ -92,6 +92,7 @@ Control {
 
                     width: parent.width
                     checked: root.currentActiveSectionIndex === index
+                    text: modelData.name
                     icon.source: modelData.iconPath
                     onClicked: root.updateLauncherIndex(index)
                 }

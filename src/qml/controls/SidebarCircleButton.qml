@@ -9,6 +9,16 @@ AbstractButton {
     implicitHeight: 38
     implicitWidth: 38
 
+    onHoveredChanged: {
+        if (hovered && text) {
+            var pos = root.mapToItem(null, root.width, root.height / 2)
+            backend.sidebarTooltipY = pos.y
+            backend.sidebarTooltipText = root.text
+        } else {
+            backend.sidebarTooltipText = ""
+        }
+    }
+
     // Dark gray pill background extending to left edge when active/highlighted
     background: Rectangle {
         radius: width / 2

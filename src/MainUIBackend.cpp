@@ -244,3 +244,19 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
+
+// --- Sidebar tooltip -------------------------------------------------------
+
+void MainUIBackend::setSidebarTooltipText(const QString& text) {
+    if (m_sidebarTooltipText != text) {
+        m_sidebarTooltipText = text;
+        emit sidebarTooltipChanged();
+    }
+}
+
+void MainUIBackend::setSidebarTooltipY(qreal y) {
+    if (m_sidebarTooltipY != y) {
+        m_sidebarTooltipY = y;
+        emit sidebarTooltipChanged();
+    }
+}
