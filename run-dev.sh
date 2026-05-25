@@ -35,7 +35,7 @@ fi
 
 # Print the paths being used
 echo "================================================"
-echo "Starting Logos App in DEVELOPMENT mode"
+echo "Starting Logos Basecamp in DEVELOPMENT mode"
 echo "================================================"
 echo "QML_UI path: $QML_UI"
 echo ""

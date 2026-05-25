@@ -298,7 +298,7 @@ WRAPPER_EOF
 
     # Create a README for reference
     cat > $out/README.txt <<EOF
-Logos App - Build Information
+Logos Basecamp - Build Information
 ==================================
 liblogos: ${logosLiblogos}
 cpp-sdk: ${logosSdk}
