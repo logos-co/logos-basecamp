@@ -37,7 +37,7 @@ nix build .#integration-test -L
 ## App Structure
 
 - **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Dashboard, Modules, Settings)
-- **Plugins** appear as sidebar icons: `counter`, `counter_qml`, `package_manager_ui`, `webview_app`
+- **Plugins** appear as sidebar icons: `package_manager_ui`
 - Plugins are loaded from `~/Library/Application Support/Logos/LogosBasecampDev/plugins/`
 - Main UI is in `src/qml/`, with panels in `src/qml/panels/`
 

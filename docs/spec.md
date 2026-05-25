@@ -16,7 +16,7 @@ The application is designed to:
 | Term | Definition |
 |------|------------|
 | **Logos Module** | An independently developed plugin that implements `PluginInterface` and is managed by the Logos runtime (`liblogos_core`). Each module runs in its own isolated `logos_host` subprocess, communicates via the Logos API, and is authenticated with tokens. Examples: `package_manager`, `capability_module`, `waku_module`. |
-| **UI App** | A Qt plugin (C++ shared library or QML package) loaded directly by Basecamp into its own process. UI Apps provide a graphical widget displayed as a tab in the MDI workspace. They are managed entirely by Basecamp, not by liblogos. UI Apps may depend on Logos Modules for backend services. Examples: `package_manager_ui`, `counter_qml`, `webview_app`. |
+| **UI App** | A Qt plugin (C++ shared library or QML package) loaded directly by Basecamp into its own process. UI Apps provide a graphical widget displayed as a tab in the MDI workspace. They are managed entirely by Basecamp, not by liblogos. UI Apps may depend on Logos Modules for backend services. Examples: `package_manager_ui`. |
 | **MDI** | Multi-Document Interface — the tabbed content area where UI App windows are displayed |
 | **Sidebar** | The left-hand navigation panel listing available UI Apps, system views, and loaded modules |
 | **Section** | A named navigation entry in the sidebar; sections are typed as either "workspace" (apps) or "view" (system screens) |
@@ -44,9 +44,8 @@ Basecamp manages two fundamentally different types of components:
 │  ┌────────────────────────────────────┐                     │
 │  │ Application Shell + Main UI        │                     │
 │  │  ├─ Sidebar, MDI, system views     │                     │
-│  │  ├─ UI App: package_manager_ui ◄───┼── loaded by         │
-│  │  ├─ UI App: counter_qml        ◄───┼── QPluginLoader     │
-│  │  └─ UI App: webview_app        ◄───┘   (in-process)      │
+│  │  └─ UI App: package_manager_ui ◄───┼── QPluginLoader     │
+│  │                                    │   (in-process)       │
 │  └────────────────────────────────────┘                     │
 │  ┌────────────────────────────────────┐                     │
 │  │ liblogos_core (linked library)     │                     │

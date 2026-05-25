@@ -194,7 +194,7 @@ node tests/ui-tests.mjs --ci ./result/bin/LogosBasecamp
 node tests/ui-tests.mjs
 
 # Run a subset:
-node tests/ui-tests.mjs counter
+node tests/ui-tests.mjs modules
 ```
 
 Tests are defined in [`tests/ui-tests.mjs`](./tests/ui-tests.mjs) using the test framework from [logos-qt-mcp](https://github.com/logos-co/logos-qt-mcp). See the [logos-qt-mcp README](https://github.com/logos-co/logos-qt-mcp#readme) for the full test API.
