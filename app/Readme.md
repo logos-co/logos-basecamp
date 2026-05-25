@@ -1,4 +1,4 @@
-# Logos App
+# Logos Basecamp
 
 ## Building the Application
 

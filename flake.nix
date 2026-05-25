@@ -1,5 +1,5 @@
 {
-  description = "Logos App - Qt application with UI plugins";
+  description = "Logos Basecamp - Qt application with UI plugins";
 
   inputs = {
     logos-nix.url = "github:logos-co/logos-nix";
@@ -300,7 +300,7 @@
             export LOGOS_PACKAGE_MANAGER_MODULE_SRC="${logosPackageManagerModuleSrc}"
             export LOGOS_CAPABILITY_MODULE_SRC="${logosCapabilityModuleSrc}"
             
-            echo "Logos App development environment"
+            echo "Logos Basecamp development environment"
             echo ""
             echo "Nix packages (host builds):"
             echo "  LOGOS_CPP_SDK_ROOT: $LOGOS_CPP_SDK_ROOT"
