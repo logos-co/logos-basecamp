@@ -154,9 +154,20 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
   curl -fsSL -o "${CERTS_DIR}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
 
   echo "Importing Apple Trust Chain from local storage."
-  security import "${CERTS_DIR}/AppleRootCA-G2.cer"   -k "${KEYCHAIN_DB_PATH}" -t cert
-  security import "${CERTS_DIR}/AppleWWDRCAG2.cer"    -k "${KEYCHAIN_DB_PATH}" -t cert
-  security import "${CERTS_DIR}/DeveloperIDG2CA.cer"  -k "${KEYCHAIN_DB_PATH}" -t cert
+  for cert in \
+      "${CERTS_DIR}/AppleRootCA-G2.cer" \
+      "${CERTS_DIR}/AppleWWDRCAG2.cer" \
+      "${CERTS_DIR}/DeveloperIDG2CA.cer"; do
+      cert_name=$(basename "${cert}")
+      if output=$(security import "${cert}" -k "${KEYCHAIN_DB_PATH}" -t cert 2>&1); then
+          echo "  Imported: ${cert_name}"
+      elif echo "${output}" | grep -q "already exists"; then
+          echo "  Skipped (already in trust store): ${cert_name}"
+      else
+          echo "  ERROR importing ${cert_name}: ${output}"
+          exit 1
+      fi
+  done
 
   # Ensure the system looks at our build keychain first
   security list-keychains -d user -s "${KEYCHAIN_DB_PATH}" /Library/Keychains/System.keychain
