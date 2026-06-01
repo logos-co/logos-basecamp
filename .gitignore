@@ -14,3 +14,8 @@ qt-ios/.ios-build-cache/
 build-ios-sim/*
 result-mcp
 qml-mcp
+
+# doctest run artifacts (generated reports/screenshots and build symlinks)
+doctests/outputs/
+doctests/result-bundle
+doctests/result-mcp

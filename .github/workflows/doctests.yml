@@ -1,0 +1,268 @@
+name: basecamp Doc-Tests
+
+# Runs the executable basecamp doc-tests end-to-end via the shared doctest CLI.
+# Both specs drive the SAME Modules-view walk; they differ only in what they build:
+#   basecamp-modules.test.yaml — builds THIS commit's development app
+#       (inspector-enabled #app), launches the dev binary headless, and drives its
+#       Modules view: it opens the UI Modules tab to see the installed apps (UI
+#       plugins), switches to the Core Modules tab to see the loaded runtime
+#       modules with their stats, and opens an installed app from the sidebar,
+#       asserting on the rendered UI at each step.
+#   basecamp-modules-bundle.test.yaml — the bundle twin: builds THIS commit as the
+#       real portable bundle (inspector-enabled #bin-bundle-dir-inspector) and runs
+#       the identical Modules-view walk against it.
+# Both run back-to-back into one --report HTML (a dropdown switches between them).
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# One-time setup required for the clickable report links to work:
+#
+#   1. Repo Settings → Pages → "Build and deployment" → Source: "Deploy from a
+#      branch", Branch: `gh-pages` / `(root)`. (The publish-report job creates
+#      the gh-pages branch on its first run.)
+#   2. Nothing else — GITHUB_TOKEN already has the permissions granted below.
+#
+# Each run publishes the two-column HTML report to:
+#   https://<owner>.github.io/<repo>/pr-<N>/<os>/      (pull requests)
+#   https://<owner>.github.io/<repo>/main/<os>/        (pushes to main/master)
+# and (for PRs) posts/updates a comment with the links.
+#
+# Note: pull requests opened from forks get a read-only GITHUB_TOKEN, so the
+# Pages push and PR comment are skipped for them — the downloadable artifact is
+# still produced. PRs from branches in this repo get the full clickable links.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+
+concurrency:
+  group: doctests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  doctests:
+    name: basecamp doc-tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: logos-co
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      # The portable bundle (#bin-bundle-dir) is relocatable: it carries the app
+      # and its Qt runtime, but NOT host graphics libraries (you can't bundle a
+      # GPU driver), so it loads libGL/glvnd from the host via the normal loader
+      # path — exactly as it would on a real Linux desktop. The minimal CI runner
+      # has none of these, so the bundle binary fails at load with
+      # `libOpenGL.so.0: cannot open shared object file`. Install the standard
+      # glvnd/mesa runtime so the launch behaves like a normal host. (The dev-app
+      # spec is unaffected — `#app` is a nix build that RPATHs libGL from the
+      # store; only the bundle relies on host libs. macOS needs none of this.)
+      - name: Install graphics runtime libraries (Linux bundle launch)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopengl0 libglx0 libgl1 libegl1 libglu1-mesa libvulkan1
+
+      # Resolve the commit under test. For pull requests this is the PR's head
+      # commit (not the synthetic merge commit); for pushes it's the pushed
+      # commit. Passed to --release-for below so the doc-test builds/launches THIS
+      # commit of logos-basecamp instead of the latest published flake.
+      #
+      # Fork PRs are the exception: their head commit lives in the fork, not in
+      # logos-co/logos-basecamp, so nix could not fetch
+      # `github:logos-co/logos-basecamp/<sha>`. We blank the SHA for forks
+      # (--release-for repo= → pins that repo to latest), so the doc-test still
+      # runs for fork PRs, just against master.
+      - name: Resolve commit under test
+        id: commit
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && \
+             [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            echo "Fork PR detected — doc-test will run against latest master."
+          else
+            echo "sha=${{ github.event.pull_request.head.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The runner is the shared `doctest` CLI, invoked directly via its flake
+      # (github:logos-co/logos-doctest). The flake bundles Python + PyYAML
+      # (+ rich), so no pip install step is needed.
+      #
+      # --release-for pins the {release} placeholder for logos-basecamp to the
+      # commit under test, so `github:logos-co/logos-basecamp{release}` in the
+      # specs becomes `.../<sha>` — the doc-test builds and exercises this
+      # PR/push rather than master. Every other repo URL still resolves to latest.
+      - name: Run basecamp doc-test
+        run: |
+          # --continue-on-fail so the run walks every step and the published
+          # report is complete. The job still fails (non-zero exit) if any step
+          # failed; this only changes whether we stop early.
+          #
+          # Both specs build this commit and drive the same Modules-view walk —
+          # one against the dev app (#app), one against the portable bundle
+          # (#bin-bundle-dir-inspector). Passing both to one `run` puts them in a
+          # single --report HTML (a dropdown switches between them).
+          nix run github:logos-co/logos-doctest -- run \
+            doctests/basecamp-modules.test.yaml \
+            doctests/basecamp-modules-bundle.test.yaml \
+            --verbose \
+            --continue-on-fail \
+            --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
+            --report "${{ runner.temp }}/basecamp-doctest-report.html"
+
+      - name: Stage report for upload
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p report-out
+          # Name it index.html so the published directory URL renders directly.
+          if [ -f "${{ runner.temp }}/basecamp-doctest-report.html" ]; then
+            cp "${{ runner.temp }}/basecamp-doctest-report.html" report-out/index.html
+          else
+            echo "<h1>No report produced</h1>" > report-out/index.html
+          fi
+
+      - name: Upload basecamp execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: basecamp-doctest-report-${{ matrix.os }}
+          path: report-out/index.html
+          if-no-files-found: warn
+
+      - name: Verify markdown generation
+        run: |
+          for spec in basecamp-modules basecamp-modules-bundle; do
+            nix run github:logos-co/logos-doctest -- generate \
+              "doctests/${spec}.test.yaml" \
+              --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
+              -o "/tmp/${spec}.md"
+            test -s "/tmp/${spec}.md"
+            echo "Generated ${spec}.md successfully"
+          done
+
+  publish-report:
+    name: Publish report to GitHub Pages
+    needs: doctests
+    # Run even when tests fail — a failing run is exactly when you want to open
+    # the report. Skip on forks, where GITHUB_TOKEN can't push or comment.
+    if: ${{ always() && github.event.pull_request.head.repo.fork != true }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write          # push to the gh-pages branch
+      pull-requests: write      # post/update the PR comment
+
+    # Serialize Pages pushes so two refs can't race on the gh-pages branch.
+    concurrency:
+      group: gh-pages-publish
+      cancel-in-progress: false
+
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # No `name:` → downloads every artifact into artifacts/<name>/...
+
+      - name: Arrange site directory
+        id: arrange
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="pr-${{ github.event.pull_request.number }}"
+          else
+            BASE="main"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+
+          mkdir -p "site/$BASE"
+          found=""
+          for os in ubuntu-latest macos-latest; do
+            src="artifacts/basecamp-doctest-report-$os/index.html"
+            if [ -f "$src" ]; then
+              mkdir -p "site/$BASE/$os"
+              cp "$src" "site/$BASE/$os/index.html"
+              found="$found $os"
+            fi
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+          # Landing page for this ref linking to each OS report.
+          {
+            echo "<!doctype html><meta charset=utf-8>"
+            echo "<title>basecamp doc-test reports — $BASE</title>"
+            echo "<style>body{font:16px system-ui;margin:40px;max-width:640px}a{color:#2563eb}</style>"
+            echo "<h1>basecamp doc-test reports</h1>"
+            echo "<p><strong>$BASE</strong> · commit <code>${GITHUB_SHA::7}</code></p><ul>"
+            for os in ubuntu-latest macos-latest; do
+              if [ -d "site/$BASE/$os" ]; then
+                echo "<li><a href=\"./$os/\">$os</a></li>"
+              fi
+            done
+            echo "</ul>"
+          } > "site/$BASE/index.html"
+
+      - name: Deploy to gh-pages
+        if: steps.arrange.outputs.found != ''
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          keep_files: true          # don't wipe other PRs' directories
+          commit_message: "Publish basecamp doc-test report for ${{ steps.arrange.outputs.base }} (${{ github.sha }})"
+
+      - name: Comment on PR with report links
+        if: ${{ github.event_name == 'pull_request' && steps.arrange.outputs.found != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const base = "${{ steps.arrange.outputs.base }}";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const root = `https://${owner}.github.io/${repo}/${base}`;
+            const oses = "${{ steps.arrange.outputs.found }}".trim().split(/\s+/).filter(Boolean);
+
+            const links = oses.map(os => `- [\`${os}\` report](${root}/${os}/)`).join("\n");
+            const marker = "<!-- basecamp-doctest-report-links -->";
+            const body =
+              `${marker}\n` +
+              `### 📊 basecamp doc-test report\n\n` +
+              `This commit of basecamp, built as both the dev app and the portable ` +
+              `bundle and driven through its Modules view to inspect the installed ` +
+              `UI plugins and loaded core modules — rendered ` +
+              `alongside the commands/actions actually run and their output ` +
+              `(updated each run, commit \`${context.sha.slice(0,7)}\`):\n\n` +
+              `${links}\n\n` +
+              `_Pages can take a minute to update after the run finishes._`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: context.issue.number, body });
+            }

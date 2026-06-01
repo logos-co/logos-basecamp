@@ -238,6 +238,18 @@
           # Bundle outputs
           bin-bundle-dir = dirBundler appDistributed;
 
+          # Test-only twin of bin-bundle-dir WITH the QML inspector compiled in,
+          # so logos-qt-mcp can connect and drive the UI headlessly. Identical to
+          # the shipping bundle in every other respect.
+          #
+          # The inspector is a compile-time feature and is deliberately OFF in the
+          # shipping bin-bundle-dir / portable / appimage / macos outputs — we do
+          # NOT ship the inspector in release builds. This output exists purely so
+          # the package-manager doc-test can install and exercise modules through
+          # the real bundled UI; it is not a release artifact.
+          # Build: nix build .#bin-bundle-dir-inspector
+          bin-bundle-dir-inspector = dirBundler appDistributedWithInspector;
+
           # QML Inspector MCP server: nix build .#mcp-server -o result-mcp
           mcp-server = logos-qt-mcp.packages.${system}.mcp-server;
 
