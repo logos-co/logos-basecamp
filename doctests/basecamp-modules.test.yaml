@@ -165,6 +165,7 @@ sections:
               action: wait_for
               texts: ["Dashboard"]
               timeout: 60000
+              text: "The dev app launches headless and lands on the **Dashboard**."
               screenshot: "basecamp-launch.png"
 
             # Open the Modules view from the sidebar. It opens on the first tab,
@@ -177,6 +178,7 @@ sections:
               action: wait_for
               texts: ["UI Modules", "Available UI plugins in the system"]
               timeout: 30000
+              text: "The **Modules → UI Modules** tab lists the UI plugins installed in the app."
               screenshot: "basecamp-ui-modules.png"
 
             # The baked-in UI plugins appear as rows. The main UI is tagged
@@ -186,6 +188,7 @@ sections:
               action: wait_for
               texts: ["main_ui", "package_manager_ui"]
               timeout: 30000
+              text: "The installed apps appear as rows — the main UI and the package manager UI."
               screenshot: "basecamp-ui-modules-list.png"
 
             # Switch to the Core Modules tab — the background modules loaded into
@@ -198,6 +201,7 @@ sections:
               action: wait_for
               texts: ["Core Modules", "All available plugins in the system"]
               timeout: 30000
+              text: "The **Core Modules** tab shows the background modules loaded into the runtime."
               screenshot: "basecamp-core-modules.png"
 
             # The auto-loaded core modules must show as "(Loaded)" with an
@@ -213,6 +217,7 @@ sections:
               action: wait_for
               texts: ["(Loaded)", "Unload Plugin"]
               timeout: 30000
+              text: "The baked-in core modules report as **(Loaded)** with an Unload Plugin action."
               screenshot: "basecamp-core-loaded.png"
 
             # Give the stats timer (polls logos_core_get_module_stats every ~2s)
@@ -220,6 +225,7 @@ sections:
             - name: "Let the module stats populate"
               action: sleep
               ms: 3000
+              text: "After a stats tick, each loaded module row carries live CPU / memory usage."
               screenshot: "basecamp-core-stats.png"
 
             # Finally, open one of the installed apps from the sidebar:
@@ -247,6 +253,7 @@ sections:
             - name: "Let the package manager view render, then capture it"
               action: sleep
               ms: 10000
+              text: "Opening **package_manager_ui** from the sidebar launches the installed app."
               screenshot: "basecamp-app-open.png"
 
             # Navigate back to the Modules section. We use a click (findAndClick
@@ -262,6 +269,7 @@ sections:
             - name: "Modules section is shown again — capture it"
               action: sleep
               ms: 4000
+              text: "Clicking **Modules** navigates back to the Modules section (Core Modules tab)."
               screenshot: "basecamp-back-to-modules.png"
         post_text: |
           Every step here is a real action against this basecamp dev app: opening
