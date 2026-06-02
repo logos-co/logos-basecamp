@@ -580,10 +580,16 @@ void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& rel
                 ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
                 : QStringList{};
             self->m_pendingAction = {PendingOp::UpgradeCascade, name, releaseTag, mode, {}};
-            // Reuse the uninstall cascade dialog — the copy applies verbatim
-            // ("these things depend on X; X is about to go away"). Phase B
-            // intentionally collapses upgrade/uninstall into one dialog.
-            emit self->uninstallCascadeConfirmationRequested(name, installedDeps, loadedDeps);
+            // Distinct cascade signal for upgrade/downgrade/reinstall: same
+            // dependent-impact lists as the uninstall variant (the
+            // package_manager performs an uninstall step first), but the
+            // dialog needs the target version + UpgradeMode so it can lead
+            // with "Upgrade to vX.Y.Z" / "Downgrade to vX.Y.Z" /
+            // "Reinstall vX.Y.Z" instead of bare "Uninstall and Unload
+            // Dependents?" — which previously caused user confusion on
+            // downgrades that looked like a pure uninstall.
+            emit self->upgradeCascadeConfirmationRequested(
+                name, releaseTag, mode, installedDeps, loadedDeps);
         });
 }
 

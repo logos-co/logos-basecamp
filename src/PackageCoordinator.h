@@ -119,12 +119,26 @@ signals:
     // loadedDependents list for the "upgrade with dependents" branch.
     void installConfirmationRequested(const QVariantMap& metadata);
 
-    // Uninstall/upgrade cascade dialog trigger. Shared shape — the dialog
-    // is the same whether we're about to remove a package or swap versions;
-    // the copy ("these depend on X") applies either way.
+    // Uninstall cascade dialog trigger — the "destructive" variant. Used
+    // for beforeUninstall (a real removal) and InstallUpgradeCascade (LGX
+    // upgrade that uninstalls first; the new version is local, not from
+    // the catalog, so we don't know its version string to surface here).
     void uninstallCascadeConfirmationRequested(const QString& name,
                                                const QStringList& installedDependents,
                                                const QStringList& loadedDependents);
+
+    // Upgrade/Downgrade/Reinstall cascade dialog trigger. Same dependent-
+    // impact lists as the uninstall variant (the package_manager performs
+    // an uninstall step first), but carries the target version + the
+    // UpgradeMode so the dialog can lead with "Upgrade to v1.2.3" /
+    // "Downgrade to v1.0.0" / "Reinstall v1.0.0" instead of bare
+    // "Uninstall and Unload Dependents?". `mode` mirrors
+    // PackageTypes::UpgradeMode (0=Upgrade, 1=Downgrade, 2=Sidegrade).
+    void upgradeCascadeConfirmationRequested(const QString& name,
+                                             const QString& releaseTag,
+                                             int mode,
+                                             const QStringList& installedDependents,
+                                             const QStringList& loadedDependents);
 
     // Multi-uninstall cascade dialog trigger. `names` is the full batch of
     // packages being uninstalled. `installedDependents` is the union of each
@@ -138,9 +152,13 @@ signals:
 private slots:
     // beforeUninstall / beforeUpgrade handlers. Both ack synchronously (to
     // cancel the module's 3s ack timer) then — if the ack landed — set the
-    // pending slot here and emit uninstallCascadeConfirmationRequested. An
-    // ack rejection means the module already cancelled (timer fired or
-    // racing listener), so we stay silent rather than showing a dead dialog.
+    // pending slot here and emit the appropriate cascade-confirmation
+    // signal: uninstallCascadeConfirmationRequested for a real removal,
+    // upgradeCascadeConfirmationRequested for a version swap (so the
+    // dialog can lead with the target version + UpgradeMode instead of
+    // bare "Uninstall and Unload Dependents?"). An ack rejection means
+    // the module already cancelled (timer fired or racing listener), so
+    // we stay silent rather than showing a dead dialog.
     void onBeforeUninstall(const QString& name, const QStringList& installedDeps);
     void onBeforeUpgrade(const QString& name, const QString& releaseTag,
                          int mode, const QStringList& installedDeps);

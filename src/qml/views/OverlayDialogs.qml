@@ -29,6 +29,7 @@ Item {
     property bool anyDialogOpen: missingDepsDialog.visible
                                   || unloadCascadeDialog.visible
                                   || uninstallCascadeDialog.visible
+                                  || upgradeCascadeDialog.visible
                                   || installConfirmDialog.visible
 
     signal overlayActiveChanged(bool active)
@@ -54,6 +55,21 @@ Item {
         onCancelClicked: (name) => backend.cancelPendingAction(name)
         onContinueClickedMulti: (names) => backend.confirmUninstallMultiCascade(names)
         onCancelClickedMulti: (names) => backend.cancelMultiUninstall(names)
+    }
+
+    // Distinct dialog instance for upgrade/downgrade/reinstall cascades so
+    // the title + body can lead with the target version + UpgradeMode
+    // instead of "Uninstall and Unload Dependents?" (the previous
+    // shared-with-uninstall dialog confused users on downgrades — see
+    // PackageCoordinator::onBeforeUpgrade for the rationale). Confirm/
+    // Cancel routes through the same backend slots; PackageCoordinator
+    // disambiguates from its own m_pendingAction.op
+    // (UpgradeCascade vs UninstallCascade).
+    ConfirmationDialog {
+        id: upgradeCascadeDialog
+        mode: "upgradeCascade"
+        onContinueClicked: (name) => backend.confirmUninstallCascade(name)
+        onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
     ConfirmationDialog {
@@ -130,6 +146,17 @@ Item {
 
         function onUninstallMultiCascadeConfirmationRequested(names, installedDependents, loadedDependents) {
             uninstallCascadeDialog.openWithMultiTargets(names, installedDependents, loadedDependents);
+        }
+
+        // Upgrade cascade: same dependent-impact shape as uninstall (the
+        // package_manager performs an uninstall step first), but carries
+        // the target version + UpgradeMode so the dialog can lead with
+        // "Upgrade to vX.Y.Z" / "Downgrade to vX.Y.Z" / "Reinstall vX.Y.Z"
+        // instead of a bare uninstall heading.
+        function onUpgradeCascadeConfirmationRequested(name, releaseTag, mode,
+                                                       installedDependents, loadedDependents) {
+            upgradeCascadeDialog.openWithUpgrade(name, releaseTag, mode,
+                                                 installedDependents, loadedDependents);
         }
 
         function onInstallConfirmationRequested(metadata) {
