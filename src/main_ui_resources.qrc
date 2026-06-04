@@ -24,7 +24,7 @@
         <file>qml/views/ModulesView.qml</file>
         <file>qml/panels/UiModulesTab.qml</file>
         <file>qml/views/CoreModulesView.qml</file>
-        <file>qml/views/PluginMethodsView.qml</file>
+        <file>qml/views/PluginInterfaceView.qml</file>
         <file>qml/views/SettingsView.qml</file>
         <file>qml/views/qmldir</file>
     </qresource>

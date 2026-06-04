@@ -9,14 +9,15 @@ Item {
     objectName: "coreModulesView"
 
     property string selectedPlugin: ""
-    property bool showingMethods: false
+    property bool showingInterface: false
 
-    // Open a specific module's Methods screen by name. Equivalent to clicking
-    // that module's "View Methods" button — exposed for UI automation/tests,
-    // which can't disambiguate the per-row buttons by their identical label.
-    function openMethods(name) {
+    // Open a specific module's Interface screen (methods + events) by name.
+    // Equivalent to clicking that module's "Interface" button — exposed for UI
+    // automation/tests, which can't disambiguate the per-row buttons by their
+    // identical label.
+    function openInterface(name) {
         selectedPlugin = name;
-        showingMethods = true;
+        showingInterface = true;
     }
 
     onVisibleChanged: {
@@ -31,7 +32,7 @@ Item {
 
     StackLayout {
         anchors.fill: parent
-        currentIndex: root.showingMethods ? 1 : 0
+        currentIndex: root.showingInterface ? 1 : 0
 
         // Plugin list view
         ColumnLayout {
@@ -180,9 +181,9 @@ Item {
                                     }
                                 }
 
-                                // View Methods button (only for loaded)
+                                // Interface button (methods + events; only for loaded)
                                 Button {
-                                    text: "View Methods"
+                                    text: "Interface"
                                     visible: modelData.isLoaded
 
                                     contentItem: LogosText {
@@ -202,7 +203,7 @@ Item {
 
                                     onClicked: {
                                         root.selectedPlugin = modelData.name
-                                        root.showingMethods = true
+                                        root.showingInterface = true
                                     }
                                 }
 
@@ -250,10 +251,10 @@ Item {
             }
         }
 
-        // Methods view
-        PluginMethodsView {
+        // Interface view (methods + events)
+        PluginInterfaceView {
             pluginName: root.selectedPlugin
-            onBackClicked: root.showingMethods = false
+            onBackClicked: root.showingInterface = false
         }
     }
 }

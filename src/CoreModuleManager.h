@@ -63,6 +63,7 @@ public:
     // JSON on failure rather than throwing. Module not being connected is a
     // normal transient state, not an error.
     Q_INVOKABLE QString getMethods(const QString& moduleName);
+    Q_INVOKABLE QString getEvents(const QString& moduleName);
     Q_INVOKABLE QString callMethod(const QString& moduleName,
                                    const QString& methodName,
                                    const QString& argsJson);

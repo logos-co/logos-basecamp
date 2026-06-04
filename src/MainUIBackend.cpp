@@ -240,6 +240,7 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 
 void    MainUIBackend::refreshCoreModules()                         { m_coreModuleManager->refresh(); }
 QString MainUIBackend::getCoreModuleMethods(const QString& n)       { return m_coreModuleManager->getMethods(n); }
+QString MainUIBackend::getCoreModuleEvents(const QString& n)        { return m_coreModuleManager->getEvents(n); }
 QString MainUIBackend::callCoreModuleMethod(const QString& n,
                                              const QString& m,
                                              const QString& a)      { return m_coreModuleManager->callMethod(n, m, a); }

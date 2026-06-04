@@ -40,7 +40,7 @@ logos-basecamp/
 │   │   │   ├── DashboardView.qml         # Dashboard screen
 │   │   │   ├── ModulesView.qml           # Modules management screen
 │   │   │   ├── CoreModulesView.qml       # Core modules list
-│   │   │   ├── PluginMethodsView.qml     # Method inspection
+│   │   │   ├── PluginInterfaceView.qml   # Interface inspection (methods + events)
 │   │   │   └── SettingsView.qml          # Settings screen
 │   │   ├── controls/                     # Reusable QML controls
 │   │   │   ├── SidebarIconButton.qml

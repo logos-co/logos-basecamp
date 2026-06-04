@@ -120,6 +120,27 @@ QString CoreModuleManager::getMethods(const QString& moduleName)
     return "[]";
 }
 
+QString CoreModuleManager::getEvents(const QString& moduleName)
+{
+    if (!m_logosAPI) {
+        return "[]";
+    }
+
+    LogosAPIClient* client = m_logosAPI->getClient(moduleName);
+    if (!client || !client->isConnected()) {
+        return "[]";
+    }
+
+    QVariant result = client->invokeRemoteMethod(moduleName, "getPluginEvents");
+    if (result.canConvert<QJsonArray>()) {
+        QJsonArray events = result.toJsonArray();
+        QJsonDocument doc(events);
+        return doc.toJson(QJsonDocument::Compact);
+    }
+
+    return "[]";
+}
+
 QString CoreModuleManager::callMethod(const QString& moduleName,
                                       const QString& methodName,
                                       const QString& argsJson)
