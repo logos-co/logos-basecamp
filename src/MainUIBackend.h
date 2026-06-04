@@ -144,6 +144,7 @@ public slots:
     void unloadCoreModule(const QString& moduleName);
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
+    Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);
     Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
 
     // UI Modules refresh — forwarded to UIPluginManager which in turn asks

@@ -9,13 +9,14 @@ Item {
     
     property string pluginName: ""
     property var methods: []
+    property var events: []
     property string resultText: ""
-    
+
     signal backClicked()
-    
-    Component.onCompleted: loadMethods()
-    onPluginNameChanged: loadMethods()
-    
+
+    Component.onCompleted: { loadMethods(); loadEvents() }
+    onPluginNameChanged: { loadMethods(); loadEvents() }
+
     function loadMethods() {
         if (pluginName.length > 0) {
             let methodsJson = backend.getCoreModuleMethods(pluginName)
@@ -24,6 +25,23 @@ Item {
             } catch (e) {
                 methods = []
             }
+        } else {
+            // Cleared/reset: don't leave a previous plugin's data on screen.
+            methods = []
+            resultText = ""
+        }
+    }
+
+    function loadEvents() {
+        if (pluginName.length > 0) {
+            let eventsJson = backend.getCoreModuleEvents(pluginName)
+            try {
+                events = JSON.parse(eventsJson)
+            } catch (e) {
+                events = []
+            }
+        } else {
+            events = []
         }
     }
 
@@ -57,7 +75,7 @@ Item {
             }
 
             LogosText {
-                text: "Methods: " + root.pluginName
+                text: "Interface: " + root.pluginName
                 font.pixelSize: 20
                 font.weight: Font.Bold
                 color: "#ffffff"
@@ -81,13 +99,28 @@ Item {
                 spacing: 16
 
                 ScrollView {
+                    id: interfaceScroll
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
 
                     ColumnLayout {
-                        width: parent.width
+                        // See CoreModulesView/UiModulesTab — bind to the
+                        // ScrollView's `availableWidth`, not `parent.width`,
+                        // which inside a Qt 6 ScrollView resolves against the
+                        // internal Flickable contentItem and can transiently
+                        // collapse to 0 during Repeater reflow.
+                        width: interfaceScroll.availableWidth
                         spacing: 8
+
+                        // ── Methods ──
+                        LogosText {
+                            text: "Methods"
+                            font.pixelSize: Theme.typography.secondaryText
+                            font.weight: Font.Bold
+                            color: "#a0a0a0"
+                            visible: root.methods.length > 0
+                        }
 
                         Repeater {
                             model: root.methods
@@ -167,6 +200,64 @@ Item {
                             Layout.alignment: Qt.AlignHCenter
                             Layout.topMargin: 40
                             visible: root.methods.length === 0
+                        }
+
+                        // ── Events ──
+                        LogosText {
+                            text: "Events"
+                            font.pixelSize: Theme.typography.secondaryText
+                            font.weight: Font.Bold
+                            color: "#a0a0a0"
+                            Layout.topMargin: 12
+                            visible: root.events.length > 0
+                        }
+
+                        Repeater {
+                            model: root.events
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: eventColumn.implicitHeight + 24
+                                color: "#363636"
+                                radius: 6
+
+                                ColumnLayout {
+                                    id: eventColumn
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 12
+
+                                        LogosText {
+                                            text: modelData.name || modelData
+                                            font.weight: Font.Bold
+                                            // Amber to distinguish events from the blue methods.
+                                            color: "#E2A04A"
+                                        }
+
+                                        LogosText {
+                                            text: modelData.signature || ""
+                                            font.pixelSize: Theme.typography.secondaryText
+                                            color: "#808080"
+                                            visible: modelData.signature !== undefined
+                                        }
+
+                                        Item { Layout.fillWidth: true }
+                                    }
+
+                                    LogosText {
+                                        text: modelData.description || ""
+                                        font.pixelSize: Theme.typography.secondaryText
+                                        color: "#a0a0a0"
+                                        wrapMode: Text.Wrap
+                                        Layout.fillWidth: true
+                                        visible: modelData.description !== undefined && modelData.description.length > 0
+                                    }
+                                }
+                            }
                         }
                     }
                 }
