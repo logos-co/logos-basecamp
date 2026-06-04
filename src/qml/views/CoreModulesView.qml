@@ -6,9 +6,18 @@ import panels
 
 Item {
     id: root
+    objectName: "coreModulesView"
 
     property string selectedPlugin: ""
     property bool showingMethods: false
+
+    // Open a specific module's Methods screen by name. Equivalent to clicking
+    // that module's "View Methods" button — exposed for UI automation/tests,
+    // which can't disambiguate the per-row buttons by their identical label.
+    function openMethods(name) {
+        selectedPlugin = name;
+        showingMethods = true;
+    }
 
     onVisibleChanged: {
         if (visible) {
