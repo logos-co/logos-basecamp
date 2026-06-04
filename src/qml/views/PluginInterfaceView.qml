@@ -25,6 +25,10 @@ Item {
             } catch (e) {
                 methods = []
             }
+        } else {
+            // Cleared/reset: don't leave a previous plugin's data on screen.
+            methods = []
+            resultText = ""
         }
     }
 
@@ -36,6 +40,8 @@ Item {
             } catch (e) {
                 events = []
             }
+        } else {
+            events = []
         }
     }
 
@@ -93,12 +99,18 @@ Item {
                 spacing: 16
 
                 ScrollView {
+                    id: interfaceScroll
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
 
                     ColumnLayout {
-                        width: parent.width
+                        // See CoreModulesView/UiModulesTab — bind to the
+                        // ScrollView's `availableWidth`, not `parent.width`,
+                        // which inside a Qt 6 ScrollView resolves against the
+                        // internal Flickable contentItem and can transiently
+                        // collapse to 0 during Repeater reflow.
+                        width: interfaceScroll.availableWidth
                         spacing: 8
 
                         // ── Methods ──

@@ -59,9 +59,9 @@ public:
     // PackageManager after install/uninstall events reshape the known set.
     Q_INVOKABLE void refresh();
 
-    // Introspection — serialised to JSON for QML. Both return "[]" / error
-    // JSON on failure rather than throwing. Module not being connected is a
-    // normal transient state, not an error.
+    // Introspection — serialised to JSON for QML. getMethods/getEvents return
+    // "[]" and callMethod returns error JSON on failure rather than throwing.
+    // Module not being connected is a normal transient state, not an error.
     Q_INVOKABLE QString getMethods(const QString& moduleName);
     Q_INVOKABLE QString getEvents(const QString& moduleName);
     Q_INVOKABLE QString callMethod(const QString& moduleName,
