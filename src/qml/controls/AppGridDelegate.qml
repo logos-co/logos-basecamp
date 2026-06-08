@@ -1,0 +1,125 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+import Logos.Controls
+import Logos.Theme
+import Basecamp.Backend 1.0
+
+ItemDelegate {
+    id: root
+
+    // ─── Public API ───
+    property var appData: ({})
+    signal appClicked(string name, string repositoryUrl)
+    signal manageRequested(string name, string repositoryUrl)
+
+    QtObject {
+        id: d
+
+        readonly property bool isInstalled: !!root.appData && root.appData.isInstalled !== false
+        readonly property bool hasUpdate:   !!root.appData && root.appData.hasUpdate === true
+        readonly property int installStage:
+            root.appData && root.appData.installStage !== undefined
+                ? root.appData.installStage
+                : InstallStage.None
+        readonly property bool isInstalling:
+            d.installStage === InstallStage.Downloading
+            || d.installStage === InstallStage.Queued
+            || d.installStage === InstallStage.Installing
+
+        readonly property string nameText:      root.appData ? (root.appData.name || "") : ""
+        readonly property string displayName:   root.appData ? (root.appData.displayName || root.appData.name || "") : ""
+        readonly property string iconUrl:      root.appData ? (root.appData.iconUrl || "") : ""
+        readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
+        readonly property string monogram:      (d.nameText || "?").substring(0, 2).toUpperCase()
+        readonly property bool   hasIcon:       d.iconUrl.length > 0
+
+        readonly property int tileSize: 80
+    }
+
+    background: Item {}
+    padding: 0
+    hoverEnabled: true
+
+    onClicked: root.appClicked(d.nameText, d.repositoryUrl)
+
+    // Right-click and long-press both go to the management modal.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: root.manageRequested(d.nameText, d.repositoryUrl)
+    }
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        longPressThreshold: 0.6
+        onLongPressed: root.manageRequested(d.nameText, d.repositoryUrl)
+    }
+
+    contentItem: Item {
+        ColumnLayout {
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Theme.spacing.medium
+
+            Rectangle {
+                id: tile
+                Layout.preferredWidth: d.tileSize
+                Layout.preferredHeight: d.tileSize
+                Layout.alignment: Qt.AlignHCenter
+                radius: Theme.spacing.radiusXlarge
+                color: Theme.palette.backgroundTertiary
+                border.color: root.hovered ? Theme.palette.border : "transparent"
+                border.width: 1
+                opacity: d.isInstalled ? 1.0 : 0.55
+
+                Image {
+                    anchors.centerIn: parent
+                    source: d.iconUrl
+                    sourceSize.width: 40
+                    sourceSize.height: 40
+                    visible: d.hasIcon
+                }
+
+                LogosText {
+                    anchors.centerIn: parent
+                    text: d.monogram
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightMedium
+                    color: Theme.palette.textTertiary
+                    visible: !d.hasIcon
+                }
+
+                LogosBadge {
+                    id: stateBadge
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottomMargin: Theme.spacing.tiny
+                    visible: d.isInstalling
+                             || d.installStage === InstallStage.Failed
+                             || !d.isInstalled
+                             || d.hasUpdate
+                    text: d.isInstalling                          ? qsTr("Installing…")
+                        : d.installStage === InstallStage.Failed  ? qsTr("Failed")
+                        : d.hasUpdate                             ? qsTr("Update")
+                                                                  : qsTr("Install")
+                    color: d.isInstalling                          ? Theme.palette.warning
+                         : d.installStage === InstallStage.Failed  ? Theme.palette.error
+                         : d.hasUpdate                             ? Theme.palette.info
+                                                                   : Theme.palette.accentOrange
+                    radius: Theme.spacing.radiusXlarge
+                    Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText
+                }
+            }
+
+            LogosText {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: d.tileSize
+                horizontalAlignment: Text.AlignHCenter
+                text: d.displayName
+                font.pixelSize: Theme.typography.primaryText
+                color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle
+                elide: Text.ElideRight
+            }
+        }
+    }
+}

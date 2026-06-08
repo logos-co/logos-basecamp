@@ -114,6 +114,9 @@ set(SOURCES
     CoreModuleManager.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
+    AppsModel.cpp
+    AppsFilterProxy.cpp
+    InstallStage.cpp
     PluginLoader.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp

@@ -1,11 +1,15 @@
 #pragma once
 
+#include "InstallStage.h"
+
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
 #include "logos_api.h"
 
+class AppsFilterProxy;
+class AppsModel;
 class CoreModuleManager;
 class PackageCoordinator;
 class QWidget;
@@ -49,6 +53,18 @@ class MainUIBackend : public QObject {
 
     // UI Modules (Apps)
     Q_PROPERTY(QVariantList uiModules READ uiModules NOTIFY uiModulesChanged)
+    // AppsModel — the single source of truth for catalog rows + installed
+    // state + live install pipeline. QML views bind directly. Lifetime is
+    // tied to MainUIBackend; the pointer is stable across the app's life.
+    Q_PROPERTY(AppsModel* appsModel READ appsModel CONSTANT)
+    // Prebuilt filter proxy over appsModel, pre-configured with
+    // type="ui_qml" and excludeMainUi=true
+    Q_PROPERTY(AppsFilterProxy* uiAppsProxy READ uiAppsProxy CONSTANT)
+    // Prebuilt filter proxy used exclusively by AddApplicationDialog's
+    // "Required Packages" list. PackageCoordinator sets its
+    // requiredPackages per resolver call so the ListView shows only the
+    // resolver's tree in install order.
+    Q_PROPERTY(AppsFilterProxy* requiredPackagesModel READ requiredPackagesModel CONSTANT)
 
     // Core Modules — composed here from all three managers (known list +
     // stats from CoreModuleManager, installType from PackageCoordinator).
@@ -105,6 +121,9 @@ public:
     CoreModuleManager* coreModuleManager() const { return m_coreModuleManager; }
     UIPluginManager*   uiPluginManager()   const { return m_uiPluginManager; }
     PackageCoordinator*    packageCoordinator()    const { return m_packageCoordinator; }
+    AppsModel*         appsModel()         const { return m_appsModel; }
+    AppsFilterProxy*   uiAppsProxy()           const { return m_uiAppsProxy; }
+    AppsFilterProxy*   requiredPackagesModel() const { return m_requiredPackagesModel; }
 
 public slots:
     // Navigation
@@ -136,6 +155,15 @@ public slots:
     Q_INVOKABLE void confirmInstall();
     Q_INVOKABLE void cancelInstall();
 
+    // App-Manager catalog open — delegated to PackageCoordinator.
+    Q_INVOKABLE void openApp(const QString& name,
+                             const QString& repositoryUrl,
+                             const QVariantMap& versionPins = QVariantMap(),
+                             bool allowFastLaunch = true);
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name,
+                                           const QString& repositoryUrl,
+                                           const QVariantMap& versionPins = QVariantMap());
+
     // Core Module operations — routing rule: cascade-aware (load/unload)
     // goes through UIPluginManager so it can run the pre-flight dependent
     // check. Pure introspection (refresh, getMethods, callMethod) goes
@@ -160,6 +188,14 @@ signals:
     void currentActiveSectionIndexChanged();
     void uiModulesChanged();
     void coreModulesChanged();
+
+    // App-Manager dialog + install lifecycle. See PackageCoordinator for
+    // the contract — these are pure re-emits.
+    void addApplicationRequested(const QVariantMap& metadata);
+    void launchAppRequested(const QString& name);
+    void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
+    void catalogInstallFinished(const QString& name);
+    void catalogInstallFailed(const QString& name, const QString& error);
     void launcherAppsChanged();
     void currentVisibleAppChanged();
     void loadingModulesChanged();
@@ -210,6 +246,9 @@ private:
     // Owned children (parent=this). Order matters: coreModuleManager first,
     // uiPluginManager second, packageCoordinator third. See class comment for
     // lifetime reasoning.
+    AppsModel*         m_appsModel;
+    AppsFilterProxy*   m_uiAppsProxy;
+    AppsFilterProxy*   m_requiredPackagesModel;
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;

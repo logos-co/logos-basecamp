@@ -141,6 +141,13 @@ int main(int argc, char *argv[])
         qWarning() << "Failed to load package_manager module by default.";
     }
 
+    bool downloaderLoaded = logos_core_load_module("package_downloader", true);
+    if (downloaderLoaded) {
+        qInfo() << "package_downloader module loaded by default.";
+    } else {
+        qWarning() << "Failed to load package_downloader module by default.";
+    }
+
     // Log the initial loaded-module list.
     const QStringList modules = drainModuleNameArray(logos_core_get_loaded_modules());
 

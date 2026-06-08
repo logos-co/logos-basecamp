@@ -17,7 +17,12 @@
         <file>qml/controls/SidebarCircleButton.qml</file>
         <file>qml/controls/SidebarAppDelegate.qml</file>
         <file>qml/controls/ConfirmationDialog.qml</file>
+        <file>qml/controls/AppGridDelegate.qml</file>
+        <file>qml/controls/AppListDelegate.qml</file>
+        <file>qml/controls/PackageRowDelegate.qml</file>
         <file>qml/controls/qmldir</file>
+        <file>qml/popups/AddApplicationDialog.qml</file>
+        <file>qml/popups/qmldir</file>
         <file>qml/views/ContentViews.qml</file>
         <file>qml/views/OverlayDialogs.qml</file>
         <file>qml/views/DashboardView.qml</file>
@@ -26,6 +31,8 @@
         <file>qml/views/CoreModulesView.qml</file>
         <file>qml/views/PluginInterfaceView.qml</file>
         <file>qml/views/SettingsView.qml</file>
+        <file>qml/views/AppManagerView.qml</file>
+        <file>qml/panels/AppGrid.qml</file>
         <file>qml/views/qmldir</file>
     </qresource>
 </RCC>

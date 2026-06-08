@@ -91,16 +91,29 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
     // C API is centralised in one place.
     for (const QVariant& dep : request.coreDependencies) {
         QString depName = dep.toString();
-        if (!depName.isEmpty()) {
-            qDebug() << "Loading core dependency for" << request.name << ":" << depName;
-            if (!m_coreModuleManager || !m_coreModuleManager->loadModule(depName)) {
-                qWarning() << "Failed to load core dependency" << depName
-                           << "for" << request.name;
-                setLoading(request.name, false);
-                emit pluginLoadFailed(request.name,
-                    QStringLiteral("Failed to load core dependencies for ") + request.name);
-                return;
-            }
+        if (depName.isEmpty())
+            continue;
+        if (!m_coreModuleManager) {
+            qWarning() << "Failed to load core dependency" << depName
+                       << "for" << request.name;
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Failed to load core dependencies for ") + request.name);
+            return;
+        }
+        if (m_coreModuleManager->loadedModules().contains(depName)) {
+            qDebug() << "Core dependency" << depName << "already loaded; skipping"
+                     << "for" << request.name;
+            continue;
+        }
+        qDebug() << "Loading core dependency for" << request.name << ":" << depName;
+        if (!m_coreModuleManager->loadModule(depName)) {
+            qWarning() << "Failed to load core dependency" << depName
+                       << "for" << request.name;
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Failed to load core dependencies for ") + request.name);
+            return;
         }
     }
     continueLoad(request);

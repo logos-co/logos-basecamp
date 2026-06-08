@@ -114,20 +114,28 @@ QVariantList UIPluginManager::uiModules() const
     QStringList availablePlugins = findAvailableUiPlugins();
 
     for (const QString& pluginName : availablePlugins) {
+        const QVariantMap& meta = m_uiPluginMetadata.value(pluginName);
+        const bool isInstalled = meta.value("isInstalled", true).toBool();
+
         QVariantMap module;
         module["name"] = pluginName;
+        module["isInstalled"] = isInstalled;
         module["isLoaded"] = m_loadedUiModules.contains(pluginName) || m_qmlPluginWidgets.contains(pluginName);
         module["isMainUi"] = (pluginName == "main_ui");
-        module["iconPath"] = getPluginIconPath(pluginName);
+        module["iconPath"] = pluginIconUrl(pluginName);
+        module["displayName"] = meta.value("displayName");
+        module["description"] = meta.value("description");
+        module["repositoryUrl"] = meta.value("repositoryUrl");
+        module["version"] = meta.value("version");
 
         // Dependency-aware fields come from PackageCoordinator. If it hasn't
         // finished its async refresh yet, the accessors return empty values
         // which QML treats as "unknown — render safe defaults" (no red-cross,
         // no Uninstall button).
-        const QStringList missing = m_packageCoordinator
+        const QStringList missing = (isInstalled && m_packageCoordinator)
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};
-        module["installType"] = m_packageCoordinator
+        module["installType"] = (isInstalled && m_packageCoordinator)
             ? m_packageCoordinator->installType(pluginName)
             : QString(); // "" | "embedded" | "user"
         module["hasMissingDeps"] = !missing.isEmpty();
@@ -169,7 +177,7 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         request.type = UIPluginType::UiQml;
         request.installDir = meta.value("installDir").toString();
         request.qmlViewPath = resolveQmlViewPath(meta);
-        request.iconPath = getPluginIconPath(moduleName, true);
+        request.iconPath = pluginIconUrl(moduleName, true);
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
         request.coreDependencies = meta.value("dependencies").toList();
@@ -464,7 +472,7 @@ QVariantList UIPluginManager::launcherApps() const
         QVariantMap app;
         app["name"] = pluginName;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
-        app["iconPath"] = getPluginIconPath(pluginName);
+        app["iconPath"] = pluginIconUrl(pluginName);
         // Sidebar red-cross marker source. The SidebarAppDelegate reads
         // this field directly; we don't ship the full missingDeps list
         // here because the sidebar only draws an indicator — the detailed
@@ -637,7 +645,7 @@ void UIPluginManager::loadLegacyUiModule(const QString& moduleName)
     request.name = moduleName;
     request.type = UIPluginType::Legacy;
     request.pluginPath = getPluginPath(moduleName);
-    request.iconPath = getPluginIconPath(moduleName, true);
+    request.iconPath = pluginIconUrl(moduleName, true);
     if (m_uiPluginMetadata.contains(moduleName)) {
         request.coreDependencies = m_uiPluginMetadata[moduleName].value("dependencies").toList();
     }
@@ -708,7 +716,7 @@ QString UIPluginManager::getPluginPath(const QString& name) const
     return QString();
 }
 
-QString UIPluginManager::getPluginIconPath(const QString& pluginName, bool forWidgetIcon) const
+QString UIPluginManager::pluginIconUrl(const QString& pluginName, bool forWidgetIcon) const
 {
     if (!m_uiPluginMetadata.contains(pluginName)) {
         return "";

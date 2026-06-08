@@ -1,12 +1,17 @@
 #pragma once
 
+#include "InstallStage.h"
+
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
 #include <QMap>
+#include <QSet>
 #include "logos_api.h"
 
+class AppsFilterProxy;
+class AppsModel;
 class CoreModuleManager;
 class UIPluginManager;
 
@@ -44,8 +49,11 @@ public:
     explicit PackageCoordinator(LogosAPI* logosAPI,
                             CoreModuleManager* coreModuleManager,
                             UIPluginManager* uiPluginManager,
+                            AppsModel* appsModel,
                             QObject* parent = nullptr);
     ~PackageCoordinator() override;
+
+    void setRequiredPackagesModel(AppsFilterProxy* proxy) { m_requiredPackagesModel = proxy; }
 
     // Read-only accessors over the package-state caches. Empty when the
     // async refresh chain hasn't completed yet; QML and UIPluginManager
@@ -63,6 +71,14 @@ public slots:
     Q_INVOKABLE void openInstallPluginDialog();
     Q_INVOKABLE void confirmInstall();
     Q_INVOKABLE void cancelInstall();
+
+    Q_INVOKABLE void openApp(const QString& name,
+                             const QString& repositoryUrl,
+                             const QVariantMap& versionPins = QVariantMap(),
+                             bool allowFastLaunch = true);
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name,
+                                           const QString& repositoryUrl,
+                                           const QVariantMap& versionPins = QVariantMap());
 
     // Gated uninstall. Both slots kick off requestUninstallAsync — the
     // module owns its own pending state and emits beforeUninstall which
@@ -113,6 +129,12 @@ signals:
     // from; PackageCoordinator is just the IPC edge that knows when the data has
     // changed.
     void uiPluginsFetched(const QVariantList& uiPlugins);
+
+    void addApplicationRequested(const QVariantMap& metadata);
+    void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
+    void catalogInstallFinished(const QString& name);
+    void catalogInstallFailed(const QString& name, const QString& error);
+    void launchAppRequested(const QString& name);
 
     // Install-confirmation dialog trigger — QML hosts the dialog; metadata
     // shape matches the inspectPackage result plus an optional
@@ -195,6 +217,11 @@ private:
     // in refreshDependencyInfo overwrites it with the core-inclusive version.
     void fetchUiPluginMetadata();
 
+    void tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft);
+    void buildCatalogIndexes(const QVariantList& catalog);
+    void populateAppsModel(const QVariantList& catalog,
+                           const QHash<QString, QString>& installedByName);
+
     // Full rescan: getInstalledPackages → per-entry resolveFlatDependencies +
     // resolveFlatDependents. Populates m_installTypeByModule,
     // m_missingDepsByModule, m_dependentsByModule. Emits uiModulesChanged +
@@ -202,23 +229,56 @@ private:
     // pick up the new installType / missing-deps values.
     void refreshDependencyInfo();
 
+    // Builds the resolver's depsJson for `name@repositoryUrl` with optional
+    // per-row version pins. The target is row 0; remaining pin rows fall back
+    // to the catalog-known repo from m_repoByName. Empty version/repo fields
+    // are omitted so the resolver uses its newest/cross-repo defaults.
+    QString buildResolverDepsJson(const QString& name,
+                                  const QString& repositoryUrl,
+                                  const QVariantMap& versionPins) const;
+    QString buildInstalledPackagesJson() const;
+    QVariantList computeDepChanges(const QVariantList& resolved,
+                                   const QHash<QString, QString>& installedByName) const;
+
+    void runResolverAndOpenDialog(const QString& name,
+                                  const QString& repositoryUrl,
+                                  const QVariantMap& versionPins);
+    void installResultsSequential(const QVariantList& results,
+                                  const QString& topLevelName,
+                                  int index,
+                                  QStringList failures = QStringList{});
+    void installOnePackage(const QVariantMap& downloadResult,
+                           std::function<void(bool, const QString&)> onDone);
+
+    // Move a session's stage and emit catalogInstallStageChanged.
+    void setSessionStage(const QString& name, InstallStage::Value stage);
+
     // Wiring (not owned — see ctor comment).
     LogosAPI*          m_logosAPI;
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
+    AppsModel*         m_appsModel;
+    AppsFilterProxy*   m_requiredPackagesModel = nullptr;
 
     // Package-state caches sourced from the package_manager module.
     QMap<QString, QString>     m_installTypeByModule;
     QMap<QString, QStringList> m_missingDepsByModule;
     QMap<QString, QStringList> m_dependentsByModule;
 
-    // Cascade-confirmation pending state (single-slot). See PendingOp above
-    // for which ops land here.
     PendingAction m_pendingAction;
-
-    // LGX path pending user confirmation from the install dialog. Set by
-    // installPluginFromPath after a successful inspect, consumed by
-    // confirmInstall or by the InstallUpgradeCascade branch of
-    // confirmUninstallCascade. Empty when no install is pending.
     QString m_pendingInstallPath;
+    QHash<QString, QVariantList> m_versionsByRepoAndName;
+    static QString catalogKey(const QString& repositoryUrl, const QString& name)
+        { return repositoryUrl + QLatin1Char('\n') + name; }
+
+    QHash<QString, QString> m_repoByName;
+    QVariantList m_installedPackagesCache;
+    QSet<QString>            m_installedNameSet;
+    QHash<QString, QString>  m_installedVersionByName;
+    QHash<QString, int> m_dialogResolveEpoch;
+    struct InstallSession {
+        QString             name;
+        InstallStage::Value stage = InstallStage::None;
+    };
+    QHash<QString, InstallSession> m_installSessions;
 };

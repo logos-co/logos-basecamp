@@ -1,10 +1,13 @@
 #include "MainUIBackend.h"
+#include "AppsFilterProxy.h"
+#include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
 #include "BuildInfo.h"
 
 #include <QDebug>
+#include <QTimer>
 
 MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     : QObject(parent)
@@ -28,9 +31,24 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // down in reverse order at destruction, so PackageCoordinator dies first
     // (stops talking to the module), then UIPluginManager (tears down
     // widgets while CoreModuleManager's C API handle is still valid).
+
+
+    m_appsModel         = new AppsModel(this);
+
+    m_uiAppsProxy       = new AppsFilterProxy(this);
+    m_uiAppsProxy->setSourceModel(m_appsModel);
+    m_uiAppsProxy->setTypeFilter(QStringLiteral("ui_qml"));
+    m_uiAppsProxy->setExcludeMainUi(true);
+
+    m_requiredPackagesModel = new AppsFilterProxy(this);
+    m_requiredPackagesModel->setSourceModel(m_appsModel);
+    m_requiredPackagesModel->setExcludeMainUi(false);
+    m_requiredPackagesModel->setInstallStateFilter(QString());
+
     m_coreModuleManager = new CoreModuleManager(m_logosAPI, this);
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
-    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, this);
+    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
+    m_packageCoordinator->setRequiredPackagesModel(m_requiredPackagesModel);
 
     // Setter-injection closes the cycle — UIPluginManager queries
     // PackageCoordinator for installType / missing-deps when building its
@@ -83,6 +101,16 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::addApplicationRequested,
+            this,             &MainUIBackend::addApplicationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
+            this,             &MainUIBackend::launchAppRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallStageChanged,
+            this,             &MainUIBackend::catalogInstallStageChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFinished,
+            this,             &MainUIBackend::catalogInstallFinished);
+    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
+            this,             &MainUIBackend::catalogInstallFailed);
 
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
@@ -98,7 +126,9 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // Kick the first catalog scan now that all wiring is in place. We do
     // this AFTER setPackageCoordinator (and its signal connections) so the
     // resulting uiPluginsFetched / uiModulesChanged land on live slots.
-    m_packageCoordinator->refresh();
+    QTimer::singleShot(0, this, [this]() {
+        m_packageCoordinator->refresh();
+    });
 
     qDebug() << "MainUIBackend created";
 }
@@ -119,7 +149,8 @@ void MainUIBackend::initializeSections()
         makeSection("Apps", "qrc:/icons/tent.png", "workspace"),
         makeSection("Dashboard", "qrc:/icons/dashboard.png", "view"),
         makeSection("Modules", "qrc:/icons/module.png", "view"),
-        makeSection("Settings", "qrc:/icons/settings.png", "view")
+        makeSection("Settings", "qrc:/icons/settings.png", "view"),
+        makeSection("App Manager", "qrc:/icons/dashboard.png", "view")
     };
 }
 
@@ -130,7 +161,7 @@ int MainUIBackend::currentActiveSectionIndex() const
 
 void MainUIBackend::setCurrentActiveSectionIndex(int index)
 {
-    // Valid indices: 0-3 (Apps, Dashboard, Modules, Settings)
+    // Valid indices: 0-4 (Apps, Dashboard, Modules, Settings, App Manager)
     if (m_currentActiveSectionIndex != index && index >= 0 && index < m_sections.size()) {
         m_currentActiveSectionIndex = index;
         emit currentActiveSectionIndexChanged();
@@ -225,6 +256,10 @@ void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_p
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::confirmInstall()                          { m_packageCoordinator->confirmInstall(); }
 void MainUIBackend::cancelInstall()                           { m_packageCoordinator->cancelInstall(); }
+void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
+{ m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
+void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins)
+{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, versionPins); }
 
 // cancelPendingAction is the one slot that doesn't route to a single manager:
 // a pending action lives on either UIPluginManager (local unload cascade) or

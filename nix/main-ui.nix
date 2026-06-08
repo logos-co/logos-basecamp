@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosModule, logosPackageManagerModule, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
 
 let
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
@@ -46,6 +46,17 @@ pkgs.stdenv.mkDerivation {
       ls -la ./src/generated_code/
     else
       echo "Warning: No include directory found in logos-package-manager-module"
+    fi
+
+    # Copy module-generated API files from logos-package-downloader-module
+    echo "Copying include files from logos-package-downloader-module..."
+    if [ -d "${logosPackageDownloaderModule}/include" ]; then
+      echo "Found include directory in logos-package-downloader-module"
+      cp -r "${logosPackageDownloaderModule}/include"/* ./src/generated_code/
+      echo "Copied include files:"
+      ls -la ./src/generated_code/
+    else
+      echo "Warning: No include directory found in logos-package-downloader-module"
     fi
 
     # Run logos-cpp-generator with metadata.json and --general-only flag

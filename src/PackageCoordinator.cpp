@@ -1,4 +1,6 @@
 #include "PackageCoordinator.h"
+#include "AppsFilterProxy.h"
+#include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
@@ -20,11 +22,13 @@
 PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
                                CoreModuleManager* coreModuleManager,
                                UIPluginManager* uiPluginManager,
+                               AppsModel* appsModel,
                                QObject* parent)
     : QObject(parent)
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
+    , m_appsModel(appsModel)
 {
     subscribeToPackageInstallationEvents();
 
@@ -730,11 +734,13 @@ void PackageCoordinator::fetchUiPluginMetadata()
         // we do this first so QML has a non-empty map to key on during the
         // window between the two async calls.
         self->m_installTypeByModule.clear();
+        QHash<QString, QString> installedByName;  // name → installed version
         for (const QVariant& item : uiPlugins) {
             QVariantMap pluginInfo = item.toMap();
             const QString name = pluginInfo.value("name").toString();
             if (name.isEmpty()) continue;
             self->m_installTypeByModule[name] = pluginInfo.value("installType").toString();
+            installedByName.insert(name, pluginInfo.value("version").toString());
         }
 
         // Push the raw UI-plugin list to UIPluginManager — that's where the
@@ -742,12 +748,80 @@ void PackageCoordinator::fetchUiPluginMetadata()
         emit self->uiPluginsFetched(uiPlugins);
         emit self->uiModulesChanged();
         emit self->launcherAppsChanged();
-
-        // Kick off the dependency-info refresh. This is asynchronous and
-        // touches every known package, so it may emit uiModulesChanged()
-        // again once it completes.
         self->refreshDependencyInfo();
+
+        // Kick off the App-Manager catalog fetch.
+        self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
     });
+}
+
+void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft)
+{
+    LogosAPIClient* dlClient = m_logosAPI
+        ? m_logosAPI->getClient("package_downloader")
+        : nullptr;
+
+    if (dlClient && dlClient->isConnected()) {
+        QPointer<PackageCoordinator> self(this);
+        dlClient->invokeRemoteMethodAsync(
+            "package_downloader", "getCatalog", QVariantList{},
+            [self, installedByName](QVariant catalogVar) {
+                if (!self) return;
+                const QVariantList catalog = catalogVar.toList();
+                self->buildCatalogIndexes(catalog);
+                self->populateAppsModel(catalog, installedByName);
+            });
+        return;
+    }
+
+    if (retriesLeft <= 0) {
+        return;
+    }
+
+    QPointer<PackageCoordinator> self(this);
+    QTimer::singleShot(200, this, [self, installedByName, retriesLeft]() {
+        if (!self) return;
+        self->tryFetchCatalog(installedByName, retriesLeft - 1);
+    });
+}
+
+void PackageCoordinator::buildCatalogIndexes(const QVariantList& catalog)
+{
+    QHash<QString, QVariantList> versionsByRepoAndName;
+    QHash<QString, QString>      repoByName;
+    versionsByRepoAndName.reserve(catalog.size());
+    repoByName.reserve(catalog.size());
+    for (const QVariant& v : catalog) {
+        const QVariantMap row = v.toMap();
+        const QString name = row.value("name").toString();
+        if (name.isEmpty()) continue;
+        const QString repo = row.value("repositoryUrl").toString();
+        versionsByRepoAndName.insert(catalogKey(repo, name),
+                                     row.value("versions").toList());
+        repoByName.insert(name, repo);
+    }
+    m_versionsByRepoAndName = std::move(versionsByRepoAndName);
+    m_repoByName            = std::move(repoByName);
+}
+
+void PackageCoordinator::populateAppsModel(
+    const QVariantList& catalog,
+    const QHash<QString, QString>& installedByName)
+{
+    if (!m_appsModel) return;
+    m_appsModel->replaceCatalog(catalog);
+    for (auto it = installedByName.cbegin(); it != installedByName.cend(); ++it) {
+        const QString& name = it.key();
+        const QString& ver  = it.value();
+        m_appsModel->markInstalled(name, ver);
+        const QString installType = m_installTypeByModule.value(name);
+        if (!installType.isEmpty())
+            m_appsModel->setInstallType(name, installType);
+        if (m_uiPluginManager) {
+            const QString iconUrl = m_uiPluginManager->pluginIconUrl(name);
+            if (!iconUrl.isEmpty()) m_appsModel->setIconUrl(name, iconUrl);
+        }
+    }
 }
 
 void PackageCoordinator::refreshDependencyInfo()
@@ -765,14 +839,29 @@ void PackageCoordinator::refreshDependencyInfo()
     logos.package_manager.getInstalledPackagesAsync(
         [self](QVariantList packages) {
         if (!self) return;
-        QMap<QString, QString> typeMap;
+        self->m_installedPackagesCache = packages;
+        QMap<QString, QString>   typeMap;
+        QSet<QString>            nameSet;
+        QHash<QString, QString>  versionByName;
+        nameSet.reserve(packages.size());
+        versionByName.reserve(packages.size());
         for (const QVariant& v : packages) {
             const QVariantMap pkg = v.toMap();
             const QString name = pkg.value("name").toString();
             if (name.isEmpty()) continue;
             typeMap[name] = pkg.value("installType").toString();
+            // moduleName is the key openApp / runResolverAndOpenDialog
+            // use; fall back to name when the field is absent.
+            const QString lookupName = pkg.value("moduleName").toString().isEmpty()
+                                           ? name
+                                           : pkg.value("moduleName").toString();
+            const QString version = pkg.value("version").toString();
+            nameSet.insert(lookupName);
+            if (!version.isEmpty()) versionByName.insert(lookupName, version);
         }
-        self->m_installTypeByModule = typeMap;
+        self->m_installTypeByModule    = typeMap;
+        self->m_installedNameSet       = std::move(nameSet);
+        self->m_installedVersionByName = std::move(versionByName);
 
         // Second pass — per-module missing/dependents queries. Dispatched
         // for every entry in the full installed-packages list (both UI and
@@ -839,4 +928,369 @@ void PackageCoordinator::refreshDependencyInfo()
                 });
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// App-Manager catalog install pipeline (ported from PMUI's
+// PackageManagerBackend, adapted to PackageCoordinator's session model).
+// ---------------------------------------------------------------------------
+
+QString PackageCoordinator::buildResolverDepsJson(const QString& name,
+                                                  const QString& repositoryUrl,
+                                                  const QVariantMap& versionPins) const
+{
+    QJsonArray arr;
+    auto append = [&arr](const QString& n, const QString& repo, const QString& ver) {
+        QJsonObject obj;
+        obj.insert(QStringLiteral("name"), n);
+        if (!repo.isEmpty()) obj.insert(QStringLiteral("repositoryUrl"), repo);
+        if (!ver.isEmpty())  obj.insert(QStringLiteral("version"), ver);
+        arr.append(obj);
+    };
+
+    append(name, repositoryUrl, versionPins.value(name).toString());
+
+    for (auto it = versionPins.cbegin(); it != versionPins.cend(); ++it) {
+        const QString pinName = it.key();
+        if (pinName == name || pinName.isEmpty()) continue;
+        const QString pinVersion = it.value().toString();
+        if (pinVersion.isEmpty()) continue;
+        append(pinName, m_repoByName.value(pinName), pinVersion);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+QString PackageCoordinator::buildInstalledPackagesJson() const
+{
+    QJsonArray arr;
+    for (const QVariant& v : m_installedPackagesCache) {
+        const QVariantMap m = v.toMap();
+        // package_manager rows expose both `name` and `moduleName`; the
+        // resolver wants the module name. Fall back to `name` when the
+        // module-name field is empty (older index shape).
+        const QString name = m.value("moduleName").toString().isEmpty()
+                             ? m.value("name").toString()
+                             : m.value("moduleName").toString();
+        const QString version = m.value("version").toString();
+        if (name.isEmpty() || version.isEmpty()) continue;
+        QJsonObject o;
+        o.insert(QStringLiteral("name"), name);
+        o.insert(QStringLiteral("version"), version);
+        const QString rootHash = m.value("hashes").toMap().value("root").toString();
+        if (!rootHash.isEmpty()) o.insert(QStringLiteral("rootHash"), rootHash);
+        arr.append(o);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+QVariantList PackageCoordinator::computeDepChanges(
+    const QVariantList& resolved,
+    const QHash<QString, QString>& installedByName) const
+{
+    QVariantList out;
+    for (const QVariant& v : resolved) {
+        const QVariantMap m = v.toMap();
+        if (m.contains("error")) {
+            QVariantMap c;
+            c.insert(QStringLiteral("name"),  m.value("name"));
+            c.insert(QStringLiteral("action"), QStringLiteral("error"));
+            c.insert(QStringLiteral("error"),  m.value("error"));
+            out.append(c);
+            continue;
+        }
+
+        const QString name = m.value("name").toString();
+        const QString to   = m.value("version").toString();
+        const QString from = installedByName.value(name);
+
+        QString action;
+        if (from.isEmpty()) {
+            action = QStringLiteral("install");
+        } else if (from == to) {
+            action = QStringLiteral("installed");
+        } else {
+            action = QStringLiteral("upgrade");
+        }
+
+        const QString repoUrl = m.value("repositoryUrl").toString();
+        QVariantMap c;
+        c.insert(QStringLiteral("name"),        name);
+        c.insert(QStringLiteral("toVersion"),   to);
+        c.insert(QStringLiteral("fromVersion"), from);
+        c.insert(QStringLiteral("repositoryUrl"), repoUrl);
+        c.insert(QStringLiteral("description"), m.value("description").toString());
+        c.insert(QStringLiteral("action"),      action);
+        const bool isTopLevel = m.value("topLevel").toBool();
+        c.insert(QStringLiteral("isTopLevel"), isTopLevel);
+        const QVariantList versionsForRow =
+            m_versionsByRepoAndName.value(catalogKey(repoUrl, name));
+        qDebug() << "  dep" << name << "repo=" << repoUrl
+                 << "versions found=" << versionsForRow.size();
+        c.insert(QStringLiteral("versions"), versionsForRow);
+        if (isTopLevel) out.prepend(c);
+        else            out.append(c);
+    }
+    return out;
+}
+
+void PackageCoordinator::setSessionStage(const QString& name, InstallStage::Value stage)
+{
+    auto it = m_installSessions.find(name);
+    if (it == m_installSessions.end()) return;
+    if (it->stage == stage) return;
+    it->stage = stage;
+    emit catalogInstallStageChanged(name, stage);
+}
+
+void PackageCoordinator::openApp(const QString& name,
+                                 const QString& repositoryUrl,
+                                 const QVariantMap& versionPins,
+                                 bool allowFastLaunch)
+{
+    if (!m_logosAPI || name.isEmpty()) return;
+
+    if (allowFastLaunch && m_installedNameSet.contains(name)) {
+        qDebug() << "openApp fast-path: installed (v="
+                 << m_installedVersionByName.value(name)
+                 << "), emitting launchAppRequested";
+        emit launchAppRequested(name);
+        return;
+    }
+
+    runResolverAndOpenDialog(name, repositoryUrl, versionPins);
+}
+
+void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
+                                                  const QString& repositoryUrl,
+                                                  const QVariantMap& versionPins)
+{
+    QVariantMap catalogRow =
+        m_appsModel ? m_appsModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
+
+    const QString targetVersion = versionPins.value(name).toString();
+
+    const int epoch = ++m_dialogResolveEpoch[name];
+
+    const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);
+
+    qDebug() << "PackageCoordinator::runResolverAndOpenDialog" << name
+             << "repo=" << repositoryUrl << "targetVersion=" << targetVersion
+             << "pins=" << versionPins.size() << "epoch=" << epoch;
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_downloader.resolveDependenciesAsync(depsJson, QString(),
+        [self, name, repositoryUrl, targetVersion, catalogRow, epoch]
+        (QVariantList resolved) {
+            if (!self) return;
+            if (self->m_dialogResolveEpoch.value(name) != epoch) {
+                qDebug() << "runResolverAndOpenDialog: dropping superseded epoch"
+                         << epoch << "for" << name;
+                return;
+            }
+            const QVariantList changes =
+                self->computeDepChanges(resolved, self->m_installedVersionByName);
+            QVariantMap metadata;
+            metadata["name"]          = name;
+            metadata["repositoryUrl"] = repositoryUrl;
+            metadata["selectedVersion"] = targetVersion;
+            metadata["displayName"]   = catalogRow.value("displayName").toString().isEmpty()
+                                            ? name
+                                            : catalogRow.value("displayName");
+            metadata["description"]   = catalogRow.value("description");
+            metadata["icon"] = catalogRow.value("iconUrl");
+            metadata["category"]      = catalogRow.value("category");
+            metadata["versions"]      = catalogRow.value("versions").toList();
+            const QString installedVersion = self->m_installedVersionByName.value(name);
+            metadata["isInstalled"]      = !installedVersion.isEmpty();
+            metadata["installedVersion"] = installedVersion;
+            const QVariantList versionsList = catalogRow.value("versions").toList();
+            metadata["latestVersion"] = versionsList.isEmpty()
+                ? QString()
+                : versionsList.first().toMap().value("version").toString();
+
+            metadata["installStage"] = static_cast<int>(
+                self->m_installSessions.contains(name)
+                    ? self->m_installSessions.value(name).stage
+                    : InstallStage::None);
+
+            QStringList requiredPackages;
+            QSet<QString> seen;
+            requiredPackages.reserve(changes.size() + 1);
+            requiredPackages.append(name);
+            seen.insert(name);
+            if (self->m_appsModel) {
+                QList<AppsModel::ResolverRow> overlay;
+                overlay.reserve(changes.size());
+                for (const QVariant& v : changes) {
+                    const QVariantMap c = v.toMap();
+                    AppsModel::ResolverRow rr;
+                    rr.name          = c.value("name").toString();
+                    rr.action        = c.value("action").toString();
+                    rr.toVersion     = c.value("toVersion").toString();
+                    rr.isTopLevel    = c.value("isTopLevel").toBool();
+                    rr.resolverError = c.value("error").toString();
+                    overlay.append(rr);
+                    if (!rr.name.isEmpty() && !seen.contains(rr.name)) {
+                        seen.insert(rr.name);
+                        requiredPackages.append(rr.name);
+                    }
+                }
+                self->m_appsModel->setResolverOverlay(overlay);
+            }
+
+            if (self->m_requiredPackagesModel)
+                self->m_requiredPackagesModel->setRequiredPackages(requiredPackages);
+
+            emit self->addApplicationRequested(metadata);
+        });
+}
+
+void PackageCoordinator::confirmCatalogInstall(const QString& name,
+                                                const QString& repositoryUrl,
+                                                const QVariantMap& versionPins)
+{
+    if (!m_logosAPI || name.isEmpty()) return;
+
+    if (m_installSessions.contains(name)) {
+        qDebug() << "confirmCatalogInstall: session for" << name
+                 << "already in progress, ignoring";
+        return;
+    }
+
+    InstallSession s;
+    s.name  = name;
+    s.stage = InstallStage::Downloading;
+    m_installSessions.insert(name, s);
+
+    if (m_appsModel) m_appsModel->setInstallStage(name, InstallStage::Downloading);
+
+    const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
+        [self, name](QVariantList results) {
+            if (!self) return;
+
+            QVariantList toInstall = results;
+            if (toInstall.isEmpty()) {
+                self->setSessionStage(name, InstallStage::Failed);
+                if (self->m_appsModel)
+                    self->m_appsModel->setInstallStage(name,
+                        InstallStage::Failed,
+                        QStringLiteral("No downloadable packages"));
+                emit self->catalogInstallFailed(name,
+                    QStringLiteral("No downloadable packages"));
+                return;
+            }
+
+            for (const QVariant& v : toInstall) {
+                const QString rowName = v.toMap().value("name").toString();
+                if (!rowName.isEmpty() && self->m_appsModel)
+                    self->m_appsModel->setInstallStage(rowName,
+                        InstallStage::Queued);
+            }
+
+            self->setSessionStage(name, InstallStage::Installing);
+            self->installResultsSequential(toInstall, name, 0);
+        });
+}
+
+void PackageCoordinator::installOnePackage(const QVariantMap& dl,
+    std::function<void(bool, const QString&)> onDone)
+{
+    const QString packageName  = dl.value("name").toString();
+    const QString filePath     = dl.value("path").toString();
+    const QString downloadError = dl.value("error").toString();
+
+    if (filePath.isEmpty()) {
+        if (onDone) onDone(false, downloadError.isEmpty()
+                                       ? QStringLiteral("Download failed")
+                                       : downloadError);
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_manager.installPluginAsync(filePath, false,
+        [self, packageName, onDone](QVariantMap installResult) {
+            if (!self) return;
+            const bool success = !installResult.value("path").toString().isEmpty()
+                              && !installResult.contains("error");
+            const QString err = installResult.value("error").toString();
+            if (onDone) onDone(success, success
+                                          ? QString()
+                                          : (err.isEmpty()
+                                                 ? QStringLiteral("Installation failed")
+                                                 : err));
+        });
+}
+
+void PackageCoordinator::installResultsSequential(const QVariantList& results,
+                                                  const QString& topLevelName,
+                                                  int index,
+                                                  QStringList failures)
+{
+    if (index >= results.size()) return;
+    const QVariantMap dl = results[index].toMap();
+    const QString rowName = dl.value("name").toString();
+    qDebug() << "installResultsSequential index=" << index
+             << "of" << results.size()
+             << "rowName=" << rowName
+             << "topLevel=" << topLevelName;
+    if (!rowName.isEmpty() && m_appsModel)
+        m_appsModel->setInstallStage(rowName, InstallStage::Installing);
+
+    QPointer<PackageCoordinator> self(this);
+    installOnePackage(dl,
+        [self, results, topLevelName, rowName, index, failures]
+        (bool success, const QString& err) mutable {
+            qDebug() << "installOnePackage callback rowName=" << rowName
+                     << "success=" << success << "err=" << err;
+            if (!self) return;
+
+            if (!rowName.isEmpty()) {
+                const InstallStage::Value stage = success
+                    ? InstallStage::Installed
+                    : InstallStage::Failed;
+                if (self->m_appsModel)
+                    self->m_appsModel->setInstallStage(rowName, stage,
+                        success ? QString() : err);
+            }
+            if (!success) {
+                failures.append(rowName.isEmpty()
+                                    ? err
+                                    : (rowName + ": " + err));
+            }
+
+            const bool isLast = (index + 1) >= results.size();
+            if (!isLast) {
+                self->installResultsSequential(
+                    results, topLevelName, index + 1, failures);
+                return;
+            }
+
+            if (!failures.isEmpty()) {
+                qDebug() << "  install loop complete with failures for"
+                         << topLevelName << ":" << failures.size();
+                self->setSessionStage(topLevelName, InstallStage::Failed);
+                emit self->catalogInstallFailed(
+                    topLevelName, failures.join(QStringLiteral("; ")));
+                QTimer::singleShot(2500, self.data(), [self, topLevelName]() {
+                    if (!self) return;
+                    self->m_installSessions.remove(topLevelName);
+                });
+                return;
+            }
+
+            qDebug() << "  install loop complete for session" << topLevelName
+                     << "; advancing session to done";
+            self->setSessionStage(topLevelName, InstallStage::Done);
+            emit self->catalogInstallFinished(topLevelName);
+            QTimer::singleShot(1500, self.data(), [self, topLevelName]() {
+                if (!self) return;
+                self->m_installSessions.remove(topLevelName);
+            });
+        });
 }
