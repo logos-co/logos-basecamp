@@ -22,8 +22,7 @@
 #include "IComponent.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
-#include "restricted/DenyAllNAMFactory.h"
-#include "restricted/RestrictedUrlInterceptor.h"
+#include "restricted/QmlSandbox.h"
 #include <ViewModuleHost.h>
 
 PluginLoader::PluginLoader(LogosAPI* logosAPI,
@@ -279,52 +278,9 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
     auto* qmlWidget = new QQuickWidget;
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     if (QQmlEngine* engine = qmlWidget->engine()) {
-      	const QStringList qtDefaultPaths = engine->importPathList();                                                                                                                                                               
-        QStringList importPaths = qtDefaultPaths;
-        importPaths.prepend(request.installDir);
-        const QString qmlEntryDir =
-            QFileInfo(request.qmlViewPath).absolutePath();
-        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir)
-            importPaths.prepend(qmlEntryDir);
-        QString appLibDir = QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
-        if (!appLibDir.isEmpty())
-            importPaths.prepend(appLibDir);
-        engine->setImportPathList(importPaths);
-
-        QStringList pluginPaths = engine->pluginPathList();
-        pluginPaths.prepend(request.installDir);
-        engine->setPluginPathList(pluginPaths);
-
-        engine->setNetworkAccessManagerFactory(new DenyAllNAMFactory());
-
-        QStringList allowedRoots;
-        allowedRoots << request.installDir;
-        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir
-            && !allowedRoots.contains(qmlEntryDir))
-            allowedRoots << qmlEntryDir;
-        // Allow only an explicit set of shared Logos QML modules.
-        if (!appLibDir.isEmpty()) {
-            static const QStringList kAllowedLogosModules = {
-                QStringLiteral("Theme"),
-                QStringLiteral("Controls"),
-                QStringLiteral("Icons"),
-            };
-            for (const QString& mod : kAllowedLogosModules) {
-                const QString modDir = QDir(appLibDir + "/Logos/" + mod).canonicalPath();
-                if (!modDir.isEmpty() && !allowedRoots.contains(modDir))
-                    allowedRoots << modDir;
-            }
-        }
-        // TODO(security): currently allows ALL of Qt's default QML module paths.
-        // Before opening the platform to third-party plugin publishing, narrow
-        // this to an explicit per-module allowlist
-        for (const QString& p : qtDefaultPaths) {
-            if (p.startsWith(QStringLiteral("qrc:"))) continue;
-            const QString canon = QDir(p).canonicalPath();
-            if (!canon.isEmpty() && !allowedRoots.contains(canon))
-                allowedRoots << canon;
-        }
-        engine->addUrlInterceptor(new RestrictedUrlInterceptor(allowedRoots));
+        const QString appLibDir =
+            QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
+        QmlSandbox::configure(engine, request.installDir, request.qmlViewPath, appLibDir);
         engine->setBaseUrl(QUrl::fromLocalFile(request.installDir + "/"));
     }
 

@@ -240,6 +240,11 @@
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
 
+          # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
+          # builds a real malicious QML plugin and asserts the production sandbox
+          # refuses to load it. Build: nix build .#sandbox-test
+          sandbox-test = import ./nix/sandbox-test.nix { inherit pkgs src; };
+
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
@@ -278,6 +283,7 @@
 
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
+        sandbox-test = self.packages.${system}.sandbox-test;
         integration-test = self.packages.${system}.integration-test;
       });
 
