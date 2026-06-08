@@ -10,15 +10,15 @@ Item {
         color: "#1e1e1e"
     }
 
-    // Content views stack (backend indices 1-3, mapped to 0-2 here).
-    // Index 0 (Apps/MDI) is handled by the C++ MdiView widget.
+    // Content views stack — only App Manager and Settings now live here.
+    // Apps (backend idx 0) is the C++ MdiView, and Modules (backend idx 2)
+    // is the sandboxed package_manager_ui QQuickWidgetxwx
     StackLayout {
         id: contentStack
         anchors.fill: parent
 
-        // Map backend index: 1=App Manager, 2=Modules (placeholder), 3=Settings
-        // to internal index: 0=App Manager, 1=placeholder, 2=Settings
-        currentIndex: Math.max(0, backend.currentActiveSectionIndex - 1)
+        // Map backend index 1 → 0 (App Manager), 3 → 1 (Settings).
+        currentIndex: backend.currentActiveSectionIndex === 3 ? 1 : 0
 
         // App Manager (backend index 1 -> internal index 0)
         AppManagerView {
@@ -34,12 +34,7 @@ Item {
             }
         }
 
-        // Place holder for PMUI
-        Item {
-            id: modulesPlaceholder
-        }
-
-        // Settings (backend index 3 -> internal index 2)
+        // Settings (backend index 3 -> internal index 1)
         SettingsView {
             id: settingsView
         }

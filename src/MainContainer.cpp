@@ -16,6 +16,13 @@
 #include <QProcessEnvironment>
 #include <QColor>
 #include <QPalette>
+#include <QTimer>
+
+namespace {
+constexpr int kAppsStackIndex     = 0;  // MdiView (C++ widget)
+constexpr int kContentStackIndex  = 1;  // ContentViews.qml (App Manager + Settings)
+constexpr int kModulesStackIndex  = 2;  // package_manager_ui (sandboxed QQuickWidget)
+}
 
 MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     : QWidget(parent)
@@ -42,12 +49,30 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     // Connect section index changes
     connect(m_backend, &MainUIBackend::currentActiveSectionIndexChanged, 
             this, &MainContainer::onViewIndexChanged);
-    connect(m_backend, &MainUIBackend::navigateToApps, 
-            this, &MainContainer::onNavigateToApps);
-    
-    // Connect plugin window signals to MdiView
-    connect(m_backend, &MainUIBackend::pluginWindowRequested,
-            this, &MainContainer::onPluginWindowRequested);
+    connect(m_backend, &MainUIBackend::navigateToApps, this, [this]() {
+        if (m_suppressNextNavToApps) {
+            m_suppressNextNavToApps = false;
+            return;
+        }
+        onNavigateToApps();
+    });
+
+    connect(m_backend, &MainUIBackend::pluginWindowRequested, this,
+        [this](QWidget* widget, const QString& title) {
+            if (title == QStringLiteral("package_manager_ui") && !m_pmuiWidget) {
+                m_pmuiWidget = widget;
+                QWidget* placeholder = m_contentStack->widget(kModulesStackIndex);
+                widget->setParent(m_contentStack);
+                m_contentStack->insertWidget(kModulesStackIndex, widget);
+                if (placeholder) {
+                    m_contentStack->removeWidget(placeholder);
+                    placeholder->deleteLater();
+                }
+                m_suppressNextNavToApps = true;
+                return;
+            }
+            onPluginWindowRequested(widget, title);
+        });
     connect(m_backend, &MainUIBackend::pluginWindowRemoveRequested,
             this, &MainContainer::onPluginWindowRemoveRequested);
     connect(m_backend, &MainUIBackend::pluginWindowActivateRequested,
@@ -168,7 +193,12 @@ void MainContainer::setupUi()
     m_contentWidget->rootContext()->setContextProperty("backend", m_backend);
     m_contentWidget->setSource(resolveQmlUrl("qml/views/ContentViews.qml"));
     m_contentStack->addWidget(m_contentWidget);
-    
+
+    // Index 2: placeholder for package_manager_ui
+    QWidget* pmuiPlaceholder = new QWidget(m_contentStack);
+    pmuiPlaceholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_contentStack->addWidget(pmuiPlaceholder);
+
     // Add widgets to content layout
     contentLayout->addWidget(m_contentStack, 1);
 
@@ -209,10 +239,21 @@ void MainContainer::setupUi()
     }
 
     // Set initial state
-    m_contentStack->setCurrentIndex(0); // Show MdiView by default
+    m_contentStack->setCurrentIndex(kAppsStackIndex); // Show MdiView by default
 
     // Set reasonable minimum size
     setMinimumSize(800, 600);
+
+    // Background-preload package_manager_ui so the Modules section shows
+    auto pmuiConn = std::make_shared<QMetaObject::Connection>();
+    *pmuiConn = connect(m_backend, &MainUIBackend::uiModulesChanged, this,
+        [this, pmuiConn]() {
+            if (m_pmuiWidget) {
+                QObject::disconnect(*pmuiConn);
+                return;
+            }
+            m_backend->loadUiModule(QStringLiteral("package_manager_ui"));
+        });
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
@@ -242,14 +283,22 @@ void MainContainer::onViewIndexChanged()
     int sectionIndex = m_backend->currentActiveSectionIndex();
     
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;
-    
-    // Index 0 = Apps (show MdiView), Indices 1-3 = Dashboard/Modules/Settings (show QML)
-    if (sectionIndex == 0) {
-        // Apps workspace - show MdiView (C++ widget)
-        m_contentStack->setCurrentIndex(0);
-    } else {
-        // Dashboard, Modules, or Settings - show QML content
-        m_contentStack->setCurrentIndex(1);
+
+    //   0 (Apps)        → MdiView
+    //   1 (App Manager) → ContentViews.qml
+    //   2 (Modules)     → package_manager_ui (preloaded in background)
+    //   3 (Settings)    → ContentViews.qml (StackLayout inside picks the page)
+    switch (sectionIndex) {
+    case 0: m_contentStack->setCurrentIndex(kAppsStackIndex);    break;
+    case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
+    case 2:
+        if (!m_pmuiWidget) {
+            m_backend->loadUiModule(QStringLiteral("package_manager_ui"));
+        }
+        m_contentStack->setCurrentIndex(kModulesStackIndex);
+        break;
+    case 3: m_contentStack->setCurrentIndex(kContentStackIndex); break;
+    default: break;
     }
 }
 

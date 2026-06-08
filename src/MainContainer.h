@@ -61,6 +61,9 @@ private:
     // MdiView (C++ widget for Apps)
     MdiView* m_mdiView;
 
+    QWidget* m_pmuiWidget = nullptr;
+    bool m_suppressNextNavToApps = false;
+
     // Content views (QML for Dashboard, Modules, PackageManager, Settings)
     QQuickWidget* m_contentWidget;
 

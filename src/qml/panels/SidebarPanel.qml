@@ -27,7 +27,7 @@ Control {
         id: _d
 
         readonly property var workspaceSections: [
-            { name: "Apps", icon: BasecampIcons.tents }
+            { name: "Workspace", icon: BasecampIcons.tents }
         ]
 
         // 0=Apps, 1=App Manager, 2=Modules, 3=Settings.
