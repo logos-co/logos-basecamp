@@ -23,14 +23,30 @@
 // To prove the test is meaningful, run with SANDBOX_TEST_EXPECT_ESCAPE=1: it
 // then loads the malicious module WITHOUT the sandbox and asserts the sentinel
 // DOES appear, confirming the plugin really is capable of executing.
+//
+// Beyond F-008, this file also guards the OTHER ui_qml sandbox guarantees —
+// the ones the counter_qml probe app (repos/counter_qml/Main.qml) checks by
+// hand: network deny (HTTP and file:// via XMLHttpRequest), URL-interceptor
+// blocking of remote-scheme loads and out-of-sandbox file reads (Loader/Image/
+// Qt.openUrlExternally), and the matching positive cases (a file under the
+// module's own dir, and qrc: resources, still resolve). These guarantees used
+// to live inline in PluginLoader and were refactored into QmlSandbox; the
+// sandbox* slots below drive that same production config so a regression in any
+// of them fails here. See the block comment above those slots for the mapping.
 
 #include <QtTest/QtTest>
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QQmlAbstractUrlInterceptor>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
@@ -58,6 +74,40 @@ void writeFile(const QString& path, const QString& contents)
     QVERIFY2(f.open(QIODevice::WriteOnly | QIODevice::Text),
              qPrintable(QStringLiteral("cannot write ") + path));
     QTextStream(&f) << contents;
+}
+
+// Source dir of the evil_app fixture (tests/sandbox/evil_app). Provided by CMake
+// via -DEVIL_APP_DIR, with an env override mirroring evilPluginPath().
+QString evilAppDir()
+{
+    if (const QByteArray fromEnv = qgetenv("EVIL_APP_DIR"); !fromEnv.isEmpty())
+        return QString::fromLocal8Bit(fromEnv);
+#ifdef EVIL_APP_DIR
+    return QStringLiteral(EVIL_APP_DIR);
+#else
+    return QString();
+#endif
+}
+
+// Recursively copy a directory tree (used to stage the evil_app fixture into a
+// writable QTemporaryDir so it becomes a real, canonical sandbox install root).
+bool copyTree(const QString& srcDir, const QString& dstDir)
+{
+    QDir().mkpath(dstDir);
+    QDir src(srcDir);
+    for (const QFileInfo& entry :
+         src.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const QString dst = dstDir + "/" + entry.fileName();
+        if (entry.isDir()) {
+            if (!copyTree(entry.absoluteFilePath(), dst))
+                return false;
+        } else {
+            QFile::remove(dst);
+            if (!QFile::copy(entry.absoluteFilePath(), dst))
+                return false;
+        }
+    }
+    return true;
 }
 
 // Base directory for the test's scratch dirs. The attacker plugin gets dlopen()ed
@@ -251,6 +301,246 @@ private slots:
                  qPrintable(QStringLiteral("legit pure-QML module failed to load: ")
                             + component.errorString()));
         QVERIFY2(!obj.isNull(), "legit pure-QML module produced no object");
+    }
+
+    // ----------------------------------------------------------------------
+    // The remaining slots cover the other sandbox guarantees that the
+    // counter_qml probe app (repos/counter_qml/Main.qml) exercises by hand:
+    // network deny (HTTP + file via XMLHttpRequest), URL-interceptor blocking
+    // of remote/foreign-scheme loads (Loader/Image) and out-of-sandbox file
+    // reads, and Qt.openUrlExternally. They all drive the SAME production
+    // sandbox config (QmlSandbox::configure) so a regression in any of these
+    // older guarantees — easy to introduce now that the policy was refactored
+    // out of PluginLoader — fails here instead of silently shipping.
+
+    // Network deny: QmlSandbox must install a QQmlNetworkAccessManagerFactory
+    // whose NAM fails every request, so any HTTP/HTTPS the QML attempts (e.g.
+    // counter_qml's "HTTP GET https://example.com" probe, which uses
+    // XMLHttpRequest -> the engine NAM) cannot reach the network.
+    void sandboxDeniesNetworkAccess()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        // The engine's NAM is the one XMLHttpRequest uses under the hood.
+        QNetworkAccessManager* nam = engine.networkAccessManager();
+        QVERIFY2(nam, "sandbox left the engine without a network access manager");
+
+        QNetworkRequest req(QUrl(QStringLiteral("https://example.com/")));
+        QScopedPointer<QNetworkReply> reply(nam->get(req));
+        QVERIFY2(!reply.isNull(), "deny-all NAM returned no reply object");
+
+        QSignalSpy finished(reply.data(), &QNetworkReply::finished);
+        QVERIFY2(finished.wait(5000), "deny-all reply never finished");
+        QVERIFY2(reply->error() != QNetworkReply::NoError,
+                 "SANDBOX BREACH: network request was permitted (no error)");
+    }
+
+    // Same guarantee for the file:// scheme: counter_qml probes
+    // "Read file:///etc/hosts" via XMLHttpRequest. The deny-all NAM must fail
+    // that too — the QML engine must not become a file-read primitive.
+    void sandboxDeniesFileSchemeNetworkRequest()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+        QNetworkAccessManager* nam = engine.networkAccessManager();
+        QVERIFY2(nam, "sandbox left the engine without a network access manager");
+
+        QNetworkRequest req(QUrl(QStringLiteral("file:///etc/hosts")));
+        QScopedPointer<QNetworkReply> reply(nam->get(req));
+        QVERIFY2(!reply.isNull(), "deny-all NAM returned no reply object");
+
+        QSignalSpy finished(reply.data(), &QNetworkReply::finished);
+        QVERIFY2(finished.wait(5000), "deny-all reply never finished");
+        QVERIFY2(reply->error() != QNetworkReply::NoError,
+                 "SANDBOX BREACH: file:// request was permitted (no error)");
+    }
+
+    // URL interception: a non-qrc, non-local scheme (http/https) must be
+    // blocked outright. This is the choke point behind counter_qml's
+    // "Loader source from http://example.com/fake.qml" probe — the engine asks
+    // the interceptor to resolve the remote URL and must get an empty QUrl back.
+    void sandboxBlocksRemoteSchemeUrl()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        const QUrl remote(QStringLiteral("http://example.com/fake.qml"));
+        // interceptUrl runs every interceptor the engine has; an empty result
+        // means "blocked" (the resource will not resolve / load).
+        const QUrl out =
+            engine.interceptUrl(remote, QQmlAbstractUrlInterceptor::UrlString);
+        QVERIFY2(out.isEmpty(),
+                 qPrintable(QStringLiteral("SANDBOX BREACH: remote URL was allowed to resolve to ")
+                            + out.toString()));
+    }
+
+    // URL interception: a local file OUTSIDE the sandbox roots must be blocked.
+    // Backs counter_qml's "Image source file:///etc/hosts" and
+    // "openUrlExternally(file:///etc/hosts)" probes — both funnel the foreign
+    // path through the engine's interceptor (Image via the QML image pipeline,
+    // Qt.openUrlExternally via QtObject::resolvedUrl -> interceptUrl(UrlString)).
+    void sandboxBlocksFileOutsideRoots()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        const QUrl outside = QUrl::fromLocalFile(QStringLiteral("/etc/hosts"));
+        for (auto type : {QQmlAbstractUrlInterceptor::UrlString,
+                          QQmlAbstractUrlInterceptor::QmlFile}) {
+            const QUrl out = engine.interceptUrl(outside, type);
+            QVERIFY2(out.isEmpty(),
+                     qPrintable(QStringLiteral("SANDBOX BREACH: file outside roots resolved to ")
+                                + out.toString()));
+        }
+    }
+
+    // The interceptor must not over-restrict: a local file UNDER the module's
+    // own install dir is the legitimate case (its own QML/JS/assets) and must
+    // resolve unchanged. Pairs with sandboxBlocksFileOutsideRoots so a fix that
+    // simply blocked all local files would fail here.
+    void sandboxAllowsFileUnderInstallDir()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+        // The path must exist: the interceptor canonicalises and compares real
+        // paths, and a non-existent path canonicalises to empty.
+        writeFile(dir.path() + "/asset.txt", QStringLiteral("hello\n"));
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        const QUrl inside = QUrl::fromLocalFile(dir.path() + "/asset.txt");
+        const QUrl out =
+            engine.interceptUrl(inside, QQmlAbstractUrlInterceptor::UrlString);
+        QVERIFY2(!out.isEmpty(),
+                 "sandbox over-restricted: a file under the module's own install dir was blocked");
+    }
+
+    // qrc: resources are engine builtins (the app's own bundled QML), never the
+    // untrusted module's, and must always pass the interceptor untouched.
+    void sandboxAllowsQrcScheme()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        const QUrl qrc(QStringLiteral("qrc:/qt/qml/Foo/Bar.qml"));
+        const QUrl out =
+            engine.interceptUrl(qrc, QQmlAbstractUrlInterceptor::QmlFile);
+        QCOMPARE(out, qrc);
+    }
+
+    // ----------------------------------------------------------------------
+    // End-to-end fixture: the evil_app (tests/sandbox/evil_app) is an
+    // adversarial ui_qml "app" — the evil twin of repos/counter_qml. Its
+    // Main.qml automatically fires every escape vector counter_qml probes by
+    // hand (network HTTP + file via XMLHttpRequest, Qt.openUrlExternally, a
+    // remote-scheme component load, a file outside the sandbox roots) and tallies
+    // how many got through into an `escapes` property. We load that REAL QML
+    // document through the production sandbox and assert nothing escaped — a
+    // single end-to-end check on top of the mechanism-level slots above.
+
+    // Stage the evil_app fixture into a fresh writable dir and return its path.
+    // (QVERIFY2 returns void on failure, so this is a void out-param helper.)
+    void stageEvilApp(const QString& root, QString& appDirOut)
+    {
+        const QString src = evilAppDir();
+        QVERIFY2(!src.isEmpty(),
+                 "EVIL_APP_DIR not set (build wires it via -DEVIL_APP_DIR)");
+        QVERIFY2(QFileInfo::exists(src + "/Main.qml"),
+                 qPrintable(QStringLiteral("evil_app fixture missing at ") + src));
+        const QString appDir = root + "/evil_app";
+        QVERIFY2(copyTree(src, appDir),
+                 "failed to stage evil_app fixture into temp dir");
+        appDirOut = appDir;
+    }
+
+    // The headline end-to-end assertion: load evil_app/Main.qml under the real
+    // sandbox, let its async probes run, and require zero escapes.
+    void evilApp_allProbesBlocked()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QString appDir;
+        stageEvilApp(dir.path(), appDir);
+        const QString view = appDir + "/Main.qml";
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, appDir, view, /*appLibDir=*/QString());
+        QQmlComponent component(&engine, QUrl::fromLocalFile(view));
+        QScopedPointer<QObject> obj(component.create());
+        QVERIFY2(!component.isError(),
+                 qPrintable(QStringLiteral("evil_app view failed to load: ")
+                            + component.errorString()));
+        QVERIFY(!obj.isNull());
+
+        // Probes are async (deny-all reply fires on a 0ms timer, createComponent
+        // loads asynchronously); spin the event loop until the app says it is done.
+        QTRY_VERIFY_WITH_TIMEOUT(obj->property("probesDone").toBool(), 10000);
+
+        const int escapes = obj->property("escapes").toInt();
+        // Build a per-probe report so a failure names exactly which vector got out.
+        const QStringList probeProps = {
+            QStringLiteral("httpStatus"), QStringLiteral("fileXhrStatus"),
+            QStringLiteral("openUrlStatus"), QStringLiteral("remoteCompStatus"),
+            QStringLiteral("outsideFileCompStatus")};
+        QStringList report;
+        for (const QString& p : probeProps)
+            report << (p + "=" + obj->property(p.toLatin1().constData()).toString());
+
+        QVERIFY2(escapes == 0,
+                 qPrintable(QStringLiteral("SANDBOX ESCAPE: %1 evil_app probe(s) were not blocked — ")
+                                .arg(escapes)
+                            + report.join(QStringLiteral("; "))));
+
+        // Every probe must have reported (guards against a vector silently never
+        // running, which would make a 0-escape tally meaningless).
+        QCOMPARE(obj->property("probesReported").toInt(),
+                 obj->property("probeCount").toInt());
+    }
+
+    // The QML-only F-008 vector: evil_app/EvilModule/qmldir declares a native
+    // plugin (but ships no .so). Importing it (evil_import.qml) must fail to
+    // compile under the sandbox, because the interceptor rejects a qmldir under
+    // the untrusted install dir that declares a plugin directive.
+    void evilApp_qmldirPluginImportRejected()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QString appDir;
+        stageEvilApp(dir.path(), appDir);
+        const QString view = appDir + "/evil_import.qml";
+        QVERIFY2(QFileInfo::exists(view), "evil_app/evil_import.qml missing");
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, appDir, view, /*appLibDir=*/QString());
+        QQmlComponent component(&engine, QUrl::fromLocalFile(view));
+        // The import of EvilModule must not resolve: its qmldir declares a native
+        // plugin and lives under the untrusted install dir, so the interceptor
+        // rejects the qmldir and the module is "not installed".
+        QVERIFY2(component.isError(),
+                 "SANDBOX ESCAPE: an EvilModule qmldir declaring a native plugin was accepted");
     }
 };
 

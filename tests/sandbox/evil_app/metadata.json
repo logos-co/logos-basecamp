@@ -1,0 +1,9 @@
+{
+  "name": "evil_app",
+  "version": "1.0.0",
+  "description": "Adversarial ui_qml sandbox-escape fixture (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": [],
+  "category": "misc"
+}

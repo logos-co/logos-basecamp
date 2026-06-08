@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick Network Test)
 
 enable_testing()
 
@@ -40,7 +40,8 @@ add_executable(tst_qml_sandbox
 )
 target_include_directories(tst_qml_sandbox PRIVATE ${BASECAMP_SRC})
 target_compile_definitions(tst_qml_sandbox PRIVATE
-    EVIL_PLUGIN_PATH="${EVIL_PLUGIN_PATH}")
+    EVIL_PLUGIN_PATH="${EVIL_PLUGIN_PATH}"
+    EVIL_APP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/evil_app")
 target_link_libraries(tst_qml_sandbox PRIVATE
     Qt6::Core Qt6::Qml Qt6::Quick Qt6::Network Qt6::Test)
 add_dependencies(tst_qml_sandbox evil_plugin)
@@ -54,7 +55,15 @@ foreach(slot
     evilPluginReallyExecutes_whenUnsandboxed
     sandboxBlocksNativePlugin_relativePath
     sandboxBlocksNativePlugin_absolutePath
-    sandboxAllowsPureQmlModule)
+    sandboxAllowsPureQmlModule
+    sandboxDeniesNetworkAccess
+    sandboxDeniesFileSchemeNetworkRequest
+    sandboxBlocksRemoteSchemeUrl
+    sandboxBlocksFileOutsideRoots
+    sandboxAllowsFileUnderInstallDir
+    sandboxAllowsQrcScheme
+    evilApp_allProbesBlocked
+    evilApp_qmldirPluginImportRejected)
   add_test(NAME qml_sandbox.${slot} COMMAND tst_qml_sandbox ${slot})
   # Headless: the test only compiles/instantiates QML types, no real window.
   set_tests_properties(qml_sandbox.${slot} PROPERTIES
