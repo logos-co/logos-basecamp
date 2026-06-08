@@ -1,0 +1,2 @@
+module popups
+AddApplicationDialog 1.0 AddApplicationDialog.qml

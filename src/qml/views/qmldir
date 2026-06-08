@@ -6,3 +6,4 @@ CoreModulesView 1.0 CoreModulesView.qml
 OverlayDialogs 1.0 OverlayDialogs.qml
 PluginMethodsView 1.0 PluginMethodsView.qml
 SettingsView 1.0 SettingsView.qml
+AppManagerView 1.0 AppManagerView.qml

@@ -86,6 +86,11 @@ public:
     // module just died don't outlive it as orphaned widgets.
     void teardownUiPluginWidget(const QString& moduleName);
 
+    // Resolve an installed UI plugin's icon from its manifest entry
+    //   forWidgetIcon=false → "file://…" (the form QML's Image wants)
+    //   forWidgetIcon=true  → raw "qrc:…" path (for QWidget::setWindowIcon)
+    QString pluginIconUrl(const QString& moduleName, bool forWidgetIcon = false) const;
+
 public slots:
     // UI module lifecycle
     void loadUiModule(const QString& moduleName);
@@ -168,7 +173,6 @@ private:
     QString getPluginType(const QString& name) const;
     bool isQmlPlugin(const QString& name) const;
     bool hasBackendPlugin(const QString& name) const;
-    QString getPluginIconPath(const QString& pluginName, bool forWidgetIcon = false) const;
 
     // Cascade helpers
     QStringList loadedCoreModules() const;

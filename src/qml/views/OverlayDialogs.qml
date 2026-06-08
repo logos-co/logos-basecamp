@@ -3,6 +3,8 @@ import QtQuick.Controls
 import Logos.Theme
 import Logos.Controls
 import controls
+import popups
+import Basecamp.Backend 1.0
 
 // Global dialog layer hosted in a transparent top-level QQuickWidget
 // (MainContainer::m_overlayWidget). Keeps the ContentViews-scoped layer
@@ -31,6 +33,7 @@ Item {
                                   || uninstallCascadeDialog.visible
                                   || upgradeCascadeDialog.visible
                                   || installConfirmDialog.visible
+                                  || addApplicationDialog.visible
 
     signal overlayActiveChanged(bool active)
 
@@ -77,6 +80,22 @@ Item {
         mode: "installConfirm"
         onContinueClicked: backend.confirmInstall()
         onCancelClicked: backend.cancelInstall()
+    }
+
+    // App-Manager "Add Application" dialog.
+    AddApplicationDialog {
+        id: addApplicationDialog
+        requiredPackagesModel: backend.requiredPackagesModel
+        onInstallRequested: function(name, repositoryUrl, versionPins) {
+            addApplicationDialog.installStage = InstallStage.Downloading
+            backend.confirmCatalogInstall(name, repositoryUrl, versionPins)
+        }
+        onLaunchRequested: function(name) {
+            backend.onAppLauncherClicked(name)
+        }
+        onVersionChangeRequested: function(name, repositoryUrl, versionPins) {
+            backend.openApp(name, repositoryUrl, versionPins, false)
+        }
     }
 
     Rectangle {
@@ -161,6 +180,34 @@ Item {
 
         function onInstallConfirmationRequested(metadata) {
             installConfirmDialog.openWithMetadata(metadata);
+        }
+
+        function onLaunchAppRequested(name) {
+            backend.onAppLauncherClicked(name);
+        }
+
+        function onAddApplicationRequested(metadata, requiredPackages) {
+            if (addApplicationDialog.visible) {
+                addApplicationDialog.metadata = metadata;
+                addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
+            } else {
+                addApplicationDialog.openWith(metadata);
+            }
+        }
+
+        function onCatalogInstallStageChanged(name, stage) {
+            if (!addApplicationDialog.visible) return;
+            if (addApplicationDialog.metadata.name !== name) return;
+            // Session-level Done collapses into the dialog's Installed
+            // (the row state) so the button settles correctly.
+            addApplicationDialog.installStage =
+                (stage === InstallStage.Done ? InstallStage.Installed : stage);
+        }
+        function onCatalogInstallFinished(name) {
+            if (addApplicationDialog.visible
+                && addApplicationDialog.metadata.name === name) {
+                addApplicationDialog.markInstallComplete();
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 #include "MainContainer.h"
+#include "InstallStage.h"
 #include "MainUIBackend.h"
 #include "mdiview.h"
 
@@ -6,6 +7,7 @@
 #include <QQmlEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <qqml.h>
 #include <QVBoxLayout>
 #include <QDebug>
 #include <QDir>
@@ -27,6 +29,10 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
 {
     // Set QML style
     QQuickStyle::setStyle("Basic");
+
+    qmlRegisterUncreatableType<InstallStage>("Basecamp.Backend", 1, 0,
+        "InstallStage",
+        QStringLiteral("Use InstallStage.Downloading etc.; not instantiable."));
     
     // Create backend
     m_backend = new MainUIBackend(m_logosAPI, this);

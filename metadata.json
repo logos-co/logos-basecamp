@@ -6,7 +6,8 @@
   "type": "ui",
   "main": "main_ui",
   "dependencies": [
-    "package_manager"
+    "package_manager",
+    "package_downloader"
   ],
   "category": "ui",
   "build": {

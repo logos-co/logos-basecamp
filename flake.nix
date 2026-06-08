@@ -105,13 +105,13 @@
 
           # Plugin packages (development builds)
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
             distributed = true;
           };
 
