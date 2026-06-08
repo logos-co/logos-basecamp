@@ -7,11 +7,6 @@ import panels
 Item {
     id: root
 
-    Rectangle {
-        anchors.fill: parent
-        color: "#1e1e1e"
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 40

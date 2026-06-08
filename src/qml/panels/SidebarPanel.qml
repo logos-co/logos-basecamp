@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 import Logos.Theme
-import Logos.Icons
 
 import controls
 import icons
@@ -31,12 +30,11 @@ Control {
             { name: "Apps", icon: BasecampIcons.tents }
         ]
 
-        // 0=Apps, 1=Dashboard, 2=Modules, 3=Settings, 4=App Manager.
+        // 0=Apps, 1=App Manager, 2=Modules, 3=Settings.
         readonly property var viewSections: [
-            { name: "Dashboard",   icon: BasecampIcons.dashboard },
+            { name: "App Manager", icon: BasecampIcons.dashboard },
             { name: "Modules",     icon: BasecampIcons.modules },
-            { name: "Settings",    icon: BasecampIcons.settings },
-            { name: "App Manager", icon: LogosIcons.more }
+            { name: "Settings",    icon: BasecampIcons.settings }
         ]
 
         readonly property var loadedApps: (root.launcherApps || []).filter(function(item) {
