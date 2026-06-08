@@ -15,13 +15,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
 
-            LogosText {
-                text: "Modules"
-                font.pixelSize: 24
-                font.weight: Font.Bold
-                color: "#ffffff"
-                Layout.fillWidth: true
-            }
+            Item { Layout.fillWidth: true }
 
             Button {
                 text: "Install LGX Package"
@@ -107,12 +101,6 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: tabBar.currentIndex
-            
-            onCurrentIndexChanged: {
-                if (currentIndex === 1) {
-                    backend.refreshCoreModules();
-                }
-            }
 
             // UI Modules tab
             UiModulesTab {

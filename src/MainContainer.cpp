@@ -9,6 +9,7 @@
 #include <QQuickStyle>
 #include <qqml.h>
 #include <QVBoxLayout>
+#include <QLabel>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -194,9 +195,21 @@ void MainContainer::setupUi()
     m_contentWidget->setSource(resolveQmlUrl("qml/views/ContentViews.qml"));
     m_contentStack->addWidget(m_contentWidget);
 
-    // Index 2: placeholder for package_manager_ui
+    // Index 2: placeholder for package_manager_ui — shows a centered
+    // "Loading…" label until PMUI's QQuickWidget arrives via the
+    // pluginWindowRequested intercept
     QWidget* pmuiPlaceholder = new QWidget(m_contentStack);
     pmuiPlaceholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    {
+        QVBoxLayout* phLayout = new QVBoxLayout(pmuiPlaceholder);
+        phLayout->setAlignment(Qt::AlignCenter);
+        QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"),
+                                          pmuiPlaceholder);
+        loadingLabel->setAlignment(Qt::AlignCenter);
+        loadingLabel->setStyleSheet(QStringLiteral(
+            "color: #a0a0a0; font-size: 14px;"));
+        phLayout->addWidget(loadingLabel);
+    }
     m_contentStack->addWidget(pmuiPlaceholder);
 
     // Add widgets to content layout
@@ -243,17 +256,6 @@ void MainContainer::setupUi()
 
     // Set reasonable minimum size
     setMinimumSize(800, 600);
-
-    // Background-preload package_manager_ui so the Modules section shows
-    auto pmuiConn = std::make_shared<QMetaObject::Connection>();
-    *pmuiConn = connect(m_backend, &MainUIBackend::uiModulesChanged, this,
-        [this, pmuiConn]() {
-            if (m_pmuiWidget) {
-                QObject::disconnect(*pmuiConn);
-                return;
-            }
-            m_backend->loadUiModule(QStringLiteral("package_manager_ui"));
-        });
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
@@ -284,10 +286,10 @@ void MainContainer::onViewIndexChanged()
     
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;
 
-    //   0 (Apps)        → MdiView
-    //   1 (App Manager) → ContentViews.qml
-    //   2 (Modules)     → package_manager_ui (preloaded in background)
-    //   3 (Settings)    → ContentViews.qml (StackLayout inside picks the page)
+    //   0 (Workspace)        → MdiView
+    //   1 (Applications)     → ContentViews.qml (App Manager view)
+    //   2 (Package Manager)  → package_manager_ui (preloaded in background)
+    //   3 (Settings)         → ContentViews.qml (StackLayout picks the page)
     switch (sectionIndex) {
     case 0: m_contentStack->setCurrentIndex(kAppsStackIndex);    break;
     case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
@@ -318,6 +320,7 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
+    if (widget && widget == m_pmuiWidget) return;
     if (m_mdiView && widget) {
         m_mdiView->removePluginWindow(widget);
         qDebug() << "MainContainer: Removed plugin window from MdiView";
@@ -326,6 +329,7 @@ void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 
 void MainContainer::onPluginWindowActivateRequested(QWidget* widget)
 {
+    if (widget && widget == m_pmuiWidget) return;
     if (m_mdiView && widget) {
         m_mdiView->activatePluginWindow(widget);
         qDebug() << "MainContainer: Activated plugin window in MdiView";

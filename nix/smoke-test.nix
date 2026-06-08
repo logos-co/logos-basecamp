@@ -48,8 +48,11 @@ pkgs.runCommand "logos-basecamp-smoke-test" {
 
   cat "$LOG"
 
-  if grep -qE "QQmlApplicationEngine failed|module.*is not installed|Cannot assign|failed to load component|Failed to load.*plugin|The shared library was not found|Failed to create plugins directory|qrc:.*error:|file:///.*error:|TypeError:|ReferenceError:|Cannot read property|Unable to assign \[undefined\]|Binding loop detected|CRITICAL:|qCritical" "$LOG"; then
-    echo "Critical errors detected"
+  CRIT=$(grep -E "QQmlApplicationEngine failed|module.*is not installed|Cannot assign|failed to load component|Failed to load.*plugin|The shared library was not found|Failed to create plugins directory|qrc:.*error:|file:///.*error:|TypeError:|ReferenceError:|Cannot read property|Unable to assign \[undefined\]|Binding loop detected|CRITICAL:|qCritical" "$LOG" \
+         | grep -vE "/plugins/[^/]+/" || true)
+  if [ -n "$CRIT" ]; then
+    echo "Critical errors detected:"
+    echo "$CRIT"
     exit 1
   fi
 

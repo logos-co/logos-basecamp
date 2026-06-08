@@ -110,10 +110,10 @@ Rectangle {
 
                     // 1 — Modules.
                     ModulesView {
-                        onVisibleChanged: if (visible) {
+                        onVisibleChanged: if (visible) Qt.callLater(() => {
                             backend.refreshUiModules()
                             backend.refreshCoreModules()
-                        }
+                        })
                     }
                 }
             }

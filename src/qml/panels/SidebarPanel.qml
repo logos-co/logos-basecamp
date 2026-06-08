@@ -30,11 +30,11 @@ Control {
             { name: "Workspace", icon: BasecampIcons.tents }
         ]
 
-        // 0=Apps, 1=App Manager, 2=Modules, 3=Settings.
+        // 0=Apps, 1=Applications, 2=Package Manager, 3=Settings.
         readonly property var viewSections: [
-            { name: "App Manager", icon: BasecampIcons.dashboard },
-            { name: "Modules",     icon: BasecampIcons.modules },
-            { name: "Settings",    icon: BasecampIcons.settings }
+            { name: "Applications",    icon: BasecampIcons.dashboard },
+            { name: "Package Manager", icon: BasecampIcons.modules },
+            { name: "Settings",        icon: BasecampIcons.settings }
         ]
 
         readonly property var loadedApps: (root.launcherApps || []).filter(function(item) {
