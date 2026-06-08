@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import Logos.Theme
+import icons
 
 AbstractButton {
     id: root
@@ -23,7 +24,7 @@ AbstractButton {
         width: 56
         height: 46
         anchors.centerIn: parent
-        source: "qrc:/icons/workspace.png"
+        source: BasecampIcons.workspace
         fillMode: Image.PreserveAspectFit
     }
 

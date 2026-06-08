@@ -28,6 +28,10 @@ Item {
         // Modules (backend index 2 -> internal index 1)
         ModulesView {
             id: modulesView
+            onVisibleChanged: if (visible) {
+                backend.refreshUiModules()
+                backend.refreshCoreModules()
+            }
         }
 
         // Settings (backend index 3 -> internal index 2)

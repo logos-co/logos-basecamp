@@ -1,14 +1,16 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+
 import Logos.Theme
+import Logos.Icons
+
 import controls
+import icons
 
 Control {
     id: root
 
-    /** All sidebar sections (workspaces + views) **/
-    property var sections: backend.sections
     /** Property to set the different ui modules discovered **/
     property var launcherApps: backend.launcherApps
     /** Current active section index **/
@@ -25,14 +27,17 @@ Control {
     QtObject {
         id: _d
 
-        // Filter sections by type
-        readonly property var workspaceSections: (root.sections || []).filter(function(item) {
-            return item && item.type === "workspace"
-        })
+        readonly property var workspaceSections: [
+            { name: "Apps", icon: BasecampIcons.tents }
+        ]
 
-        readonly property var viewSections: (root.sections || []).filter(function(item) {
-            return item && item.type === "view"
-        })
+        // 0=Apps, 1=Dashboard, 2=Modules, 3=Settings, 4=App Manager.
+        readonly property var viewSections: [
+            { name: "Dashboard",   icon: BasecampIcons.dashboard },
+            { name: "Modules",     icon: BasecampIcons.modules },
+            { name: "Settings",    icon: BasecampIcons.settings },
+            { name: "App Manager", icon: LogosIcons.more }
+        ]
 
         readonly property var loadedApps: (root.launcherApps || []).filter(function(item) {
             return item && item.isLoaded === true
@@ -58,7 +63,7 @@ Control {
             Layout.preferredWidth: 46
             Layout.preferredHeight: 25
             Layout.alignment: Qt.AlignHCenter
-            source: "qrc:/icons/basecamp.png"
+            source: BasecampIcons.logo
         }
 
         // Pre-release version badge — only shown for builds whose version
@@ -93,7 +98,7 @@ Control {
                     width: parent.width
                     checked: root.currentActiveSectionIndex === index
                     text: modelData.name
-                    icon.source: modelData.iconPath
+                    icon.source: modelData.icon
                     onClicked: root.updateLauncherIndex(index)
                 }
             }
@@ -175,7 +180,7 @@ Control {
                 delegate: SidebarCircleButton {
                     checked: backend.currentActiveSectionIndex -1 === index
                     text: modelData.name
-                    icon.source: modelData.iconPath
+                    icon.source: modelData.icon
                     onClicked: root.updateLauncherIndex(_d.workspaceSections.length + index)
                 }
             }
