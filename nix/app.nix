@@ -48,6 +48,11 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.stdenv.cc.cc
       pkgs.freetype
       pkgs.fontconfig
+      # Qt split: the app links logos-qt-sdk → logos-protocol, whose shared
+      # runtime deps (Boost.System, OpenSSL) must be reachable now that the
+      # binary's RPATH is stripped for bundling.
+      pkgs.boost
+      pkgs.openssl
     ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.libglvnd
