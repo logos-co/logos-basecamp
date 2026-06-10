@@ -10,32 +10,17 @@ Item {
         color: "#1e1e1e"
     }
 
-    // Content views stack (indices 1-4 from backend, mapped to 0-3 here)
-    // Index 0 (Apps/MDI) is handled by the C++ MdiView widget
+    // Content views stack — only App Manager and Settings now live here.
+    // Apps (backend idx 0) is the C++ MdiView, and Modules (backend idx 2)
+    // is the sandboxed package_manager_ui QQuickWidgetxwx
     StackLayout {
         id: contentStack
         anchors.fill: parent
 
-        // Map backend index: 1=Dashboard, 2=Modules, 3=Settings, 4=App Manager
-        // to internal index: 0=Dashboard, 1=Modules, 2=Settings, 3=App Manager
-        currentIndex: Math.max(0, backend.currentActiveSectionIndex - 1)
+        // Map backend index 1 → 0 (App Manager), 3 → 1 (Settings).
+        currentIndex: backend.currentActiveSectionIndex === 3 ? 1 : 0
 
-        // Dashboard (backend index 1 -> internal index 0)
-        DashboardView {
-            id: dashboardView
-        }
-
-        // Modules (backend index 2 -> internal index 1)
-        ModulesView {
-            id: modulesView
-        }
-
-        // Settings (backend index 3 -> internal index 2)
-        SettingsView {
-            id: settingsView
-        }
-
-        // App Manager (backend index 4 -> internal index 3)
+        // App Manager (backend index 1 -> internal index 0)
         AppManagerView {
             id: appManagerView
             appsProxy: backend.uiAppsProxy
@@ -47,6 +32,11 @@ Item {
                 // Right-click / long-press — force the dialog open.
                 backend.openApp(name, repositoryUrl, ({}), false)
             }
+        }
+
+        // Settings (backend index 3 -> internal index 1)
+        SettingsView {
+            id: settingsView
         }
     }
 }

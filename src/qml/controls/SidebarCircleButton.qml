@@ -22,19 +22,17 @@ AbstractButton {
     // Dark gray pill background extending to left edge when active/highlighted
     background: Rectangle {
         radius: width / 2
-        color: Theme.palette.surface
-        border.width: root.hovered ? 1 : 0
-        border.color: Theme.palette.borderSecondary
+        color: root.hovered || root.checked ? Theme.palette.accentOrange: Theme.palette.surface
     }
 
     contentItem: Item {
-        Image {
+        LogosIcon {
             id: appIcon
             anchors.centerIn: parent
             width: 24
             height: 24
             source: root.icon.source
-            fillMode: Image.PreserveAspectFit
+            color: root.hovered || root.checked ? Theme.palette.backgroundBlack: "transparent"
             visible: !!root.icon.source &&
                      !(appIcon.status === Image.Null ||
                        appIcon.status === Image.Error)

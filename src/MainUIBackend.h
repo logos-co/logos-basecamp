@@ -49,7 +49,6 @@ class MainUIBackend : public QObject {
 
     // Navigation
     Q_PROPERTY(int currentActiveSectionIndex READ currentActiveSectionIndex WRITE setCurrentActiveSectionIndex NOTIFY currentActiveSectionIndexChanged)
-    Q_PROPERTY(QVariantList sections READ sections CONSTANT)
 
     // UI Modules (Apps)
     Q_PROPERTY(QVariantList uiModules READ uiModules NOTIFY uiModulesChanged)
@@ -94,7 +93,6 @@ public:
 
     // Navigation — lives on this class.
     int currentActiveSectionIndex() const;
-    QVariantList sections() const;
 
     // Delegations to UIPluginManager.
     QVariantList uiModules() const;
@@ -233,11 +231,8 @@ signals:
     void sidebarTooltipChanged();
 
 private:
-    void initializeSections();
-
     // Navigation state — the only state this facade class holds.
     int m_currentActiveSectionIndex;
-    QVariantList m_sections;
 
     // LogosAPI — shared with all three managers.
     LogosAPI* m_logosAPI;
