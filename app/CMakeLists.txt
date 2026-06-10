@@ -126,6 +126,16 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
         ${LOGOS_PROTOCOL_ROOT}/include/cpp
     )
     link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_SDK_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
+    # Link the Qt SDK via its exported target so the app inherits the full
+    # transitive link interface (logos-protocol, OpenSSL, Boost::system,
+    # nlohmann_json) — a bare archive on the link line would leave Boost.Asio
+    # TLS symbols undefined.
+    find_package(logos-protocol REQUIRED CONFIG
+        PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
+        NO_DEFAULT_PATH)
+    find_package(logos-qt-sdk REQUIRED CONFIG
+        PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
+        NO_DEFAULT_PATH)
 endif()
 
 set(PROJECT_SOURCES
@@ -161,10 +171,11 @@ if(ENABLE_QML_INSPECTOR)
     message(STATUS "QML Inspector enabled")
 endif()
 
-# Link with logos_core, logos_sdk, and all Qt modules needed by plugins.
+# Link with logos_core, the Qt SDK, and all Qt modules needed by plugins.
 # Plugins (main_ui) are loaded at runtime and depend on
 # these Qt libraries. Linking them here ensures the portable bundler includes
-# them in the app bundle.
+# them in the app bundle. logos-qt-sdk::logos_qt_sdk replaced logos_sdk in
+# the qt split and carries the logos-protocol library transitively.
 target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Widgets
     Qt6::RemoteObjects
@@ -173,7 +184,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     logos_core
-    logos_sdk
+    logos-qt-sdk::logos_qt_sdk
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
 )
 

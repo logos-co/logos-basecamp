@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosProtocolPkg, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -17,6 +17,10 @@ pkgs.stdenv.mkDerivation rec {
   buildInputs = common.buildInputs ++ [
     pkgs.qt6.qtwebview
     pkgs.qt6.qtdeclarative
+    # Qt split: the app links logos-qt-sdk::logos_qt_sdk, which carries the
+    # logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
+    logosProtocolPkg
+    logosQtSdk
   ] ++ (
     if pkgs.stdenv.isLinux then
       # Linux: WebKitGTK as backend + Wayland platform plugin
@@ -79,12 +83,11 @@ pkgs.stdenv.mkDerivation rec {
     mkdir -p ./logos-cpp-sdk/include/cpp
     cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
 
-    # Also copy core headers
-    echo "Copying core headers..."
-    mkdir -p ./logos-cpp-sdk/include/core
-    cp -r ${logosSdk}/include/core/* ./logos-cpp-sdk/include/core/
+    # core/interface.h moved to logos-qt-sdk in the qt split; the app finds it
+    # via LOGOS_QT_SDK_ROOT, so nothing to stage here anymore.
 
-    # Copy SDK library files to lib directory
+    # Copy SDK library files to lib directory (no-op since the qt split — the
+    # base SDK is header-only; kept for older layouts)
     echo "Copying SDK library files..."
     mkdir -p ./logos-cpp-sdk/lib
     if [ -f "${logosSdk}/lib/liblogos_sdk.dylib" ]; then
@@ -187,6 +190,8 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
+      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
+      -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
       -DENABLE_QML_INSPECTOR=${if enableInspector then "ON" else "OFF"} \

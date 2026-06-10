@@ -148,7 +148,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -156,7 +156,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -180,7 +180,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
