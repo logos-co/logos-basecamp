@@ -47,7 +47,8 @@ logos-basecamp/
 │   │   │   ├── SidebarAppDelegate.qml
 │   │   │   └── SidebarCircleButton.qml
 │   │   └── main_ui_resources.qrc         # QML resource bundle
-│   ├── restricted/                       # Network sandbox
+│   ├── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
+│   │   ├── QmlSandbox.h/cpp               # applies the sandbox policy to a QML engine
 │   │   ├── DenyAllNetworkAccessManager.h/cpp
 │   │   ├── DenyAllNAMFactory.h/cpp
 │   │   ├── DenyAllReply.h/cpp
@@ -249,18 +250,25 @@ The bridge validates that the `LogosAPI` is available and the target Logos Modul
 
 **Purpose:** Individual tab in the MDI area. Wraps a UI App's widget and manages its lifecycle within the tabbed workspace.
 
-### Network Sandbox
+### QML Sandbox
 
-**Files:** `src/restricted/DenyAllNetworkAccessManager.h/cpp`, `src/restricted/DenyAllNAMFactory.h/cpp`, `src/restricted/DenyAllReply.h/cpp`, `src/restricted/RestrictedUrlInterceptor.h/cpp`
+**Files:** `src/restricted/QmlSandbox.h/cpp`, `src/restricted/DenyAllNetworkAccessManager.h/cpp`, `src/restricted/DenyAllNAMFactory.h/cpp`, `src/restricted/DenyAllReply.h/cpp`, `src/restricted/RestrictedUrlInterceptor.h/cpp`
 
-**Purpose:** Security layer for QML-based UI Apps. When a QML UI App is loaded, its `QQmlEngine` is configured with a `DenyAllNAMFactory` (blocks all HTTP/HTTPS requests) and a `RestrictedUrlInterceptor` (whitelists only the app's own directory for file access). This prevents untrusted UI App content from making unauthorized network calls or accessing files outside its sandbox. UI Apps that need network access must do so indirectly through Logos Modules via the QML bridge.
+**Purpose:** Security layer for QML-based UI Apps (`ui_qml` modules), applied by `QmlSandbox::configure()` (the single setup `PluginLoader::loadQmlView` runs on each app's `QQmlEngine`). A `ui_qml` app is meant to be QML/JS only, confined to its own install directory; the sandbox enforces that on three fronts:
+
+- **Network:** a `DenyAllNAMFactory` blocks all outgoing HTTP/HTTPS. Apps that need network do so indirectly through Logos Modules via the QML bridge.
+- **Filesystem:** a `RestrictedUrlInterceptor` resolves only `qrc:` URLs and local files under an allow-list of roots (the app's own dir, the vetted app lib dir's shared Logos QML modules, and Qt's own module dirs). Everything else — other schemes, paths outside the roots — is blocked.
+- **Native code:** the app's install dir is **not** added to the engine's native-plugin search path, and a qmldir living under the app's own (untrusted) dir may **not** declare a native `plugin`. Without this, a `ui_qml` app could ship a `qmldir` with a `plugin` directive plus a matching Qt plugin `.so` and have Qt `dlopen()` it straight into the host process — full native code execution, defeating the network/filesystem guarantees (formerly tracked as finding F-008). Native plugin loading bypasses URL interception entirely, so the qmldir that *declares* the plugin is the choke point: rejecting that qmldir makes the malicious module simply "not installed". Vetted roots (the app lib dir, Qt's module dirs — which legitimately ship native plugins like QtQuick) are exempt.
+
+The escape and its fix are covered by the `sandbox-test` check (`tests/sandbox/`, `nix build .#sandbox-test`), which builds a real malicious QML plugin and asserts it is never loaded while a legitimate pure-QML module still is. The same check also regresses the rest of the `ui_qml` sandbox policy — network deny (HTTP and `file://`), URL-interceptor blocking of remote-scheme loads and out-of-root file reads, and the matching positive cases (files under the module's own dir and `qrc:` resources still resolve) — i.e. the guarantees the `counter_qml` probe app exercises by hand, now driven against the real `QmlSandbox::configure`. On top of those mechanism-level slots, `tests/sandbox/evil_app/` is an end-to-end adversarial fixture — the evil twin of `counter_qml` — a real `ui_qml` view whose `Main.qml` automatically fires every escape vector on load and tallies an `escapes` count; the check loads it through the real sandbox and asserts `escapes == 0` (plus a QML-only F-008 probe: an `EvilModule/qmldir` declaring a native plugin must be rejected at import).
 
 | Class | Description |
 |-------|-------------|
+| `QmlSandbox` (namespace) | `configure(engine, installDir, qmlViewPath, appLibDir)` — applies the whole ui_qml sandbox policy to a QML engine. Factored out of `PluginLoader` so it is unit-testable against a bare `QQmlEngine`. |
 | `DenyAllNetworkAccessManager` | Qt network access manager that rejects all requests |
 | `DenyAllNAMFactory` | Factory that creates deny-all NAM instances for QML engines |
 | `DenyAllReply` | Network reply that immediately signals error |
-| `RestrictedUrlInterceptor` | URL request interceptor that blocks navigation outside allowed roots |
+| `RestrictedUrlInterceptor` | URL interceptor: gates file/qmldir resolution to allowed roots, and rejects a qmldir under an *untrusted* root that declares a native plugin |
 
 ### Main UI Plugin
 
