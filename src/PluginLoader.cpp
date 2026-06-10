@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMutexLocker>
 #include <QPluginLoader>
@@ -15,6 +16,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 
 #include <memory>
 
@@ -22,6 +24,8 @@
 #include "IComponent.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
+#include "logos_api_client.h"
+#include "token_manager.h"
 #include "restricted/QmlSandbox.h"
 #include <ViewModuleHost.h>
 
@@ -213,9 +217,12 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
+    // Mint a per-spawn UUID.
+    const QString uiAuthToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
     // Has a backend plugin — spawn a ViewModuleHost process.
     auto* viewHost = new ViewModuleHost(this);
-    if (!viewHost->spawn(request.name, request.mainFilePath)) {
+    if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken)) {
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
         delete viewHost;
         delete bridge;
@@ -225,7 +232,22 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
-    auto onHostReady = [this, request, bridge, viewHost]() {
+    auto onHostReady = [this, request, bridge, viewHost, uiAuthToken]() {
+        if (LogosAPIClient* cap = m_logosAPI
+                ? m_logosAPI->getClient(QStringLiteral("capability_module"))
+                : nullptr) {
+            const QString capToken = m_logosAPI->getTokenManager()
+                ->getToken(QStringLiteral("capability_module"));
+            if (capToken.isEmpty()) {
+                qWarning() << "PluginLoader: no capability_module token on host —"
+                              "UI module" << request.name
+                           << "will not be registered (calls will be rejected)";
+            } else if (!cap->informModuleToken(capToken, request.name, uiAuthToken)) {
+                qWarning() << "PluginLoader: capability_module.informModuleToken"
+                              "failed for UI module" << request.name;
+            }
+        }
+
         bridge->setViewModuleSocket(request.name, viewHost->socketName());
 
         const QString base = QFileInfo(request.mainFilePath).absolutePath()
