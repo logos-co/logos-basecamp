@@ -33,6 +33,7 @@
 extern "C" {
     void logos_core_add_modules_dir(const char* modules_dir);
     void logos_core_set_persistence_base_path(const char* path);
+    void logos_core_set_access_policy(const char* policy_json);
     void logos_core_start();
     void logos_core_cleanup();
     char** logos_core_get_loaded_modules();
@@ -128,6 +129,13 @@ int main(int argc, char *argv[])
     // Set persistence base path for core modules
     logos_core_set_persistence_base_path(
         LogosBasecampPaths::moduleDataDirectory().toUtf8().constData());
+
+    // Restrict the package_manager / package_downloader modules to calls
+    // from package_manager_ui. Must be set before logos_core_start().
+    logos_core_set_access_policy(
+        "{\"version\":1,\"mode\":\"enforce\",\"restrictions\":{"
+        "\"package_manager\":{\"allowedCallers\":[\"package_manager_ui\"]},"
+        "\"package_downloader\":{\"allowedCallers\":[\"package_manager_ui\"]}}}");
 
     // Start the core
     logos_core_start();
