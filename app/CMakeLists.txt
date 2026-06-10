@@ -119,9 +119,13 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     include_directories(
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
-        ${LOGOS_CPP_SDK_ROOT}/include/core
+        ${LOGOS_QT_SDK_ROOT}/include
+        ${LOGOS_QT_SDK_ROOT}/include/cpp
+        ${LOGOS_QT_SDK_ROOT}/include/core
+        ${LOGOS_PROTOCOL_ROOT}/include
+        ${LOGOS_PROTOCOL_ROOT}/include/cpp
     )
-    link_directories(${LOGOS_CPP_SDK_ROOT}/lib)
+    link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_SDK_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
 endif()
 
 set(PROJECT_SOURCES

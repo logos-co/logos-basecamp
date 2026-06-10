@@ -69,23 +69,27 @@ if(_liblogos_found)
     message(STATUS "Using logos-liblogos at: ${LOGOS_LIBLOGOS_ROOT}")
 endif()
 
-# Check if dependencies are available (support both source and installed layouts)
+# The SDK stack since the Qt split: logos-qt-sdk carries the Qt developer
+# layer (LogosAPI etc.) this app uses; logos-protocol the transports; the
+# Qt-free logos-cpp-sdk only std headers.
+if(NOT DEFINED LOGOS_PROTOCOL_ROOT AND DEFINED ENV{LOGOS_PROTOCOL_ROOT})
+    set(LOGOS_PROTOCOL_ROOT "$ENV{LOGOS_PROTOCOL_ROOT}")
+endif()
+if(NOT DEFINED LOGOS_QT_SDK_ROOT AND DEFINED ENV{LOGOS_QT_SDK_ROOT})
+    set(LOGOS_QT_SDK_ROOT "$ENV{LOGOS_QT_SDK_ROOT}")
+endif()
 set(_cpp_sdk_found FALSE)
-if(EXISTS "${LOGOS_CPP_SDK_ROOT}/cpp/logos_api.h")
+if(EXISTS "${LOGOS_QT_SDK_ROOT}/cpp/logos_api.h")
     set(_cpp_sdk_found TRUE)
     set(_cpp_sdk_is_source TRUE)
-elseif(EXISTS "${LOGOS_CPP_SDK_ROOT}/include/cpp/logos_api.h")
-    set(_cpp_sdk_found TRUE)
-    set(_cpp_sdk_is_source FALSE)
-elseif(EXISTS "${LOGOS_CPP_SDK_ROOT}/lib/liblogos_sdk.a" OR EXISTS "${LOGOS_CPP_SDK_ROOT}/lib/liblogos_sdk.dylib" OR EXISTS "${LOGOS_CPP_SDK_ROOT}/lib/liblogos_sdk.so")
-    # If we have the SDK library but no source files, it's definitely installed layout
+elseif(EXISTS "${LOGOS_QT_SDK_ROOT}/include/cpp/logos_api.h")
     set(_cpp_sdk_found TRUE)
     set(_cpp_sdk_is_source FALSE)
 endif()
 
 if(NOT _cpp_sdk_found)
-    message(FATAL_ERROR "logos-cpp-sdk not found at ${LOGOS_CPP_SDK_ROOT}. "
-                        "Set LOGOS_CPP_SDK_ROOT or run git submodule update --init --recursive.")
+    message(FATAL_ERROR "logos-qt-sdk not found at ${LOGOS_QT_SDK_ROOT}. "
+                        "Set LOGOS_QT_SDK_ROOT (and LOGOS_PROTOCOL_ROOT).")
 endif()
 
 message(STATUS "Using logos-cpp-sdk at: ${LOGOS_CPP_SDK_ROOT}")
@@ -130,24 +134,20 @@ set(SOURCES
 # Add SDK sources based on layout type
 if(_cpp_sdk_is_source)
     list(APPEND SOURCES
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api.h
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_client.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_client.h
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_consumer.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_consumer.h
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_provider.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/logos_api_provider.h
-        ${LOGOS_CPP_SDK_ROOT}/cpp/token_manager.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/token_manager.h
-        ${LOGOS_CPP_SDK_ROOT}/cpp/module_proxy.cpp
-        ${LOGOS_CPP_SDK_ROOT}/cpp/module_proxy.h
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api.cpp
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api.h
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api_provider.cpp
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api_provider.h
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_provider_object.cpp
+        ${LOGOS_QT_SDK_ROOT}/cpp/logos_provider_object.h
+        ${LOGOS_QT_SDK_ROOT}/cpp/qt_provider_object.cpp
+        ${LOGOS_QT_SDK_ROOT}/cpp/qt_provider_object.h
     )
 endif()
 
 # Use umbrella source that includes all generated wrappers to avoid duplicate symbols
 if(_cpp_sdk_is_source)
-    set(GENERATED_LOGOS_SDK_DIR ${LOGOS_CPP_SDK_ROOT}/cpp/generated)
+    set(GENERATED_LOGOS_SDK_DIR ${LOGOS_QT_SDK_ROOT}/cpp/generated)
 else()
     # For nix builds, generated files are in the source directory
     set(GENERATED_LOGOS_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/generated_code)
@@ -212,12 +212,19 @@ if(_cpp_sdk_is_source)
     target_include_directories(main_ui PRIVATE 
         ${LOGOS_CPP_SDK_ROOT}/cpp
         ${LOGOS_CPP_SDK_ROOT}/cpp/generated
+        ${LOGOS_QT_SDK_ROOT}/cpp
+        ${LOGOS_QT_SDK_ROOT}/core
+        ${LOGOS_PROTOCOL_ROOT}/cpp
     )
 else()
     target_include_directories(main_ui PRIVATE 
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
-        ${LOGOS_CPP_SDK_ROOT}/include/core
+        ${LOGOS_QT_SDK_ROOT}/include
+        ${LOGOS_QT_SDK_ROOT}/include/cpp
+        ${LOGOS_QT_SDK_ROOT}/include/core
+        ${LOGOS_PROTOCOL_ROOT}/include
+        ${LOGOS_PROTOCOL_ROOT}/include/cpp
         ${GENERATED_LOGOS_SDK_DIR}
     )
 endif()
@@ -294,10 +301,26 @@ endif()
 # SSL_*, ...) ends up undefined at link time on Linux as soon as the
 # SDK adds any code path that references the ssl transports.
 if(NOT _cpp_sdk_is_source)
-    find_package(logos-cpp-sdk REQUIRED CONFIG
-        PATHS ${LOGOS_CPP_SDK_ROOT}/lib/cmake/logos-cpp-sdk
+    find_package(logos-protocol REQUIRED CONFIG
+        PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
         NO_DEFAULT_PATH)
-    target_link_libraries(main_ui PRIVATE logos-cpp-sdk::logos_sdk)
+    find_package(logos-qt-sdk REQUIRED CONFIG
+        PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
+        NO_DEFAULT_PATH)
+    target_link_libraries(main_ui PRIVATE logos-qt-sdk::logos_qt_sdk)
+else()
+    if(EXISTS "${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol")
+        find_package(logos-protocol REQUIRED CONFIG
+            PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
+            NO_DEFAULT_PATH)
+        target_link_libraries(main_ui PRIVATE logos-protocol::logos_protocol)
+    elseif(EXISTS "${LOGOS_PROTOCOL_ROOT}/cpp/CMakeLists.txt")
+        if(NOT TARGET logos_protocol)
+            add_subdirectory("${LOGOS_PROTOCOL_ROOT}/cpp"
+                             "${CMAKE_BINARY_DIR}/logos-protocol-build")
+        endif()
+        target_link_libraries(main_ui PRIVATE logos_protocol)
+    endif()
 endif()
 
 # For macOS, we need to set the bundle properties
