@@ -249,10 +249,8 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 }
 
 // Package repositories — delegations + cache pass-through.
-QVariantList MainUIBackend::repositories() const
-{ return m_packageCoordinator ? m_packageCoordinator->repositories() : QVariantList{}; }
-bool MainUIBackend::repositoriesLoading() const
-{ return m_packageCoordinator && m_packageCoordinator->repositoriesLoading(); }
+QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
+bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }

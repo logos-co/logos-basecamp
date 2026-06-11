@@ -63,9 +63,9 @@ public:
     QStringList dependentsOf(const QString& name) const;
 
     // Last-known package_downloader repository list, refreshed on demand via
-    // refreshRepositories() and after every successful add/remove/toggle..
+    // refreshRepositories() and after every successful add/remove/toggle.
     QVariantList repositories() const { return m_repositories; }
-    bool repositoriesLoading() const { return m_repositoriesLoading; }
+    bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
 
     // True until the first successful populateAppsModel() — drives the
     // App Manager's loading placeholder. Stays false on subsequent refreshes
@@ -331,6 +331,6 @@ private:
     QHash<QString, InstallSession> m_installSessions;
 
     QVariantList m_repositories;
-    bool         m_repositoriesLoading = false;
-    bool         m_appsLoading         = true;
+    int          m_repositoriesLoadingCount = 0;
+    bool         m_appsLoading              = true;
 };

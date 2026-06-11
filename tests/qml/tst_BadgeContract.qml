@@ -40,7 +40,7 @@ TestCase {
 
     function test_InstallStage_and_InstallStatus_share_value_for_Installed() {
         compare(InstallStage.Installed,  4);
-        compare(InstallStatus.Installed, 1);.
+        compare(InstallStatus.Installed, 1);
         verify(InstallStage.Installed !== InstallStatus.Installed);
     }
 }

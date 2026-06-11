@@ -210,14 +210,15 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
     for (int i = toRemove.size() - 1; i >= 0; --i) {
         const int idx = toRemove[i];
         beginRemoveRows({}, idx, idx);
-        const QString k = key(m_rows[idx].repositoryUrl, m_rows[idx].name);
-        m_indexByKey.remove(k);
         m_rows.removeAt(idx);
         endRemoveRows();
     }
     m_indexByKey.clear();
-    for (int i = 0; i < m_rows.size(); ++i)
+    m_indicesByName.clear();
+    for (int i = 0; i < m_rows.size(); ++i) {
         m_indexByKey.insert(key(m_rows[i].repositoryUrl, m_rows[i].name), i);
+        m_indicesByName.insert(m_rows[i].name, i);
+    }
 
     // Upsert incoming rows.
     for (const QVariant& v : catalogRows) {
@@ -244,6 +245,7 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             recomputeVersionDerivedFields(r);
             m_rows.append(std::move(r));
             m_indexByKey.insert(k, idx);
+            m_indicesByName.insert(name, idx);
             endInsertRows();
         } else {
             // Update catalog fields on existing row, preserve everything else.
@@ -274,8 +276,7 @@ void AppsModel::markInstalled(const QString& name,
                               const QString& installedHash)
 {
     bool anyChanged = false;
-    for (int idx = 0; idx < m_rows.size(); ++idx) {
-        if (m_rows[idx].name != name) continue;
+    for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
         if (r.installedVersion == installedVersion
             && r.installedHash == installedHash) continue;
@@ -287,7 +288,7 @@ void AppsModel::markInstalled(const QString& name,
                                   IsInstalledRole, InstallStatusRole});
         anyChanged = true;
     }
-    if (!anyChanged) return;
+    if (!anyChanged || m_inBulkInstalledUpdate) return;
 
     for (int idx = 0; idx < m_rows.size(); ++idx) {
         Row& other = m_rows[idx];
@@ -301,10 +302,30 @@ void AppsModel::markInstalled(const QString& name,
     }
 }
 
+void AppsModel::beginBulkInstalledUpdate()
+{
+    m_inBulkInstalledUpdate = true;
+}
+
+void AppsModel::endBulkInstalledUpdate()
+{
+    if (!m_inBulkInstalledUpdate) return;
+    m_inBulkInstalledUpdate = false;
+
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        Row& r = m_rows[idx];
+        const InstallStatus::Value prev = r.installStatus;
+        recomputeInstallStatus(r);
+        if (r.installStatus != prev) {
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, {InstallStatusRole, IsInstalledRole});
+        }
+    }
+}
+
 void AppsModel::setInstallType(const QString& name, const QString& installType)
 {
-    for (int idx = 0; idx < m_rows.size(); ++idx) {
-        if (m_rows[idx].name != name) continue;
+    for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
         if (r.installType == installType) continue;
         r.installType = installType;
@@ -315,8 +336,7 @@ void AppsModel::setInstallType(const QString& name, const QString& installType)
 
 void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
 {
-    for (int idx = 0; idx < m_rows.size(); ++idx) {
-        if (m_rows[idx].name != name) continue;
+    for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
         if (r.iconUrl == iconUrl) continue;
         r.iconUrl = iconUrl;
@@ -327,8 +347,7 @@ void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
 
 void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
 {
-    for (int idx = 0; idx < m_rows.size(); ++idx) {
-        if (m_rows[idx].name != name) continue;
+    for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
         if (r.missingDeps == missing) continue;
         r.missingDeps = missing;
@@ -344,8 +363,7 @@ void AppsModel::setInstallStage(const QString& name,
                                 InstallStage::Value stage,
                                 const QString& error)
 {
-    for (int idx = 0; idx < m_rows.size(); ++idx) {
-        if (m_rows[idx].name != name) continue;
+    for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
         if (r.installStage == stage && r.installError == error) continue;
         r.installStage = stage;

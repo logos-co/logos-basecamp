@@ -21,15 +21,16 @@ Rectangle {
         repositoriesView.reportOperationResult(operation, url, success, error)
     }
 
-    function showSection(idx) {
-        if (idx >= 0 && idx < d.sections.length)
-            d.selectedIndex = idx
-    }
+    function showRepositories() { d.selectedIndex = d.sectionRepositories }
 
     QtObject {
         id: d
 
         // Sub-views in the right pane. Order maps 1:1 to the StackLayout below.
+        readonly property int sectionDashboard:    0
+        readonly property int sectionModules:      1
+        readonly property int sectionRepositories: 2
+
         readonly property var sections: [
             { label: qsTr("Dashboard") },
             { label: qsTr("Modules") },

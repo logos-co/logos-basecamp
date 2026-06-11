@@ -72,6 +72,9 @@ public:
                          InstallStage::Value stage,
                          const QString& error = {});
 
+    void beginBulkInstalledUpdate();
+    void endBulkInstalledUpdate();
+
     struct ResolverRow {
         QString name;
         QString repositoryUrl;
@@ -129,6 +132,8 @@ private:
     void recomputeVersionDerivedFields(Row& r);
     void recomputeInstallStatus(Row& r);
 
-    QList<Row>         m_rows;
+    QList<Row>          m_rows;
     QHash<QString, int> m_indexByKey;     // (repo + "\n" + name) → row index
+    QMultiHash<QString, int> m_indicesByName;
+    bool m_inBulkInstalledUpdate = false;
 };

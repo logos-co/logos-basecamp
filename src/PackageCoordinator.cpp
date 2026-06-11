@@ -835,6 +835,8 @@ void PackageCoordinator::populateAppsModel(
     const QHash<QString, QString>& fullInstalled = m_installedVersionByName.isEmpty()
         ? installedByName
         : m_installedVersionByName;
+
+    m_appsModel->beginBulkInstalledUpdate();
     for (auto it = fullInstalled.cbegin(); it != fullInstalled.cend(); ++it) {
         const QString& name = it.key();
         const QString& ver  = it.value();
@@ -853,6 +855,7 @@ void PackageCoordinator::populateAppsModel(
          it != m_missingDepsByModule.cend(); ++it) {
         m_appsModel->setMissingDeps(it.key(), it.value());
     }
+    m_appsModel->endBulkInstalledUpdate();
 
     if (m_appsLoading) {
         m_appsLoading = false;
@@ -869,10 +872,9 @@ void PackageCoordinator::refreshRepositories()
         : nullptr;
     if (!dlClient || !dlClient->isConnected()) return;
 
-    if (!m_repositoriesLoading) {
-        m_repositoriesLoading = true;
-        emit repositoriesLoadingChanged();
-    }
+    const bool wasLoading = m_repositoriesLoadingCount > 0;
+    ++m_repositoriesLoadingCount;
+    if (!wasLoading) emit repositoriesLoadingChanged();
 
     QPointer<PackageCoordinator> self(this);
     dlClient->invokeRemoteMethodAsync(
@@ -880,9 +882,9 @@ void PackageCoordinator::refreshRepositories()
         [self](QVariant result) {
             if (!self) return;
             self->m_repositories = result.toList();
-            self->m_repositoriesLoading = false;
+            const int remaining = --self->m_repositoriesLoadingCount;
             emit self->repositoriesChanged();
-            emit self->repositoriesLoadingChanged();
+            if (remaining == 0) emit self->repositoriesLoadingChanged();
         });
 }
 
@@ -999,12 +1001,14 @@ void PackageCoordinator::refreshDependencyInfo()
         // Replay markInstalled across the full package set — fetchUiPluginMetadata
         // only saw UI plugins. Idempotent on (version, hash).
         if (self->m_appsModel) {
+            self->m_appsModel->beginBulkInstalledUpdate();
             for (auto it = self->m_installedVersionByName.cbegin();
                  it != self->m_installedVersionByName.cend(); ++it) {
                 self->m_appsModel->markInstalled(
                     it.key(), it.value(),
                     self->m_installedHashByName.value(it.key()));
             }
+            self->m_appsModel->endBulkInstalledUpdate();
         }
 
         // Second pass — per-module missing/dependents queries. Dispatched
@@ -1247,18 +1251,16 @@ void PackageCoordinator::openApp(const QString& name,
     if (!m_logosAPI || name.isEmpty()) return;
 
     // Fast-launch only for the tile whose repo's rootHash matches what's
-    // on disk AND with healthy deps. Other repos' tiles fall through to
-    // the resolver+dialog (Reinstall / Upgrade / Downgrade).
-    const bool depsHealthy = m_missingDepsByModule.value(name).isEmpty();
+    // on disk. installStatus is already missing-deps-aware: AppsModel's
+    // recomputeInstallStatus demotes a row with non-empty missingDeps to
+    // NotInstalled, so tileStatus == Installed implies healthy deps.
     int tileStatus = InstallStatus::NotInstalled;
     if (m_appsModel) {
         const QVariantMap row =
             m_appsModel->rowDataByName(name, repositoryUrl);
         tileStatus = row.value("installStatus").toInt();
     }
-    if (allowFastLaunch
-        && tileStatus == InstallStatus::Installed
-        && depsHealthy) {
+    if (allowFastLaunch && tileStatus == InstallStatus::Installed) {
         qDebug() << "openApp fast-path: installed (v="
                  << m_installedVersionByName.value(name)
                  << "), emitting launchAppRequested";
@@ -1323,19 +1325,17 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     metadata["category"]      = catalogRow.value("category");
     metadata["versions"]      = catalogRow.value("versions").toList();
     const QString installedVersion = m_installedVersionByName.value(name);
-    // Per-tile installStatus from the CLICKED row. A partial install
-    // (LGX on disk, dep missing) is demoted to NotInstalled so the
-    // dialog reads Install instead of Launch.
-    const bool depsHealthy = m_missingDepsByModule.value(name).isEmpty();
+    // Per-tile installStatus from the CLICKED row. Already missing-deps-aware
+    // (AppsModel::recomputeInstallStatus returns NotInstalled when missingDeps
+    // is non-empty), so the dialog reads Install instead of Launch for a
+    // partial install.
     int tileStatus = InstallStatus::NotInstalled;
     if (m_appsModel) {
         const QVariantMap clickedRow = m_appsModel->rowDataByName(name, repositoryUrl);
         tileStatus = clickedRow.value("installStatus").toInt();
     }
-    metadata["installStatus"] = depsHealthy
-        ? tileStatus
-        : static_cast<int>(InstallStatus::NotInstalled);
-    metadata["isInstalled"]      = depsHealthy && tileStatus == InstallStatus::Installed;
+    metadata["installStatus"]    = tileStatus;
+    metadata["isInstalled"]      = tileStatus == InstallStatus::Installed;
     metadata["installedVersion"] = installedVersion;
     const QVariantList versionsList = catalogRow.value("versions").toList();
     metadata["latestVersion"] = versionsList.isEmpty()

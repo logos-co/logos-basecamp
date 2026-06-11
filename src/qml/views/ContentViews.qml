@@ -5,6 +5,12 @@ import QtQuick.Layouts
 Item {
     id: root
 
+    // Sidebar section indices (backend's m_sections list, defined by
+    // SidebarPanel.qml). 0 = Apps (MdiView), 1 = App Manager,
+    // 2 = Modules, 3 = Settings.
+    readonly property int sidebarAppManager: 1
+    readonly property int sidebarSettings:   3
+
     Connections {
         target: backend
         function onRepositoryOperationCompleted(operation, url, success, error) {
@@ -24,10 +30,10 @@ Item {
         id: contentStack
         anchors.fill: parent
 
-        // Map backend index 1 → 0 (App Manager), 3 → 1 (Settings).
-        currentIndex: backend.currentActiveSectionIndex === 3 ? 1 : 0
+        // Map backend's sidebar index to this stack's two-entry layout.
+        currentIndex: backend.currentActiveSectionIndex === root.sidebarSettings ? 1 : 0
 
-        // App Manager (backend index 1 -> internal index 0)
+        // App Manager (sidebar sidebarAppManager -> stack index 0)
         AppManagerView {
             id: appManagerView
             appsProxy:    backend.uiAppsProxy
@@ -42,8 +48,8 @@ Item {
                 backend.openApp(name, repositoryUrl, ({}), false)
             }
             onNavigateToRepositories: {
-                backend.setCurrentActiveSectionIndex(3)
-                settingsView.showSection(2)
+                backend.setCurrentActiveSectionIndex(root.sidebarSettings)
+                settingsView.showRepositories()
             }
         }
 

@@ -1,4 +1,6 @@
 # Builds and runs basecamp's QML component tests (Qt Quick Test).
+{ pkgs, src }:
+
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-qml-tests";
   version = "0.0.0";

@@ -20,22 +20,16 @@ Item {
     function reportOperationResult(operation, url, success, error) {
         if (success) {
             d.lastError = ""
-            d.lastErrorOp = operation
-            d.lastErrorUrl = url
             if (operation === "add") d.newRepoUrl = ""
             return
         }
-        d.lastError    = error.length > 0 ? error : qsTr("Operation failed")
-        d.lastErrorOp  = operation
-        d.lastErrorUrl = url
+        d.lastError = error.length > 0 ? error : qsTr("Operation failed")
     }
 
     QtObject {
         id: d
         property string newRepoUrl: ""
         property string lastError: ""
-        property string lastErrorOp: ""
-        property string lastErrorUrl: ""
     }
 
     ScrollView {
