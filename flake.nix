@@ -250,6 +250,9 @@
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix { inherit pkgs src; };
 
+          # QML component tests (Qt Quick Test)
+          qml-tests = import ./nix/qml-tests.nix { inherit pkgs src; };
+
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
@@ -290,6 +293,7 @@
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;
+        qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
       });
 
