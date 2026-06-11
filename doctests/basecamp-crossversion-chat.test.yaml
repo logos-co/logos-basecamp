@@ -184,7 +184,7 @@ sections:
             - name: "App window opens with the sidebar visible"
               action: wait_for
               texts: ["Applications", "Settings"]
-              timeout: 300000
+              timeout: 60000
               screenshot: "xver-chatA-launch.png"
 
             - name: "The chat app appears in the sidebar"
@@ -282,7 +282,7 @@ sections:
             - name: "App window opens with the sidebar visible"
               action: wait_for
               texts: ["Applications", "Settings"]
-              timeout: 300000
+              timeout: 60000
               screenshot: "xver-chatB-launch.png"
 
             - name: "The chat app appears in the sidebar"
