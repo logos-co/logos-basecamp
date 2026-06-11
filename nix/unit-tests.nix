@@ -1,10 +1,3 @@
-#  Builds and runs basecamp's C++ unit tests (tests/apps_model_test.cpp).
-#
-#  Pure-model logic only — no IPC, no display, no PackageCoordinator. Mirrors
-#  tests/sandbox/ in shape: a standalone QtTest project that links the real
-#  basecamp sources under test so we exercise the same code the app does.
-#  Add new tests by adding sources to tests/CMakeLists.txt and the AppsModel
-#  source list there.
 { pkgs, src }:
 
 pkgs.stdenv.mkDerivation {

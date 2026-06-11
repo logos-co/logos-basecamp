@@ -100,11 +100,6 @@ QStringList AppsModel::categories() const
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// Dotted-numeric compare. Mirrors PMUI's versionCmp at
-// repos/logos-package-manager-ui/src/RowActionResolver.h:31 so the App
-// Manager grid sees the same Upgrade/Downgrade verdict the Package
-// Manager view does. Kept file-local to avoid a header dependency
-// across repos.
 static int versionCmp(const QString& a, const QString& b)
 {
     const QStringList aParts = a.split('.');
@@ -121,17 +116,11 @@ static int versionCmp(const QString& a, const QString& b)
 
 void AppsModel::recomputeInstallStatus(Row& r)
 {
-    // Mirrors PMUI's RowActionResolver verdict (Install/Installed/Upgrade/
-    // Downgrade/Reinstall) and extends it with per-dep hash checks so two
-    // repos publishing the same top-level rootHash but different dep hashes
-    // don't both read Installed.
     if (r.installedVersion.isEmpty()) {
         r.installStatus = InstallStatus::NotInstalled;
         return;
     }
     if (!r.missingDeps.isEmpty()) {
-        // Partially installed → tile reads Install, click goes through the
-        // resolver and fills in the missing pieces.
         r.installStatus = InstallStatus::NotInstalled;
         return;
     }
@@ -152,12 +141,6 @@ void AppsModel::recomputeInstallStatus(Row& r)
         r.installStatus = InstallStatus::DifferentHash;
         return;
     }
-    // Same version + same (or unknown) top-level hash. A dep with a hash
-    // mismatch against this repo's catalog row demotes the tile to
-    // DifferentHash. Intentional: the lookup is scoped to THIS repo, not
-    // any repo — if a repo doesn't catalogue one of its declared deps,
-    // we trust whatever's on disk rather than punishing the tile with
-    // DifferentHash based on another repo's expected value.
     for (const QVariant& v : r.dependencies) {
         const QVariantMap dep = v.toMap();
         const QString depName = dep.value("name").toString();
