@@ -8,7 +8,7 @@ The application is designed to:
 - Serve as a frontend for the Logos runtime (`liblogos_core`), managing Logos Module lifecycle via its C API
 - Host UI Apps as tabbed workspaces in a sidebar-and-content layout, with each app able to call Logos Modules for backend services
 - Provide a built-in package manager for installing, browsing, and removing both Logos Modules and UI Apps
-- Sandbox untrusted UI App content by restricting network access
+- Sandbox untrusted QML UI App content — restricting its network access, filesystem reach, and ability to load native code into the host process
 - Offer cross-platform distribution as a self-contained portable application
 
 ## Definitions & Acronyms
@@ -154,7 +154,7 @@ Discovered ──► Loading ──► Running ──► Unloading ──► Dis
 ```
 
 1. **Discovery**: Basecamp queries the package manager for installed UI Apps. They appear in the UI Modules tab.
-2. **Loading**: Basecamp loads the plugin directly into its own process. For C++ plugins, `QPluginLoader` loads the shared library and calls `createWidget(LogosAPI*)`. For QML plugins, a `QQuickWidget` is created with a sandboxed QML engine. If the UI App declares Logos Module dependencies, those are loaded first via `logos_core_load_module_with_dependencies()`. A new tab is added to the MDI workspace.
+2. **Loading**: Basecamp loads the plugin directly into its own process. For C++ plugins, `QPluginLoader` loads the shared library and calls `createWidget(LogosAPI*)`. For QML plugins, a `QQuickWidget` is created with a sandboxed QML engine (network-deny, filesystem-restricted, and barred from loading native code from the app's own directory — see [QML App Sandboxing](#qml-app-sandboxing)). If the UI App declares Logos Module dependencies, those are loaded first via `logos_core_load_module_with_dependencies()`. A new tab is added to the MDI workspace.
 3. **Running**: The UI App's widget is displayed in a tab. The user interacts with it. The app may call Logos Modules via the QML bridge or LogosAPI.
 4. **Unloading**: The tab is removed from the MDI area, the widget is destroyed, and the plugin is unloaded. Any Logos Module dependencies remain loaded (they may be shared with other apps).
 
@@ -212,13 +212,13 @@ Basecamp integrates with the package management system for installing both Logos
 - Modules view with tabs for UI Apps and Logos Modules
 - Settings view for application configuration
 
-### Network Sandboxing
+### QML App Sandboxing
 
-- QML-based UI Apps run in a restricted network environment
-- A deny-all network access manager blocks all outgoing HTTP/HTTPS requests from sandboxed content
-- URL interception prevents navigation to external resources
-- This protects against untrusted UI App content making unauthorized network calls
-- UI Apps that need network access do so indirectly through Logos Modules (which run in their own process and are not sandboxed by Basecamp)
+QML-based UI Apps (`ui_qml` modules) load directly into the Basecamp process, so an untrusted app is confined by a sandbox applied to its QML engine (`QmlSandbox::configure`). A `ui_qml` app is QML/JS only and must stay inside its own install directory; the sandbox enforces this on three fronts:
+
+- **Network:** a deny-all network access manager blocks all outgoing HTTP/HTTPS requests from sandboxed content; URL interception prevents navigation to external resources. UI Apps that need network access do so indirectly through Logos Modules (which run in their own process and are not sandboxed by Basecamp).
+- **Filesystem:** a URL interceptor resolves only `qrc:` URLs and local files under an allow-list of roots — the app's own dir, the vetted shared Logos QML modules, and Qt's own module dirs. Access to any other path is blocked.
+- **Native code:** the app's (untrusted) install dir is kept off the engine's native-plugin search path, and a `qmldir` under the app's own dir may not declare a native `plugin`. This closes a sandbox escape (F-008) in which a `ui_qml` app shipped a `qmldir` `plugin` directive plus a Qt plugin `.so` and had Qt `dlopen()` it into the host process — gaining native code execution that bypasses the network and filesystem restrictions. Qt loads native plugins without consulting the URL interceptor, so the interceptor instead rejects the *qmldir that declares the plugin*; vetted roots (Qt's own modules, which legitimately ship native plugins) are exempt. The `sandbox-test` Nix check guards this regression, and also covers the network and filesystem guarantees above (network deny for HTTP and `file://`, blocking of remote-scheme loads and out-of-root file reads, while files under the module's own dir and `qrc:` resources still resolve). It additionally loads an end-to-end adversarial fixture (`tests/sandbox/evil_app/`, the evil twin of `counter_qml`) that auto-fires every escape vector on load and asserts none get through.
 
 ### Desktop Integration
 

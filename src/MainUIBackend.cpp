@@ -23,8 +23,6 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
         m_ownsLogosAPI = true;
     }
 
-    initializeSections();
-
     // Order matters: CoreModuleManager must exist before UIPluginManager so
     // the latter's ctor can receive a valid pointer; UIPluginManager must
     // exist before PackageCoordinator for the same reason. Qt tears children
@@ -135,25 +133,6 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
 
 MainUIBackend::~MainUIBackend() = default;
 
-void MainUIBackend::initializeSections()
-{
-    auto makeSection = [](const QString& name, const QString& iconPath, const QString& type) {
-        QVariantMap section;
-        section["name"] = name;
-        section["iconPath"] = iconPath;
-        section["type"] = type;
-        return section;
-    };
-
-    m_sections = QVariantList{
-        makeSection("Apps", "qrc:/icons/tent.png", "workspace"),
-        makeSection("Dashboard", "qrc:/icons/dashboard.png", "view"),
-        makeSection("Modules", "qrc:/icons/module.png", "view"),
-        makeSection("Settings", "qrc:/icons/settings.png", "view"),
-        makeSection("App Manager", "qrc:/icons/dashboard.png", "view")
-    };
-}
-
 int MainUIBackend::currentActiveSectionIndex() const
 {
     return m_currentActiveSectionIndex;
@@ -161,26 +140,14 @@ int MainUIBackend::currentActiveSectionIndex() const
 
 void MainUIBackend::setCurrentActiveSectionIndex(int index)
 {
-    // Valid indices: 0-4 (Apps, Dashboard, Modules, Settings, App Manager)
-    if (m_currentActiveSectionIndex != index && index >= 0 && index < m_sections.size()) {
+    // Section list is owned by QML (SidebarPanel). The upper bound is
+    // self-policed there; we only guard against negative indices.
+    // Per-section side effects (e.g., the Modules-view auto-refresh) live
+    // in the QML view that becomes visible, not here.
+    if (m_currentActiveSectionIndex != index && index >= 0) {
         m_currentActiveSectionIndex = index;
         emit currentActiveSectionIndexChanged();
-
-        // On entering the Modules view, kick a refresh of both lists so the
-        // user sees up-to-date state. Both managers' refresh paths are
-        // non-blocking.
-        const QVariantMap section = m_sections[index].toMap();
-        const QString name = section.value("name").toString();
-        if (name == "Modules") {
-            m_uiPluginManager->refreshUiModules();
-            m_coreModuleManager->refresh();
-        }
     }
-}
-
-QVariantList MainUIBackend::sections() const
-{
-    return m_sections;
 }
 
 // --- coreModules() composer ------------------------------------------------

@@ -469,6 +469,10 @@ QVariantList UIPluginManager::launcherApps() const
             continue;
         }
 
+        if (pluginName == "package_manager_ui") {
+            continue;
+        }
+
         QVariantMap app;
         app["name"] = pluginName;
         app["isLoaded"] = m_loadedApps.contains(pluginName);

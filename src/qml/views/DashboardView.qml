@@ -6,11 +6,6 @@ import Logos.Controls
 Item {
     id: root
 
-    Rectangle {
-        anchors.fill: parent
-        color: "#1e1e1e"
-    }
-
     ScrollView {
         id: scroll
         anchors.fill: parent

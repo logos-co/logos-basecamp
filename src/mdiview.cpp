@@ -1,8 +1,11 @@
 #include "mdiview.h"
 #include "mdichild.h"
 #include <QApplication>
+#include <QStyle>
 #include <QDebug>
 #include <QColor>
+#include <QPainter>
+#include <QPixmap>
 #include <QTimer>
 #include <QEvent>
 #include <QMouseEvent>
@@ -12,6 +15,31 @@
 #include <QEasingCurve>
 #include <QQmlContext>
 #include <QQuickWidget>
+
+namespace {
+// TODO: remove this when moving this over to qml
+QIcon makePlusInCircleIcon(int size, QColor circleColor, QColor plusColor)
+{
+    const int dpr = 2;  // hidpi: render at 2× then let Qt scale
+    QPixmap pm(size * dpr, size * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(circleColor);
+    p.drawEllipse(0, 0, size, size);
+    QPen plusPen(plusColor);
+    plusPen.setWidthF(1.5);
+    plusPen.setCapStyle(Qt::RoundCap);
+    p.setPen(plusPen);
+    const int margin = size / 4;
+    const int mid = size / 2;
+    p.drawLine(mid, margin, mid, size - margin);
+    p.drawLine(margin, mid, size - margin, mid);
+    return QIcon(pm);
+}
+}
 
 MdiView::MdiView(QWidget *parent)
     : QWidget(parent)
@@ -233,7 +261,7 @@ void MdiView::installTabBarCloseButtons(QTabBar* tabBar)
             oldBtn->deleteLater();
         }
         QToolButton* btn = new QToolButton(tabBar);
-        btn->setIcon(QIcon(QStringLiteral(":/icons/close.png")));
+        btn->setIcon(qApp->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
         btn->setIconSize(QSize(12, 12));
         btn->setFixedSize(12, 12);
         btn->setCursor(Qt::PointingHandCursor);
@@ -265,7 +293,9 @@ void MdiView::ensureMdiAddButton(QTabBar* tabBar)
     // Create add button - parent it to the tab bar's parent so it's not clipped
     if (!m_mdiAddBtn) {
         m_mdiAddBtn = new QToolButton(tabBar->parentWidget());
-        m_mdiAddBtn->setIcon(QIcon(":/icons/add-button.png"));
+        m_mdiAddBtn->setIcon(makePlusInCircleIcon(15,
+                                                  QColor(255, 255, 255, 38),
+                                                  QColor(255, 255, 255)));
         m_mdiAddBtn->setIconSize(QSize(15, 15));
         m_mdiAddBtn->setAutoRaise(true);
         m_mdiAddBtn->setCursor(Qt::PointingHandCursor);

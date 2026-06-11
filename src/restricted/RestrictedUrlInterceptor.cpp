@@ -1,7 +1,10 @@
 #include "restricted/RestrictedUrlInterceptor.h"
 
 #include <QDir>
+#include <QFile>
 #include <QLoggingCategory>
+#include <QRegularExpression>
+#include <QTextStream>
 
 Q_LOGGING_CATEGORY(lcBasecampSandbox, "logos.basecamp.sandbox")
 
@@ -16,9 +19,19 @@ const char* dataTypeName(QQmlAbstractUrlInterceptor::DataType type)
     }
     return "resource";
 }
+
+// A qmldir 'plugin' / 'optional plugin' directive declares a native C++ plugin
+// that Qt will dlopen() into the host process. Matches the leading directive
+// keyword only (per the qmldir grammar each directive is at the start of a line).
+const QRegularExpression& nativePluginDirective()
+{
+    static const QRegularExpression re(QStringLiteral("^\\s*(optional\\s+)?plugin(\\s|$)"));
+    return re;
+}
 }
 
-RestrictedUrlInterceptor::RestrictedUrlInterceptor(const QStringList& allowedRoots)
+RestrictedUrlInterceptor::RestrictedUrlInterceptor(const QStringList& allowedRoots,
+                                                   const QStringList& untrustedRoots)
 {
     for (const QString& root : allowedRoots) {
         const QString canonical = QDir(root).canonicalPath();
@@ -26,6 +39,42 @@ RestrictedUrlInterceptor::RestrictedUrlInterceptor(const QStringList& allowedRoo
             m_allowedRoots.append(canonical);
         }
     }
+    for (const QString& root : untrustedRoots) {
+        const QString canonical = QDir(root).canonicalPath();
+        if (!canonical.isEmpty()) {
+            m_untrustedRoots.append(canonical);
+        }
+    }
+}
+
+bool RestrictedUrlInterceptor::isUnder(const QString& canonicalPath,
+                                       const QStringList& roots) const
+{
+    for (const QString& root : roots) {
+        if (!root.isEmpty()
+            && (canonicalPath == root
+                || canonicalPath.startsWith(root + QLatin1Char('/')))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RestrictedUrlInterceptor::qmldirDeclaresNativePlugin(const QString& qmldirPath) const
+{
+    QFile file(qmldirPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // Fail closed: if we cannot read the qmldir to vet it, treat it as if it
+        // declared a plugin so a sandboxed module cannot smuggle one past us.
+        return true;
+    }
+    QTextStream stream(&file);
+    while (!stream.atEnd()) {
+        if (nativePluginDirective().match(stream.readLine()).hasMatch()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType type)
@@ -43,18 +92,33 @@ QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType type)
         if (local.isEmpty()) {
             return url;
         }
-        for (const QString& root : m_allowedRoots) {
-            if (!root.isEmpty() && (local == root || local.startsWith(root + QLatin1Char('/')))) {
-                return url;
-            }
+        if (!isUnder(local, m_allowedRoots)) {
+            qCWarning(lcBasecampSandbox).noquote()
+                << QStringLiteral("Blocked %1 import \"%2\": path is outside the basecamp plugin sandbox. "
+                                  "Allowed roots: %3")
+                       .arg(QString::fromLatin1(dataTypeName(type)),
+                            url.toLocalFile(),
+                            m_allowedRoots.join(QStringLiteral(", ")));
+            return QUrl();  // Block file access outside allowed roots
         }
-        qCWarning(lcBasecampSandbox).noquote()
-            << QStringLiteral("Blocked %1 import \"%2\": path is outside the basecamp plugin sandbox. "
-                              "Allowed roots: %3")
-                   .arg(QString::fromLatin1(dataTypeName(type)),
-                        url.toLocalFile(),
-                        m_allowedRoots.join(QStringLiteral(", ")));
-        return QUrl();  // Block file access outside allowed roots
+
+        // A ui_qml module is QML/JS only. A qmldir living in the module's own
+        // (untrusted) install dir must not declare a native C++ plugin: Qt
+        // resolves that plugin internally and dlopen()s it into the host
+        // process WITHOUT routing the .so through this interceptor, so the
+        // qmldir is the only place we can stop it. Rejecting the qmldir here
+        // makes the module "not installed" instead of granting it native code
+        // execution. Trusted roots (the app's vetted lib dir, Qt's own module
+        // dirs that legitimately ship plugins like QtQuick) are exempt.
+        if (type == QmldirFile && isUnder(local, m_untrustedRoots)
+            && qmldirDeclaresNativePlugin(local)) {
+            qCWarning(lcBasecampSandbox).noquote()
+                << QStringLiteral("Blocked qmldir \"%1\": a sandboxed ui_qml module may not declare a "
+                                  "native plugin (QML-only modules cannot load C++ plugins into the host).")
+                       .arg(url.toLocalFile());
+            return QUrl();
+        }
+        return url;
     }
 
     qCWarning(lcBasecampSandbox).noquote()

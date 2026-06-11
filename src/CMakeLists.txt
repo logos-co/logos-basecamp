@@ -126,6 +126,7 @@ set(SOURCES
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp
     restricted/RestrictedUrlInterceptor.cpp
+    restricted/QmlSandbox.cpp
     mdichild.cpp
     mdiview.cpp
     main_ui_resources.qrc

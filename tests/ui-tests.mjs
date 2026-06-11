@@ -31,11 +31,36 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
 }
 
 // --- Package Manager ---
-
+//
+// PMUI is no longer launched from the sidebar app launcher (filtered out
+// in UIPluginManager::launcherApps); it now lives behind the dedicated
+// "Package Manager" sidebar section button, which lazy-loads PMUI into
+// MainContainer's QStackedWidget slot 2 on first click.
 test("package_manager_ui: open and verify categories", async (app) => {
   // Offscreen CI: logos-qt-mcp findByProperty sees "Reload" but not the Install label
   // (Row contentItem). Assert Reload only; the UI itself is unchanged.
-  await openPlugin(app, "package_manager_ui", ["Reload"]);
+  await openPlugin(app, "Package Manager", ["Reload"]);
+});
+
+test("settings: shows Dashboard and Modules entries", async (app) => {
+  await app.click("Settings");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+});
+
+test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
+  await app.click("Settings");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+  await app.click("Dashboard", { type: "LogosItemDelegate" });
+  await app.waitFor(
+    async () => { await app.expectTexts(["Commits"]); },
+    { timeout: 10000, interval: 500, description: "Dashboard view to render" }
+  );
 });
 
 // --- Modules section ---
@@ -47,13 +72,46 @@ test("package_manager_ui: open and verify categories", async (app) => {
 // which re-ran ModuleRegistry::discoverInstalledModules() and wiped the
 // `loaded` flag of every module via `m_modules.insert(qName, freshInfo)`.
 // The whole list then rendered as Not Loaded with no CPU/Mem stats.
-test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
-  await app.click("Modules");
+//
+// The old top-level "Modules" sidebar entry was renamed; the embedded
+// ModulesView (UI Modules + Core Modules tabs) now lives under
+// Settings → Modules sub-tab.
+async function openModules(app) {
+  await app.click("Settings");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+  await app.click("Modules", { type: "LogosItemDelegate" });
+  await app.waitFor(
+    async () => { await app.expectTexts(["UI Modules", "Core Modules"]); },
+    { timeout: 10000, interval: 500, description: "Modules tabs to render" }
+  );
+}
+
+async function openCoreModules(app) {
+  await openModules(app);
   await app.click("Core Modules");
+  await app.waitFor(
+    async () => { await app.expectTexts(["All available plugins in the system"]); },
+    { timeout: 10000, interval: 500, description: "Core Modules tab to become active" }
+  );
+}
+
+test("modules: ui tab shows installed UI plugins", async (app) => {
+  await openModules(app);
+  await app.waitFor(
+    async () => { await app.expectTexts(["main_ui", "package_manager_ui"]); },
+    { timeout: 10000, interval: 500, description: "UI Modules list to populate" }
+  );
+});
+
+test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
+  await openCoreModules(app);
 
   // Wait for the core modules list to populate.
   await app.waitFor(
-    async () => { await app.expectTexts(["package_manager", "capability_module"]); },
+    async () => { await app.expectTexts(["package_manager"]); },
     { timeout: 10000, interval: 500, description: "Core Modules list to populate" }
   );
 
@@ -62,12 +120,14 @@ test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
   // the refreshCoreModules bug, every module showed "(Not Loaded)" and
   // the only buttons were "Load Plugin", so neither "(Loaded)" nor
   // "Unload Plugin" appeared anywhere in the UI.
-  await app.expectTexts(["(Loaded)", "Unload Plugin"]);
+  await app.waitFor(
+    async () => { await app.expectTexts(["(Loaded)", "Unload Plugin"]); },
+    { timeout: 10000, interval: 500, description: "loaded status and Unload button to appear" }
+  );
 });
 
 test("modules: loaded plugins render CPU and memory stats", async (app) => {
-  await app.click("Modules");
-  await app.click("Core Modules");
+  await openCoreModules(app);
 
   // Wait for at least one loaded plugin to appear.
   await app.waitFor(
@@ -81,7 +141,7 @@ test("modules: loaded plugins render CPU and memory stats", async (app) => {
   // the "CPU: " and "Mem: " prefixes appear in the rendered text.
   await app.waitFor(
     async () => {
-      const tree = await app.getTree({ depth: 20 });
+      const tree = await app.getTree({ depth: 40 });
       const treeStr = JSON.stringify(tree);
       if (!treeStr.includes("CPU: ")) {
         throw new Error("No CPU stats rendered for loaded plugins");
@@ -95,22 +155,23 @@ test("modules: loaded plugins render CPU and memory stats", async (app) => {
 });
 
 test("modules: leaving and returning to Core Modules preserves loaded state", async (app) => {
-  // Navigate to Core Modules and wait for loaded plugins.
-  await app.click("Modules");
-  await app.click("Core Modules");
+  // Navigate to Settings → Modules → Core Modules and wait for loaded plugins.
+  await openCoreModules(app);
 
   await app.waitFor(
     async () => { await app.expectTexts(["package_manager", "(Loaded)"]); },
     { timeout: 10000, interval: 500, description: "Core Modules to show loaded plugins" }
   );
 
-  // Navigate away to Dashboard.
-  await app.click("Dashboard");
-  await app.expectTexts(["Dashboard"]);
+  // Navigate away to a different top-level section (Applications).
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
 
-  // Navigate back to Modules > Core Modules.
-  await app.click("Modules");
-  await app.click("Core Modules");
+  // Navigate back to Settings → Modules → Core Modules.
+  await openCoreModules(app);
 
   // The previously-loaded modules must still show as "(Loaded)" with stats.
   await app.waitFor(
@@ -119,32 +180,33 @@ test("modules: leaving and returning to Core Modules preserves loaded state", as
   );
 });
 
-// --- Sidebar: sequential plugin opening ---
+// --- Sidebar: sequential section opening ---
 //
-// Regression guard: opening multiple plugins one after another must not
-// crash, hang, or leave the sidebar in an inconsistent state. Each
-// plugin is opened via its sidebar icon, we wait for its UI to load,
-// then move on to the next. Finally we verify all opened plugins are
-// still reachable by switching back to each one.
-
-test("sidebar: open multiple plugins sequentially without failure", async (app) => {
-  const plugins = [
-    { name: "package_manager_ui",  expect: ["Reload"] },
+// Regression guard: opening multiple sidebar sections one after another
+// must not crash, hang, or leave the sidebar in an inconsistent state.
+// Each section is opened via its sidebar button, we wait for expected
+// content to render, then move on to the next. Finally we verify each
+// section is still reachable by switching back to it.
+//
+// (Previously this iterated launcher-installed plugins, but PMUI is now
+// the only one and it lives behind a section button rather than the
+// launcher, so this is now a section walk.)
+test("sidebar: open multiple sections sequentially without failure", async (app) => {
+  const sections = [
+    { name: "Applications",    expect: ["Install and manage applications."] },
+    { name: "Package Manager", expect: ["Reload"] },
+    { name: "Settings",        expect: ["Manage modules, apps and dashboards.", "Sections"] },
   ];
 
-  // Open each plugin sequentially.
-  for (const plugin of plugins) {
-    await openPlugin(app, plugin.name, plugin.expect);
+  for (const section of sections) {
+    await openPlugin(app, section.name, section.expect);
   }
 
-  // Switch back to each plugin and verify its UI is still intact.
-  // Clicking an already-loaded plugin in the sidebar should activate its
-  // tab without reloading.
-  for (const plugin of plugins) {
-    await app.click(plugin.name);
+  for (const section of sections) {
+    await app.click(section.name);
     await app.waitFor(
-      async () => { await app.expectTexts(plugin.expect); },
-      { timeout: 10000, interval: 500, description: `"${plugin.name}" still accessible` }
+      async () => { await app.expectTexts(section.expect); },
+      { timeout: 10000, interval: 500, description: `"${section.name}" still accessible` }
     );
   }
 });

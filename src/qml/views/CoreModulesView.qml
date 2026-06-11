@@ -20,16 +20,6 @@ Item {
         showingInterface = true;
     }
 
-    onVisibleChanged: {
-        if (visible) {
-            backend.refreshCoreModules();
-        }
-    }
-
-    Component.onCompleted: {
-        backend.refreshCoreModules();
-    }
-
     StackLayout {
         anchors.fill: parent
         currentIndex: root.showingInterface ? 1 : 0

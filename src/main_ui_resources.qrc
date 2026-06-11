@@ -1,15 +1,14 @@
 <!DOCTYPE RCC>
 <RCC>
     <qresource prefix="/">
-        <file>icons/dashboard.png</file>
-        <file>icons/settings.png</file>
-        <file>icons/profile.png</file>
-        <file>icons/module.png</file>
-        <file>icons/basecamp.png</file>
-        <file>icons/tent.png</file>
-        <file>icons/workspace.png</file>
-        <file>icons/close.png</file>
-        <file>icons/add-button.png</file>
+        <file>qml/icons/BasecampIcons.qml</file>
+        <file>qml/icons/qmldir</file>
+        <file>qml/icons/basecamp.svg</file>
+        <file>qml/icons/dashboard.svg</file>
+        <file>qml/icons/module.svg</file>
+        <file>qml/icons/settings.svg</file>
+        <file>qml/icons/tent.png</file>
+        <file>qml/icons/workspace.svg</file>
         <file>qml/panels/ModuleRow.qml</file>
         <file>qml/panels/SidebarPanel.qml</file>
         <file>qml/panels/qmldir</file>

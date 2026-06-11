@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMutexLocker>
 #include <QPluginLoader>
@@ -15,6 +16,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 
 #include <memory>
 
@@ -22,8 +24,9 @@
 #include "IComponent.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
-#include "restricted/DenyAllNAMFactory.h"
-#include "restricted/RestrictedUrlInterceptor.h"
+#include "logos_api_client.h"
+#include "token_manager.h"
+#include "restricted/QmlSandbox.h"
 #include <ViewModuleHost.h>
 
 PluginLoader::PluginLoader(LogosAPI* logosAPI,
@@ -214,9 +217,12 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
+    // Mint a per-spawn UUID.
+    const QString uiAuthToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
     // Has a backend plugin — spawn a ViewModuleHost process.
     auto* viewHost = new ViewModuleHost(this);
-    if (!viewHost->spawn(request.name, request.mainFilePath)) {
+    if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken)) {
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
         delete viewHost;
         delete bridge;
@@ -226,7 +232,22 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
-    auto onHostReady = [this, request, bridge, viewHost]() {
+    auto onHostReady = [this, request, bridge, viewHost, uiAuthToken]() {
+        if (LogosAPIClient* cap = m_logosAPI
+                ? m_logosAPI->getClient(QStringLiteral("capability_module"))
+                : nullptr) {
+            const QString capToken = m_logosAPI->getTokenManager()
+                ->getToken(QStringLiteral("capability_module"));
+            if (capToken.isEmpty()) {
+                qWarning() << "PluginLoader: no capability_module token on host —"
+                              "UI module" << request.name
+                           << "will not be registered (calls will be rejected)";
+            } else if (!cap->informModuleToken(capToken, request.name, uiAuthToken)) {
+                qWarning() << "PluginLoader: capability_module.informModuleToken"
+                              "failed for UI module" << request.name;
+            }
+        }
+
         bridge->setViewModuleSocket(request.name, viewHost->socketName());
 
         const QString base = QFileInfo(request.mainFilePath).absolutePath()
@@ -279,52 +300,9 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
     auto* qmlWidget = new QQuickWidget;
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     if (QQmlEngine* engine = qmlWidget->engine()) {
-      	const QStringList qtDefaultPaths = engine->importPathList();                                                                                                                                                               
-        QStringList importPaths = qtDefaultPaths;
-        importPaths.prepend(request.installDir);
-        const QString qmlEntryDir =
-            QFileInfo(request.qmlViewPath).absolutePath();
-        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir)
-            importPaths.prepend(qmlEntryDir);
-        QString appLibDir = QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
-        if (!appLibDir.isEmpty())
-            importPaths.prepend(appLibDir);
-        engine->setImportPathList(importPaths);
-
-        QStringList pluginPaths = engine->pluginPathList();
-        pluginPaths.prepend(request.installDir);
-        engine->setPluginPathList(pluginPaths);
-
-        engine->setNetworkAccessManagerFactory(new DenyAllNAMFactory());
-
-        QStringList allowedRoots;
-        allowedRoots << request.installDir;
-        if (!qmlEntryDir.isEmpty() && qmlEntryDir != request.installDir
-            && !allowedRoots.contains(qmlEntryDir))
-            allowedRoots << qmlEntryDir;
-        // Allow only an explicit set of shared Logos QML modules.
-        if (!appLibDir.isEmpty()) {
-            static const QStringList kAllowedLogosModules = {
-                QStringLiteral("Theme"),
-                QStringLiteral("Controls"),
-                QStringLiteral("Icons"),
-            };
-            for (const QString& mod : kAllowedLogosModules) {
-                const QString modDir = QDir(appLibDir + "/Logos/" + mod).canonicalPath();
-                if (!modDir.isEmpty() && !allowedRoots.contains(modDir))
-                    allowedRoots << modDir;
-            }
-        }
-        // TODO(security): currently allows ALL of Qt's default QML module paths.
-        // Before opening the platform to third-party plugin publishing, narrow
-        // this to an explicit per-module allowlist
-        for (const QString& p : qtDefaultPaths) {
-            if (p.startsWith(QStringLiteral("qrc:"))) continue;
-            const QString canon = QDir(p).canonicalPath();
-            if (!canon.isEmpty() && !allowedRoots.contains(canon))
-                allowedRoots << canon;
-        }
-        engine->addUrlInterceptor(new RestrictedUrlInterceptor(allowedRoots));
+        const QString appLibDir =
+            QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
+        QmlSandbox::configure(engine, request.installDir, request.qmlViewPath, appLibDir);
         engine->setBaseUrl(QUrl::fromLocalFile(request.installDir + "/"));
     }
 
