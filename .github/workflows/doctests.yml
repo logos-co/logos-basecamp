@@ -1,7 +1,6 @@
 name: basecamp Doc-Tests
 
 # Runs the executable basecamp doc-tests end-to-end via the shared doctest CLI.
-# Both specs drive the SAME Modules-view walk; they differ only in what they build:
 #   basecamp-modules.test.yaml — builds THIS commit's development app
 #       (inspector-enabled #app), launches the dev binary headless, and drives its
 #       Modules view: it opens the UI Modules tab to see the installed apps (UI
@@ -11,7 +10,14 @@ name: basecamp Doc-Tests
 #   basecamp-modules-bundle.test.yaml — the bundle twin: builds THIS commit as the
 #       real portable bundle (inspector-enabled #bin-bundle-dir-inspector) and runs
 #       the identical Modules-view walk against it.
-# Both run back-to-back into one --report HTML (a dropdown switches between them).
+#   basecamp-crossversion-accounts.test.yaml / -chat.test.yaml — cross-version
+#       compatibility: build one component fresh from source (#install-portable),
+#       download the latest released counterpart from the package manager, assemble
+#       both into a user-dir, launch the portable bundle against it, and drive the
+#       app (accounts: create mnemonics; chat: confirm the Waku node initializes) —
+#       in both directions (fresh module + released UI, and fresh UI + released
+#       module). These need network at runtime and exercise the live ecosystem.
+# All specs run into one --report HTML (a dropdown switches between them).
 #
 # ──────────────────────────────────────────────────────────────────────────────
 # One-time setup required for the clickable report links to work:
@@ -118,13 +124,20 @@ jobs:
           # report is complete. The job still fails (non-zero exit) if any step
           # failed; this only changes whether we stop early.
           #
-          # Both specs build this commit and drive the same Modules-view walk —
-          # one against the dev app (#app), one against the portable bundle
-          # (#bin-bundle-dir-inspector). Passing both to one `run` puts them in a
-          # single --report HTML (a dropdown switches between them).
+          # All specs build this commit; passing them to one `run` puts them in a
+          # single --report HTML (a dropdown switches between them):
+          #   basecamp-modules / basecamp-modules-bundle — the Modules-view walk
+          #     against the dev app (#app) and the portable bundle.
+          #   basecamp-crossversion-accounts / -chat — cross-version compatibility:
+          #     a freshly-built component (#install-portable) driven against the
+          #     latest released counterpart downloaded from the package manager,
+          #     in both directions. These need network at runtime (catalog
+          #     download + chat's Waku node) and exercise the live ecosystem.
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
+            doctests/basecamp-crossversion-accounts.test.yaml \
+            doctests/basecamp-crossversion-chat.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -152,7 +165,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-crossversion-accounts basecamp-crossversion-chat; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \

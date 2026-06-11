@@ -1,0 +1,312 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SCOPE — chat cross-version check is currently "init + screenshot".
+#
+# This spec verifies, in both directions, that a freshly-built chat component
+# loads and initializes inside basecamp alongside the latest released
+# counterpart: it opens the chat app and waits for the chat node to come up
+# (status "Connected"), capturing a screenshot. `chat_module` starts a real Waku
+# node by default, so reaching "Connected" depends on the run environment having
+# working network/peer discovery.
+#
+# DEFERRED (not yet driven here): the full messaging flow — click "Get Intro
+# Bundle", start a new conversation from a bundle, and send/receive messages. It
+# is left as a commented WIP block in the "Variant A" launch step below. Driving
+# it needs (a) capturing the generated intro bundle out of the bundle dialog and
+# re-injecting it into the new-conversation dialog via the runner's set_text
+# action, and (b) a reliably-connected node (its own e2e tests use a dedicated
+# nwaku bootstrap). Keep the messaging steps commented until both are addressed,
+# so the spec stays green. (Mirrors the WIP approach in
+# basecamp-modules-bundle.test.yaml.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Cross-version check: freshly-built chat against the latest released counterpart"
+output: basecamp-crossversion-chat.md
+release: ""
+
+intro: |
+  > **⚠️ Partial coverage.** This chat cross-version check currently goes as far
+  > as **opening the chat app and confirming it initializes** (the chat node comes
+  > up and the UI reaches **Connected**), capturing a screenshot. The full
+  > messaging flow — get intro bundle → start a conversation → send messages — is
+  > a documented follow-up (see the WIP block in the spec). `chat_module` runs a
+  > real Waku node, so reaching **Connected** depends on the run environment's
+  > network.
+
+  [`logos-basecamp`](https://github.com/logos-co/logos-basecamp) hosts the
+  `chat_module` (core runtime, which runs a real Waku node) and `chat_ui` (the QML
+  app) as **separate** packages that ship independently through the package
+  manager. As with accounts, they can drift apart, so this doc-test checks a
+  freshly-built side against the latest released counterpart in **both**
+  directions:
+
+  - **Variant A:** freshly-built **`chat_module`** + latest-downloaded **`chat_ui`**
+  - **Variant B:** freshly-built **`chat_ui`** + latest-downloaded **`chat_module`**
+
+  Everything is **portable**: a freshly-built component can only coexist with a
+  downloaded catalog package in one process if both — and the host — are the
+  portable variant. So the host is the portable bundle
+  (`#bin-bundle-dir-inspector`, the inspector-enabled twin of the shippable
+  `#bin-bundle-dir`), the fresh side is built with `#install-portable`, and the
+  downloaded side is the catalog's portable `.lgx`.
+
+  Both sides are assembled into a basecamp **user-dir** (discovered via
+  `--user-dir`: `<user-dir>/modules/<name>/` + `<user-dir>/plugins/<name>/`), the
+  portable bundle is launched against it, the chat app is opened from the sidebar,
+  and we wait for it to initialize. A green run is evidence that this commit's
+  source build of one chat component still loads and initializes next to the last
+  released version of the other.
+
+what_you_build: "The portable basecamp bundle (inspector-enabled `#bin-bundle-dir-inspector`), plus a freshly-built portable `chat_module`/`chat_ui`, combined in a user-dir with the latest released counterpart downloaded from the package manager, and driven to confirm the chat app initializes."
+
+what_you_learn:
+  - How `chat_module` and `chat_ui` ship as separate packages and why cross-version compatibility needs its own test
+  - Why fresh-built and downloaded packages must both be the portable variant to coexist in one process
+  - How to build a component portably (`#install-portable`) and download its counterpart with `lgpd`/`lgpm`
+  - How basecamp's `--user-dir` discovers extra modules and UI plugins at launch
+  - How to confirm the chat app initializes (the Waku node comes up and the UI reaches "Connected") headless with logos-qt-mcp
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required."
+  - "**Network access.** This doc-test downloads the latest released package from the package manager catalog, and `chat_module` starts a real Waku node — both need internet access."
+
+sections:
+  - title: "How the cross-version check works"
+    text: |
+      The chat feature is two packages that ship separately:
+
+      ```
+      chat_module   core runtime plugin (runs a real Waku node) -> modules/chat_module/
+      chat_ui       QML app (depends on chat_module)            -> plugins/chat_ui/
+      ```
+
+      Each variant pins one side to **today's source** and the other to the
+      **latest release**:
+
+      ```
+      Variant A : fresh chat_module + downloaded chat_ui
+      Variant B : fresh chat_ui     + downloaded chat_module
+      ```
+
+      Both are assembled into a basecamp **user-dir**, and the **portable** bundle
+      is launched with `--user-dir` pointed at it — so the freshly-built piece
+      initializes next to the released piece in one process.
+
+  - title: "Build the qt-mcp test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness the
+      doc-test uses to connect to the bundle's QML inspector and drive it. Build it
+      once and link it as `./result-mcp`.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the package-manager CLIs"
+    step: true
+    text: |
+      `lgpd` (downloader) fetches the latest `.lgx` from the catalog, and `lgpm`
+      (manager) installs it into the user-dir. We build them from their flakes —
+      `lgpm` from the **portable** CLI (`#cli-portable`), so it selects the
+      catalog's portable platform variant rather than a `-dev` one.
+    steps:
+      - title: "Build lgpd (package downloader)"
+        run: "nix build 'github:logos-co/logos-package-downloader#cli' -o result-lgpd"
+        check_file: "result-lgpd/bin/lgpd"
+      - title: "Build lgpm (package manager, portable)"
+        run: "nix build 'github:logos-co/logos-package-manager#cli-portable' -o result-lgpm"
+        check_file: "result-lgpm/bin/lgpm"
+
+  - title: "Build the basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit's portable bundle and link it as
+      `./result-bundle` — the inspector-enabled twin (`#bin-bundle-dir-inspector`)
+      of the shippable `#bin-bundle-dir`, the host the fresh + downloaded portable
+      packages load into.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Variant A — fresh chat_module + latest chat_ui"
+    step: true
+    text: |
+      Build `chat_module` fresh from source as a **portable** install, download the
+      latest released `chat_ui`, and assemble both into `./testdata/chat-A`.
+    steps:
+      - title: "Build the fresh chat_module (portable)"
+        run: "nix build 'github:logos-co/logos-chat-module#install-portable' -o result-chatA-mod"
+        check_file: "result-chatA-mod/modules/chat_module"
+
+      - title: "Download the latest released chat_ui"
+        run: "rm -rf dl-chatA && mkdir -p dl-chatA && ./result-lgpd/bin/lgpd download chat_ui -o dl-chatA && ls dl-chatA"
+        expect_contains:
+          - "chat_ui"
+
+      - title: "Assemble the user-dir"
+        run: |
+          chmod -R u+w testdata/chat-A 2>/dev/null || true
+          rm -rf testdata/chat-A
+          mkdir -p testdata/chat-A/modules testdata/chat-A/plugins
+          cp -r result-chatA-mod/modules/chat_module testdata/chat-A/modules/
+          chmod -R u+w testdata/chat-A
+          ./result-lgpm/bin/lgpm --modules-dir testdata/chat-A/modules --ui-plugins-dir testdata/chat-A/plugins install --file dl-chatA/*.lgx
+          echo "--- modules ---"; ls testdata/chat-A/modules
+          echo "--- plugins ---"; ls testdata/chat-A/plugins
+        expect_contains:
+          - "chat_module"
+          - "chat_ui"
+
+      - title: "Launch the bundle and confirm chat initializes"
+        text: |
+          Launch the portable bundle against `./testdata/chat-A`, open the chat app
+          from the sidebar, and wait for the chat node to come up — the released
+          `chat_ui` initializing the freshly-built `chat_module`'s Waku node.
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/chat-A"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              screenshot: "xver-chatA-launch.png"
+
+            - name: "The chat app appears in the sidebar"
+              action: wait_for
+              texts: ["chat_ui"]
+              timeout: 30000
+
+            - name: "Open the chat app"
+              action: click
+              target: "chat_ui"
+
+            - name: "Chat view renders"
+              action: wait_for
+              texts: ["Get Intro Bundle"]
+              timeout: 30000
+              text: "Clicking the sidebar icon loads `chat_ui` and auto-loads its `chat_module` dependency."
+              screenshot: "xver-chatA-open.png"
+
+            - name: "Chat node initializes (Connected)"
+              action: wait_for
+              texts: ["Connected"]
+              timeout: 120000
+              text: "The chat node starts its Waku node and the UI reaches **Connected** — the freshly-built module initialized cleanly under the released UI."
+              screenshot: "xver-chatA-connected.png"
+
+            # ── DEFERRED WIP: full messaging flow ───────────────────────────────
+            # Once we can (a) capture the generated intro bundle out of the bundle
+            # dialog and (b) rely on a connected node, drive the rest here:
+            #
+            #   - { action: click,    target: "Get Intro Bundle" }
+            #   - { action: wait_for, texts: ["My Bundle", "Share this bundle"], timeout: 30000 }
+            #     # bundle text lives in the `bundleDisplay` TextArea (ChatView.qml:725);
+            #     # capture it, then close the dialog.
+            #   - { action: click,    target: "+ new" }
+            #   - { action: set_text, find_by: "objectName", find_value: "<bundleInput>", value: "<captured-bundle>" }
+            #   - { action: set_text, find_by: "objectName", find_value: "<introMsgInput>", value: "Hello!" }
+            #   - { action: click,    target: "Create" }
+            #   - { action: wait_for, texts: ["No messages yet", "Conversation active"], timeout: 60000 }
+            #   - { action: set_text, find_by: "objectName", find_value: "<msgInput>", value: "first message" }
+            #   - { action: click,    target: ">>" }
+            #   - { action: wait_for, texts: ["first message"], timeout: 60000, screenshot: "xver-chatA-message.png" }
+            #
+            # NOTE: bundleInput/introMsgInput/msgInput in ChatView.qml currently
+            # carry QML `id`s but not `objectName`s; set_text matches by property
+            # (default findByProperty), so those elements would need stable
+            # objectNames added to be targetable. Track that as part of enabling
+            # this flow.
+            # ────────────────────────────────────────────────────────────────────
+        post_text: |
+          A green Variant A means today's `chat_module` source initializes cleanly
+          under the latest released `chat_ui`.
+
+  - title: "Variant B — fresh chat_ui + latest chat_module"
+    step: true
+    text: |
+      The mirror image: build `chat_ui` fresh from source as a **portable**
+      install, download the latest released `chat_module`, and assemble both into
+      `./testdata/chat-B`.
+    steps:
+      - title: "Build the fresh chat_ui (portable)"
+        run: "nix build 'github:logos-co/logos-chat-ui#install-portable' -o result-chatB-ui"
+        check_file: "result-chatB-ui/plugins/chat_ui"
+
+      - title: "Download the latest released chat_module"
+        run: "rm -rf dl-chatB && mkdir -p dl-chatB && ./result-lgpd/bin/lgpd download chat_module -o dl-chatB && ls dl-chatB"
+        expect_contains:
+          - "chat_module"
+
+      - title: "Assemble the user-dir"
+        text: |
+          Copy only the freshly-built `chat_ui` plugin dir into the user-dir's
+          `plugins/`, and install the downloaded module `.lgx` into its `modules/`.
+        run: |
+          chmod -R u+w testdata/chat-B 2>/dev/null || true
+          rm -rf testdata/chat-B
+          mkdir -p testdata/chat-B/modules testdata/chat-B/plugins
+          cp -r result-chatB-ui/plugins/chat_ui testdata/chat-B/plugins/
+          chmod -R u+w testdata/chat-B
+          ./result-lgpm/bin/lgpm --modules-dir testdata/chat-B/modules --ui-plugins-dir testdata/chat-B/plugins install --file dl-chatB/*.lgx
+          echo "--- modules ---"; ls testdata/chat-B/modules
+          echo "--- plugins ---"; ls testdata/chat-B/plugins
+        expect_contains:
+          - "chat_module"
+          - "chat_ui"
+
+      - title: "Launch the bundle and confirm chat initializes"
+        text: |
+          Same drive as Variant A, against `./testdata/chat-B`: the freshly-built
+          `chat_ui` initializing the latest released `chat_module`'s Waku node.
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/chat-B"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              screenshot: "xver-chatB-launch.png"
+
+            - name: "The chat app appears in the sidebar"
+              action: wait_for
+              texts: ["chat_ui"]
+              timeout: 30000
+
+            - name: "Open the chat app"
+              action: click
+              target: "chat_ui"
+
+            - name: "Chat view renders"
+              action: wait_for
+              texts: ["Get Intro Bundle"]
+              timeout: 30000
+              screenshot: "xver-chatB-open.png"
+
+            - name: "Chat node initializes (Connected)"
+              action: wait_for
+              texts: ["Connected"]
+              timeout: 120000
+              text: "The freshly-built `chat_ui` brings up the released `chat_module`'s Waku node and reaches **Connected**."
+              screenshot: "xver-chatB-connected.png"
+        post_text: |
+          A green Variant B means today's `chat_ui` source initializes the last
+          released `chat_module` cleanly. Together with Variant A, the chat pair is
+          verified (init scope) in both directions.
