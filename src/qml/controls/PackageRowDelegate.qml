@@ -123,6 +123,7 @@ ItemDelegate {
                 case "install":   return qsTr("Install")
                 case "upgrade":   return qsTr("Upgrade")
                 case "downgrade": return qsTr("Downgrade")
+                case "reinstall": return qsTr("Reinstall")
                 default:          return qsTr("Installed")
                 }
             }
@@ -139,6 +140,7 @@ ItemDelegate {
                 case "install":   return Theme.palette.primary
                 case "upgrade":   return Theme.palette.info
                 case "downgrade": return Theme.palette.info
+                case "reinstall": return Theme.palette.info
                 default:          return Theme.palette.textTertiary
                 }
             }

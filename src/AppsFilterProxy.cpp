@@ -1,7 +1,7 @@
 #include "AppsFilterProxy.h"
 
 #include "AppsModel.h"
-#include "InstallStage.h"
+#include "InstallEnums.h"
 
 #include <climits>
 
@@ -63,14 +63,17 @@ qlonglong AppsFilterProxy::totalDownloadBytes() const
         const QString action = data(mi, AppsModel::ActionRole).toString();
         if (action != QStringLiteral("install")
             && action != QStringLiteral("upgrade")
-            && action != QStringLiteral("downgrade")) {
+            && action != QStringLiteral("downgrade")
+            && action != QStringLiteral("reinstall")) {
             continue;
         }
         const QString toVersion = data(mi, AppsModel::ToVersionRole).toString();
         const QVariantList versions = data(mi, AppsModel::VersionsRole).toList();
         for (const QVariant& v : versions) {
             const QVariantMap entry = v.toMap();
-            if (entry.value("version").toString() == toVersion) {
+            const QString entryVersion =
+                entry.value("manifest").toMap().value("version").toString();
+            if (entryVersion == toVersion) {
                 total += entry.value("size").toLongLong();
                 break;
             }
@@ -161,15 +164,39 @@ void AppsFilterProxy::setExcludeMainUi(bool e)
     emit categoriesChanged();
 }
 
-void AppsFilterProxy::setRequiredPackages(const QStringList& names)
+void AppsFilterProxy::setRepositoryUrlFilter(const QString& url)
 {
-    const bool wasActive = m_requiredPackagesActive;
+    if (m_repositoryUrlFilter == url) return;
+    m_repositoryUrlFilter = url;
+    invalidateFilter();
+    emit repositoryUrlFilterChanged();
+}
+
+QStringList AppsFilterProxy::requiredPackages() const
+{
+    QStringList out;
+    out.resize(m_requiredPackagesOrder.size());
+    for (auto it = m_requiredPackagesOrder.cbegin();
+         it != m_requiredPackagesOrder.cend(); ++it) {
+        if (it.value() < 0 || it.value() >= out.size()) continue;
+        out[it.value()] = it.key();
+    }
+    return out;
+}
+
+void AppsFilterProxy::setRequiredPackages(const QVariantList& entries)
+{
     m_requiredPackagesActive = true;
-    if (wasActive && m_requiredPackages == names) return;
-    m_requiredPackages = names;
-    m_requiredPackagesIndex.clear();
-    for (int i = 0; i < names.size(); ++i)
-        m_requiredPackagesIndex.insert(names[i], i);
+    m_requiredPackagesByName.clear();
+    m_requiredPackagesOrder.clear();
+    int order = 0;
+    for (const QVariant& v : entries) {
+        const QVariantMap m = v.toMap();
+        const QString name = m.value("name").toString();
+        if (name.isEmpty()) continue;
+        m_requiredPackagesByName.insert(name, m.value("repositoryUrl").toString());
+        m_requiredPackagesOrder.insert(name, order++);
+    }
     invalidate();
     emit requiredPackagesChanged();
 }
@@ -218,12 +245,24 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
         if (!n.contains(m_searchText, Qt::CaseInsensitive)) return false;
     }
 
-    // requiredPackages membership (dialog use). The dialog proxy flips
-    // m_requiredPackagesActive on its first setRequiredPackages call;
-    // once active, only rows in m_requiredPackagesIndex pass
+    // Repository URL — exact match. Used by the App Manager's per-repo
+    // sections.
+    if (!m_repositoryUrlFilter.isEmpty()) {
+        const QString repo = src->data(idx, AppsModel::RepositoryUrlRole).toString();
+        if (repo != m_repositoryUrlFilter) return false;
+    }
+
+    // requiredPackages: name in map AND (pinned repo empty OR matches row).
+    // Without the repo pin, two repos publishing the same name both pass.
     if (m_requiredPackagesActive) {
         const QString n = src->data(idx, AppsModel::NameRole).toString();
-        if (!m_requiredPackagesIndex.contains(n)) return false;
+        const auto it = m_requiredPackagesByName.constFind(n);
+        if (it == m_requiredPackagesByName.constEnd()) return false;
+        if (!it.value().isEmpty()) {
+            const QString rowRepo =
+                src->data(idx, AppsModel::RepositoryUrlRole).toString();
+            if (rowRepo != it.value()) return false;
+        }
     }
 
     return true;
@@ -234,8 +273,8 @@ bool AppsFilterProxy::lessThan(const QModelIndex& left, const QModelIndex& right
     if (m_requiredPackagesActive) {
         const QString ln = sourceModel()->data(left,  AppsModel::NameRole).toString();
         const QString rn = sourceModel()->data(right, AppsModel::NameRole).toString();
-        return m_requiredPackagesIndex.value(ln, INT_MAX)
-             < m_requiredPackagesIndex.value(rn, INT_MAX);
+        return m_requiredPackagesOrder.value(ln, INT_MAX)
+             < m_requiredPackagesOrder.value(rn, INT_MAX);
     }
     return QSortFilterProxyModel::lessThan(left, right);
 }

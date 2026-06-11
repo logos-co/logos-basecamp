@@ -4,6 +4,7 @@
 #include <QString>
 #include <QtQml/qqml.h>
 
+// Transient: what the install pipeline is doing to a row right now.
 class InstallStage : public QObject {
     Q_OBJECT
 public:
@@ -12,7 +13,6 @@ public:
         Downloading,
         Queued,
         Installing,
-        Done,
         Installed,
         Failed,
     };
@@ -23,7 +23,6 @@ public:
         case Downloading: return QStringLiteral("downloading");
         case Queued:      return QStringLiteral("queued");
         case Installing:  return QStringLiteral("installing");
-        case Done:        return QStringLiteral("done");
         case Installed:   return QStringLiteral("installed");
         case Failed:      return QStringLiteral("failed");
         case None:        return QString();
@@ -35,9 +34,23 @@ public:
         if (s == QStringLiteral("downloading")) return Downloading;
         if (s == QStringLiteral("queued"))      return Queued;
         if (s == QStringLiteral("installing"))  return Installing;
-        if (s == QStringLiteral("done"))        return Done;
         if (s == QStringLiteral("installed"))   return Installed;
         if (s == QStringLiteral("failed"))      return Failed;
         return None;
     }
+};
+
+// Steady-state: catalog row vs disk comparison. Mirrors PMUI's
+// PackageTypes::InstallStatus
+class InstallStatus : public QObject {
+    Q_OBJECT
+public:
+    enum Value {
+        NotInstalled = 0,
+        Installed,            // installed AND this repo's rootHash matches disk
+        UpgradeAvailable,     // installed at older version than this repo offers
+        DowngradeAvailable,   // installed at newer version than this repo offers
+        DifferentHash,        // installed at SAME version, different rootHash → Reinstall
+    };
+    Q_ENUM(Value)
 };

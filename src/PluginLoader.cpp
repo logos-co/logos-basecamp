@@ -104,11 +104,6 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
                 QStringLiteral("Failed to load core dependencies for ") + request.name);
             return;
         }
-        if (m_coreModuleManager->loadedModules().contains(depName)) {
-            qDebug() << "Core dependency" << depName << "already loaded; skipping"
-                     << "for" << request.name;
-            continue;
-        }
         qDebug() << "Loading core dependency for" << request.name << ":" << depName;
         if (!m_coreModuleManager->loadModule(depName)) {
             qWarning() << "Failed to load core dependency" << depName

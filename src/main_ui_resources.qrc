@@ -31,6 +31,7 @@
         <file>qml/views/PluginInterfaceView.qml</file>
         <file>qml/views/SettingsView.qml</file>
         <file>qml/views/AppManagerView.qml</file>
+        <file>qml/views/RepositoriesView.qml</file>
         <file>qml/panels/AppGrid.qml</file>
         <file>qml/views/qmldir</file>
     </qresource>

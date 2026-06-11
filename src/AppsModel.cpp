@@ -41,7 +41,10 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
         return !r.installedVersion.isEmpty()
             && !r.latestVersion.isEmpty()
             && r.installedVersion != r.latestVersion;
-    case IsInstalledRole:      return !r.installedVersion.isEmpty();
+    case IsInstalledRole:      return !r.installedVersion.isEmpty()
+                                      && r.missingDeps.isEmpty();
+    case MissingDepsRole:      return r.missingDeps;
+    case InstallStatusRole:    return static_cast<int>(r.installStatus);
     case InstallTypeRole:      return r.installType;
     case ActionRole:           return r.action;
     case ToVersionRole:        return r.toVersion;
@@ -69,6 +72,8 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {LatestVersionRole,    "latestVersion"},
         {HasUpdateRole,        "hasUpdate"},
         {IsInstalledRole,      "isInstalled"},
+        {MissingDepsRole,      "missingDeps"},
+        {InstallStatusRole,    "installStatus"},
         {InstallTypeRole,      "installType"},
         {ActionRole,           "action"},
         {ToVersionRole,        "toVersion"},
@@ -95,30 +100,110 @@ QStringList AppsModel::categories() const
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Dotted-numeric compare. Mirrors PMUI's versionCmp at
+// repos/logos-package-manager-ui/src/RowActionResolver.h:31 so the App
+// Manager grid sees the same Upgrade/Downgrade verdict the Package
+// Manager view does. Kept file-local to avoid a header dependency
+// across repos.
+static int versionCmp(const QString& a, const QString& b)
+{
+    const QStringList aParts = a.split('.');
+    const QStringList bParts = b.split('.');
+    const int n = std::max(aParts.size(), bParts.size());
+    for (int i = 0; i < n; ++i) {
+        const int av = (i < aParts.size()) ? aParts[i].toInt() : 0;
+        const int bv = (i < bParts.size()) ? bParts[i].toInt() : 0;
+        if (av < bv) return -1;
+        if (av > bv) return  1;
+    }
+    return 0;
+}
+
+void AppsModel::recomputeInstallStatus(Row& r)
+{
+    // Mirrors PMUI's RowActionResolver verdict (Install/Installed/Upgrade/
+    // Downgrade/Reinstall) and extends it with per-dep hash checks so two
+    // repos publishing the same top-level rootHash but different dep hashes
+    // don't both read Installed.
+    if (r.installedVersion.isEmpty()) {
+        r.installStatus = InstallStatus::NotInstalled;
+        return;
+    }
+    if (!r.missingDeps.isEmpty()) {
+        // Partially installed → tile reads Install, click goes through the
+        // resolver and fills in the missing pieces.
+        r.installStatus = InstallStatus::NotInstalled;
+        return;
+    }
+    const QString releaseVersion = r.latestVersion;
+    const QString releaseHash    = r.versions.isEmpty()
+        ? QString()
+        : r.versions.first().toMap().value("rootHash").toString();
+    if (releaseVersion.isEmpty()) {
+        // No catalog version to compare against — best-effort Installed.
+        r.installStatus = InstallStatus::Installed;
+        return;
+    }
+    const int cmp = versionCmp(r.installedVersion, releaseVersion);
+    if (cmp < 0) { r.installStatus = InstallStatus::UpgradeAvailable;   return; }
+    if (cmp > 0) { r.installStatus = InstallStatus::DowngradeAvailable; return; }
+    if (!releaseHash.isEmpty() && !r.installedHash.isEmpty()
+        && releaseHash != r.installedHash) {
+        r.installStatus = InstallStatus::DifferentHash;
+        return;
+    }
+    // Same version + same (or unknown) top-level hash. A dep with a hash
+    // mismatch against this repo's catalog row demotes the tile to
+    // DifferentHash. Intentional: the lookup is scoped to THIS repo, not
+    // any repo — if a repo doesn't catalogue one of its declared deps,
+    // we trust whatever's on disk rather than punishing the tile with
+    // DifferentHash based on another repo's expected value.
+    for (const QVariant& v : r.dependencies) {
+        const QVariantMap dep = v.toMap();
+        const QString depName = dep.value("name").toString();
+        if (depName.isEmpty()) continue;
+        const int depIdx = rowOf(depName, r.repositoryUrl);
+        if (depIdx < 0) continue;   // dep not in this repo — see comment above
+        const Row& depRow = m_rows[depIdx];
+        if (depRow.versions.isEmpty()) continue;
+        const QString expectedDepHash =
+            depRow.versions.first().toMap().value("rootHash").toString();
+        const QString installedDepHash = depRow.installedHash;
+        if (expectedDepHash.isEmpty() || installedDepHash.isEmpty()) continue;
+        if (expectedDepHash != installedDepHash) {
+            r.installStatus = InstallStatus::DifferentHash;
+            return;
+        }
+    }
+    r.installStatus = InstallStatus::Installed;
+}
+
 void AppsModel::recomputeVersionDerivedFields(Row& r)
 {
-    r.latestVersion = r.versions.isEmpty()
-        ? QString()
-        : r.versions.first().toMap().value("version").toString();
+    QVariantMap firstManifest;
+    if (!r.versions.isEmpty()) {
+        firstManifest = r.versions.first().toMap().value("manifest").toMap();
+    }
+    r.latestVersion = firstManifest.value("version").toString();
 
     r.dependencies.clear();
-    if (r.versions.isEmpty()) return;
-    const QVariantMap manifest =
-        r.versions.first().toMap().value("manifest").toMap();
-    const QVariantList raw = manifest.value("dependencies").toList();
-    for (const QVariant& v : raw) {
-        QVariantMap entry;
-        if (v.typeId() == QMetaType::QString) {
-            entry["name"]    = v.toString();
-            entry["version"] = QString();
-        } else {
-            const QVariantMap m = v.toMap();
-            entry["name"]    = m.value("name").toString();
-            entry["version"] = m.value("version").toString();
+    if (!r.versions.isEmpty()) {
+        const QVariantList raw = firstManifest.value("dependencies").toList();
+        for (const QVariant& v : raw) {
+            QVariantMap entry;
+            if (v.typeId() == QMetaType::QString) {
+                entry["name"]    = v.toString();
+                entry["version"] = QString();
+            } else {
+                const QVariantMap m = v.toMap();
+                entry["name"]    = m.value("name").toString();
+                entry["version"] = m.value("version").toString();
+            }
+            if (entry.value("name").toString().isEmpty()) continue;
+            r.dependencies.append(entry);
         }
-        if (entry.value("name").toString().isEmpty()) continue;
-        r.dependencies.append(entry);
     }
+    recomputeInstallStatus(r);
 }
 
 // ── Mutation: bulk replace from catalog ────────────────────────────────────
@@ -192,7 +277,7 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             emit dataChanged(mi, mi, {
                 DisplayNameRole, DescriptionRole, CategoryRole, TypeRole,
                 IconUrlRole, VersionsRole, LatestVersionRole, HasUpdateRole,
-                DependenciesRole
+                DependenciesRole, InstallStatusRole
             });
         }
     }
@@ -201,38 +286,73 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
 
 // ── Mutation: on-disk state ────────────────────────────────────────────────
 
-void AppsModel::markInstalled(const QString& name, const QString& installedVersion)
+void AppsModel::markInstalled(const QString& name,
+                              const QString& installedVersion,
+                              const QString& installedHash)
 {
-    const int idx = rowOf(name);
-    if (idx < 0) return;
-    Row& r = m_rows[idx];
-    if (r.installedVersion == installedVersion) return;
-    r.installedVersion = installedVersion;
-    // HasUpdate is derived; emit both. Also IsInstalled.
-    const QModelIndex mi = index(idx);
-    emit dataChanged(mi, mi, {InstalledVersionRole, HasUpdateRole, IsInstalledRole});
+    bool anyChanged = false;
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        if (m_rows[idx].name != name) continue;
+        Row& r = m_rows[idx];
+        if (r.installedVersion == installedVersion
+            && r.installedHash == installedHash) continue;
+        r.installedVersion = installedVersion;
+        r.installedHash    = installedHash;
+        recomputeInstallStatus(r);
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {InstalledVersionRole, HasUpdateRole,
+                                  IsInstalledRole, InstallStatusRole});
+        anyChanged = true;
+    }
+    if (!anyChanged) return;
+
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        Row& other = m_rows[idx];
+        if (other.name == name) continue;
+        const InstallStatus::Value prev = other.installStatus;
+        recomputeInstallStatus(other);
+        if (other.installStatus != prev) {
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, {InstallStatusRole, IsInstalledRole});
+        }
+    }
 }
 
 void AppsModel::setInstallType(const QString& name, const QString& installType)
 {
-    const int idx = rowOf(name);
-    if (idx < 0) return;
-    Row& r = m_rows[idx];
-    if (r.installType == installType) return;
-    r.installType = installType;
-    const QModelIndex mi = index(idx);
-    emit dataChanged(mi, mi, {InstallTypeRole});
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        if (m_rows[idx].name != name) continue;
+        Row& r = m_rows[idx];
+        if (r.installType == installType) continue;
+        r.installType = installType;
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {InstallTypeRole});
+    }
 }
 
 void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
 {
-    const int idx = rowOf(name);
-    if (idx < 0) return;
-    Row& r = m_rows[idx];
-    if (r.iconUrl == iconUrl) return;
-    r.iconUrl = iconUrl;
-    const QModelIndex mi = index(idx);
-    emit dataChanged(mi, mi, {IconUrlRole});
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        if (m_rows[idx].name != name) continue;
+        Row& r = m_rows[idx];
+        if (r.iconUrl == iconUrl) continue;
+        r.iconUrl = iconUrl;
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {IconUrlRole});
+    }
+}
+
+void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
+{
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        if (m_rows[idx].name != name) continue;
+        Row& r = m_rows[idx];
+        if (r.missingDeps == missing) continue;
+        r.missingDeps = missing;
+        recomputeInstallStatus(r);
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {MissingDepsRole, IsInstalledRole, InstallStatusRole});
+    }
 }
 
 // ── Mutation: live install stage ──────────────────────────────────────────
@@ -241,14 +361,15 @@ void AppsModel::setInstallStage(const QString& name,
                                 InstallStage::Value stage,
                                 const QString& error)
 {
-    const int idx = rowOf(name);
-    if (idx < 0) return;
-    Row& r = m_rows[idx];
-    if (r.installStage == stage && r.installError == error) return;
-    r.installStage = stage;
-    r.installError = stage == InstallStage::Failed ? error : QString();
-    const QModelIndex mi = index(idx);
-    emit dataChanged(mi, mi, {InstallStageRole, InstallErrorRole});
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        if (m_rows[idx].name != name) continue;
+        Row& r = m_rows[idx];
+        if (r.installStage == stage && r.installError == error) continue;
+        r.installStage = stage;
+        r.installError = stage == InstallStage::Failed ? error : QString();
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {InstallStageRole, InstallErrorRole});
+    }
 }
 
 // ── Mutation: resolver overlay ─────────────────────────────────────────────
@@ -257,15 +378,23 @@ void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
 {
     clearResolverOverlay();
     for (const ResolverRow& src : rows) {
-        const int idx = rowOf(src.name);
+        const int idx = rowOf(src.name, src.repositoryUrl);
         if (idx < 0) continue;
         Row& r = m_rows[idx];
         r.action        = src.action;
         r.toVersion     = src.toVersion;
         r.isTopLevel    = src.isTopLevel;
         r.resolverError = src.resolverError;
+        // Wipe any sticky pipeline state from a previous session
+        QList<int> changedRoles{ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole};
+        if (r.installStage != InstallStage::None
+            || !r.installError.isEmpty()) {
+            r.installStage = InstallStage::None;
+            r.installError.clear();
+            changedRoles << InstallStageRole << InstallErrorRole;
+        }
         const QModelIndex mi = index(idx);
-        emit dataChanged(mi, mi, {ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole});
+        emit dataChanged(mi, mi, changedRoles);
     }
 }
 

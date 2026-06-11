@@ -245,6 +245,11 @@
           # refuses to load it. Build: nix build .#sandbox-test
           sandbox-test = import ./nix/sandbox-test.nix { inherit pkgs src; };
 
+          # Pure-model unit tests (AppsModel install-status logic, etc.). Same
+          # shape as sandbox-test — standalone QtTest project, no app launch,
+          # no IPC. Build: nix build .#unit-tests
+          unit-tests = import ./nix/unit-tests.nix { inherit pkgs src; };
+
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
@@ -284,6 +289,7 @@
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
+        unit-tests = self.packages.${system}.unit-tests;
         integration-test = self.packages.${system}.integration-test;
       });
 
