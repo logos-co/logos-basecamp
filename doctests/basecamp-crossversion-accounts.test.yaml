@@ -1,0 +1,325 @@
+name: "Cross-version check: freshly-built accounts against the latest released counterpart"
+output: basecamp-crossversion-accounts.md
+release: ""
+
+intro: |
+  [`logos-basecamp`](https://github.com/logos-co/logos-basecamp) hosts modules and
+  their UI plugins that ship **independently** through the package manager: the
+  `accounts_module` (core runtime) and `accounts_ui` (the QML app) are built,
+  released, and downloaded as separate `.lgx` packages. Because they evolve on
+  their own cadence, the risk is **cross-version drift** — a change to the module
+  that subtly breaks the released UI, or vice-versa.
+
+  The existing basecamp doc-tests only ever exercise the modules and plugins
+  **baked into a single build**, so that drift ships green. This doc-test closes
+  that gap for the **accounts** pair. It builds **one** side fresh from source,
+  downloads the **other** side as the latest released package from the package
+  manager, drops both into a basecamp user-dir, launches the portable basecamp
+  bundle against it, and drives the real Accounts app — in **both** directions:
+
+  - **Variant A:** freshly-built **`accounts_module`** + latest-downloaded **`accounts_ui`**
+  - **Variant B:** freshly-built **`accounts_ui`** + latest-downloaded **`accounts_module`**
+
+  Everything is **portable**. A freshly-built component can only coexist in the
+  same process as a downloaded catalog package if both — and the host — are the
+  portable variant (the dev `#app` / `#install` outputs rpath into `/nix/store`
+  and will not load alongside a portable package). So the host is the portable
+  bundle (`#bin-bundle-dir-inspector`, the inspector-enabled twin of the shippable
+  `#bin-bundle-dir`), the fresh side is built with `#install-portable`, and the
+  downloaded side is the catalog's portable `.lgx`. This is exactly the real
+  install scenario: a portable bundle with portable packages installed into it.
+
+  basecamp discovers extra modules/plugins from a **user-dir** passed via
+  `--user-dir`: anything under `<user-dir>/modules/<name>/` and
+  `<user-dir>/plugins/<name>/` is picked up at launch on top of the bundle's
+  baked-in set. We assemble that dir on disk from the fresh build + the download
+  (the in-app package manager is **not** driven here — its catalog refresh stalls
+  headless), then open the Accounts app from the sidebar and create a couple of
+  mnemonics. A green run is real evidence that this commit's source build of one
+  accounts component still interoperates with the last released version of the
+  other.
+
+what_you_build: "The portable basecamp bundle (inspector-enabled `#bin-bundle-dir-inspector`), plus a freshly-built portable `accounts_module`/`accounts_ui`, combined in a user-dir with the latest released counterpart downloaded from the package manager, and driven through the Accounts app."
+
+what_you_learn:
+  - How `accounts_module` and `accounts_ui` ship as separate packages and why cross-version compatibility needs its own test
+  - Why fresh-built and downloaded packages must both be the portable variant to coexist in one process
+  - How to build a component portably (`#install-portable`) into a `modules/<name>/` or `plugins/<name>/` layout
+  - How to download the latest released package with `lgpd` and install it with `lgpm`
+  - How basecamp's `--user-dir` discovers extra modules and UI plugins at launch
+  - How to drive the Accounts app headless with logos-qt-mcp (open the app, create mnemonics) and capture screenshots
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required."
+  - "**Network access.** Unlike the other basecamp doc-tests, this one downloads the latest released package from the package manager catalog, so it needs internet access."
+
+sections:
+  - title: "How the cross-version check works"
+    text: |
+      The accounts feature is two packages that ship separately:
+
+      ```
+      accounts_module   core runtime plugin   -> modules/accounts_module/
+      accounts_ui       QML app (depends on accounts_module) -> plugins/accounts_ui/
+      ```
+
+      To catch drift between them, each variant of this doc-test pins one side to
+      **today's source** and the other to the **latest release**:
+
+      ```
+      Variant A : fresh accounts_module   + downloaded accounts_ui
+      Variant B : fresh accounts_ui       + downloaded accounts_module
+      ```
+
+      Both are assembled into a basecamp **user-dir** (`modules/` + `plugins/`),
+      and the **portable** bundle is launched with `--user-dir` pointed at it. The
+      Accounts app then loads the freshly-built piece next to the released piece in
+      one process — which only works because everything is the portable variant.
+
+  - title: "Build the qt-mcp test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness the
+      doc-test uses to connect to the bundle's QML inspector and drive it. Build it
+      once and link it as `./result-mcp`.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the package-manager CLIs"
+    step: true
+    text: |
+      The download/install of the released counterpart is driven by the package
+      manager's CLIs: `lgpd` (downloader) fetches the latest `.lgx` from the
+      catalog, and `lgpm` (manager) installs it into the user-dir. We build them
+      from their flakes — `lgpm` from the **portable** CLI (`#cli-portable`), so it
+      selects the catalog's portable platform variant rather than a `-dev` one.
+    steps:
+      - title: "Build lgpd (package downloader)"
+        run: "nix build 'github:logos-co/logos-package-downloader#cli' -o result-lgpd"
+        check_file: "result-lgpd/bin/lgpd"
+      - title: "Build lgpm (package manager, portable)"
+        run: "nix build 'github:logos-co/logos-package-manager#cli-portable' -o result-lgpm"
+        check_file: "result-lgpm/bin/lgpm"
+
+  - title: "Build the basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit's portable bundle and link it as
+      `./result-bundle`. This is the self-contained `#bin-bundle-dir` you ship; to
+      automate the UI we build its inspector-enabled twin
+      (`#bin-bundle-dir-inspector`) — identical except the QML inspector is
+      compiled in. The bundle is the **host** the fresh + downloaded portable
+      packages load into.
+
+      > The `{release}` in the URL pins the build to this commit (the doc-test
+      > runner expands it; locally that is this checkout's `HEAD`, see `run.sh`).
+    steps:
+      - title: "Build the bundle"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Variant A — fresh accounts_module + latest accounts_ui"
+    step: true
+    text: |
+      Build `accounts_module` fresh from source as a **portable** install, download
+      the latest released `accounts_ui` from the package manager, and assemble both
+      into the user-dir `./testdata/acc-A`.
+    steps:
+      - title: "Build the fresh accounts_module (portable)"
+        text: |
+          `#install-portable` produces the same `modules/<name>/` layout basecamp
+          loads from a user-dir — a portable plugin plus its metadata.
+        run: "nix build 'github:logos-co/logos-accounts-module#install-portable' -o result-accA-mod"
+        check_file: "result-accA-mod/modules/accounts_module"
+
+      - title: "Download the latest released accounts_ui"
+        text: |
+          `lgpd` fetches the latest `accounts_ui` `.lgx` from the package manager
+          catalog into `./dl-accA`.
+        run: "rm -rf dl-accA && mkdir -p dl-accA && ./result-lgpd/bin/lgpd download accounts_ui -o dl-accA && ls dl-accA"
+        expect_contains:
+          - "accounts_ui"
+
+      - title: "Assemble the user-dir"
+        text: |
+          Copy the freshly-built module into the user-dir's `modules/`, and install
+          the downloaded UI `.lgx` into its `plugins/` with `lgpm`.
+        run: |
+          chmod -R u+w testdata/acc-A 2>/dev/null || true
+          rm -rf testdata/acc-A
+          mkdir -p testdata/acc-A/modules testdata/acc-A/plugins
+          cp -r result-accA-mod/modules/accounts_module testdata/acc-A/modules/
+          chmod -R u+w testdata/acc-A
+          ./result-lgpm/bin/lgpm --modules-dir testdata/acc-A/modules --ui-plugins-dir testdata/acc-A/plugins install --file dl-accA/*.lgx
+          echo "--- modules ---"; ls testdata/acc-A/modules
+          echo "--- plugins ---"; ls testdata/acc-A/plugins
+        expect_contains:
+          - "accounts_module"
+          - "accounts_ui"
+
+      - title: "Launch the bundle and create mnemonics"
+        text: |
+          Launch the portable bundle against `./testdata/acc-A`, open the Accounts
+          app from the sidebar, and create a couple of random mnemonics — each a
+          round-trip from the freshly-built `accounts_module` through the released
+          `accounts_ui`.
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/acc-A"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the assembled user-dir."
+              screenshot: "xver-accA-launch.png"
+
+            - name: "The accounts app appears in the sidebar"
+              action: wait_for
+              texts: ["accounts_ui"]
+              timeout: 30000
+
+            - name: "Open the Accounts app"
+              action: click
+              target: "accounts_ui"
+
+            - name: "Accounts Manager loads"
+              action: wait_for
+              texts: ["Accounts Manager", "Create Random Mnemonic"]
+              timeout: 30000
+              text: "Clicking the sidebar icon loads `accounts_ui` and auto-loads its `accounts_module` dependency."
+              screenshot: "xver-accA-open.png"
+
+            - name: "Create the first mnemonic"
+              action: click
+              target: "Create Random Mnemonic"
+
+            - name: "First mnemonic is created"
+              action: wait_for
+              texts: ["Status: Mnemonic created successfully"]
+              timeout: 30000
+              text: "The released UI calls the freshly-built module's `createRandomMnemonic` and reports success."
+              screenshot: "xver-accA-mnemonic1.png"
+
+            - name: "Create a second mnemonic"
+              action: click
+              target: "Create Random Mnemonic"
+
+            - name: "Second mnemonic is created"
+              action: wait_for
+              texts: ["Status: Mnemonic created successfully"]
+              timeout: 30000
+              screenshot: "xver-accA-mnemonic2.png"
+        post_text: |
+          A green Variant A means today's `accounts_module` source still serves the
+          latest released `accounts_ui`.
+
+  - title: "Variant B — fresh accounts_ui + latest accounts_module"
+    step: true
+    text: |
+      The mirror image: build `accounts_ui` fresh from source as a **portable**
+      install, download the latest released `accounts_module`, and assemble both
+      into `./testdata/acc-B`.
+    steps:
+      - title: "Build the fresh accounts_ui (portable)"
+        text: |
+          For a QML UI, `#install-portable` produces a `plugins/<name>/` layout with
+          the plugin, its `qml/` view, and metadata.
+        run: "nix build 'github:logos-co/logos-accounts-ui#install-portable' -o result-accB-ui"
+        check_file: "result-accB-ui/plugins/accounts_ui"
+
+      - title: "Download the latest released accounts_module"
+        run: "rm -rf dl-accB && mkdir -p dl-accB && ./result-lgpd/bin/lgpd download accounts_module -o dl-accB && ls dl-accB"
+        expect_contains:
+          - "accounts_module"
+
+      - title: "Assemble the user-dir"
+        text: |
+          Copy the freshly-built UI into the user-dir's `plugins/`, and install the
+          downloaded module `.lgx` into its `modules/` with `lgpm`. (We copy only
+          the `accounts_ui` plugin dir, so the fresh side is exactly the UI and the
+          module comes from the download.)
+        run: |
+          chmod -R u+w testdata/acc-B 2>/dev/null || true
+          rm -rf testdata/acc-B
+          mkdir -p testdata/acc-B/modules testdata/acc-B/plugins
+          cp -r result-accB-ui/plugins/accounts_ui testdata/acc-B/plugins/
+          chmod -R u+w testdata/acc-B
+          ./result-lgpm/bin/lgpm --modules-dir testdata/acc-B/modules --ui-plugins-dir testdata/acc-B/plugins install --file dl-accB/*.lgx
+          echo "--- modules ---"; ls testdata/acc-B/modules
+          echo "--- plugins ---"; ls testdata/acc-B/plugins
+        expect_contains:
+          - "accounts_module"
+          - "accounts_ui"
+
+      - title: "Launch the bundle and create mnemonics"
+        text: |
+          Same drive as Variant A, against `./testdata/acc-B`: this time the
+          freshly-built `accounts_ui` is calling the latest released
+          `accounts_module`.
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/acc-B"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              screenshot: "xver-accB-launch.png"
+
+            - name: "The accounts app appears in the sidebar"
+              action: wait_for
+              texts: ["accounts_ui"]
+              timeout: 30000
+
+            - name: "Open the Accounts app"
+              action: click
+              target: "accounts_ui"
+
+            - name: "Accounts Manager loads"
+              action: wait_for
+              texts: ["Accounts Manager", "Create Random Mnemonic"]
+              timeout: 30000
+              text: "The freshly-built `accounts_ui` loads and auto-loads the released `accounts_module`."
+              screenshot: "xver-accB-open.png"
+
+            - name: "Create the first mnemonic"
+              action: click
+              target: "Create Random Mnemonic"
+
+            - name: "First mnemonic is created"
+              action: wait_for
+              texts: ["Status: Mnemonic created successfully"]
+              timeout: 30000
+              screenshot: "xver-accB-mnemonic1.png"
+
+            - name: "Create a second mnemonic"
+              action: click
+              target: "Create Random Mnemonic"
+
+            - name: "Second mnemonic is created"
+              action: wait_for
+              texts: ["Status: Mnemonic created successfully"]
+              timeout: 30000
+              screenshot: "xver-accB-mnemonic2.png"
+        post_text: |
+          A green Variant B means today's `accounts_ui` source still works against
+          the last released `accounts_module`. Together with Variant A, the accounts
+          pair is verified in both directions.
