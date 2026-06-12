@@ -215,6 +215,32 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     // Mint a per-spawn UUID.
     const QString uiAuthToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
+    // Register the UI module's auth token with capability_module BEFORE
+    // spawning ui-host. Plugin ctors commonly schedule their first IPC
+    // calls via QTimer::singleShot(0, ...) which fire the instant
+    // ui-host enters its event loop. If we deferred this to onHostReady
+    // (called after ViewModuleHost::ready), the async IPC to
+    // capability_module would race those first calls — capability_module
+    // would reject them with "auth token not recognized" because the
+    // token hadn't been registered yet, leaving the plugin's first
+    // refresh silently empty. capability_module is fully loaded by this
+    // point (loaded during basecamp startup), so the synchronous IPC
+    // here is cheap and closes the race deterministically.
+    if (LogosAPIClient* cap = m_logosAPI
+            ? m_logosAPI->getClient(QStringLiteral("capability_module"))
+            : nullptr) {
+        const QString capToken = m_logosAPI->getTokenManager()
+            ->getToken(QStringLiteral("capability_module"));
+        if (capToken.isEmpty()) {
+            qWarning() << "PluginLoader: no capability_module token on host —"
+                          "UI module" << request.name
+                       << "will not be registered (calls will be rejected)";
+        } else if (!cap->informModuleToken(capToken, request.name, uiAuthToken)) {
+            qWarning() << "PluginLoader: capability_module.informModuleToken"
+                          "failed for UI module" << request.name;
+        }
+    }
+
     // Has a backend plugin — spawn a ViewModuleHost process.
     auto* viewHost = new ViewModuleHost(this);
     if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken)) {
@@ -227,22 +253,7 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
-    auto onHostReady = [this, request, bridge, viewHost, uiAuthToken]() {
-        if (LogosAPIClient* cap = m_logosAPI
-                ? m_logosAPI->getClient(QStringLiteral("capability_module"))
-                : nullptr) {
-            const QString capToken = m_logosAPI->getTokenManager()
-                ->getToken(QStringLiteral("capability_module"));
-            if (capToken.isEmpty()) {
-                qWarning() << "PluginLoader: no capability_module token on host —"
-                              "UI module" << request.name
-                           << "will not be registered (calls will be rejected)";
-            } else if (!cap->informModuleToken(capToken, request.name, uiAuthToken)) {
-                qWarning() << "PluginLoader: capability_module.informModuleToken"
-                              "failed for UI module" << request.name;
-            }
-        }
-
+    auto onHostReady = [this, request, bridge, viewHost]() {
         bridge->setViewModuleSocket(request.name, viewHost->socketName());
 
         const QString base = QFileInfo(request.mainFilePath).absolutePath()
