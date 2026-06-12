@@ -110,6 +110,16 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
             this,             &MainUIBackend::catalogInstallFailed);
 
+    // Package repositories — pure re-emits so QML binding to backend.*
+    connect(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
+            this,             &MainUIBackend::repositoriesChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
+            this,             &MainUIBackend::repositoriesLoadingChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
+            this,             &MainUIBackend::appsLoadingChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
+            this,             &MainUIBackend::repositoryOperationCompleted);
+
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
     //   * UIPluginManager on cascade-induced state changes (re-emits
@@ -237,6 +247,16 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
     m_uiPluginManager->cancelUnloadCascade(n);
     m_packageCoordinator->cancelPendingAction(n);
 }
+
+// Package repositories — delegations + cache pass-through.
+QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
+bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
+bool MainUIBackend::appsLoading() const
+{ return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
+void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
+void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
+void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
+void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 

@@ -211,6 +211,15 @@ test("sidebar: open multiple sections sequentially without failure", async (app)
   }
 });
 
+// --- App Manager ---
+test("app manager: panel + categories sidebar render on first open", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Apps", "Categories", "All"]); },
+    { timeout: 15000, interval: 500, description: "App Manager content" }
+  );
+});
+
 // --- Run ---
 
 run();

@@ -120,7 +120,7 @@ set(SOURCES
     PackageCoordinator.cpp
     AppsModel.cpp
     AppsFilterProxy.cpp
-    InstallStage.cpp
+    InstallEnums.cpp
     PluginLoader.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp

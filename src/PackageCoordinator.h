@@ -1,6 +1,6 @@
 #pragma once
 
-#include "InstallStage.h"
+#include "InstallEnums.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -62,6 +62,16 @@ public:
     QStringList missingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
 
+    // Last-known package_downloader repository list, refreshed on demand via
+    // refreshRepositories() and after every successful add/remove/toggle.
+    QVariantList repositories() const { return m_repositories; }
+    bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
+
+    // True until the first successful populateAppsModel() — drives the
+    // App Manager's loading placeholder. Stays false on subsequent refreshes
+    // so a background catalog re-fetch doesn't wipe the visible grid.
+    bool appsLoading() const { return m_appsLoading; }
+
 public slots:
     // Install confirmation flow. installPluginFromPath inspects the LGX,
     // branches between fresh-install and upgrade-with-dependents, and
@@ -114,6 +124,13 @@ public slots:
     // the initial uiPluginsFetched signal isn't emitted before listeners have
     // had a chance to connect.
     Q_INVOKABLE void refresh();
+
+    // Package-repository management — thin wrappers around the
+    // package_downloader IPC surface
+    Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void addRepository(const QString& url);
+    Q_INVOKABLE void removeRepository(const QString& url);
+    Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
 
 signals:
     // Tells MainUIBackend to refresh the uiModules / launcherApps / coreModules
@@ -171,6 +188,16 @@ signals:
                                                     const QStringList& installedDependents,
                                                     const QStringList& loadedDependents);
 
+    // Repository management — change-notify for the QML-facing cache and
+    // an outcome signal for add/remove/toggle (success or error string).
+    void repositoriesChanged();
+    void repositoriesLoadingChanged();
+    void appsLoadingChanged();
+    void repositoryOperationCompleted(const QString& operation,
+                                      const QString& url,
+                                      bool success,
+                                      const QString& error);
+
 private slots:
     // beforeUninstall / beforeUpgrade handlers. Both ack synchronously (to
     // cancel the module's 3s ack timer) then — if the ack landed — set the
@@ -212,6 +239,9 @@ private:
     // session.
     void subscribeToPackageInstallationEvents();
 
+    // Subscribe to package_downloader's catalogChanged event
+    void subscribeToPackageDownloaderEvents();
+
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
     // seeds the installType cache for the UI-plugin subset; the full-scan pass
     // in refreshDependencyInfo overwrites it with the core-inclusive version.
@@ -239,10 +269,23 @@ private:
     QString buildInstalledPackagesJson() const;
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;
+    static QString depAction(const QString& installedVersion,
+                             const QString& resolvedVersion,
+                             const QString& installedHash,
+                             const QString& resolvedHash);
+    static QVariantMap changeFromResolverEntry(const QVariantMap& entry,
+                                               const QString& installedVersion,
+                                               const QString& installedHash);
+    static bool installPluginSucceeded(const QVariantMap& installResult);
 
     void runResolverAndOpenDialog(const QString& name,
                                   const QString& repositoryUrl,
                                   const QVariantMap& versionPins);
+    void emitDialogMetadata(const QString& name,
+                            const QString& repositoryUrl,
+                            const QString& targetVersion,
+                            const QVariantMap& catalogRow,
+                            const QVariantList& changes);
     void installResultsSequential(const QVariantList& results,
                                   const QString& topLevelName,
                                   int index,
@@ -275,10 +318,19 @@ private:
     QVariantList m_installedPackagesCache;
     QSet<QString>            m_installedNameSet;
     QHash<QString, QString>  m_installedVersionByName;
+    QHash<QString, QString>  m_installedHashByName;   // name → rootHash of
+                                                     // what's on disk. Used
+                                                     // by populateAppsModel
+                                                     // to feed AppsModel's
+                                                     // DifferentHash detection.
     QHash<QString, int> m_dialogResolveEpoch;
     struct InstallSession {
         QString             name;
         InstallStage::Value stage = InstallStage::None;
     };
     QHash<QString, InstallSession> m_installSessions;
+
+    QVariantList m_repositories;
+    int          m_repositoriesLoadingCount = 0;
+    bool         m_appsLoading              = true;
 };

@@ -8,19 +8,39 @@ import Logos.Theme
 Rectangle {
     id: root
 
-    color: Theme.palette.background
+    property var    repositories:        []
+    property bool   repositoriesLoading: false
+
+    signal repositoryRefreshRequested()
+    signal repositoryAddRequested(string url)
+    signal repositoryRemoveRequested(string url)
+    signal repositoryEnabledRequested(string url, bool enabled)
+    signal repositoriesBecameVisible()
+
+    function reportRepositoryResult(operation, url, success, error) {
+        repositoriesView.reportOperationResult(operation, url, success, error)
+    }
+
+    function showRepositories() { d.selectedIndex = d.sectionRepositories }
 
     QtObject {
         id: d
 
         // Sub-views in the right pane. Order maps 1:1 to the StackLayout below.
+        readonly property int sectionDashboard:    0
+        readonly property int sectionModules:      1
+        readonly property int sectionRepositories: 2
+
         readonly property var sections: [
             { label: qsTr("Dashboard") },
-            { label: qsTr("Modules") }
+            { label: qsTr("Modules") },
+            { label: qsTr("Package Repositories") }
         ]
 
         property int selectedIndex: 0
     }
+
+    color: Theme.palette.background
 
     ColumnLayout {
         anchors.fill: parent
@@ -114,6 +134,22 @@ Rectangle {
                             backend.refreshUiModules()
                             backend.refreshCoreModules()
                         })
+                    }
+
+                    // 2 — Package Repositories.
+                    RepositoriesView {
+                        id: repositoriesView
+
+                        repositories: root.repositories
+                        loading:      root.repositoriesLoading
+
+                        onRefreshRequested:    root.repositoryRefreshRequested()
+                        onAddRequested:        url => root.repositoryAddRequested(url)
+                        onRemoveRequested:     url => root.repositoryRemoveRequested(url)
+                        onSetEnabledRequested: (url, enabled) =>
+                                                   root.repositoryEnabledRequested(url, enabled)
+                        onVisibleChanged:      if (visible)
+                                                   root.repositoriesBecameVisible()
                     }
                 }
             }

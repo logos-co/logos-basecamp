@@ -19,6 +19,10 @@ ItemDelegate {
 
         readonly property bool isInstalled: !!root.appData && root.appData.isInstalled !== false
         readonly property bool hasUpdate:   !!root.appData && root.appData.hasUpdate === true
+        readonly property int installStatus:
+            root.appData && root.appData.installStatus !== undefined
+                ? root.appData.installStatus
+                : InstallStatus.NotInstalled
         readonly property int installStage:
             root.appData && root.appData.installStage !== undefined
                 ? root.appData.installStage
@@ -96,16 +100,19 @@ ItemDelegate {
                     anchors.bottomMargin: Theme.spacing.tiny
                     visible: d.isInstalling
                              || d.installStage === InstallStage.Failed
-                             || !d.isInstalled
-                             || d.hasUpdate
-                    text: d.isInstalling                          ? qsTr("Installing…")
-                        : d.installStage === InstallStage.Failed  ? qsTr("Failed")
-                        : d.hasUpdate                             ? qsTr("Update")
-                                                                  : qsTr("Install")
-                    color: d.isInstalling                          ? Theme.palette.warning
-                         : d.installStage === InstallStage.Failed  ? Theme.palette.error
-                         : d.hasUpdate                             ? Theme.palette.info
-                                                                   : Theme.palette.accentOrange
+                             || d.installStatus !== InstallStatus.Installed
+                    text: d.isInstalling                                      ? qsTr("Installing…")
+                        : d.installStage === InstallStage.Failed              ? qsTr("Failed")
+                        : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
+                        : d.installStatus === InstallStatus.DowngradeAvailable    ? qsTr("Downgrade")
+                        : d.installStatus === InstallStatus.DifferentHash         ? qsTr("Reinstall")
+                                                                              : qsTr("Install")
+                    color: d.isInstalling                                      ? Theme.palette.warning
+                         : d.installStage === InstallStage.Failed              ? Theme.palette.error
+                         : d.installStatus === InstallStatus.UpgradeAvailable      ? Theme.palette.info
+                         : d.installStatus === InstallStatus.DowngradeAvailable    ? Theme.palette.info
+                         : d.installStatus === InstallStatus.DifferentHash         ? Theme.palette.info
+                                                                               : Theme.palette.accentOrange
                     radius: Theme.spacing.radiusXlarge
                     Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText
                 }

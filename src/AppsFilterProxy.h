@@ -5,25 +5,17 @@
 
 class AppsModel;
 
-// Filter proxy over AppsModel. One proxy = one fully-configured view.
-// All four filters are checked per-row; rows that fail any one are
-// hidden. Setters fire invalidateFilter automatically.
-//
-// Filters:
-//   typeFilter         — exact match against TypeRole (e.g. "ui_qml"). Empty = all.
-//   categoryFilter     — case-insensitive exact match against CategoryRole, capitalized.
-//                        "All" or empty = all categories.
-//   searchText         — case-insensitive substring against NameRole. Empty = no search.
-//   installStateFilter — "all" / "installed" / "notInstalled". Empty = all.
-//   excludeMainUi      — drop the "main_ui" placeholder row (basecamp itself).
+// Filter proxy over AppsModel. One proxy = one configured view; all filters
+// are AND-ed per-row and setters call invalidateFilter automatically.
 class AppsFilterProxy : public QSortFilterProxyModel {
     Q_OBJECT
     Q_PROPERTY(QString typeFilter         READ typeFilter         WRITE setTypeFilter         NOTIFY typeFilterChanged)
     Q_PROPERTY(QString categoryFilter     READ categoryFilter     WRITE setCategoryFilter     NOTIFY categoryFilterChanged)
     Q_PROPERTY(QString searchText         READ searchText         WRITE setSearchText         NOTIFY searchTextChanged)
     Q_PROPERTY(QString installStateFilter READ installStateFilter WRITE setInstallStateFilter NOTIFY installStateFilterChanged)
+    Q_PROPERTY(QString repositoryUrlFilter READ repositoryUrlFilter WRITE setRepositoryUrlFilter NOTIFY repositoryUrlFilterChanged)
     Q_PROPERTY(bool    excludeMainUi      READ excludeMainUi      WRITE setExcludeMainUi      NOTIFY excludeMainUiChanged)
-    Q_PROPERTY(QStringList requiredPackages READ requiredPackages WRITE setRequiredPackages NOTIFY requiredPackagesChanged)
+    Q_PROPERTY(QStringList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
     Q_PROPERTY(int  installedCount       READ installedCount NOTIFY installedCountChanged)
     Q_PROPERTY(bool hasResolutionErrors  READ hasResolutionErrors NOTIFY hasResolutionErrorsChanged)
     Q_PROPERTY(int  visibleCount         READ visibleCount    NOTIFY visibleCountChanged)
@@ -36,15 +28,17 @@ public:
     QString categoryFilter()     const { return m_categoryFilter; }
     QString searchText()         const { return m_searchText; }
     QString installStateFilter() const { return m_installStateFilter; }
+    QString repositoryUrlFilter() const { return m_repositoryUrlFilter; }
     bool    excludeMainUi()      const { return m_excludeMainUi; }
 
     void setTypeFilter(const QString& t);
     void setCategoryFilter(const QString& c);
     void setSearchText(const QString& s);
     void setInstallStateFilter(const QString& s);
+    void setRepositoryUrlFilter(const QString& url);
     void setExcludeMainUi(bool e);
-    QStringList requiredPackages() const { return m_requiredPackages; }
-    void setRequiredPackages(const QStringList& names);
+    QStringList requiredPackages() const;
+    Q_INVOKABLE void setRequiredPackages(const QVariantList& entries);
 
     int  installedCount() const;
     bool hasResolutionErrors() const;
@@ -59,6 +53,7 @@ signals:
     void categoryFilterChanged();
     void searchTextChanged();
     void installStateFilterChanged();
+    void repositoryUrlFilterChanged();
     void excludeMainUiChanged();
     void requiredPackagesChanged();
     void installedCountChanged();
@@ -78,8 +73,9 @@ private:
     QString m_categoryFilter;
     QString m_searchText;
     QString m_installStateFilter = QStringLiteral("all");
+    QString m_repositoryUrlFilter;
     bool    m_excludeMainUi      = true;
-    QStringList m_requiredPackages;
-    QHash<QString, int> m_requiredPackagesIndex; // name → position; rebuilt on setRequiredPackages
-    bool m_requiredPackagesActive = false;       // flipped true on first setRequiredPackages call
+    QHash<QString, QString> m_requiredPackagesByName;
+    QHash<QString, int>     m_requiredPackagesOrder;
+    bool m_requiredPackagesActive = false;
 };

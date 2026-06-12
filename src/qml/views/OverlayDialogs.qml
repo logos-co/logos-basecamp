@@ -198,10 +198,7 @@ Item {
         function onCatalogInstallStageChanged(name, stage) {
             if (!addApplicationDialog.visible) return;
             if (addApplicationDialog.metadata.name !== name) return;
-            // Session-level Done collapses into the dialog's Installed
-            // (the row state) so the button settles correctly.
-            addApplicationDialog.installStage =
-                (stage === InstallStage.Done ? InstallStage.Installed : stage);
+            addApplicationDialog.installStage = stage;
         }
         function onCatalogInstallFinished(name) {
             if (addApplicationDialog.visible

@@ -28,6 +28,7 @@ Dialog {
     function markInstallComplete() {
         root.metadata = Object.assign({}, root.metadata, {
             isInstalled: true,
+            installStatus: InstallStatus.Installed,
             installedVersion: d.targetVersion,
         })
     }
@@ -70,18 +71,28 @@ Dialog {
         readonly property bool   hasUpdate:
             d.installed && d.latestVersion.length > 0
             && d.installedVersion !== d.latestVersion
+        readonly property int installStatus:
+            root.metadata.installStatus !== undefined
+                ? root.metadata.installStatus
+                : InstallStatus.NotInstalled
 
         readonly property string actionMode: {
             if (d.installing) return "installing"
-            if (!d.installed) return "install"
-            if (d.hasUpdate)  return "update"
-            return "launch"
+            switch (d.installStatus) {
+            case InstallStatus.UpgradeAvailable:   return "update"
+            case InstallStatus.DowngradeAvailable: return "downgrade"
+            case InstallStatus.DifferentHash:      return "reinstall"
+            case InstallStatus.Installed:          return "launch"
+            }
+            return "install"
         }
         readonly property string actionText: {
             switch (d.actionMode) {
             case "installing": return d.stageLabel
             case "install":    return qsTr("Install")
             case "update":     return qsTr("Update")
+            case "downgrade":  return qsTr("Downgrade")
+            case "reinstall":  return qsTr("Reinstall")
             case "launch":     return qsTr("Launch")
             }
             return ""
