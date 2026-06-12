@@ -6,6 +6,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 
+import Basecamp.Backend
 import panels
 
 Rectangle {
@@ -13,8 +14,11 @@ Rectangle {
 
     // ─── Public API ───
     property var appsProxy: null
+    property var repositories: []
+    property bool loading: false
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
+    signal navigateToRepositories()
 
     QtObject {
         id: d
@@ -169,10 +173,17 @@ Rectangle {
                 radius: Theme.spacing.radiusXlarge
                 clip: true
 
+                LogosSpinner {
+                    anchors.centerIn: parent
+                    visible: root.loading
+                    running: root.loading
+                }
+
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: Theme.spacing.large
                     spacing: Theme.spacing.medium
+                    visible: !root.loading
 
                     // ─── Panel header: title + install-state tabs + view toggle ───
                     RowLayout {
@@ -203,6 +214,16 @@ Rectangle {
                         }
 
                         Item { Layout.fillWidth: true }
+
+                        LogosButton {
+                            Layout.minimumWidth: 100
+                            Layout.preferredWidth: 130
+                            Layout.maximumWidth: 130
+                            Layout.preferredHeight: 40
+                            radius: Theme.spacing.radiusLarge
+                            text: qsTr("Repositories")
+                            onClicked: root.navigateToRepositories()
+                        }
 
                         RowLayout {
                             spacing: 24
@@ -261,28 +282,68 @@ Rectangle {
                         ColumnLayout {
                             id: gridColumn
                             width: gridScroll.width
-                            spacing: Theme.spacing.medium
+                            spacing: Theme.spacing.large
 
-                            LogosText {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: implicitHeight
-                                visible: root.appsProxy && root.appsProxy.rowCount() > 0
-                                text: qsTr("Starter Apps")
-                                font.pixelSize: Theme.typography.subtitleText
-                                font.weight: Theme.typography.weightMedium
-                                color: Theme.palette.textSecondary
-                            }
+                            Repeater {
+                                model: root.repositories
+                                delegate: ColumnLayout {
+                                    required property var modelData
 
-                            AppGrid {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: implicitHeight
-                                modulesSource: root.appsProxy
-                                viewMode: d.viewMode
-                                onAppClicked: function(name, repositoryUrl) {
-                                    root.appClicked(name, repositoryUrl || "")
-                                }
-                                onAppManageRequested: function(name, repositoryUrl) {
-                                    root.manageAppRequested(name, repositoryUrl || "")
+                                    AppsFilterProxy {
+                                        id: repoFilter
+                                        sourceModel: root.appsProxy
+                                        repositoryUrlFilter: modelData.url || ""
+                                        excludeMainUi: false
+                                    }
+
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacing.medium
+                                    visible: modelData.enabled !== false
+                                             && repoFilter.visibleCount > 0
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacing.small
+
+                                        LogosText {
+                                            text: modelData.isDefault === true
+                                                ? qsTr("Starter Apps")
+                                                : (modelData.displayName
+                                                   || modelData.name
+                                                   || modelData.url
+                                                   || qsTr("Repository"))
+                                            font.pixelSize: Theme.typography.subtitleText
+                                            font.weight: Theme.typography.weightMedium
+                                            color: Theme.palette.textSecondary
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                        LogosText {
+                                            text: "(" + repoFilter.visibleCount + ")"
+                                            font.pixelSize: Theme.typography.secondaryText
+                                            color: Theme.palette.textTertiary
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 1
+                                        color: Theme.palette.borderSubtle
+                                        opacity: 0.5
+                                    }
+
+                                    AppGrid {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: implicitHeight
+                                        modulesSource: repoFilter
+                                        viewMode: d.viewMode
+                                        onAppClicked: function(name, repositoryUrl) {
+                                            root.appClicked(name, repositoryUrl || "")
+                                        }
+                                        onAppManageRequested: function(name, repositoryUrl) {
+                                            root.manageAppRequested(name, repositoryUrl || "")
+                                        }
+                                    }
                                 }
                             }
                         }

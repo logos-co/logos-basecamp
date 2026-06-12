@@ -1,6 +1,6 @@
 #pragma once
 
-#include "InstallStage.h"
+#include "InstallEnums.h"
 
 #include <QAbstractListModel>
 #include <QHash>
@@ -29,12 +29,19 @@ public:
         LatestVersionRole,       // versions[0].version
         HasUpdateRole,           // installedVersion != "" && installed != latest
         IsInstalledRole,         // installedVersion != ""
+        MissingDepsRole,         // QStringList of dep names whose LGX isn't on
+                                 //   disk (sourced from
+                                 //   PackageCoordinator::m_missingDepsByModule).
+                                 //   Empty when the install is complete.
+        InstallStatusRole,       // InstallStatus enum — per-row catalog-vs-disk
+                                 //   state (Install/Launch/Upgrade/Downgrade/
+                                 //   Reinstall in QML terms). PMUI mirror.
         InstallTypeRole,         // "embedded" | "user" | ""
         ActionRole,            
         ToVersionRole,
         IsTopLevelRole,
         ResolverErrorRole,
-        InstallStageRole,        // InstallStage::Value (int) — see InstallStage.h
+        InstallStageRole,        // InstallStage::Value (int) — see InstallEnums.h
         InstallErrorRole,        // failure message when InstallStage == Failed
     };
     Q_ENUM(Roles)
@@ -54,15 +61,23 @@ signals:
 public:
 
     void replaceCatalog(const QVariantList& catalogRows);
-    void markInstalled(const QString& name, const QString& installedVersion);
+
+    void markInstalled(const QString& name,
+                       const QString& installedVersion,
+                       const QString& installedHash = {});
     void setInstallType(const QString& name, const QString& installType);
     void setIconUrl(const QString& name, const QString& iconUrl);
+    void setMissingDeps(const QString& name, const QStringList& missing);
     void setInstallStage(const QString& name,
                          InstallStage::Value stage,
                          const QString& error = {});
 
+    void beginBulkInstalledUpdate();
+    void endBulkInstalledUpdate();
+
     struct ResolverRow {
         QString name;
+        QString repositoryUrl;
         QString action;
         QString toVersion;   
         bool    isTopLevel = false;
@@ -96,7 +111,10 @@ private:
 
         // On-disk state
         QString installedVersion;
+        QString installedHash;
         QString installType;
+        QStringList missingDeps;
+        InstallStatus::Value installStatus = InstallStatus::NotInstalled;
 
         // Live install pipeline state
         InstallStage::Value installStage = InstallStage::None;
@@ -112,7 +130,10 @@ private:
     static QString key(const QString& repo, const QString& name);
 
     void recomputeVersionDerivedFields(Row& r);
+    void recomputeInstallStatus(Row& r);
 
-    QList<Row>         m_rows;
+    QList<Row>          m_rows;
     QHash<QString, int> m_indexByKey;     // (repo + "\n" + name) → row index
+    QMultiHash<QString, int> m_indicesByName;
+    bool m_inBulkInstalledUpdate = false;
 };

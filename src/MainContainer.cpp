@@ -1,5 +1,6 @@
 #include "MainContainer.h"
-#include "InstallStage.h"
+#include "AppsFilterProxy.h"
+#include "InstallEnums.h"
 #include "MainUIBackend.h"
 #include "mdiview.h"
 
@@ -41,6 +42,10 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     qmlRegisterUncreatableType<InstallStage>("Basecamp.Backend", 1, 0,
         "InstallStage",
         QStringLiteral("Use InstallStage.Downloading etc.; not instantiable."));
+    qmlRegisterUncreatableType<InstallStatus>("Basecamp.Backend", 1, 0,
+        "InstallStatus",
+        QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));
+    qmlRegisterType<AppsFilterProxy>("Basecamp.Backend", 1, 0, "AppsFilterProxy");
     
     // Create backend
     m_backend = new MainUIBackend(m_logosAPI, this);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "InstallStage.h"
+#include "InstallEnums.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -87,6 +87,13 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QString sidebarTooltipText READ sidebarTooltipText WRITE setSidebarTooltipText NOTIFY sidebarTooltipChanged)
     Q_PROPERTY(qreal sidebarTooltipY READ sidebarTooltipY WRITE setSidebarTooltipY NOTIFY sidebarTooltipChanged)
 
+    // Package repositories
+    Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
+    Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
+
+    // App Manager loading state — true until the first catalog populate.
+    Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -111,6 +118,10 @@ public:
     // Sidebar tooltip accessors.
     QString sidebarTooltipText() const { return m_sidebarTooltipText; }
     qreal sidebarTooltipY() const { return m_sidebarTooltipY; }
+
+    QVariantList repositories() const;
+    bool repositoriesLoading() const;
+    bool appsLoading() const;
     void setSidebarTooltipText(const QString& text);
     void setSidebarTooltipY(qreal y);
 
@@ -182,6 +193,11 @@ public slots:
     void onPluginWindowClosed(const QString& pluginName);
     void setCurrentVisibleApp(const QString& pluginName);
 
+    Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void addRepository(const QString& url);
+    Q_INVOKABLE void removeRepository(const QString& url);
+    Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
+
 signals:
     void currentActiveSectionIndexChanged();
     void uiModulesChanged();
@@ -229,6 +245,14 @@ signals:
     void pluginWindowRemoveRequested(QWidget* widget);
     void pluginWindowActivateRequested(QWidget* widget);
     void sidebarTooltipChanged();
+
+    void repositoriesChanged();
+    void repositoriesLoadingChanged();
+    void appsLoadingChanged();
+    void repositoryOperationCompleted(const QString& operation,
+                                      const QString& url,
+                                      bool success,
+                                      const QString& error);
 
 private:
     // Navigation state — the only state this facade class holds.
