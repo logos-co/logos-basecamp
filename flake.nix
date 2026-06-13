@@ -6,6 +6,17 @@
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
+    logos-cpp-sdk.inputs.logos-protocol.follows = "logos-protocol";
+    logos-protocol = {
+      url = "github:logos-co/logos-protocol";
+      inputs.logos-nix.follows = "logos-nix";
+    };
+    logos-qt-sdk = {
+      url = "github:logos-co/logos-qt-sdk";
+      inputs.logos-nix.follows = "logos-nix";
+      inputs.logos-protocol.follows = "logos-protocol";
+      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
+    };
     logos-module.url = "github:logos-co/logos-module";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager";
@@ -31,7 +42,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-qt-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the main UI plugin so
@@ -70,6 +81,8 @@
         inherit system;
         pkgs = import nixpkgs { inherit system; };
         logosSdk = logos-cpp-sdk.packages.${system}.default;
+        logosProtocolPkg = logos-protocol.packages.${system}.default;
+        logosQtSdk = logos-qt-sdk.packages.${system}.default;
         logosModule = logos-module.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManagerLibrary = logos-package-manager.packages.${system}.lib;
@@ -95,23 +108,23 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
-            inherit pkgs logosSdk logosModule logosLiblogos;
+            inherit pkgs logosSdk logosProtocolPkg logosQtSdk logosModule logosLiblogos;
           };
           src = ./.;
 
           # Plugin packages (development builds)
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosLiblogos logosViewModuleRuntime buildInfo;
             distributed = true;
           };
 
@@ -135,7 +148,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -143,7 +156,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -167,7 +180,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -297,7 +310,7 @@
         integration-test = self.packages.${system}.integration-test;
       });
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc }: {
+      devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.cmake
@@ -315,6 +328,8 @@
           shellHook = ''
             # Nix package paths (pre-built for host system)
             export LOGOS_CPP_SDK_ROOT="${logosSdk}"
+            export LOGOS_PROTOCOL_ROOT="${logosProtocolPkg}"
+            export LOGOS_QT_SDK_ROOT="${logosQtSdk}"
             export LOGOS_MODULE_ROOT="${logosModule}"
             export LOGOS_LIBLOGOS_ROOT="${logosLiblogos}"
             export LOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}"
