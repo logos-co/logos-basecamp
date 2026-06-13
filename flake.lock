@@ -5241,11 +5241,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1781309226,
-        "narHash": "sha256-KjqTzEjjBYEn+QHG/0gLvp4A0/t3xgPav1OeTZFy6PU=",
+        "lastModified": 1781311603,
+        "narHash": "sha256-Ym3i52f5MWuZy8Qas3+zfoxz+mxQUsyW+Qol1no6kDs=",
         "owner": "logos-co",
         "repo": "logos-module",
-        "rev": "de634ce3d6a1a0fcf840c523534de85751f0bab1",
+        "rev": "a3e288a71d6f79445db598b0ffcca2ee435596b9",
         "type": "github"
       },
       "original": {
