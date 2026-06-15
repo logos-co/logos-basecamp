@@ -198,6 +198,52 @@ private slots:
         QCOMPARE(m_proxy->rowCount(), 1);   // (wallet_ui, repo1, wallet)
     }
 
+    // ── BUG-013: search must match the VISIBLE fields, not just name ──
+    // Users type what they see (display name / description), but the proxy
+    // only searched the internal package name, filtering out rows whose
+    // visible title or description matched. These pin the fix.
+    void searchText_matches_displayName()
+    {
+        QVariantMap r = row("wallet_ui", "r", "1.0", "H1");
+        r.insert("displayName", "My Wallet");
+        r.insert("description", "Manage your funds");
+        m_model->replaceCatalog({ r });
+        QCOMPARE(m_proxy->rowCount(), 1);
+
+        // "Wallet" appears in the display name but the internal name is
+        // "wallet_ui" — the old code matched it only by luck of the substring;
+        // use a display-only token to prove display-name search works.
+        m_proxy->setSearchText("My Wal");
+        QCOMPARE(m_proxy->rowCount(), 1);   // FAILS before the fix (name has no "My Wal")
+        m_proxy->setSearchText("");
+    }
+
+    void searchText_matches_description()
+    {
+        QVariantMap r = row("soulseek_ui", "r", "1.0", "H1");
+        r.insert("displayName", "Soulseek");
+        r.insert("description", "Peer to peer file sharing");
+        m_model->replaceCatalog({ r });
+        QCOMPARE(m_proxy->rowCount(), 1);
+
+        m_proxy->setSearchText("file sharing");
+        QCOMPARE(m_proxy->rowCount(), 1);   // FAILS before the fix
+        // A token in none of name/display/description still excludes the row.
+        m_proxy->setSearchText("nonexistent-zzz");
+        QCOMPARE(m_proxy->rowCount(), 0);
+        m_proxy->setSearchText("");
+    }
+
+    void searchText_still_matches_internal_name()
+    {
+        // Regression guard: internal-name search must keep working.
+        QVariantMap r = row("waku_module", "r", "1.0", "H1");
+        m_model->replaceCatalog({ r });
+        m_proxy->setSearchText("waku");
+        QCOMPARE(m_proxy->rowCount(), 1);
+        m_proxy->setSearchText("");
+    }
+
     // ── visibleCount stays in sync with rowCount ──────────────────────
     // QML bindings consume visibleCount; if it drifts the "Loading…"
     // collapse / "(N)" badge breaks. The proxy emits visibleCountChanged

@@ -296,7 +296,17 @@ void PackageCoordinator::confirmInstall()
     logos.package_manager.installPluginAsync(path, false,
         [self](QVariant result) {
             if (!self) return;
-            Q_UNUSED(result);
+            // installPlugin returns {path:"", error:"..."} on failure. Check it
+            // (non-empty path AND no error) and surface the reason via the signal.
+            const QVariantMap m = result.toMap();
+            const QString err = m.value("error").toString();
+            const bool ok = !m.value("path").toString().isEmpty() && err.isEmpty();
+            if (!ok) {
+                const QString name = m.value("name").toString();
+                qWarning() << "installPlugin failed:" << name << err;
+                emit self->catalogInstallFailed(name, err);
+                // Still refresh so any partial state is reflected accurately.
+            }
             if (self->m_coreModuleManager) self->m_coreModuleManager->refresh();
             self->fetchUiPluginMetadata();
         });
@@ -391,6 +401,15 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     m_pendingAction = {};
     m_pendingInstallPath.clear();
 
+    // Defer the cascade body off the QML click stack: unloadModuleWithDependents
+    // spins a nested event loop, and running that under the dialog's onClicked
+    // handler trips a QQmlData::destroyed qFatal. Pending state is cleared above;
+    // queue the rest so the click handler unwinds first.
+    QPointer<PackageCoordinator> selfDefer(this);
+    QMetaObject::invokeMethod(this,
+        [this, selfDefer, moduleName, isUpgrade, isInstallUpgrade, releaseTag, installPath]() {
+        if (!selfDefer) return;
+
     // Snapshot the loaded-dependents list BEFORE the cascade — once
     // unloadModuleWithDependents returns, the target is off the loaded-
     // modules list and the filter would come up empty. UI-plugin dependents
@@ -437,7 +456,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     // Hand the actual package-lifecycle work back to the module.
     if (!m_logosAPI) return;
     LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
+    QPointer<PackageCoordinator> self(selfDefer);
     if (isInstallUpgrade) {
         // Local LGX file upgrade — uninstall old, then install new from file.
         // Two chained async calls: uninstallPackage removes the old files,
@@ -483,6 +502,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     emit coreModulesChanged();
     emit uiModulesChanged();
     emit launcherAppsChanged();
+    }, Qt::QueuedConnection);  // run the cascade off the click stack
 }
 
 void PackageCoordinator::refresh()
@@ -1526,8 +1546,10 @@ void PackageCoordinator::installResultsSequential(const QVariantList& results,
                                     : (rowName + ": " + err));
             }
 
+            // Stop on the first failure rather than growing a half-installed
+            // set; report it now. (Rollback of installed packages is follow-up.)
             const bool isLast = (index + 1) >= results.size();
-            if (!isLast) {
+            if (!isLast && success) {
                 self->installResultsSequential(
                     results, topLevelName, index + 1, failures);
                 return;

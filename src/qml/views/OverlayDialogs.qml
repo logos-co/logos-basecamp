@@ -200,6 +200,13 @@ Item {
             if (addApplicationDialog.metadata.name !== name) return;
             addApplicationDialog.installStage = stage;
         }
+        // Capture the failure reason so the dialog can show why the install failed.
+        function onCatalogInstallFailed(name, error) {
+            if (!addApplicationDialog.visible) return;
+            if (addApplicationDialog.metadata.name !== name) return;
+            addApplicationDialog.installStage = InstallStage.Failed;
+            addApplicationDialog.installError = error;
+        }
         function onCatalogInstallFinished(name) {
             if (addApplicationDialog.visible
                 && addApplicationDialog.metadata.name === name) {

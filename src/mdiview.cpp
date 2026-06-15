@@ -104,6 +104,9 @@ void MdiView::addMdiWindow()
     child->setWindowTitle(tr("MDI Window %1").arg(windowCounter));
     
     QMdiSubWindow *subWindow = mdiArea->addSubWindow(child);
+    // Without this, closing only hides the subwindow and it lingers in
+    // subWindowList(), leaking and skewing tab/layout logic. Matches addPluginWindow().
+    subWindow->setAttribute(Qt::WA_DeleteOnClose);
     subWindow->setMinimumSize(200, 200);
     subWindow->show();
     

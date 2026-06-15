@@ -13,6 +13,9 @@ Dialog {
     property var metadata: ({})
     property var requiredPackagesModel: null
     property int installStage: InstallStage.None
+    // Reason for a failed install, shown in the footer. Set by OverlayDialogs'
+    // onCatalogInstallFailed; cleared on each (re)open.
+    property string installError: ""
 
     signal installRequested(string name, string repositoryUrl, var versionPins)
     signal launchRequested(string name)
@@ -22,6 +25,7 @@ Dialog {
         root.metadata = metadata_ || ({})
         d.pickedVersions = ({})
         root.installStage = root.metadata.installStage || InstallStage.None
+        root.installError = ""   // clear any stale error from a prior open
         open()
     }
 
@@ -114,8 +118,11 @@ Dialog {
 
         readonly property var selectedVersionRow: {
             const list = root.metadata.versions || []
+            // Version lives at manifest.version, not a top-level `version`;
+            // matching the latter always fell through to list[0] (newest).
             for (var i = 0; i < list.length; ++i) {
-                if (list[i].version === d.targetVersion) return list[i]
+                const v = (list[i] && list[i].manifest) ? list[i].manifest.version : undefined
+                if (v === d.targetVersion) return list[i]
             }
             return list.length > 0 ? list[0] : ({})
         }
@@ -378,12 +385,29 @@ Dialog {
         }
 
         // ─── Footer summary ───
+        // On failure, show the error here; falls back to a generic line if the
+        // backend didn't carry a reason.
         LogosText {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
             Layout.bottomMargin: Theme.spacing.large
+            visible: root.installStage === InstallStage.Failed
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.typography.secondaryText
+            color: Theme.palette.error
+            text: root.installError.length > 0
+                  ? qsTr("Install failed: %1").arg(root.installError)
+                  : qsTr("Install failed. Please try again.")
+        }
+        LogosText {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.spacing.large
+            Layout.rightMargin: Theme.spacing.large
+            Layout.topMargin: Theme.spacing.medium
+            Layout.bottomMargin: Theme.spacing.large
+            visible: root.installStage !== InstallStage.Failed
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textTertiary

@@ -138,6 +138,10 @@ signals:
     void unloadCascadeConfirmationRequested(const QString& name,
                                             const QStringList& loadedDependents);
 
+    // Re-emitted from onPluginLoadFailed so MainUIBackend can forward a load
+    // failure to the QML overlay instead of only logging it.
+    void pluginLoadFailedNotice(const QString& name, const QString& error);
+
     // MDI coordination — consumed by C++ MdiView via MainUIBackend's forwarders.
     void pluginWindowRequested(QWidget* widget, const QString& title);
     void pluginWindowRemoveRequested(QWidget* widget);

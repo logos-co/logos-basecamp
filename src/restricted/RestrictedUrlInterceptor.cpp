@@ -88,9 +88,23 @@ QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType type)
     }
 
     if (url.isLocalFile()) {
-        const QString local = QDir(url.toLocalFile()).canonicalPath();
+        const QString raw   = url.toLocalFile();
+        const QString local = QDir(raw).canonicalPath();
         if (local.isEmpty()) {
-            return url;
+            // Empty canonical path = the path doesn't exist. Qt's module
+            // resolution probes many non-existent qmldir candidates before
+            // hitting the real one, so let misses through (they can't load
+            // anything; a real hit re-enters here and is vetted then). Only an
+            // existing-but-uncanonicalisable path (symlink loop) fails closed.
+            if (!QFile::exists(raw)) {
+                return url;
+            }
+            qCWarning(lcBasecampSandbox).noquote()
+                << QStringLiteral("Blocked %1 import \"%2\": path exists but could not "
+                                  "be canonicalised and cannot be vetted against the "
+                                  "sandbox allowed roots.")
+                       .arg(QString::fromLatin1(dataTypeName(type)), raw);
+            return QUrl();
         }
         if (!isUnder(local, m_allowedRoots)) {
             qCWarning(lcBasecampSandbox).noquote()
