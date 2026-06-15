@@ -1,5 +1,0 @@
-module panels
-ModuleRow 1.0 ModuleRow.qml
-SidebarPanel 1.0 SidebarPanel.qml
-UiModulesTab 1.0 UiModulesTab.qml
-AppGrid 1.0 AppGrid.qml

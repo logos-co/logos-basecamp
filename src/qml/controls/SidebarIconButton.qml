@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import Logos.Theme
-import icons
+import Basecamp.Icons
 
 AbstractButton {
     id: root

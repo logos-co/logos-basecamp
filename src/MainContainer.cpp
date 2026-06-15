@@ -12,10 +12,7 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QDebug>
-#include <QDir>
-#include <QFile>
 #include <QQuickItem>
-#include <QProcessEnvironment>
 #include <QColor>
 #include <QPalette>
 #include <QTimer>
@@ -39,14 +36,6 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     // Set QML style
     QQuickStyle::setStyle("Basic");
 
-    qmlRegisterUncreatableType<InstallStage>("Basecamp.Backend", 1, 0,
-        "InstallStage",
-        QStringLiteral("Use InstallStage.Downloading etc.; not instantiable."));
-    qmlRegisterUncreatableType<InstallStatus>("Basecamp.Backend", 1, 0,
-        "InstallStatus",
-        QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));
-    qmlRegisterType<AppsFilterProxy>("Basecamp.Backend", 1, 0, "AppsFilterProxy");
-    
     // Create backend
     m_backend = new MainUIBackend(m_logosAPI, this);
     
@@ -116,26 +105,6 @@ MainContainer::~MainContainer()
     qDebug() << "MainContainer destroyed";
 }
 
-// Using this function to load qml files from local path instead of qrc
-QUrl MainContainer::resolveQmlUrl(const QString& qmlFile)
-{
-    QString qmlUiPath =  QProcessEnvironment::systemEnvironment().value("QML_UI", "");
-
-    if (!qmlUiPath.isEmpty()) {
-        QDir qmlDir(qmlUiPath);
-        QString fullPath = qmlDir.absoluteFilePath(qmlFile);
-
-        if (QFile::exists(fullPath)) {
-            qDebug() << "Loading from filesystem " << fullPath;
-            return QUrl::fromLocalFile(fullPath);
-        }
-    }
-
-    qDebug() << "Loading from resources " << qmlFile;
-    QString resourcePath = "qrc:/" + qmlFile;
-    return QUrl(resourcePath);
-}
-
 void MainContainer::setupUi()
 {
     // We would likely move this to qml and use Logos.Theme instead
@@ -150,24 +119,12 @@ void MainContainer::setupUi()
     m_mainLayout = new QHBoxLayout(this);
     m_mainLayout->setSpacing(0);
     m_mainLayout->setContentsMargins(4, 0, 4, 2);
-    // When QML_UI is set, add it to each QML engine's import path so nested
-    // components (e.g. SidebarIconButton) load from disk — no rebuild for UI changes.
-    QString qmlUiPath = QProcessEnvironment::systemEnvironment().value("QML_UI", "");
 
     // === SIDEBAR (QML) ===
     m_sidebarWidget = new QQuickWidget(this);
     m_sidebarWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    if (!qmlUiPath.isEmpty()) {
-        QString absPath = QDir(qmlUiPath).absolutePath();
-        m_sidebarWidget->engine()->addImportPath(absPath + "/qml");
-        m_sidebarWidget->engine()->addImportPath(absPath);
-        qDebug() << "DEV MODE: Added QML import paths:" << absPath + "/qml" << absPath;
-    } else {
-        m_sidebarWidget->engine()->addImportPath("qrc:/qml");
-    }
-    qDebug() << "Sidebar engine import paths:" << m_sidebarWidget->engine()->importPathList();
     m_sidebarWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_sidebarWidget->setSource(resolveQmlUrl("qml/panels/SidebarPanel.qml"));
+    m_sidebarWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Panels/qml/panels/SidebarPanel.qml")));
     m_sidebarWidget->setMinimumWidth(60);
     m_sidebarWidget->setMaximumWidth(60);
     // set clear color to sidebar so that rounded corners don't show white
@@ -189,15 +146,8 @@ void MainContainer::setupUi()
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    if (!qmlUiPath.isEmpty()) {
-        QString absPath = QDir(qmlUiPath).absolutePath();
-        m_contentWidget->engine()->addImportPath(absPath + "/qml");
-        m_contentWidget->engine()->addImportPath(absPath);
-    } else {
-        m_contentWidget->engine()->addImportPath("qrc:/qml");
-    }
     m_contentWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_contentWidget->setSource(resolveQmlUrl("qml/views/ContentViews.qml"));
+    m_contentWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Views/qml/views/ContentViews.qml")));
     m_contentStack->addWidget(m_contentWidget);
 
     // Index 2: placeholder for package_manager_ui — shows a centered
@@ -239,15 +189,8 @@ void MainContainer::setupUi()
     // normal UI; flipped off in onOverlayActiveChanged while a dialog
     // is visible so the dialog itself can receive clicks.
     m_overlayWidget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    if (!qmlUiPath.isEmpty()) {
-        QString absPath = QDir(qmlUiPath).absolutePath();
-        m_overlayWidget->engine()->addImportPath(absPath + "/qml");
-        m_overlayWidget->engine()->addImportPath(absPath);
-    } else {
-        m_overlayWidget->engine()->addImportPath("qrc:/qml");
-    }
     m_overlayWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_overlayWidget->setSource(resolveQmlUrl("qml/views/OverlayDialogs.qml"));
+    m_overlayWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Views/qml/views/OverlayDialogs.qml")));
 
     // Hook up the QML signal that tracks "any dialog visible" so we can
     // toggle mouse-passthrough on the overlay QQuickWidget.

@@ -47,7 +47,6 @@ private slots:
 
 private:
     void setupUi();
-    QUrl resolveQmlUrl(const QString& qmlFile);
 
     // Main layout
     QHBoxLayout* m_mainLayout;

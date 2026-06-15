@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
 import Logos.Icons
-import controls
+import Basecamp.Controls
 import Logos.Theme
 import Basecamp.Backend 1.0
 

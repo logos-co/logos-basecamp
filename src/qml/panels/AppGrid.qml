@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
 import Logos.Theme
-import controls
+import Basecamp.Controls
 
 Item {
     id: root

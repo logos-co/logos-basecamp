@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import Logos.Theme
 import Logos.Controls
-import controls
-import popups
+import Basecamp.Controls
+import Basecamp.Popups
 import Basecamp.Backend 1.0
 
 // Global dialog layer hosted in a transparent top-level QQuickWidget

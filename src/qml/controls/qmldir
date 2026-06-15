@@ -1,8 +1,0 @@
-module controls
-SidebarIconButton 1.0 SidebarIconButton.qml
-SidebarCircleButton 1.0 SidebarCircleButton.qml
-SidebarAppDelegate 1.0 SidebarAppDelegate.qml
-ConfirmationDialog 1.0 ConfirmationDialog.qml
-AppGridDelegate 1.0 AppGridDelegate.qml
-AppListDelegate 1.0 AppListDelegate.qml
-PackageRowDelegate 1.0 PackageRowDelegate.qml
