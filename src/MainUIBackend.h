@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InstallEnums.h"
+#include "AppsFilterProxy.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -8,7 +9,6 @@
 #include <QStringList>
 #include "logos_api.h"
 
-class AppsFilterProxy;
 class AppsModel;
 class CoreModuleManager;
 class PackageCoordinator;

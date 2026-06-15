@@ -2,6 +2,7 @@
 
 #include <QSortFilterProxyModel>
 #include <QString>
+#include <QtQml/qqml.h>
 
 class AppsModel;
 
@@ -9,6 +10,7 @@ class AppsModel;
 // are AND-ed per-row and setters call invalidateFilter automatically.
 class AppsFilterProxy : public QSortFilterProxyModel {
     Q_OBJECT
+    QML_ELEMENT
     Q_PROPERTY(QString typeFilter         READ typeFilter         WRITE setTypeFilter         NOTIFY typeFilterChanged)
     Q_PROPERTY(QString categoryFilter     READ categoryFilter     WRITE setCategoryFilter     NOTIFY categoryFilterChanged)
     Q_PROPERTY(QString searchText         READ searchText         WRITE setSearchText         NOTIFY searchTextChanged)

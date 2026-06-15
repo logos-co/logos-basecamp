@@ -1,8 +1,6 @@
 pragma Singleton
 import QtQuick
 
-import Logos.Icons
-
 QtObject {
     readonly property url logo:       Qt.resolvedUrl("basecamp.svg")
     readonly property url tents:      Qt.resolvedUrl("tent.png")

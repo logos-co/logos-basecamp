@@ -4,8 +4,8 @@ import QtQuick.Layouts
 
 import Logos.Theme
 
-import controls
-import icons
+import Basecamp.Controls
+import Basecamp.Icons
 
 Control {
     id: root

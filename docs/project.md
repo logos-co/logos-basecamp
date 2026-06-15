@@ -42,11 +42,10 @@ logos-basecamp/
 │   │   │   ├── CoreModulesView.qml       # Core modules list
 │   │   │   ├── PluginInterfaceView.qml   # Interface inspection (methods + events)
 │   │   │   └── SettingsView.qml          # Settings screen
-│   │   ├── controls/                     # Reusable QML controls
-│   │   │   ├── SidebarIconButton.qml
-│   │   │   ├── SidebarAppDelegate.qml
-│   │   │   └── SidebarCircleButton.qml
-│   │   └── main_ui_resources.qrc         # QML resource bundle
+│   │   └── controls/                     # Reusable QML controls
+│   │       ├── SidebarIconButton.qml
+│   │       ├── SidebarAppDelegate.qml
+│   │       └── SidebarCircleButton.qml
 │   ├── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
 │   │   ├── QmlSandbox.h/cpp               # applies the sandbox policy to a QML engine
 │   │   ├── DenyAllNetworkAccessManager.h/cpp

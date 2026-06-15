@@ -7,6 +7,8 @@
 // Transient: what the install pipeline is doing to a row right now.
 class InstallStage : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Use InstallStage.Downloading etc.; not instantiable.")
 public:
     enum Value {
         None = 0,
@@ -44,6 +46,8 @@ public:
 // PackageTypes::InstallStatus
 class InstallStatus : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Use InstallStatus.Installed etc.; not instantiable.")
 public:
     enum Value {
         NotInstalled = 0,

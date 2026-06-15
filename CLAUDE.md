@@ -8,12 +8,14 @@ A Qt/QML desktop application with a plugin-based architecture. It uses Nix for b
 # Build the app
 nix build
 
-# Run in dev mode (hot-reload QML, no disk cache)
-./run-dev.sh
-
 # Build + run directly
 nix build && ./result/bin/LogosBasecamp
 ```
+
+QML lives in build-time qt_add_qml_module modules (Basecamp.Controls, .Icons,
+.Panels, .Popups, .Views, .Backend) — bytecode is embedded in main_ui. No
+runtime QML disk cache, so the qrc-keyed cache staleness bug doesn't apply.
+The old QML_UI / run-dev.sh hot-reload path is gone; a replacement is queued.
 
 ## Testing
 

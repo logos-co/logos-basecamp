@@ -119,8 +119,6 @@ set(SOURCES
     UIPluginManager.cpp
     PackageCoordinator.cpp
     AppsModel.cpp
-    AppsFilterProxy.cpp
-    InstallEnums.cpp
     PluginLoader.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
@@ -129,7 +127,6 @@ set(SOURCES
     restricted/QmlSandbox.cpp
     mdichild.cpp
     mdiview.cpp
-    main_ui_resources.qrc
 )
 
 # Add SDK sources based on layout type
@@ -202,6 +199,98 @@ add_library(main_ui SHARED ${SOURCES})
 if(_cpp_sdk_is_source)
     add_dependencies(main_ui run_cpp_generator_main_ui)
 endif()
+
+set_source_files_properties(qml/icons/BasecampIcons.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
+qt_add_qml_module(basecamp_backend_qml
+    URI Basecamp.Backend
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Backend
+    SOURCES
+        InstallEnums.h
+        InstallEnums.cpp
+        AppsFilterProxy.h
+        AppsFilterProxy.cpp
+)
+
+qt_add_qml_module(basecamp_icons_qml
+    URI Basecamp.Icons
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Icons
+    QML_FILES
+        qml/icons/BasecampIcons.qml
+    RESOURCES
+        qml/icons/basecamp.svg
+        qml/icons/dashboard.svg
+        qml/icons/module.svg
+        qml/icons/settings.svg
+        qml/icons/tent.png
+        qml/icons/workspace.svg
+)
+
+qt_add_qml_module(basecamp_controls_qml
+    URI Basecamp.Controls
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Controls
+    QML_FILES
+        qml/controls/SidebarIconButton.qml
+        qml/controls/SidebarCircleButton.qml
+        qml/controls/SidebarAppDelegate.qml
+        qml/controls/ConfirmationDialog.qml
+        qml/controls/AppGridDelegate.qml
+        qml/controls/AppListDelegate.qml
+        qml/controls/PackageRowDelegate.qml
+)
+
+qt_add_qml_module(basecamp_panels_qml
+    URI Basecamp.Panels
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Panels
+    QML_FILES
+        qml/panels/ModuleRow.qml
+        qml/panels/SidebarPanel.qml
+        qml/panels/UiModulesTab.qml
+        qml/panels/AppGrid.qml
+)
+
+qt_add_qml_module(basecamp_popups_qml
+    URI Basecamp.Popups
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Popups
+    QML_FILES
+        qml/popups/AddApplicationDialog.qml
+)
+
+qt_add_qml_module(basecamp_views_qml
+    URI Basecamp.Views
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Views
+    QML_FILES
+        qml/views/ContentViews.qml
+        qml/views/DashboardView.qml
+        qml/views/ModulesView.qml
+        qml/views/CoreModulesView.qml
+        qml/views/OverlayDialogs.qml
+        qml/views/PluginInterfaceView.qml
+        qml/views/SettingsView.qml
+        qml/views/AppManagerView.qml
+        qml/views/RepositoriesView.qml
+)
+
+qt_import_qml_plugins(main_ui)
 
 # Add include directories before target_link_libraries
 target_include_directories(main_ui PRIVATE 
@@ -287,6 +376,18 @@ target_link_libraries(main_ui
         Qt6::QuickControls2
         component-interfaces
         ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
+        basecamp_backend_qml
+        basecamp_icons_qml
+        basecamp_controls_qml
+        basecamp_panels_qml
+        basecamp_popups_qml
+        basecamp_views_qml
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_backend_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_icons_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_controls_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_panels_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_popups_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_views_qmlplugin>
 )
 
 
