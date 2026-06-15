@@ -70,21 +70,23 @@ ItemDelegate {
                 anchors.fill: parent
                 visible: d.usableVersions.length > 0
                 enabled: !root.installing && !d.isError
-                model: d.usableVersions.map(function(v) { return v.manifest.version })
+                // Catalog entries can have manifest: null; guard every access
+                // or v.manifest.version throws a QML TypeError and blanks the picker.
+                model: d.usableVersions.map(function(v) { return (v && v.manifest) ? (v.manifest.version || "") : "" })
                 currentIndex: {
                     const list = d.usableVersions
                     for (var i = 0; i < list.length; ++i)
-                        if (list[i].manifest.version === d.toVersion) return i
+                        if (list[i] && list[i].manifest && list[i].manifest.version === d.toVersion) return i
                     return 0
                 }
                 displayText: {
                     const v = d.usableVersions[currentIndex]
-                    return v && v.manifest.version ? ("v." + v.manifest.version) : ""
+                    return (v && v.manifest && v.manifest.version) ? ("v." + v.manifest.version) : ""
                 }
                 onActivated: function(idx) {
                     const list = d.usableVersions
                     if (idx < 0 || idx >= list.length) return
-                    const picked = list[idx].manifest.version || ""
+                    const picked = (list[idx] && list[idx].manifest) ? (list[idx].manifest.version || "") : ""
                     if (!picked || picked === d.toVersion) return
                     root.versionPicked(d.rowName, picked)
                 }

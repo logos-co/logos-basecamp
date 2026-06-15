@@ -434,6 +434,37 @@ private slots:
                  "sandbox over-restricted: a file under the module's own install dir was blocked");
     }
 
+    // BUG-018 (revised): a NON-EXISTENT local path must PASS THROUGH, not be
+    // blocked. Qt's module resolution probes many non-existent
+    // "<importPath>/<Module>[.ver]/qmldir" candidates before finding the real
+    // one; blocking a miss (returning an invalid URL) aborts resolution and
+    // breaks legitimate imports like a ui_qml view's `import Panels`. A path
+    // that does not exist can't load anything — if it later resolves to a real
+    // file, that file is re-intercepted with a non-empty canonical path and
+    // vetted against the roots then. (An earlier fix blocked these outright and
+    // regressed every sandboxed view's imports — see RestrictedUrlInterceptor.)
+    void sandboxPassesThroughNonExistentProbe()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        // Inside the install dir but does not exist -> canonicalPath is empty.
+        // Must pass through unchanged so Qt can continue probing.
+        const QUrl ghost =
+            QUrl::fromLocalFile(dir.path() + "/does_not_exist/ghost.qml");
+        for (auto type : {QQmlAbstractUrlInterceptor::UrlString,
+                          QQmlAbstractUrlInterceptor::QmlFile}) {
+            const QUrl out = engine.interceptUrl(ghost, type);
+            QVERIFY2(out == ghost,
+                     qPrintable(QStringLiteral("non-existent probe candidate was not "
+                                               "passed through; got ") + out.toString()));
+        }
+    }
+
     // qrc: resources are engine builtins (the app's own bundled QML), never the
     // untrusted module's, and must always pass the interceptor untouched.
     void sandboxAllowsQrcScheme()

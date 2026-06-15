@@ -213,6 +213,8 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
 void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& error)
 {
     qWarning() << "Failed to load UI module" << name << ":" << error;
+    // Surface to the user, not just the log (forwarded to the QML overlay).
+    emit pluginLoadFailedNotice(name, error);
 }
 
 QStringList UIPluginManager::loadingModules() const
@@ -269,7 +271,13 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
     // Skip the cascade entirely during destruction — the QML that would
     // drive the dialog is gone and we need to actually tear down, not
     // await a confirmation that can never arrive.
-    if (!m_shuttingDown && !m_pendingUnload.active) {
+    //
+    // Scope the skip to a re-entry of the SAME module (the confirm path clears
+    // m_pendingUnload before re-calling); a cascade pending for another module
+    // must not suppress this one's dependent check.
+    const bool reentryForSameModule =
+        m_pendingUnload.active && m_pendingUnload.name == moduleName;
+    if (!m_shuttingDown && !reentryForSameModule) {
         const QStringList loadedDeps = loadedDependentsOf(moduleName);
         if (!loadedDeps.isEmpty()) {
             m_pendingUnload = {true, moduleName};
@@ -423,7 +431,11 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
         // silently orphans them. The confirmation dialog path is only
         // engaged when there's at least one loaded dependent, so leaf
         // unloads still take the fast path.
-        if (!m_pendingUnload.active) {
+        //
+        // Scope the re-entry guard to the SAME module (see unloadUiModule).
+        const bool reentryForSameModule =
+            m_pendingUnload.active && m_pendingUnload.name == moduleName;
+        if (!reentryForSameModule) {
             const QStringList loadedDeps = loadedDependentsOf(moduleName);
             if (!loadedDeps.isEmpty()) {
                 m_pendingUnload = {true, moduleName};

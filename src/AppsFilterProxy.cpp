@@ -239,10 +239,16 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
         if (src->data(idx, AppsModel::IsInstalledRole).toBool()) return false;
     }
 
-    // Search text (case-insensitive substring on name).
+    // Search the visible fields — users type what they see, not the internal
+    // package name. (DisplayNameRole falls back to name, so name search works.)
     if (!m_searchText.isEmpty()) {
-        const QString n = src->data(idx, AppsModel::NameRole).toString();
-        if (!n.contains(m_searchText, Qt::CaseInsensitive)) return false;
+        const QString n  = src->data(idx, AppsModel::NameRole).toString();
+        const QString dn = src->data(idx, AppsModel::DisplayNameRole).toString();
+        const QString ds = src->data(idx, AppsModel::DescriptionRole).toString();
+        if (!n.contains(m_searchText, Qt::CaseInsensitive)
+            && !dn.contains(m_searchText, Qt::CaseInsensitive)
+            && !ds.contains(m_searchText, Qt::CaseInsensitive))
+            return false;
     }
 
     // Repository URL — exact match. Used by the App Manager's per-repo

@@ -189,7 +189,8 @@ void CoreModuleManager::updateModuleStats()
     }
 
     QJsonDocument doc = QJsonDocument::fromJson(stats_json);
-    free(stats_json);
+    // logos_core_get_module_stats allocates with new char[], so free with delete[].
+    delete[] stats_json;
 
     if (doc.isNull()) {
         qWarning() << "Failed to parse module stats JSON";
