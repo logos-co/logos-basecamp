@@ -4,6 +4,7 @@
 #include <QMutex>
 #include <QSet>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantList>
 
 class LogosAPI;
@@ -55,6 +56,8 @@ signals:
                       ViewModuleHost* viewHost);
     void pluginLoadFailed(const QString& name, const QString& error);
     void loadingChanged();
+    void pluginPublished(const QString& name, const QUrl& viewUrl,
+                            QObject* bridge, ViewModuleHost* viewHost);
 
 private:
     void startLoad(const PluginLoadRequest& request);

@@ -30,6 +30,8 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
             this, &UIPluginManager::onPluginLoadFailed);
     connect(m_pluginLoader, &PluginLoader::loadingChanged,
             this, &UIPluginManager::loadingModulesChanged);
+    connect(m_pluginLoader, &PluginLoader::pluginPublished,
+            this, &UIPluginManager::pluginPublished);
 }
 
 UIPluginManager::~UIPluginManager()
@@ -648,6 +650,15 @@ QString UIPluginManager::resolveQmlViewPath(const QVariantMap& meta) const
     const QString viewField = meta.value("view").toString();
     if (viewField.isEmpty()) return QString();
     return QDir(installDir).filePath(viewField);
+}
+
+QUrl UIPluginManager::viewUrlOf(const QString& name) const
+{
+    const auto it = m_uiPluginMetadata.constFind(name);
+    if (it == m_uiPluginMetadata.cend()) return {};
+    const QString path = resolveQmlViewPath(*it);
+    if (path.isEmpty()) return {};
+    return QUrl::fromLocalFile(path);
 }
 
 void UIPluginManager::loadLegacyUiModule(const QString& moduleName)

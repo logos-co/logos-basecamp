@@ -303,6 +303,17 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
                                LogosQmlBridge* bridge,
                                ViewModuleHost* viewHost)
 {
+    if (request.name == QStringLiteral("package_manager_ui")) {
+        bridge->setParent(this);
+        setLoading(request.name, false);
+        emit pluginPublished(request.name,
+                                QUrl::fromLocalFile(request.qmlViewPath),
+                                bridge, viewHost);
+        emit pluginLoaded(request.name, nullptr, nullptr,
+                          UIPluginType::UiQml, viewHost);
+        return;
+    }
+
     auto* qmlWidget = new QQuickWidget;
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     if (QQmlEngine* engine = qmlWidget->engine()) {

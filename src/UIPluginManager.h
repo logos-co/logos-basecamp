@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
@@ -72,6 +73,11 @@ public:
     QVariantList launcherApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
+
+    // Resolve an installed ui_qml plugin's view to a file:// QUrl that QML
+    // can hand to a Loader. Returns an empty QUrl if the plugin is unknown
+    // or has no `view` entry.
+    QUrl viewUrlOf(const QString& name) const;
 
     // Cross-class helpers used by PackageCoordinator during cascade work.
 
@@ -146,6 +152,8 @@ signals:
     void pluginWindowRequested(QWidget* widget, const QString& title);
     void pluginWindowRemoveRequested(QWidget* widget);
     void pluginWindowActivateRequested(QWidget* widget);
+    void pluginPublished(const QString& name, const QUrl& viewUrl,
+                            QObject* bridge, ViewModuleHost* viewHost);
 
 private slots:
     void onPluginLoaded(const QString& name, QWidget* widget,

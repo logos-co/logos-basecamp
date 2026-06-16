@@ -4,6 +4,7 @@
 #include "AppsFilterProxy.h"
 
 #include <QObject>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
@@ -94,6 +95,10 @@ class MainUIBackend : public QObject {
     // App Manager loading state — true until the first catalog populate.
     Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
 
+    // Package Manager UI plugin's QML view URL. Empty until PluginLoader
+    // publishes the plugin
+    Q_PROPERTY(QUrl packageManagerViewUrl READ packageManagerViewUrl NOTIFY packageManagerViewUrlChanged)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -122,6 +127,8 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     bool appsLoading() const;
+    QUrl packageManagerViewUrl() const { return m_packageManagerViewUrl; }
+    void setPackageManagerViewUrl(const QUrl& url);
     void setSidebarTooltipText(const QString& text);
     void setSidebarTooltipY(qreal y);
 
@@ -249,6 +256,7 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
+    void packageManagerViewUrlChanged();
     void repositoryOperationCompleted(const QString& operation,
                                       const QString& url,
                                       bool success,
@@ -274,4 +282,5 @@ private:
 
     QString m_sidebarTooltipText;
     qreal m_sidebarTooltipY = 0;
+    QUrl m_packageManagerViewUrl;
 };

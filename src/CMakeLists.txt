@@ -279,6 +279,7 @@ qt_add_qml_module(basecamp_views_qml
     RESOURCE_PREFIX /qt/qml
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Views
     QML_FILES
+        qml/views/MainContainer.qml
         qml/views/ContentViews.qml
         qml/views/DashboardView.qml
         qml/views/ModulesView.qml

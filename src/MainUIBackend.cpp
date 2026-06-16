@@ -253,6 +253,12 @@ QVariantList MainUIBackend::repositories() const        { return m_packageCoordi
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
+void MainUIBackend::setPackageManagerViewUrl(const QUrl& url)
+{
+    if (m_packageManagerViewUrl == url) return;
+    m_packageManagerViewUrl = url;
+    emit packageManagerViewUrlChanged();
+}
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
