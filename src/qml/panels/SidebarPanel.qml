@@ -64,12 +64,12 @@ Control {
             source: BasecampIcons.logo
         }
 
-        // Pre-release version badge — only shown for builds whose version
-        // string carries a pre-release suffix (-rc, -alpha, -beta, -dev).
-        // Stable releases show nothing. Keeps screenshots and bug reports
-        // self-documenting without cluttering the production UI.
+        // Version badge — shown for any build whose version string is
+        // non-empty (pre-release CI builds, RCs, and stable releases alike).
+        // Keeps screenshots and bug reports self-documenting. Hidden only for
+        // dirty local dev builds where no version is baked in.
         Text {
-            visible: /(-rc|-alpha|-beta|-dev)/i.test(backend.buildVersion)
+            visible: backend.buildVersion.length > 0
             text: backend.buildVersion
             color: "#4B5563"
             font.pixelSize: 10
