@@ -7,7 +7,6 @@ import Logos.Icons
 import Logos.Theme
 
 import Basecamp.Backend
-import Basecamp.Panels
 
 Rectangle {
     id: root

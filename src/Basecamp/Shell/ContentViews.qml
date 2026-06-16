@@ -2,6 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
+import Basecamp.AppManager
+import Basecamp.Settings
+
 Item {
     id: root
 

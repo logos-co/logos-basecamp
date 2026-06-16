@@ -4,7 +4,6 @@ import QtQuick.Layouts
 
 import Logos.Theme
 
-import Basecamp.Controls
 import Basecamp.Icons
 
 Control {

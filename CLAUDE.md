@@ -10,12 +10,36 @@ nix build
 
 # Build + run directly
 nix build && ./result/bin/LogosBasecamp
+
+# Iterate on QML without rebuilding — relaunch to pick up edits.
+DEV_QML_PATH=$PWD/src nix build && DEV_QML_PATH=$PWD/src ./result/bin/LogosBasecamp
 ```
 
-QML lives in build-time qt_add_qml_module modules (Basecamp.Controls, .Icons,
-.Panels, .Popups, .Views, .Backend) — bytecode is embedded in main_ui. No
-runtime QML disk cache, so the qrc-keyed cache staleness bug doesn't apply.
-The old QML_UI / run-dev.sh hot-reload path is gone; a replacement is queued.
+QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
+.AppManager, .Settings, .Shell, plus .Backend for C++ types) — bytecode is
+embedded in main_ui. No runtime QML disk cache, so the qrc-keyed cache
+staleness bug doesn't apply.
+
+### `DEV_QML_PATH` — iterate on view layouts without rebuilding
+
+Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
+(typically `<repo>/src`, which contains `Basecamp/Sidebar/`,
+`Basecamp/Shell/`, etc.). MainContainer's three view-entry `setSource` calls
+will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
+embedded qrc resource. Relaunch the app to pick up edits.
+
+Covered entries (the three QQuickWidgets MainContainer creates):
+- `Basecamp/Sidebar/SidebarPanel.qml`
+- `Basecamp/Shell/ContentViews.qml`
+- `Basecamp/Shell/OverlayDialogs.qml`
+
+Sub-components imported by those entries (anything reached via
+`import Basecamp.<Feature>`) still load from the embedded qrc — qt_add_qml_module's
+auto-generated qmldirs live in the build dir, not the source tree, so the
+engine has no on-disk qmldir to prefer over the embedded one. Editing a
+delegate/widget inside e.g. `Basecamp.Settings` requires a `nix build`.
+Convention matches `logos-standalone-app`'s `DEV_QML_PATH` (see that repo's
+README) extended for our multi-entry layout.
 
 ## Testing
 
@@ -41,7 +65,7 @@ nix build .#integration-test -L
 - **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Dashboard, Modules, Settings)
 - **Plugins** appear as sidebar icons: `package_manager_ui`
 - Plugins are loaded from `~/Library/Application Support/Logos/LogosBasecampDev/plugins/`
-- Main UI is in `src/qml/`, with panels in `src/qml/panels/`
+- Main UI is in `src/Basecamp/`, organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
 
 ## C++ Architecture
 
@@ -89,13 +113,13 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 
 | File | Purpose |
 |------|---------|
-| `src/qml/views/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install confirm) — hosted in a transparent top-level QQuickWidget |
-| `src/qml/controls/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `installConfirm` |
-| `src/qml/panels/SidebarPanel.qml` | App icons + system nav buttons |
-| `src/qml/panels/UiModulesTab.qml` | UI Modules tab in the Modules view |
-| `src/qml/views/CoreModulesView.qml` | Core Modules tab with load/unload/uninstall/stats |
-| `src/qml/views/ContentViews.qml` | StackLayout switching between Dashboard, Modules, Settings |
-| `src/qml/panels/ModuleRow.qml` | Reusable row component for module lists |
+| `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install confirm) — hosted in a transparent top-level QQuickWidget |
+| `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `installConfirm` |
+| `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
+| `src/Basecamp/Settings/UiModulesTab.qml` | UI Modules tab in the Modules view |
+| `src/Basecamp/Settings/CoreModulesView.qml` | Core Modules tab with load/unload/uninstall/stats |
+| `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Modules, Settings |
+| `src/Basecamp/Settings/ModuleRow.qml` | Reusable row component for module lists |
 
 ## QML Inspector (MCP)
 
@@ -115,8 +139,7 @@ The app runs an inspector server (default: localhost:3768) that the `qml-inspect
 
 ## Key Directories
 
-- `src/qml/` - QML UI source files
-- `src/qml/panels/` - Panel components (e.g., SidebarPanel.qml)
+- `src/Basecamp/` - QML UI source files, organised by feature (Sidebar/AppManager/Settings/Shell/Icons)
 - `nix/` - Nix build configurations (app.nix, main-ui.nix, smoke-test.nix, integration-test.nix)
 - `logos-qt-mcp` - QML Inspector: MCP server, test framework, Qt plugin (separate repo, flake input)
 - `tests/` - UI integration tests

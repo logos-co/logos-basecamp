@@ -12,6 +12,9 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QQuickItem>
 #include <QColor>
 #include <QPalette>
@@ -21,7 +24,39 @@ namespace {
 constexpr int kAppsStackIndex     = 0;  // MdiView (C++ widget)
 constexpr int kContentStackIndex  = 1;  // ContentViews.qml (App Manager + Settings)
 constexpr int kModulesStackIndex  = 2;  // package_manager_ui (sandboxed QQuickWidget)
+
+// DEV_QML_PATH: when set, load QML view entry files from the filesystem source
+// tree instead of the embedded qrc resource
+QString devQmlRoot() {
+    const QString dev = QString::fromUtf8(qgetenv("DEV_QML_PATH")).trimmed();
+    if (dev.isEmpty()) return QString();
+    if (!QFileInfo(dev).isDir()) {
+        qWarning().noquote() << "DEV_QML_PATH is not a directory:" << dev
+                             << "- using embedded QML";
+        return QString();
+    }
+    return dev;
 }
+
+QUrl resolveQmlView(const QString& relPath, const QString& qrcFallback) {
+    const QString root = devQmlRoot();
+    if (root.isEmpty()) return QUrl(qrcFallback);
+    const QString fullPath = QDir(root).absoluteFilePath(relPath);
+    if (!QFile::exists(fullPath)) {
+        qWarning().noquote() << "DEV_QML_PATH set but" << relPath
+                             << "not found at" << fullPath
+                             << "- using embedded QML";
+        return QUrl(qrcFallback);
+    }
+    qInfo().noquote() << "DEV_QML_PATH override active:" << fullPath;
+    return QUrl::fromLocalFile(fullPath);
+}
+
+void applyDevQmlImportPath(QQmlEngine* engine) {
+    const QString root = devQmlRoot();
+    if (!root.isEmpty()) engine->addImportPath(root);
+}
+} // namespace
 
 MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     : QWidget(parent)
@@ -123,8 +158,11 @@ void MainContainer::setupUi()
     // === SIDEBAR (QML) ===
     m_sidebarWidget = new QQuickWidget(this);
     m_sidebarWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    applyDevQmlImportPath(m_sidebarWidget->engine());
     m_sidebarWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_sidebarWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Panels/qml/panels/SidebarPanel.qml")));
+    m_sidebarWidget->setSource(resolveQmlView(
+        QStringLiteral("Basecamp/Sidebar/SidebarPanel.qml"),
+        QStringLiteral("qrc:/qt/qml/Basecamp/Sidebar/Basecamp/Sidebar/SidebarPanel.qml")));
     m_sidebarWidget->setMinimumWidth(60);
     m_sidebarWidget->setMaximumWidth(60);
     // set clear color to sidebar so that rounded corners don't show white
@@ -146,8 +184,11 @@ void MainContainer::setupUi()
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    applyDevQmlImportPath(m_contentWidget->engine());
     m_contentWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_contentWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Views/qml/views/ContentViews.qml")));
+    m_contentWidget->setSource(resolveQmlView(
+        QStringLiteral("Basecamp/Shell/ContentViews.qml"),
+        QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
     m_contentStack->addWidget(m_contentWidget);
 
     // Index 2: placeholder for package_manager_ui — shows a centered
@@ -189,8 +230,11 @@ void MainContainer::setupUi()
     // normal UI; flipped off in onOverlayActiveChanged while a dialog
     // is visible so the dialog itself can receive clicks.
     m_overlayWidget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    applyDevQmlImportPath(m_overlayWidget->engine());
     m_overlayWidget->rootContext()->setContextProperty("backend", m_backend);
-    m_overlayWidget->setSource(QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Views/qml/views/OverlayDialogs.qml")));
+    m_overlayWidget->setSource(resolveQmlView(
+        QStringLiteral("Basecamp/Shell/OverlayDialogs.qml"),
+        QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OverlayDialogs.qml")));
 
     // Hook up the QML signal that tracks "any dialog visible" so we can
     // toggle mouse-passthrough on the overlay QQuickWidget.
