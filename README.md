@@ -234,3 +234,4 @@ The `.mcp.json` in this repo is pre-configured to use the MCP server from `resul
 This repository forms part of an experimental development environment and is not intended for production use.
 
 See the Logos Core repository for additional information about the experimental development environment: https://github.com/logos-co/logos-liblogos
+test change
