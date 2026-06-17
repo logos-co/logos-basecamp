@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [master]
 
+env:
+  ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
+  ATTIC_TOKEN: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+
 jobs:
   build-appimage:
     strategy:
@@ -26,11 +30,16 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            fallback = true
 
-      - uses: cachix/cachix-action@v15
+      - uses: ryanccn/attic-action@v0.4.1
         with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          cache: ${{ env.ATTIC_CACHE }}
+          inputs-from: "."
+          token: ${{ env.ATTIC_TOKEN }}
 
       - name: Build bin-appimage
         run: nix build .#bin-appimage
@@ -59,11 +68,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
-
-      - uses: cachix/cachix-action@v15
         with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          extra-conf: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            fallback = true
+
+      - uses: ryanccn/attic-action@v0.4.1
+        with:
+          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          cache: ${{ env.ATTIC_CACHE }}
+          inputs-from: "."
+          token: ${{ env.ATTIC_TOKEN }}
 
       - name: Build bin-macos-app
         run: nix build .#bin-macos-app
@@ -100,11 +116,16 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            fallback = true
 
-      - uses: cachix/cachix-action@v15
+      - uses: ryanccn/attic-action@v0.4.1
         with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          cache: ${{ env.ATTIC_CACHE }}
+          inputs-from: "."
+          token: ${{ env.ATTIC_TOKEN }}
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
@@ -116,11 +137,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
-
-      - uses: cachix/cachix-action@v15
         with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          extra-conf: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            fallback = true
+
+      - uses: ryanccn/attic-action@v0.4.1
+        with:
+          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          cache: ${{ env.ATTIC_CACHE }}
+          inputs-from: "."
+          token: ${{ env.ATTIC_TOKEN }}
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L

@@ -47,6 +47,10 @@ concurrency:
   group: doctests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
+  ATTIC_TOKEN: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+
 jobs:
   doctests:
     name: basecamp doc-tests (${{ matrix.os }})
@@ -64,12 +68,19 @@ jobs:
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Setup Cachix
-        uses: cachix/cachix-action@v15
         with:
-          name: logos-co
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          extra-conf: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            fallback = true
+
+      - name: Setup Attic cache
+        uses: ryanccn/attic-action@v0.4.1
+        with:
+          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          cache: ${{ env.ATTIC_CACHE }}
+          inputs-from: "."
+          token: ${{ env.ATTIC_TOKEN }}
 
       # The portable bundle (#bin-bundle-dir) is relocatable: it carries the app
       # and its Qt runtime, but NOT host graphics libraries (you can't bundle a
