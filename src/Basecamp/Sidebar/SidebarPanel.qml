@@ -63,19 +63,6 @@ Control {
             source: BasecampIcons.logo
         }
 
-        // Version badge — shown for any build whose version string is
-        // non-empty (pre-release CI builds, RCs, and stable releases alike).
-        // Keeps screenshots and bug reports self-documenting. Hidden only for
-        // dirty local dev builds where no version is baked in.
-        Text {
-            visible: backend.buildVersion.length > 0
-            text: backend.buildVersion
-            color: "#4B5563"
-            font.pixelSize: 10
-            Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: -Theme.spacing.large + 2
-        }
-
         SeparatorLine {}
 
         // Workspaces
