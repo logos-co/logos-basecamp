@@ -279,25 +279,25 @@ The escape and its fix are covered by the `sandbox-test` check (`tests/sandbox/`
 
 ### SidebarPanel
 
-**File:** `src/qml/panels/SidebarPanel.qml`
+**File:** `src/Basecamp/Sidebar/SidebarPanel.qml`
 
 **Purpose:** Left-hand navigation panel. Sections are filtered by type — "workspace" entries appear at the top, "view" entries at the bottom. Loaded apps appear in the middle with close/activate interactions.
 
 ### ContentViews
 
-**File:** `src/qml/views/ContentViews.qml`
+**File:** `src/Basecamp/Shell/ContentViews.qml`
 
 **Purpose:** Content area using `StackLayout` with four indices: MDI area (index 0), Dashboard (1), Modules (2), Settings (3). The active index is controlled by the sidebar selection.
 
 ### ModulesView
 
-**File:** `src/qml/views/ModulesView.qml`
+**File:** `src/Basecamp/Settings/ModulesView.qml`
 
 **Purpose:** Component management screen with two tabs: **UI Apps** (Qt plugins managed by Basecamp) and **Logos Modules** (process-isolated modules managed by liblogos). Lists available/loaded components with load/unload buttons, icons, and status indicators. The Logos Modules tab also shows CPU/memory stats for running modules. Includes "Install LGX Package" action.
 
 ### DashboardView / SettingsView
 
-**Files:** `src/qml/views/DashboardView.qml`, `src/qml/views/SettingsView.qml`
+**Files:** `src/Basecamp/Settings/DashboardView.qml`, `src/Basecamp/Settings/SettingsView.qml`
 
 **Purpose:** System views for overview information and application configuration.
 
