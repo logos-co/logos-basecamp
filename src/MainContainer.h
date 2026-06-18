@@ -66,6 +66,9 @@ private:
     // Content views (QML for Dashboard, Modules, PackageManager, Settings)
     QQuickWidget* m_contentWidget;
 
+    // Bottom toolbar (QML) — thin status strip below sidebar+content.
+    QQuickWidget* m_bottomToolbar;
+
     // Full-window overlay for the dependency-aware dialogs
     // (missing-deps popup, cascade-unload/uninstall confirmations).
     // Lives outside the content stack so it's visible regardless of

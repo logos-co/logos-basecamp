@@ -163,8 +163,8 @@ void MainContainer::setupUi()
     m_sidebarWidget->setSource(resolveQmlView(
         QStringLiteral("Basecamp/Sidebar/SidebarPanel.qml"),
         QStringLiteral("qrc:/qt/qml/Basecamp/Sidebar/Basecamp/Sidebar/SidebarPanel.qml")));
-    m_sidebarWidget->setMinimumWidth(60);
-    m_sidebarWidget->setMaximumWidth(60);
+    m_sidebarWidget->setMinimumWidth(80);
+    m_sidebarWidget->setMaximumWidth(80);
     // set clear color to sidebar so that rounded corners don't show white
     m_sidebarWidget->setClearColor(bgColor);
 
@@ -208,8 +208,22 @@ void MainContainer::setupUi()
     }
     m_contentStack->addWidget(pmuiPlaceholder);
 
-    // Add widgets to content layout
+    // === BOTTOM TOOLBAR
+    m_bottomToolbar = new QQuickWidget(contentArea);
+    m_bottomToolbar->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    m_bottomToolbar->setClearColor(Qt::transparent);
+    m_bottomToolbar->setAttribute(Qt::WA_TranslucentBackground);
+    applyDevQmlImportPath(m_bottomToolbar->engine());
+    m_bottomToolbar->rootContext()->setContextProperty("backend", m_backend);
+    m_bottomToolbar->setSource(resolveQmlView(
+        QStringLiteral("Basecamp/Shell/BottomToolbar.qml"),
+        QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/BottomToolbar.qml")));
+    m_bottomToolbar->setFixedHeight(50);
+
+    // Add widgets to content layout (4px gap between stack and bottom toolbar)
     contentLayout->addWidget(m_contentStack, 1);
+    contentLayout->addSpacing(4);
+    contentLayout->addWidget(m_bottomToolbar);
 
     // Add widgets to main layout
     m_mainLayout->addWidget(m_sidebarWidget);
