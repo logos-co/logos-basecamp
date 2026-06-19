@@ -123,6 +123,83 @@ Dialog {
         readonly property string counterText:
             d.installedDepsCount + " / " + d.totalDeps
 
+        readonly property int installFreshBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.installFreshCount : 0
+        readonly property int upgradeBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.upgradeCount : 0
+        readonly property int reinstallBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.reinstallCount : 0
+        readonly property int alreadyInstalledBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.alreadyInstalledCount : 0
+        readonly property int errorBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.errorCount : 0
+        readonly property int changingBuckets:
+            d.installFreshBuckets + d.upgradeBuckets + d.reinstallBuckets
+
+        function buildFooterText() {
+            if (d.installing) {
+                if (d.changingBuckets > 0)
+                    return qsTr("%1 %2 package(s)…")
+                        .arg(d.stageLabel).arg(d.changingBuckets)
+                return d.stageLabel
+            }
+
+            // Top-level + deps all match disk → nothing to do. The action
+            // button reads "Launch"; hide the footer entirely.
+            if (d.changingBuckets === 0) return ""
+
+            // Single-package (no separate deps): direct sentence tied to the
+            // top-level's actionMode.
+            if (d.totalDeps <= 1) {
+                switch (d.actionMode) {
+                case "install":
+                    return qsTr("%1 will be installed.").arg(d.targetDisplayName)
+                case "update":
+                    return d.installedVersion.length > 0 && d.targetVersion.length > 0
+                        ? qsTr("%1 will be updated from %2 to %3.")
+                            .arg(d.targetDisplayName).arg(d.installedVersion).arg(d.targetVersion)
+                        : qsTr("%1 will be updated.").arg(d.targetDisplayName)
+                case "downgrade":
+                    return d.installedVersion.length > 0 && d.targetVersion.length > 0
+                        ? qsTr("%1 will be downgraded from %2 to %3.")
+                            .arg(d.targetDisplayName).arg(d.installedVersion).arg(d.targetVersion)
+                        : qsTr("%1 will be downgraded.").arg(d.targetDisplayName)
+                case "reinstall":
+                    return qsTr("%1 will be reinstalled.").arg(d.targetDisplayName)
+                }
+                return ""
+            }
+
+            // Multi-package
+            const missing  = d.installFreshBuckets
+            const outdated = d.upgradeBuckets
+            const broken   = d.reinstallBuckets
+
+            let stateText, actionText
+            if (outdated > 0 && missing === 0 && broken === 0) {
+                stateText  = qsTr("have become outdated")
+                actionText = qsTr("please update your dependencies")
+            } else if (missing > 0 && outdated === 0 && broken === 0) {
+                stateText  = qsTr("are missing")
+                actionText = qsTr("please install your dependencies")
+            } else if (broken > 0 && outdated === 0 && missing === 0) {
+                stateText  = qsTr("need to be reinstalled")
+                actionText = qsTr("please reinstall your dependencies")
+            } else {
+                stateText  = qsTr("need updates")
+                actionText = qsTr("please update your dependencies")
+            }
+
+            return qsTr("%1 out of %2 required package dependencies %3, "
+                        + "%4 to be able to use the %5 application.")
+                .arg(d.changingBuckets)
+                .arg(d.totalDeps)
+                .arg(stateText)
+                .arg(actionText)
+                .arg(d.targetDisplayName)
+        }
+        readonly property string footerText: buildFooterText()
+
         readonly property var selectedVersionRow: {
             const list = root.metadata.versions || []
             // Version lives at manifest.version, not a top-level `version`;
@@ -410,6 +487,23 @@ Dialog {
                   ? qsTr("Install failed: %1").arg(root.installError)
                   : qsTr("Install failed. Please try again.")
         }
+        // Resolver couldn't resolve one or more deps. Surfaced as a
+        // warning-tone line
+        LogosText {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.spacing.large
+            Layout.rightMargin: Theme.spacing.large
+            Layout.topMargin: Theme.spacing.medium
+            Layout.bottomMargin: Theme.spacing.large
+            visible: root.installStage !== InstallStage.Failed && d.hasResolutionErrors
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.typography.secondaryText
+            color: Theme.palette.warning
+            text: qsTr("Some required packages could not be resolved. "
+                       + "Adjust versions or check your repositories.")
+        }
+
+        // Steady-state breakdown of what this install will do.
         LogosText {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
@@ -417,12 +511,12 @@ Dialog {
             Layout.topMargin: Theme.spacing.medium
             Layout.bottomMargin: Theme.spacing.large
             visible: root.installStage !== InstallStage.Failed
+                     && !d.hasResolutionErrors
+                     && d.footerText.length > 0
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textTertiary
-            text: qsTr("%1 of %2 packages installed. Missing packages will be downloaded "
-                       + "and installed as part of this install.")
-                  .arg(d.installedDepsCount).arg(d.totalDeps)
+            text: d.footerText
         }
     }
 }
