@@ -254,6 +254,7 @@ bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordi
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
+void MainUIBackend::refreshAppCatalog()                                    { m_packageCoordinator->refresh(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }

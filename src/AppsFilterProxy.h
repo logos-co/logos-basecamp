@@ -19,6 +19,11 @@ class AppsFilterProxy : public QSortFilterProxyModel {
     Q_PROPERTY(bool    excludeMainUi      READ excludeMainUi      WRITE setExcludeMainUi      NOTIFY excludeMainUiChanged)
     Q_PROPERTY(QStringList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
     Q_PROPERTY(int  installedCount       READ installedCount NOTIFY installedCountChanged)
+    Q_PROPERTY(int  installFreshCount      READ installFreshCount      NOTIFY breakdownChanged)
+    Q_PROPERTY(int  upgradeCount           READ upgradeCount           NOTIFY breakdownChanged)
+    Q_PROPERTY(int  reinstallCount         READ reinstallCount         NOTIFY breakdownChanged)
+    Q_PROPERTY(int  alreadyInstalledCount  READ alreadyInstalledCount  NOTIFY breakdownChanged)
+    Q_PROPERTY(int  errorCount             READ errorCount             NOTIFY breakdownChanged)
     Q_PROPERTY(bool hasResolutionErrors  READ hasResolutionErrors NOTIFY hasResolutionErrorsChanged)
     Q_PROPERTY(int  visibleCount         READ visibleCount    NOTIFY visibleCountChanged)
     Q_PROPERTY(qlonglong totalDownloadBytes READ totalDownloadBytes NOTIFY totalDownloadBytesChanged)
@@ -43,6 +48,11 @@ public:
     Q_INVOKABLE void setRequiredPackages(const QVariantList& entries);
 
     int  installedCount() const;
+    int  installFreshCount() const;
+    int  upgradeCount() const;
+    int  reinstallCount() const;
+    int  alreadyInstalledCount() const;
+    int  errorCount() const;
     bool hasResolutionErrors() const;
     int  visibleCount() const { return rowCount(); }
     qlonglong totalDownloadBytes() const;
@@ -59,6 +69,7 @@ signals:
     void excludeMainUiChanged();
     void requiredPackagesChanged();
     void installedCountChanged();
+    void breakdownChanged();
     void hasResolutionErrorsChanged();
     void visibleCountChanged();
     void totalDownloadBytesChanged();

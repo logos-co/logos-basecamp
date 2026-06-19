@@ -14,6 +14,7 @@ AppsFilterProxy::AppsFilterProxy(QObject* parent)
     auto bump = [this]() {
         emit visibleCountChanged();
         emit installedCountChanged();
+        emit breakdownChanged();
         emit hasResolutionErrorsChanged();
         emit totalDownloadBytesChanged();
     };
@@ -50,6 +51,61 @@ int AppsFilterProxy::installedCount() const
                    == InstallStage::Installed) {
             ++c;
         }
+    }
+    return c;
+}
+
+int AppsFilterProxy::installFreshCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("install")) ++c;
+    }
+    return c;
+}
+
+int AppsFilterProxy::upgradeCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("upgrade")) ++c;
+    }
+    return c;
+}
+
+int AppsFilterProxy::reinstallCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("reinstall")) ++c;
+    }
+    return c;
+}
+
+int AppsFilterProxy::alreadyInstalledCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("installed")) ++c;
+    }
+    return c;
+}
+
+int AppsFilterProxy::errorCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("error")) ++c;
     }
     return c;
 }

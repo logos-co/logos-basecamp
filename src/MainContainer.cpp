@@ -178,7 +178,7 @@ void MainContainer::setupUi()
     m_contentStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     
     // Index 0: MdiView (C++ widget)
-    m_mdiView = new MdiView(m_contentStack);
+    m_mdiView = new MdiView(m_backend, m_contentStack);
     m_contentStack->addWidget(m_mdiView);
     
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)

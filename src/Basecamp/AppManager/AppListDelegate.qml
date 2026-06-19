@@ -59,11 +59,6 @@ ItemDelegate {
         acceptedButtons: Qt.RightButton
         onTapped: root.manageRequested(d.nameText, d.repositoryUrl)
     }
-    TapHandler {
-        acceptedButtons: Qt.LeftButton
-        longPressThreshold: 0.6
-        onLongPressed: root.manageRequested(d.nameText, d.repositoryUrl)
-    }
 
     background: Rectangle {
         anchors.fill: parent

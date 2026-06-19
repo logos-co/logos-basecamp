@@ -47,13 +47,14 @@ Item {
                 backend.openApp(name, repositoryUrl, ({}), true)
             }
             onManageAppRequested: function(name, repositoryUrl) {
-                // Right-click / long-press — force the dialog open.
+                // Right-click — force the dialog open.
                 backend.openApp(name, repositoryUrl, ({}), false)
             }
             onNavigateToRepositories: {
                 backend.setCurrentActiveSectionIndex(root.sidebarSettings)
                 settingsView.showRepositories()
             }
+            onRefreshRequested: backend.refreshAppCatalog()
         }
 
         // Settings (backend index 3 -> internal index 1)

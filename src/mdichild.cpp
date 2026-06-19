@@ -1,47 +1,96 @@
 #include "mdichild.h"
-#include <QRandomGenerator>
+#include "MainUIBackend.h"
 #include <QApplication>
+#include <QHBoxLayout>
 #include <QPainter>
 #include <QPainterPath>
 
-MdiChild::MdiChild(QWidget *parent)
+MdiChild::MdiChild(MainUIBackend* backend, QWidget *parent)
     : QWidget(parent)
+    , m_backend(backend)
 {
-    // set background color
     setAutoFillBackground(true);
     QPalette p = palette();
     p.setColor(QPalette::Window, QColor("#171717"));
     setPalette(p);
 
-    // Create a layout for the child window
-    layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    
     setAttribute(Qt::WA_StyledBackground, false);
 
-    // Create a label with some content
-    contentLabel = new QLabel(this);
-    contentLabel->setStyleSheet("color: #A3A3A3;");
-    contentLabel->setAlignment(Qt::AlignCenter);
-    contentLabel->setText("MDI Child Window Content\n\n"
-                         "This is a sample MDI child window.\n"
-                         "You can add more windows using the 'Add Window' button.\n"
-                         "You can load a UI plugin by clicking on it");
-    
-    // Add the label to the layout
-    layout->addWidget(contentLabel);
-    
-    // Set the layout for this widget
+    layout = new QVBoxLayout(this);
+    layout->setContentsMargins(24, 24, 24, 24);
+    layout->setSpacing(8);
+    layout->addStretch();
+
+    titleLabel = new QLabel(this);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet("color: #FFFFFF; font-size: 24px; font-weight: 700;");
+
+    bodyLabel = new QLabel(this);
+    bodyLabel->setAlignment(Qt::AlignCenter);
+    bodyLabel->setStyleSheet("color: #A4A4A4; font-size: 14px; font-weight: 400;");
+    bodyLabel->setWordWrap(true);
+
+    QHBoxLayout* buttonRow = new QHBoxLayout();
+    buttonRow->setContentsMargins(0, 16, 0, 0);
+    installButton = new QPushButton(tr("Install now"), this);
+    installButton->setCursor(Qt::PointingHandCursor);
+    installButton->setFixedSize(200, 50);
+    installButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #262626;"
+        "  color: #FFFFFF;"
+        "  border: 1px solid #434343;"
+        "  border-radius: 16px;"
+        "  font-size: 12px;"
+        "  font-weight: 500;"
+        "  padding: 0 20px;"
+        "}"
+        "QPushButton:hover, QPushButton:pressed {"
+        "  border: 1px solid rgba(255, 136, 0, 0.30);"
+        "}");
+    buttonRow->addStretch();
+    buttonRow->addWidget(installButton);
+    buttonRow->addStretch();
+
+    layout->addWidget(titleLabel);
+    layout->addWidget(bodyLabel);
+    layout->addLayout(buttonRow);
+    layout->addStretch();
+
     setLayout(layout);
-    
-    // Set minimum size
     setMinimumSize(300, 200);
+
+    if (m_backend) {
+        connect(installButton, &QPushButton::clicked, m_backend, [this]() {
+            m_backend->setCurrentActiveSectionIndex(1);
+        });
+        connect(m_backend, &MainUIBackend::launcherAppsChanged,
+                this, &MdiChild::refreshState);
+    } else {
+        installButton->setEnabled(false);
+    }
+
+    refreshState();
 }
 
 MdiChild::~MdiChild()
 {
-} 
+}
+
+void MdiChild::refreshState()
+{
+    const bool hasApps = m_backend && !m_backend->launcherApps().isEmpty();
+
+    if (hasApps) {
+        titleLabel->setText(tr("Welcome back"));
+        bodyLabel->setText(tr("Launch an installed app from the sidebar to open it here."));
+        installButton->setVisible(false);
+    } else {
+        titleLabel->setText(tr("Welcome to Basecamp!"));
+        bodyLabel->setText(tr("Browse the catalog and install your first app to get started."));
+        installButton->setVisible(true);
+    }
+}
 
 void MdiChild::paintEvent(QPaintEvent* event)
 {
