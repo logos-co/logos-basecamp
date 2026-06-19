@@ -108,7 +108,7 @@ Item {
 
                                 // Plugin name — flex-sized.
                                 LogosText {
-                                    text: modelData.name
+                                    text: modelData.displayName || modelData.name
                                     font.pixelSize: 16
                                     color: "#e0e0e0"
                                     elide: Text.ElideRight

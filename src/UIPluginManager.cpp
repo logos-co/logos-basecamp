@@ -487,6 +487,9 @@ QVariantList UIPluginManager::launcherApps() const
 
         QVariantMap app;
         app["name"] = pluginName;
+        app["displayName"] = m_packageCoordinator
+            ? m_packageCoordinator->displayNameFor(pluginName)
+            : pluginName;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
         app["iconPath"] = pluginIconUrl(pluginName);
         // Sidebar red-cross marker source. The SidebarAppDelegate reads

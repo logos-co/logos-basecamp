@@ -38,14 +38,21 @@ Item {
 
     onAnyDialogOpenChanged: root.overlayActiveChanged(anyDialogOpen)
 
+    QtObject {
+        id: _dialogDeps
+        property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
+    }
+
     ConfirmationDialog {
         id: missingDepsDialog
         mode: "missingDeps"
+        displayNameLookup: _dialogDeps.displayNameLookup
     }
 
     ConfirmationDialog {
         id: unloadCascadeDialog
         mode: "unloadCascade"
+        displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUnloadCascade(name)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
@@ -53,6 +60,7 @@ Item {
     ConfirmationDialog {
         id: uninstallCascadeDialog
         mode: "uninstallCascade"
+        displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
         onContinueClickedMulti: (names) => backend.confirmUninstallMultiCascade(names)
@@ -70,6 +78,7 @@ Item {
     ConfirmationDialog {
         id: upgradeCascadeDialog
         mode: "upgradeCascade"
+        displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
@@ -77,6 +86,7 @@ Item {
     ConfirmationDialog {
         id: installConfirmDialog
         mode: "installConfirm"
+        displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: backend.confirmInstall()
         onCancelClicked: backend.cancelInstall()
     }

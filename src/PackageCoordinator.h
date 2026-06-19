@@ -61,6 +61,7 @@ public:
     QString     installType(const QString& name) const;
     QStringList missingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
+    QString     displayNameFor(const QString& name) const;
 
     // Last-known package_downloader repository list, refreshed on demand via
     // refreshRepositories() and after every successful add/remove/toggle.
@@ -305,6 +306,7 @@ private:
 
     // Package-state caches sourced from the package_manager module.
     QMap<QString, QString>     m_installTypeByModule;
+    QMap<QString, QString>     m_displayNameByModule;
     QMap<QString, QStringList> m_missingDepsByModule;
     QMap<QString, QStringList> m_dependentsByModule;
 

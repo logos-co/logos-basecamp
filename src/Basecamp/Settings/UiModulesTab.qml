@@ -140,7 +140,7 @@ Item {
 
                             // Name absorbs the remaining row width.
                             LogosText {
-                                text: modelData.name
+                                text: modelData.displayName || modelData.name
                                 font.pixelSize: 16
                                 color: "#e0e0e0"
                                 elide: Text.ElideRight

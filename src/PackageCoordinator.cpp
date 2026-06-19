@@ -213,6 +213,20 @@ QStringList PackageCoordinator::dependentsOf(const QString& name) const
     return m_dependentsByModule.value(name);
 }
 
+QString PackageCoordinator::displayNameFor(const QString& name) const
+{
+    {
+        const QString dn = m_displayNameByModule.value(name);
+        if (!dn.isEmpty()) return dn;
+    }
+    if (m_appsModel) {
+        const QVariantMap row = m_appsModel->rowDataByName(name, QString());
+        const QString dn = row.value("displayName").toString();
+        if (!dn.isEmpty()) return dn;
+    }
+    return name;
+}
+
 // ---------------------------------------------------------------------------
 // Install flow
 // ---------------------------------------------------------------------------
@@ -995,11 +1009,14 @@ void PackageCoordinator::refreshDependencyInfo()
         nameSet.reserve(packages.size());
         versionByName.reserve(packages.size());
         hashByName.reserve(packages.size());
+        QMap<QString, QString> displayNameMap;
         for (const QVariant& v : packages) {
             const QVariantMap pkg = v.toMap();
             const QString name = pkg.value("name").toString();
             if (name.isEmpty()) continue;
             typeMap[name] = pkg.value("installType").toString();
+            const QString dn = pkg.value("displayName").toString();
+            if (!dn.isEmpty()) displayNameMap[name] = dn;
             // moduleName is the key openApp / runResolverAndOpenDialog
             // use; fall back to name when the field is absent.
             const QString lookupName = pkg.value("moduleName").toString().isEmpty()
@@ -1012,6 +1029,7 @@ void PackageCoordinator::refreshDependencyInfo()
             if (!rootHash.isEmpty()) hashByName.insert(lookupName, rootHash);
         }
         self->m_installTypeByModule    = typeMap;
+        self->m_displayNameByModule    = std::move(displayNameMap);
         self->m_installedNameSet       = std::move(nameSet);
         self->m_installedVersionByName = std::move(versionByName);
         for (auto it = hashByName.cbegin(); it != hashByName.cend(); ++it) {

@@ -122,7 +122,7 @@ Control {
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
                             enabled: !loading
                             checked: modelData.name === (backend.currentVisibleApp || "")
-                            text: modelData.name
+                            text: modelData.displayName || modelData.name
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
@@ -143,7 +143,7 @@ Control {
                             loaded: false
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
                             enabled: !loading
-                            text: modelData.name
+                            text: modelData.displayName || modelData.name
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
