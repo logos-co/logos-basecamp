@@ -39,7 +39,15 @@ ItemDelegate {
         readonly property string monogram:      (d.nameText || "?").substring(0, 2).toUpperCase()
         readonly property bool   hasIcon:       d.iconUrl.length > 0
 
+        readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
+        readonly property color  tileColor:
+            d.packageColor.length > 0 ? d.packageColor
+                                      : AppColors.colorForApp(d.nameText)
+        readonly property real tileOpacity:
+            (d.isInstalled || root.hovered) ? 1.0 : 0.55
+
         readonly property int tileSize: 80
+        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
     }
 
     background: Item {}
@@ -71,25 +79,28 @@ ItemDelegate {
                 Layout.preferredHeight: d.tileSize
                 Layout.alignment: Qt.AlignHCenter
                 radius: Theme.spacing.radiusXlarge
-                color: Theme.palette.backgroundTertiary
+                color: d.tileColor
                 border.color: root.hovered ? Theme.palette.border : "transparent"
                 border.width: 1
-                opacity: d.isInstalled ? 1.0 : 0.55
+                opacity: d.tileOpacity
+                Behavior on opacity { NumberAnimation { duration: 150 } }
 
-                Image {
+                LogosIcon {
                     anchors.centerIn: parent
                     source: d.iconUrl
-                    sourceSize.width: 40
-                    sourceSize.height: 40
+                    color: Theme.palette.text
+                    brightness: 1.0
+                    width: 40
+                    height: 40
                     visible: d.hasIcon
                 }
 
                 LogosText {
                     anchors.centerIn: parent
                     text: d.monogram
-                    font.pixelSize: Theme.typography.subtitleText
-                    font.weight: Theme.typography.weightMedium
-                    color: Theme.palette.textTertiary
+                    font.pixelSize: d.monogramSize
+                    font.weight: Theme.typography.weightBold
+                    color: Theme.palette.text
                     visible: !d.hasIcon
                 }
 
@@ -100,7 +111,8 @@ ItemDelegate {
                     anchors.bottomMargin: Theme.spacing.tiny
                     visible: d.isInstalling
                              || d.installStage === InstallStage.Failed
-                             || d.installStatus !== InstallStatus.Installed
+                             || (d.installStatus !== InstallStatus.Installed
+                                 && (d.isInstalled || root.hovered))
                     text: d.isInstalling                                      ? qsTr("Installing…")
                         : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                         : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
@@ -113,6 +125,8 @@ ItemDelegate {
                          : d.installStatus === InstallStatus.DowngradeAvailable    ? Theme.palette.info
                          : d.installStatus === InstallStatus.DifferentHash         ? Theme.palette.info
                                                                                : Theme.palette.accentOrange
+
+                    backgroundColor: Theme.palette.surfaceRaised
                     radius: Theme.spacing.radiusXlarge
                     Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText
                 }

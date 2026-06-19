@@ -1,9 +1,9 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Effects
 
 import Logos.Theme
 import Logos.Controls
+import Basecamp.AppManager
 
 AbstractButton {
     id: root
@@ -16,6 +16,22 @@ AbstractButton {
     property bool hasMissingDeps: false
 
     implicitHeight: 50
+
+    QtObject {
+        id: d
+
+        readonly property string nameText: root.text || ""
+        readonly property string monogram: (d.nameText || "?").substring(0, 2).toUpperCase()
+        readonly property color tileColor: AppColors.colorForApp(d.nameText)
+        readonly property real uninstalledTileAlpha: 0.55
+        readonly property color tileBackgroundColor:
+            root.loaded ? d.tileColor
+                        : Theme.colors.getColor(d.tileColor, d.uninstalledTileAlpha)
+
+        readonly property int tileSize: 38
+        readonly property int iconSize: 19
+        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
+    }
 
     onHoveredChanged: {
         if (hovered && text) {
@@ -38,32 +54,36 @@ AbstractButton {
     }
 
     contentItem: Item {
-        Image {
-            id: appIcon
+        Rectangle {
+            id: tile
             anchors.centerIn: parent
-            width: 24
-            height: 24
-            source: root.icon.source
-            fillMode: Image.PreserveAspectFit
-            visible: !root.loading
-                     && !!root.icon.source
-                     && !(appIcon.status === Image.Null || appIcon.status === Image.Error)
-        }
-        MultiEffect {
-            anchors.fill: appIcon
-            source: appIcon
-            colorization: 1.0
-            colorizationColor: "transparent"
-            brightness: root.checked ? 0.5 : 0
-            visible: appIcon.visible
-        }
-        LogosText {
-            anchors.centerIn: parent
-            text: root.text.substring(0, 4)
-            font.pixelSize: Theme.typography.secondaryText
-            font.weight: Theme.typography.weightBold
-            color: Theme.palette.textSecondary
-            visible: !root.loading && !appIcon.visible
+            width: d.tileSize
+            height: d.tileSize
+            radius: Theme.spacing.radiusMedium
+            color: d.tileBackgroundColor
+
+            LogosIcon {
+                id: appIcon
+                anchors.centerIn: parent
+                source: root.icon.source
+                color: Theme.palette.text
+                brightness: 1.0
+                width: d.iconSize
+                height: d.iconSize
+                visible: !root.loading
+                         && !!root.icon.source
+                         && appIcon.imageItem.status !== Image.Null
+                         && appIcon.imageItem.status !== Image.Error
+            }
+
+            LogosText {
+                anchors.centerIn: parent
+                text: d.monogram
+                font.pixelSize: d.monogramSize
+                font.weight: Theme.typography.weightBold
+                color: Theme.palette.text
+                visible: !root.loading && !appIcon.visible
+            }
         }
 
         Item {
@@ -96,23 +116,18 @@ AbstractButton {
             }
         }
 
-        // Missing-dependencies overlay: small red circle with a white "x",
-        // drawn with QML primitives so we don't need to ship a new asset.
-        // Anchored top-right of the delegate; hidden while the plugin is
-        // loading (spinner animates there otherwise the two overlap).
         Rectangle {
             id: missingDepsMarker
             visible: root.hasMissingDeps && !root.loading
             width: 14
             height: 14
             radius: 7
-            color: "#d32f2f" // material red 700 — not in the current theme palette
+            color: "#d32f2f"
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.rightMargin: 6
             anchors.topMargin: 6
 
-            // White "x" — two thin rectangles rotated 45°/-45° inside the circle.
             Rectangle {
                 width: 8
                 height: 1.5
