@@ -38,6 +38,16 @@ ItemDelegate {
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
         readonly property string monogram:      (d.nameText || "?").substring(0, 2).toUpperCase()
         readonly property bool   hasIcon:       d.iconUrl.length > 0
+
+        readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
+        readonly property color  tileColor:
+            d.packageColor.length > 0 ? d.packageColor
+                                      : AppColors.colorForApp(d.nameText)
+        readonly property real tileOpacity:
+            (d.isInstalled || root.hovered) ? 1.0 : 0.55
+
+        readonly property int tileSize: 40
+        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
     }
 
     padding: 0
@@ -60,7 +70,6 @@ ItemDelegate {
         anchors.margins: Theme.spacing.tiny
         radius: Theme.spacing.radiusLarge
         color: root.hovered ? Theme.palette.surfaceRaised : "transparent"
-        opacity: d.isInstalled ? 1.0 : 0.7
     }
 
     contentItem: RowLayout {
@@ -69,26 +78,30 @@ ItemDelegate {
         spacing: Theme.spacing.medium
 
         Rectangle {
-            Layout.preferredWidth: 40
-            Layout.preferredHeight: 40
+            Layout.preferredWidth: d.tileSize
+            Layout.preferredHeight: d.tileSize
             Layout.alignment: Qt.AlignVCenter
             radius: Theme.spacing.radiusMedium
-            color: Theme.palette.backgroundTertiary
+            color: d.tileColor
+            opacity: d.tileOpacity
+            Behavior on opacity { NumberAnimation { duration: 150 } }
 
-            Image {
+            LogosIcon {
                 anchors.centerIn: parent
                 source: d.iconUrl
-                sourceSize.width: 24
-                sourceSize.height: 24
+                color: Theme.palette.text
+                brightness: 1.0
+                width: 24
+                height: 24
                 visible: d.hasIcon
             }
 
             LogosText {
                 anchors.centerIn: parent
                 text: d.monogram
-                font.pixelSize: Theme.typography.secondaryText
-                font.weight: Theme.typography.weightMedium
-                color: Theme.palette.textTertiary
+                font.pixelSize: d.monogramSize
+                font.weight: Theme.typography.weightBold
+                color: Theme.palette.text
                 visible: !d.hasIcon
             }
         }
@@ -120,9 +133,11 @@ ItemDelegate {
 
         LogosBadge {
             Layout.alignment: Qt.AlignVCenter
+            // Installed-but-stale states stay visible; NotInstalled only on hover.
             visible: d.isInstalling
                      || d.installStage === InstallStage.Failed
-                     || d.installStatus !== InstallStatus.Installed
+                     || (d.installStatus !== InstallStatus.Installed
+                         && (d.isInstalled || root.hovered))
             text: d.isInstalling                                      ? qsTr("Installing…")
                 : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                 : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
@@ -135,6 +150,7 @@ ItemDelegate {
                  : d.installStatus === InstallStatus.DowngradeAvailable    ? Theme.palette.info
                  : d.installStatus === InstallStatus.DifferentHash         ? Theme.palette.info
                                                                        : Theme.palette.accentOrange
+            backgroundColor: Theme.palette.surfaceRaised
         }
     }
 }

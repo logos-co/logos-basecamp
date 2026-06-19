@@ -67,6 +67,14 @@ Dialog {
             if (raw.indexOf("://") < 0) return ""
             return raw
         }
+        readonly property bool   hasIcon: d.targetIcon.length > 0
+        readonly property string packageColor: root.metadata.color || ""
+        readonly property color  tileColor:
+            d.packageColor.length > 0 ? d.packageColor
+                                      : AppColors.colorForApp(d.targetName)
+
+        readonly property int tileSize: 64
+        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
 
         readonly property bool   installed:        root.metadata.isInstalled === true
         readonly property string installedVersion: root.metadata.installedVersion || ""
@@ -216,25 +224,27 @@ Dialog {
 
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 64
-                    Layout.preferredHeight: 64
-                    color: Theme.palette.surfaceRaised
+                    Layout.preferredWidth: d.tileSize
+                    Layout.preferredHeight: d.tileSize
+                    color: d.tileColor
                     radius: Theme.spacing.radiusMedium
 
-                    Image {
+                    LogosIcon {
                         anchors.centerIn: parent
                         source: d.targetIcon
-                        sourceSize.width: 32
-                        sourceSize.height: 32
-                        visible: d.targetIcon.length > 0
+                        color: Theme.palette.text
+                        brightness: 1.0
+                        width: 32
+                        height: 32
+                        visible: d.hasIcon
                     }
                     LogosText {
                         anchors.centerIn: parent
-                        visible: d.targetIcon.length === 0
+                        visible: !d.hasIcon
                         text: (d.targetDisplayName || "?").substring(0, 2).toUpperCase()
-                        font.pixelSize: Theme.typography.primaryText
-                        font.weight: Theme.typography.weightMedium
-                        color: Theme.palette.textTertiary
+                        font.pixelSize: d.monogramSize
+                        font.weight: Theme.typography.weightBold
+                        color: Theme.palette.text
                     }
                 }
 
