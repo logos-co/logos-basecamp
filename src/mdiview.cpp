@@ -41,8 +41,9 @@ QIcon makePlusInCircleIcon(int size, QColor circleColor, QColor plusColor)
 }
 }
 
-MdiView::MdiView(QWidget *parent)
+MdiView::MdiView(MainUIBackend* backend, QWidget *parent)
     : QWidget(parent)
+    , m_backend(backend)
     , windowCounter(0)
     , m_mdiAddBtn(nullptr)
 {
@@ -99,7 +100,7 @@ void MdiView::setupUi()
 
 void MdiView::addMdiWindow()
 {
-    MdiChild *child = new MdiChild;
+    MdiChild *child = new MdiChild(m_backend);
     windowCounter++;
     child->setWindowTitle(tr("MDI Window %1").arg(windowCounter));
     

@@ -16,13 +16,14 @@
 
 class QHideEvent;
 class QShowEvent;
+class MainUIBackend;
 
 class MdiView : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MdiView(QWidget *parent = nullptr);
+    explicit MdiView(MainUIBackend* backend = nullptr, QWidget *parent = nullptr);
     ~MdiView();
     
     // Add a plugin widget as an MDI window
@@ -59,6 +60,7 @@ private:
     void hideEvent(QHideEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
+    MainUIBackend* m_backend;
     QMdiArea *mdiArea;
     QPushButton *addButton;
     QPushButton *toggleButton;
