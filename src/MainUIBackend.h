@@ -194,6 +194,7 @@ public slots:
     void setCurrentVisibleApp(const QString& pluginName);
 
     Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void refreshAppCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);

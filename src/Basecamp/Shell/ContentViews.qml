@@ -54,6 +54,7 @@ Item {
                 backend.setCurrentActiveSectionIndex(root.sidebarSettings)
                 settingsView.showRepositories()
             }
+            onRefreshRequested: backend.refreshAppCatalog()
         }
 
         // Settings (backend index 3 -> internal index 1)

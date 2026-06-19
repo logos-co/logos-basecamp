@@ -18,6 +18,7 @@ Rectangle {
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
     signal navigateToRepositories()
+    signal refreshRequested()
 
     QtObject {
         id: d
@@ -213,6 +214,22 @@ Rectangle {
                         }
 
                         Item { Layout.fillWidth: true }
+
+                        LogosIconButton {
+                            iconSource: LogosIcons.refresh
+                            size: 36
+                            iconSize: 18
+                            iconColor: Theme.palette.textTertiary
+                            background: Rectangle {
+                                radius: Theme.spacing.radiusLarge
+                                color: parent.hovered ? Theme.palette.backgroundButton
+                                                      : "transparent"
+                            }
+                            ToolTip.text: qsTr("Reload apps")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 500
+                            onClicked: root.refreshRequested()
+                        }
 
                         LogosButton {
                             Layout.minimumWidth: 100
