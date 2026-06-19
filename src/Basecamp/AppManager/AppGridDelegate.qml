@@ -56,15 +56,9 @@ ItemDelegate {
 
     onClicked: root.appClicked(d.nameText, d.repositoryUrl)
 
-    // Right-click and long-press both go to the management modal.
     TapHandler {
         acceptedButtons: Qt.RightButton
         onTapped: root.manageRequested(d.nameText, d.repositoryUrl)
-    }
-    TapHandler {
-        acceptedButtons: Qt.LeftButton
-        longPressThreshold: 0.6
-        onLongPressed: root.manageRequested(d.nameText, d.repositoryUrl)
     }
 
     contentItem: Item {

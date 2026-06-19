@@ -47,7 +47,7 @@ Item {
                 backend.openApp(name, repositoryUrl, ({}), true)
             }
             onManageAppRequested: function(name, repositoryUrl) {
-                // Right-click / long-press — force the dialog open.
+                // Right-click — force the dialog open.
                 backend.openApp(name, repositoryUrl, ({}), false)
             }
             onNavigateToRepositories: {
