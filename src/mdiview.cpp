@@ -418,17 +418,21 @@ bool MdiView::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-QMdiSubWindow* MdiView::addPluginWindow(QWidget* pluginWidget, const QString& title)
+QMdiSubWindow* MdiView::addPluginWindow(QWidget* pluginWidget,
+                                       const QString& displayLabel,
+                                       const QString& moduleName)
 {
     if (!pluginWidget) {
         qDebug() << "Cannot add null plugin widget to MDI area";
         return nullptr;
     }
-    
+
+    const QString closeKey = moduleName.isEmpty() ? displayLabel : moduleName;
+
     QMdiSubWindow *subWindow = new QMdiSubWindow();
     subWindow->setWidget(pluginWidget);
     subWindow->setAttribute(Qt::WA_DeleteOnClose);
-    subWindow->setWindowTitle(title);
+    subWindow->setWindowTitle(displayLabel);
     QIcon icon = pluginWidget->windowIcon();
     if (icon.isNull()) {
         icon = QApplication::windowIcon();
@@ -453,14 +457,14 @@ QMdiSubWindow* MdiView::addPluginWindow(QWidget* pluginWidget, const QString& ti
     m_pluginWindows[pluginWidget] = subWindow;
     m_subWindowToWidget[subWindow] = pluginWidget;
     
-    // Capture the title by value — the QMdiSubWindow is partially destroyed
-    // by the time the destroyed signal fires (only ~QObject remains), so
-    // calling subWindow->windowTitle() in the slot is undefined behavior.
-    QString windowTitle = title;
+    // Capture the close key by value — the QMdiSubWindow is partially
+    // destroyed by the time the destroyed signal fires (only ~QObject
+    // remains), so calling subWindow->windowTitle() in the slot is
+    // undefined behavior.
     m_subWindowConnections[subWindow] =
-        connect(subWindow, &QMdiSubWindow::destroyed, this, [this, pluginWidget, subWindow, windowTitle]() {
-            if (!windowTitle.isEmpty()) {
-                emit pluginWindowClosed(windowTitle);
+        connect(subWindow, &QMdiSubWindow::destroyed, this, [this, pluginWidget, subWindow, closeKey]() {
+            if (!closeKey.isEmpty()) {
+                emit pluginWindowClosed(closeKey);
             }
             m_pluginWindows.remove(pluginWidget);
             m_subWindowToWidget.remove(subWindow);

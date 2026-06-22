@@ -1,5 +1,6 @@
 {
   "name": "main_ui",
+  "display_name": "Main UI",
   "version": "1.0.0",
   "description": "Main user interface for the Logos application",
   "author": "Logos Core Team",

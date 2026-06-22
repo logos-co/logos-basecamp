@@ -215,15 +215,8 @@ QStringList PackageCoordinator::dependentsOf(const QString& name) const
 
 QString PackageCoordinator::displayNameFor(const QString& name) const
 {
-    {
-        const QString dn = m_displayNameByModule.value(name);
-        if (!dn.isEmpty()) return dn;
-    }
-    if (m_appsModel) {
-        const QVariantMap row = m_appsModel->rowDataByName(name, QString());
-        const QString dn = row.value("displayName").toString();
-        if (!dn.isEmpty()) return dn;
-    }
+    const QString dn = m_displayNameByModule.value(name);
+    if (!dn.isEmpty()) return dn;
     return name;
 }
 
@@ -1002,6 +995,11 @@ void PackageCoordinator::refreshDependencyInfo()
         [self](QVariantList packages) {
         if (!self) return;
         self->m_installedPackagesCache = packages;
+
+        // Snapshot the previous installed set BEFORE the wholesale assignments
+        // below overwrite it.
+        const QSet<QString> previouslyInstalled = self->m_installedNameSet;
+
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;
         QHash<QString, QString>  versionByName;
@@ -1035,11 +1033,21 @@ void PackageCoordinator::refreshDependencyInfo()
         for (auto it = hashByName.cbegin(); it != hashByName.cend(); ++it) {
             self->m_installedHashByName.insert(it.key(), it.value());
         }
+        for (const QString& name : previouslyInstalled) {
+            if (!self->m_installedNameSet.contains(name)) {
+                self->m_installedHashByName.remove(name);
+            }
+        }
 
         // Replay markInstalled across the full package set — fetchUiPluginMetadata
         // only saw UI plugins. Idempotent on (version, hash).
         if (self->m_appsModel) {
             self->m_appsModel->beginBulkInstalledUpdate();
+            for (const QString& name : previouslyInstalled) {
+                if (!self->m_installedNameSet.contains(name)) {
+                    self->m_appsModel->markInstalled(name, QString(), QString());
+                }
+            }
             for (auto it = self->m_installedVersionByName.cbegin();
                  it != self->m_installedVersionByName.cend(); ++it) {
                 self->m_appsModel->markInstalled(
