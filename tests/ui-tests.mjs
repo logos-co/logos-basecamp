@@ -101,7 +101,7 @@ async function openCoreModules(app) {
 test("modules: ui tab shows installed UI plugins", async (app) => {
   await openModules(app);
   await app.waitFor(
-    async () => { await app.expectTexts(["main_ui", "package_manager_ui"]); },
+    async () => { await app.expectTexts(["Main UI", "Package Manager"]); },
     { timeout: 10000, interval: 500, description: "UI Modules list to populate" }
   );
 });
@@ -111,7 +111,7 @@ test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
 
   // Wait for the core modules list to populate.
   await app.waitFor(
-    async () => { await app.expectTexts(["package_manager"]); },
+    async () => { await app.expectTexts(["Package Manager"]); },
     { timeout: 10000, interval: 500, description: "Core Modules list to populate" }
   );
 
@@ -131,7 +131,7 @@ test("modules: loaded plugins render CPU and memory stats", async (app) => {
 
   // Wait for at least one loaded plugin to appear.
   await app.waitFor(
-    async () => { await app.expectTexts(["package_manager", "(Loaded)"]); },
+    async () => { await app.expectTexts(["Package Manager", "(Loaded)"]); },
     { timeout: 10000, interval: 500, description: "loaded plugins to appear" }
   );
 
@@ -159,7 +159,7 @@ test("modules: leaving and returning to Core Modules preserves loaded state", as
   await openCoreModules(app);
 
   await app.waitFor(
-    async () => { await app.expectTexts(["package_manager", "(Loaded)"]); },
+    async () => { await app.expectTexts(["Package Manager", "(Loaded)"]); },
     { timeout: 10000, interval: 500, description: "Core Modules to show loaded plugins" }
   );
 
@@ -175,7 +175,7 @@ test("modules: leaving and returning to Core Modules preserves loaded state", as
 
   // The previously-loaded modules must still show as "(Loaded)" with stats.
   await app.waitFor(
-    async () => { await app.expectTexts(["package_manager", "(Loaded)", "Unload Plugin"]); },
+    async () => { await app.expectTexts(["Package Manager", "(Loaded)", "Unload Plugin"]); },
     { timeout: 10000, interval: 500, description: "loaded state to be preserved after returning" }
   );
 });

@@ -306,12 +306,11 @@ sections:
               text: "The **Settings → Modules → UI Modules** tab lists the UI plugins installed in the app."
               screenshot: "bundle-ui-modules.png"
 
-            # The bundled UI plugins appear as rows. The main UI is tagged
-            # "(Main UI)"; package_manager_ui is a normal loaded plugin.
-            # Asserting both names proves the installed-apps list rendered.
+            # Module rows render `displayName || name`. main_ui's display_name
+            # is "Main UI"; package_manager_ui's is "Package Manager".
             - name: "Installed apps are listed"
               action: wait_for
-              texts: ["main_ui", "package_manager_ui"]
+              texts: ["Main UI", "Package Manager"]
               timeout: 30000
               text: "The installed apps appear as rows — the main UI and the package manager UI."
               screenshot: "bundle-ui-modules-list.png"
@@ -329,11 +328,11 @@ sections:
               text: "The **Core Modules** tab shows the background modules loaded into the runtime."
               screenshot: "bundle-core-modules.png"
 
-            # The auto-loaded core modules must show as "(Loaded)" with an
-            # "Unload Plugin" button (not "(Not Loaded)" / "Load Plugin").
+            # Core modules render `displayName || name`; package_manager and
+            # capability_module both set display_name in their metadata.
             - name: "Core modules are present"
               action: wait_for
-              texts: ["package_manager", "capability_module"]
+              texts: ["Package Manager", "Capabilities"]
               timeout: 30000
 
             - name: "Core modules report as loaded"

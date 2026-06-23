@@ -213,6 +213,13 @@ QStringList PackageCoordinator::dependentsOf(const QString& name) const
     return m_dependentsByModule.value(name);
 }
 
+QString PackageCoordinator::displayNameFor(const QString& name) const
+{
+    const QString dn = m_displayNameByModule.value(name);
+    if (!dn.isEmpty()) return dn;
+    return name;
+}
+
 // ---------------------------------------------------------------------------
 // Install flow
 // ---------------------------------------------------------------------------
@@ -988,6 +995,11 @@ void PackageCoordinator::refreshDependencyInfo()
         [self](QVariantList packages) {
         if (!self) return;
         self->m_installedPackagesCache = packages;
+
+        // Snapshot the previous installed set BEFORE the wholesale assignments
+        // below overwrite it.
+        const QSet<QString> previouslyInstalled = self->m_installedNameSet;
+
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;
         QHash<QString, QString>  versionByName;
@@ -995,11 +1007,14 @@ void PackageCoordinator::refreshDependencyInfo()
         nameSet.reserve(packages.size());
         versionByName.reserve(packages.size());
         hashByName.reserve(packages.size());
+        QMap<QString, QString> displayNameMap;
         for (const QVariant& v : packages) {
             const QVariantMap pkg = v.toMap();
             const QString name = pkg.value("name").toString();
             if (name.isEmpty()) continue;
             typeMap[name] = pkg.value("installType").toString();
+            const QString dn = pkg.value("displayName").toString();
+            if (!dn.isEmpty()) displayNameMap[name] = dn;
             // moduleName is the key openApp / runResolverAndOpenDialog
             // use; fall back to name when the field is absent.
             const QString lookupName = pkg.value("moduleName").toString().isEmpty()
@@ -1012,16 +1027,27 @@ void PackageCoordinator::refreshDependencyInfo()
             if (!rootHash.isEmpty()) hashByName.insert(lookupName, rootHash);
         }
         self->m_installTypeByModule    = typeMap;
+        self->m_displayNameByModule    = std::move(displayNameMap);
         self->m_installedNameSet       = std::move(nameSet);
         self->m_installedVersionByName = std::move(versionByName);
         for (auto it = hashByName.cbegin(); it != hashByName.cend(); ++it) {
             self->m_installedHashByName.insert(it.key(), it.value());
+        }
+        for (const QString& name : previouslyInstalled) {
+            if (!self->m_installedNameSet.contains(name)) {
+                self->m_installedHashByName.remove(name);
+            }
         }
 
         // Replay markInstalled across the full package set — fetchUiPluginMetadata
         // only saw UI plugins. Idempotent on (version, hash).
         if (self->m_appsModel) {
             self->m_appsModel->beginBulkInstalledUpdate();
+            for (const QString& name : previouslyInstalled) {
+                if (!self->m_installedNameSet.contains(name)) {
+                    self->m_appsModel->markInstalled(name, QString(), QString());
+                }
+            }
             for (auto it = self->m_installedVersionByName.cbegin();
                  it != self->m_installedVersionByName.cend(); ++it) {
                 self->m_appsModel->markInstalled(

@@ -27,7 +27,9 @@ public:
     ~MdiView();
     
     // Add a plugin widget as an MDI window
-    QMdiSubWindow* addPluginWindow(QWidget* pluginWidget, const QString& title);
+    QMdiSubWindow* addPluginWindow(QWidget* pluginWidget,
+                                   const QString& displayLabel,
+                                   const QString& moduleName = {});
     
     // Remove a plugin window
     void removePluginWindow(QWidget* pluginWidget);

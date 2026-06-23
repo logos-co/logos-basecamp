@@ -19,6 +19,8 @@ ItemDelegate {
         id: d
 
         readonly property string rowName: root.appRow ? (root.appRow.name || "") : ""
+        readonly property string rowDisplayName:
+            root.appRow ? (root.appRow.displayName || root.appRow.name || "") : ""
         readonly property string action:  root.appRow ? (root.appRow.action || "") : ""
         readonly property string toVersion: root.appRow ? (root.appRow.toVersion || "") : ""
         readonly property bool   isError:   d.action === "error"
@@ -52,7 +54,7 @@ ItemDelegate {
         LogosText {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: 110
-            text: d.rowName
+            text: d.rowDisplayName
             font.weight: Theme.typography.weightMedium
             font.pixelSize: Theme.typography.primaryText
             color: Theme.palette.text

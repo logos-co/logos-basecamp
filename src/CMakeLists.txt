@@ -274,6 +274,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/ContentViews.qml
         Basecamp/Shell/OverlayDialogs.qml
         Basecamp/Shell/ConfirmationDialog.qml
+        Basecamp/Shell/BottomToolbar.qml
 )
 
 qt_add_qml_module(basecamp_icons_qml

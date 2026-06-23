@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
+import Logos.Icons
 import Logos.Theme
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
@@ -67,6 +68,8 @@ Dialog {
     property string upgradeTargetVersion: ""
     property int upgradeModeKind: 0
 
+    property var displayNameLookup: function(name) { return name; }
+
     // Internal: tracks whether a button explicitly handled the close
     // so the onClosed handler doesn't double-fire cancelClicked. Set
     // true in continue/cancel onClicked before we call close().
@@ -79,7 +82,7 @@ Dialog {
 
     modal: true
     anchors.centerIn: parent
-    width: 440
+    width: 560
     padding: Theme.spacing.large
     closePolicy: Popup.CloseOnEscape
 
@@ -150,8 +153,8 @@ Dialog {
     }
 
     background: Rectangle {
-        color: "#2d2d2d"
-        border.color: "#3d3d3d"
+        color: Theme.palette.surfaceRaised
+        border.color: Theme.palette.border
         border.width: 1
         radius: 8
     }
@@ -159,50 +162,62 @@ Dialog {
     contentItem: ColumnLayout {
         spacing: 12
 
-        LogosText {
+        RowLayout {
             Layout.fillWidth: true
-            text: {
-                if (root.mode === "missingDeps")
-                    return "Missing Dependencies";
-                if (root.mode === "unloadCascade")
-                    return "Unload Dependent Modules?";
-                if (root.mode === "uninstallCascade") {
-                    if (root.targets.length > 1)
-                        return "Uninstall " + root.targets.length + " packages?";
-                    return "Uninstall and Unload Dependents?";
-                }
-                if (root.mode === "upgradeCascade") {
-                    // Title leads with the operation. The target version
-                    // goes in the body (below) so the title stays short
-                    // when the version string is long (e.g. "1.0.0-rc.1").
-                    if (root.upgradeModeKind === 1) return "Downgrade Package?";
-                    if (root.upgradeModeKind === 2) return "Reinstall Package?";
-                    return "Upgrade Package?";
-                }
-                if (root.mode === "installConfirm") {
-                    if (root.metadata.isAlreadyInstalled)
-                        return "Upgrade Package?";
-                    return "Install Package?";
-                }
-                return "";
+            spacing: 8
+
+            LogosIcon {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                source: LogosIcons.warning
+                color: Theme.palette.error
+                brightness: 1.0
             }
-            font.pixelSize: 18
-            font.weight: Font.Bold
-            color: "#ffffff"
-            wrapMode: Text.Wrap
+
+            LogosText {
+                Layout.fillWidth: true
+                text: {
+                    if (root.mode === "missingDeps")
+                        return "Missing Dependencies";
+                    if (root.mode === "unloadCascade")
+                        return "Unload Dependent Modules?";
+                    if (root.mode === "uninstallCascade") {
+                        if (root.targets.length > 1)
+                            return "Uninstall " + root.targets.length + " packages?";
+                        return "Uninstall and Unload Dependents?";
+                    }
+                    if (root.mode === "upgradeCascade") {
+                        if (root.upgradeModeKind === 1) return "Downgrade Package?";
+                        if (root.upgradeModeKind === 2) return "Reinstall Package?";
+                        return "Upgrade Package?";
+                    }
+                    if (root.mode === "installConfirm") {
+                        if (root.metadata.isAlreadyInstalled)
+                            return "Upgrade Package?";
+                        return "Install Package?";
+                    }
+                    return "";
+                }
+                font.pixelSize: Theme.typography.panelTitleText
+                font.weight: Theme.typography.weightBold
+                color: Theme.palette.text
+                wrapMode: Text.Wrap
+            }
         }
 
         LogosText {
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            color: "#c0c0c0"
+            color: Theme.palette.textSecondary
+            readonly property string _label: root.displayNameLookup(root.moduleName) || root.moduleName
             text: {
                 if (root.mode === "missingDeps")
-                    return "'" + root.moduleName + "' cannot be loaded because the "
+                    return "'" + _label + "' cannot be loaded because the "
                          + "following modules are not installed:";
                 if (root.mode === "unloadCascade")
                     return "The following modules are currently loaded and depend on '"
-                         + root.moduleName + "'. Unloading will terminate them:";
+                         + _label + "'. Unloading will terminate them:";
                 if (root.mode === "uninstallCascade") {
                     if (root.targets.length > 1) {
                         if (root.items.length === 0 && root.loadedItems.length === 0)
@@ -213,9 +228,9 @@ Dialog {
                     // Collapse to a simple destructive-action confirmation
                     // when neither list is populated.
                     if (root.items.length === 0 && root.loadedItems.length === 0)
-                        return "Uninstall '" + root.moduleName + "'? This will "
+                        return "Uninstall '" + _label + "'? This will "
                              + "remove the package files from disk.";
-                    return "Uninstalling '" + root.moduleName + "' will remove the "
+                    return "Uninstalling '" + _label + "' will remove the "
                          + "package files from disk and affect the following:";
                 }
                 if (root.mode === "upgradeCascade") {
@@ -230,7 +245,7 @@ Dialog {
                     else if (root.upgradeModeKind === 2) verb = "Reinstall";
                     var verPhrase = root.upgradeTargetVersion.length > 0
                                     ? " to v" + root.upgradeTargetVersion : "";
-                    var head = verb + " '" + root.moduleName + "'" + verPhrase
+                    var head = verb + " '" + _label + "'" + verPhrase
                              + ". The current version will be removed first, "
                              + "then the new one downloaded and installed.";
                     // We only surface the *loaded* dependents here — the
@@ -277,7 +292,7 @@ Dialog {
                 model: root.items
                 clip: true
                 delegate: LogosText {
-                    text: "• " + modelData
+                    text: "• " + (root.displayNameLookup(modelData) || modelData)
                     color: "#e0e0e0"
                     font.pixelSize: 13
                 }
@@ -298,7 +313,7 @@ Dialog {
                 text: "Packages to uninstall:"
                 color: "#c0c0c0"
                 font.pixelSize: 13
-                font.weight: Font.Bold
+                font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
             }
 
@@ -316,7 +331,7 @@ Dialog {
                     model: root.targets
                     clip: true
                     delegate: LogosText {
-                        text: "• " + modelData
+                        text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: "#e0e0e0"
                         font.pixelSize: 13
                     }
@@ -349,7 +364,7 @@ Dialog {
                 text: "Will stop working (installed but not running):"
                 color: "#c0c0c0"
                 font.pixelSize: 13
-                font.weight: Font.Bold
+                font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
                 visible: root.mode === "uninstallCascade" && root.items.length > 0
             }
@@ -369,7 +384,7 @@ Dialog {
                     model: root.items
                     clip: true
                     delegate: LogosText {
-                        text: "• " + modelData
+                        text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: "#e0e0e0"
                         font.pixelSize: 13
                     }
@@ -388,7 +403,7 @@ Dialog {
                       : "Will be unloaded now:"
                 color: "#c0c0c0"
                 font.pixelSize: 13
-                font.weight: Font.Bold
+                font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
                 visible: root.loadedItems.length > 0
             }
@@ -408,7 +423,7 @@ Dialog {
                     model: root.loadedItems
                     clip: true
                     delegate: LogosText {
-                        text: "• " + modelData
+                        text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: "#e0e0e0"
                         font.pixelSize: 13
                     }
@@ -569,7 +584,7 @@ Dialog {
                 text: "Will be unloaded for the upgrade:"
                 color: "#c0c0c0"
                 font.pixelSize: 13
-                font.weight: Font.Bold
+                font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
             }
 
@@ -587,7 +602,7 @@ Dialog {
                     model: parent.parent._installLoadedDeps
                     clip: true
                     delegate: LogosText {
-                        text: "\u2022 " + modelData
+                        text: "\u2022 " + (root.displayNameLookup(modelData) || modelData)
                         color: "#e0e0e0"
                         font.pixelSize: 13
                     }
@@ -611,7 +626,7 @@ Dialog {
                 contentItem: LogosText {
                     text: parent.text
                     font.pixelSize: 13
-                    color: "#ffffff"
+                    color: Theme.palette.text
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -657,7 +672,7 @@ Dialog {
                 contentItem: LogosText {
                     text: parent.text
                     font.pixelSize: 13
-                    color: "#ffffff"
+                    color: Theme.palette.text
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }

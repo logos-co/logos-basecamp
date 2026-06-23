@@ -318,10 +318,13 @@ void MainContainer::onNavigateToApps()
 
 void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& title)
 {
-    if (m_mdiView && widget) {
-        m_mdiView->addPluginWindow(widget, title);
-        qDebug() << "MainContainer: Added plugin window to MdiView:" << title;
-    }
+    if (!m_mdiView || !widget) return;
+    const QString resolved = m_backend ? m_backend->displayNameFor(title)
+                                       : title;
+    const QString label = resolved.isEmpty() ? title : resolved;
+    m_mdiView->addPluginWindow(widget, label, title);
+    qDebug() << "MainContainer: Added plugin window to MdiView:" << label
+             << "(module:" << title << ")";
 }
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)

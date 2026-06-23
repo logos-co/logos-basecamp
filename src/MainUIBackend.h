@@ -143,6 +143,9 @@ public slots:
     void unloadUiModule(const QString& moduleName);
     void activateApp(const QString& appName);
 
+    // Friendly module label, resolved from the catalog with fallback to `name`.
+    Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
+
     // Install flow — delegated to PackageCoordinator.
     Q_INVOKABLE void installPluginFromPath(const QString& filePath);
     Q_INVOKABLE void openInstallPluginDialog();

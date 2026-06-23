@@ -190,14 +190,19 @@ sections:
               text: "The bundle launches headless against the assembled user-dir."
               screenshot: "xver-accA-launch.png"
 
+            # Downloaded accounts_ui .lgx is at manifestVersion 0.3.0 with
+            # display_name="Accounts" — once installed, basecamp's sidebar
+            # renders the friendly label, not the raw module name. (Variant B
+            # below still expects "accounts_ui" because the fresh-built
+            # install pipeline doesn't yet emit display_name.)
             - name: "The accounts app appears in the sidebar"
               action: wait_for
-              texts: ["accounts_ui"]
+              texts: ["Accounts"]
               timeout: 30000
 
             - name: "Open the Accounts app"
               action: click
-              target: "accounts_ui"
+              target: "Accounts"
 
             - name: "Accounts Manager loads"
               action: wait_for

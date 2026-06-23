@@ -178,6 +178,7 @@ QVariantList MainUIBackend::coreModules() const
     for (const QString& name : known) {
         QVariantMap module;
         module["name"] = name;
+        module["displayName"] = m_packageCoordinator ? m_packageCoordinator->displayNameFor(name) : name;
         module["isLoaded"] = loaded.contains(name);
         // installType populated lazily by refreshDependencyInfo's full-scan
         // pass on PackageCoordinator. Empty means "not known yet" — QML treats
@@ -224,6 +225,9 @@ void MainUIBackend::onPluginWindowClosed(const QString& n)    { m_uiPluginManage
 void MainUIBackend::setCurrentVisibleApp(const QString& n)    { m_uiPluginManager->setCurrentVisibleApp(n); }
 
 // PackageCoordinator — package_manager IPC and package-lifecycle cascade.
+QString MainUIBackend::displayNameFor(const QString& n) const {
+    return m_packageCoordinator ? m_packageCoordinator->displayNameFor(n) : n;
+}
 void MainUIBackend::installPluginFromPath(const QString& p)   { m_packageCoordinator->installPluginFromPath(p); }
 void MainUIBackend::openInstallPluginDialog()                 { m_packageCoordinator->openInstallPluginDialog(); }
 void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }

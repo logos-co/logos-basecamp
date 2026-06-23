@@ -131,7 +131,7 @@ ItemDelegate {
                 Layout.preferredWidth: d.tileSize
                 horizontalAlignment: Text.AlignHCenter
                 text: d.displayName
-                font.pixelSize: Theme.typography.primaryText
+                font.pixelSize: Theme.typography.subtitleText
                 color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle
                 elide: Text.ElideRight
             }
