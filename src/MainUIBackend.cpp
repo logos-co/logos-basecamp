@@ -47,6 +47,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
     m_packageCoordinator->setRequiredPackagesModel(m_requiredPackagesModel);
+    m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
 
     // Setter-injection closes the cycle — UIPluginManager queries
     // PackageCoordinator for installType / missing-deps when building its
@@ -99,8 +100,10 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::addApplicationRequested,
-            this,             &MainUIBackend::addApplicationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
+            this,             &MainUIBackend::requestOpenAddApplicationDialog);
+    connect(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
+            this,             &MainUIBackend::addApplicationDataUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
             this,             &MainUIBackend::launchAppRequested);
     connect(m_packageCoordinator, &PackageCoordinator::catalogInstallStageChanged,
@@ -241,6 +244,8 @@ void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, c
 { m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
 void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins)
 { m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, versionPins); }
+void MainUIBackend::notifyAddApplicationDialogClosed()
+{ m_packageCoordinator->notifyAddApplicationDialogClosed(); }
 
 // cancelPendingAction is the one slot that doesn't route to a single manager:
 // a pending action lives on either UIPluginManager (local unload cascade) or

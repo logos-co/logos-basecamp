@@ -118,6 +118,7 @@ set(SOURCES
     CoreModuleManager.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
+    InstallRegistry.cpp
     AppsModel.cpp
     PluginLoader.cpp
     restricted/DenyAllReply.cpp

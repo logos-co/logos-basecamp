@@ -23,6 +23,7 @@ class AppsFilterProxy : public QSortFilterProxyModel {
     Q_PROPERTY(int  upgradeCount           READ upgradeCount           NOTIFY breakdownChanged)
     Q_PROPERTY(int  reinstallCount         READ reinstallCount         NOTIFY breakdownChanged)
     Q_PROPERTY(int  alreadyInstalledCount  READ alreadyInstalledCount  NOTIFY breakdownChanged)
+    Q_PROPERTY(int  installingCount        READ installingCount        NOTIFY breakdownChanged)
     Q_PROPERTY(int  errorCount             READ errorCount             NOTIFY breakdownChanged)
     Q_PROPERTY(bool hasResolutionErrors  READ hasResolutionErrors NOTIFY hasResolutionErrorsChanged)
     Q_PROPERTY(int  visibleCount         READ visibleCount    NOTIFY visibleCountChanged)
@@ -52,6 +53,7 @@ public:
     int  upgradeCount() const;
     int  reinstallCount() const;
     int  alreadyInstalledCount() const;
+    int  installingCount() const;
     int  errorCount() const;
     bool hasResolutionErrors() const;
     int  visibleCount() const { return rowCount(); }

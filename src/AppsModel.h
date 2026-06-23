@@ -4,9 +4,12 @@
 
 #include <QAbstractListModel>
 #include <QHash>
+#include <QPointer>
 #include <QString>
 #include <QVariantList>
 #include <QVariantMap>
+
+class InstallRegistry;
 
 // AppsModel — the single source of truth for every package the App Manager
 // (and Modules tab) cares about.
@@ -65,12 +68,13 @@ public:
     void markInstalled(const QString& name,
                        const QString& installedVersion,
                        const QString& installedHash = {});
+    void replaceInstalledSet(const QHash<QString, QString>& versionByName,
+                             const QHash<QString, QString>& hashByName);
+
     void setInstallType(const QString& name, const QString& installType);
     void setIconUrl(const QString& name, const QString& iconUrl);
     void setMissingDeps(const QString& name, const QStringList& missing);
-    void setInstallStage(const QString& name,
-                         InstallStage::Value stage,
-                         const QString& error = {});
+    void setInstallRegistry(InstallRegistry* installRegistry);
 
     void beginBulkInstalledUpdate();
     void endBulkInstalledUpdate();
@@ -116,11 +120,9 @@ private:
         QStringList missingDeps;
         InstallStatus::Value installStatus = InstallStatus::NotInstalled;
 
-        // Live install pipeline state
-        InstallStage::Value installStage = InstallStage::None;
-        QString installError;
-
-        // Resolver overlay (per dialog session)
+        // Resolver overlay (per dialog session). Live install state lives
+        // on m_installRegistry — see setInstallRegistry. Per-row InstallStageRole /
+        // InstallErrorRole / ActionRole derive from there at read time.
         QString action;
         QString toVersion;
         bool    isTopLevel = false;
@@ -136,4 +138,7 @@ private:
     QHash<QString, int> m_indexByKey;     // (repo + "\n" + name) → row index
     QMultiHash<QString, int> m_indicesByName;
     bool m_inBulkInstalledUpdate = false;
+
+    // Source of truth for in-flight install state
+    QPointer<InstallRegistry> m_installRegistry;
 };
