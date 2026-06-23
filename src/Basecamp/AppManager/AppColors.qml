@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import Logos.Theme
 
 QtObject {
     function hash32(key) {
@@ -14,13 +15,28 @@ QtObject {
         return h
     }
 
+    // Muted accent for dark-theme app tiles (single solid fill).
     function colorForApp(appKey) {
-        if (!appKey) return "#404040"
+        if (!appKey) return Theme.palette.surfaceRaised
         var h = hash32(appKey)
-        // Golden-ratio hue: maximally spreads similar hashes around the wheel.
         var hue = ((h / 4294967296) * 0.618033988749895) % 1
-        var sat   = 0.68
-        var light = 0.48
+        var sat   = 0.38
+        var light = 0.22
         return Qt.hsla(hue, sat, light, 1.0)
+    }
+
+    function accentForDarkTheme(color) {
+        var c = Qt.color(color)
+        var hue = c.hsvHue
+        if (hue < 0)
+            hue = (hash32(color) / 4294967296) % 1
+        var sat = Math.max(0.30, Math.min(c.hsvSaturation > 0 ? c.hsvSaturation : 0.38, 0.50))
+        return Qt.hsva(hue, sat, 0.28, 1.0)
+    }
+
+    function tileColor(packageColor, appKey) {
+        if (packageColor && packageColor.length > 0)
+            return accentForDarkTheme(packageColor)
+        return colorForApp(appKey)
     }
 }

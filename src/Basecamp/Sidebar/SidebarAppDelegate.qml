@@ -21,16 +21,8 @@ AbstractButton {
         id: d
 
         readonly property string nameText: root.text || ""
-        readonly property string monogram: (d.nameText || "?").substring(0, 2).toUpperCase()
-        readonly property color tileColor: AppColors.colorForApp(d.nameText)
-        readonly property real uninstalledTileAlpha: 0.55
-        readonly property color tileBackgroundColor:
-            root.loaded ? d.tileColor
-                        : Theme.colors.getColor(d.tileColor, d.uninstalledTileAlpha)
-
         readonly property int tileSize: 38
         readonly property int iconSize: 19
-        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
     }
 
     onHoveredChanged: {
@@ -54,36 +46,15 @@ AbstractButton {
     }
 
     contentItem: Item {
-        Rectangle {
+        AppTile {
             id: tile
             anchors.centerIn: parent
-            width: d.tileSize
-            height: d.tileSize
-            radius: Theme.spacing.radiusMedium
-            color: d.tileBackgroundColor
-
-            LogosIcon {
-                id: appIcon
-                anchors.centerIn: parent
-                source: root.icon.source
-                color: Theme.palette.text
-                brightness: 1.0
-                width: d.iconSize
-                height: d.iconSize
-                visible: !root.loading
-                         && !!root.icon.source
-                         && appIcon.imageItem.status !== Image.Null
-                         && appIcon.imageItem.status !== Image.Error
-            }
-
-            LogosText {
-                anchors.centerIn: parent
-                text: d.monogram
-                font.pixelSize: d.monogramSize
-                font.weight: Theme.typography.weightBold
-                color: Theme.palette.text
-                visible: !root.loading && !appIcon.visible
-            }
+            appName: d.nameText
+            iconSource: root.icon.source
+            tileSize: d.tileSize
+            iconSize: d.iconSize
+            dimOpacity: root.loaded ? 1.0 : 0.55
+            visible: !root.loading
         }
 
         Item {

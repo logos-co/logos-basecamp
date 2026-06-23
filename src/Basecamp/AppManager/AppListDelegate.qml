@@ -36,18 +36,11 @@ ItemDelegate {
         readonly property string iconUrl:      root.appData ? (root.appData.iconUrl || "") : ""
         readonly property string description:   root.appData ? (root.appData.description || "") : ""
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
-        readonly property string monogram:      (d.nameText || "?").substring(0, 2).toUpperCase()
-        readonly property bool   hasIcon:       d.iconUrl.length > 0
-
         readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
-        readonly property color  tileColor:
-            d.packageColor.length > 0 ? d.packageColor
-                                      : AppColors.colorForApp(d.nameText)
         readonly property real tileOpacity:
             (d.isInstalled || root.hovered) ? 1.0 : 0.55
 
         readonly property int tileSize: 40
-        readonly property int monogramSize: Math.round(d.tileSize * 0.375)
     }
 
     padding: 0
@@ -72,33 +65,16 @@ ItemDelegate {
         anchors.rightMargin: Theme.spacing.medium
         spacing: Theme.spacing.medium
 
-        Rectangle {
+        AppTile {
             Layout.preferredWidth: d.tileSize
             Layout.preferredHeight: d.tileSize
             Layout.alignment: Qt.AlignVCenter
-            radius: Theme.spacing.radiusMedium
-            color: d.tileColor
-            opacity: d.tileOpacity
-            Behavior on opacity { NumberAnimation { duration: 150 } }
-
-            LogosIcon {
-                anchors.centerIn: parent
-                source: d.iconUrl
-                color: Theme.palette.text
-                brightness: 1.0
-                width: 24
-                height: 24
-                visible: d.hasIcon
-            }
-
-            LogosText {
-                anchors.centerIn: parent
-                text: d.monogram
-                font.pixelSize: d.monogramSize
-                font.weight: Theme.typography.weightBold
-                color: Theme.palette.text
-                visible: !d.hasIcon
-            }
+            appName: d.nameText
+            packageColor: d.packageColor
+            iconSource: d.iconUrl
+            tileSize: d.tileSize
+            iconSize: 24
+            dimOpacity: d.tileOpacity
         }
 
         // Name + (optional) description.
