@@ -246,6 +246,7 @@ qt_add_qml_module(basecamp_appmanager_qml
         Basecamp/AppManager/PackageRowDelegate.qml
         Basecamp/AppManager/AddApplicationDialog.qml
         Basecamp/AppManager/AppColors.qml
+        Basecamp/AppManager/AppTile.qml
 )
 
 qt_add_qml_module(basecamp_settings_qml
