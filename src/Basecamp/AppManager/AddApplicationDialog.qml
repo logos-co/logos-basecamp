@@ -112,6 +112,7 @@ Dialog {
         readonly property bool actionEnabled:
             d.targetName.length > 0
             && !d.installing
+            && d.installingBuckets === 0
             && (d.actionMode === "launch" || !d.hasResolutionErrors)
 
         readonly property int totalDeps:
@@ -131,6 +132,8 @@ Dialog {
             root.requiredPackagesModel ? root.requiredPackagesModel.reinstallCount : 0
         readonly property int alreadyInstalledBuckets:
             root.requiredPackagesModel ? root.requiredPackagesModel.alreadyInstalledCount : 0
+        readonly property int installingBuckets:
+            root.requiredPackagesModel ? root.requiredPackagesModel.installingCount : 0
         readonly property int errorBuckets:
             root.requiredPackagesModel ? root.requiredPackagesModel.errorCount : 0
         readonly property int changingBuckets:
@@ -142,6 +145,12 @@ Dialog {
                     return qsTr("%1 %2 package(s)…")
                         .arg(d.stageLabel).arg(d.changingBuckets)
                 return d.stageLabel
+            }
+
+            if (d.installingBuckets > 0 && d.changingBuckets === 0) {
+                return qsTr("%1 of %2's required package(s) are currently being installed. "
+                            + "Wait for the active install to finish before launching %2.")
+                    .arg(d.installingBuckets).arg(d.targetDisplayName)
             }
 
             // Top-level + deps all match disk → nothing to do. The action

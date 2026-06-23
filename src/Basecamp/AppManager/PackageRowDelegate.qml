@@ -24,6 +24,8 @@ ItemDelegate {
         readonly property string action:  root.appRow ? (root.appRow.action || "") : ""
         readonly property string toVersion: root.appRow ? (root.appRow.toVersion || "") : ""
         readonly property bool   isError:   d.action === "error"
+        readonly property bool   isInstalled:
+            root.appRow ? (root.appRow.isInstalled === true) : false
         readonly property int rowStage:
             root.appRow && root.appRow.installStage !== undefined
                 ? root.appRow.installStage
@@ -128,8 +130,9 @@ ItemDelegate {
                 case "upgrade":   return qsTr("Upgrade")
                 case "downgrade": return qsTr("Downgrade")
                 case "reinstall": return qsTr("Reinstall")
-                default:          return qsTr("Installed")
+                case "installed": return qsTr("Installed")
                 }
+                return d.isInstalled ? qsTr("Installed") : qsTr("Install")
             }
             color: {
                 if (d.isError) return Theme.palette.error
@@ -145,8 +148,9 @@ ItemDelegate {
                 case "upgrade":   return Theme.palette.info
                 case "downgrade": return Theme.palette.info
                 case "reinstall": return Theme.palette.info
-                default:          return Theme.palette.textTertiary
+                case "installed": return Theme.palette.textTertiary
                 }
+                return d.isInstalled ? Theme.palette.textTertiary : Theme.palette.primary
             }
             radius: Theme.spacing.radiusLarge
 

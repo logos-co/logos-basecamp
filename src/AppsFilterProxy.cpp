@@ -99,6 +99,17 @@ int AppsFilterProxy::alreadyInstalledCount() const
     return c;
 }
 
+int AppsFilterProxy::installingCount() const
+{
+    int c = 0;
+    const int n = rowCount();
+    for (int i = 0; i < n; ++i) {
+        if (data(index(i, 0), AppsModel::ActionRole).toString()
+                == QStringLiteral("installing")) ++c;
+    }
+    return c;
+}
+
 int AppsFilterProxy::errorCount() const
 {
     int c = 0;

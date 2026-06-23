@@ -1,5 +1,7 @@
 #include "AppsModel.h"
 
+#include "InstallRegistry.h"
+
 #include <QSet>
 
 namespace {
@@ -46,12 +48,23 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case MissingDepsRole:      return r.missingDeps;
     case InstallStatusRole:    return static_cast<int>(r.installStatus);
     case InstallTypeRole:      return r.installType;
-    case ActionRole:           return r.action;
+    case ActionRole: {
+        if (m_installRegistry) {
+            if (m_installRegistry->isInFlight(r.name))
+                return QStringLiteral("installing");
+            if (m_installRegistry->stage(r.name) == InstallStage::Installed)
+                return QStringLiteral("installed");
+        }
+        return r.action;
+    }
     case ToVersionRole:        return r.toVersion;
     case IsTopLevelRole:       return r.isTopLevel;
     case ResolverErrorRole:    return r.resolverError;
-    case InstallStageRole:     return static_cast<int>(r.installStage);
-    case InstallErrorRole:     return r.installError;
+    case InstallStageRole:
+        return m_installRegistry ? m_installRegistry->stage(r.name)
+                            : static_cast<int>(InstallStage::None);
+    case InstallErrorRole:
+        return m_installRegistry ? m_installRegistry->error(r.name) : QString();
     }
     return {};
 }
@@ -302,6 +315,30 @@ void AppsModel::markInstalled(const QString& name,
     }
 }
 
+void AppsModel::replaceInstalledSet(const QHash<QString, QString>& versionByName,
+                                    const QHash<QString, QString>& hashByName)
+{
+    const bool wasBulk = m_inBulkInstalledUpdate;
+    if (!wasBulk) beginBulkInstalledUpdate();
+
+    for (int idx = 0; idx < m_rows.size(); ++idx) {
+        Row& r = m_rows[idx];
+        const auto it = versionByName.find(r.name);
+        const bool isInstalled = (it != versionByName.end());
+        const QString newVersion = isInstalled ? it.value() : QString();
+        const QString newHash    = isInstalled ? hashByName.value(r.name) : QString();
+        if (r.installedVersion == newVersion && r.installedHash == newHash) continue;
+        r.installedVersion = newVersion;
+        r.installedHash    = newHash;
+        recomputeInstallStatus(r);
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {InstalledVersionRole, HasUpdateRole,
+                                  IsInstalledRole, InstallStatusRole});
+    }
+
+    if (!wasBulk) endBulkInstalledUpdate();
+}
+
 void AppsModel::beginBulkInstalledUpdate()
 {
     m_inBulkInstalledUpdate = true;
@@ -357,20 +394,26 @@ void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
     }
 }
 
-// ── Mutation: live install stage ──────────────────────────────────────────
+// ── Wiring: live install state ────────────────────────────────────────────
 
-void AppsModel::setInstallStage(const QString& name,
-                                InstallStage::Value stage,
-                                const QString& error)
+void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
 {
-    for (int idx : m_indicesByName.values(name)) {
-        Row& r = m_rows[idx];
-        if (r.installStage == stage && r.installError == error) continue;
-        r.installStage = stage;
-        r.installError = stage == InstallStage::Failed ? error : QString();
-        const QModelIndex mi = index(idx);
-        emit dataChanged(mi, mi, {InstallStageRole, InstallErrorRole});
-    }
+    if (m_installRegistry == installRegistry) return;
+    if (m_installRegistry) m_installRegistry->disconnect(this);
+    m_installRegistry = installRegistry;
+    if (!m_installRegistry) return;
+
+    auto refresh = [this](const QString& name) {
+        const QList<int> roles{InstallStageRole, InstallErrorRole, ActionRole};
+        for (int idx : m_indicesByName.values(name)) {
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, roles);
+        }
+    };
+    connect(m_installRegistry, &InstallRegistry::stageChanged, this,
+            [refresh](const QString& name, InstallStage::Value) { refresh(name); });
+    connect(m_installRegistry, &InstallRegistry::errorChanged, this,
+            [refresh](const QString& name, const QString&) { refresh(name); });
 }
 
 // ── Mutation: resolver overlay ─────────────────────────────────────────────
@@ -386,16 +429,9 @@ void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
         r.toVersion     = src.toVersion;
         r.isTopLevel    = src.isTopLevel;
         r.resolverError = src.resolverError;
-        // Wipe any sticky pipeline state from a previous session
-        QList<int> changedRoles{ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole};
-        if (r.installStage != InstallStage::None
-            || !r.installError.isEmpty()) {
-            r.installStage = InstallStage::None;
-            r.installError.clear();
-            changedRoles << InstallStageRole << InstallErrorRole;
-        }
         const QModelIndex mi = index(idx);
-        emit dataChanged(mi, mi, changedRoles);
+        emit dataChanged(mi, mi,
+            {ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole});
     }
 }
 

@@ -95,6 +95,7 @@ Item {
     AddApplicationDialog {
         id: addApplicationDialog
         requiredPackagesModel: backend.requiredPackagesModel
+        onClosed: backend.notifyAddApplicationDialogClosed()
         onInstallRequested: function(name, repositoryUrl, versionPins) {
             addApplicationDialog.installStage = InstallStage.Downloading
             backend.confirmCatalogInstall(name, repositoryUrl, versionPins)
@@ -195,13 +196,21 @@ Item {
             backend.onAppLauncherClicked(name);
         }
 
-        function onAddApplicationRequested(metadata, requiredPackages) {
-            if (addApplicationDialog.visible) {
+        function onRequestOpenAddApplicationDialog(metadata) {
+            if (!addApplicationDialog.visible) {
+                addApplicationDialog.openWith(metadata);
+            } else if (addApplicationDialog.metadata.name === metadata.name) {
+                // Version re-resolve while the same app's dialog is already open.
                 addApplicationDialog.metadata = metadata;
                 addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
-            } else {
-                addApplicationDialog.openWith(metadata);
             }
+        }
+
+        function onAddApplicationDataUpdated(metadata) {
+            if (!addApplicationDialog.visible) return;
+            if (addApplicationDialog.metadata.name !== metadata.name) return;
+            addApplicationDialog.metadata = metadata;
+            addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
         }
 
         function onCatalogInstallStageChanged(name, stage) {

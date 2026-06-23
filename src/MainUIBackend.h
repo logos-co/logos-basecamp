@@ -175,6 +175,7 @@ public slots:
     Q_INVOKABLE void confirmCatalogInstall(const QString& name,
                                            const QString& repositoryUrl,
                                            const QVariantMap& versionPins = QVariantMap());
+    Q_INVOKABLE void notifyAddApplicationDialogClosed();
 
     // Core Module operations — routing rule: cascade-aware (load/unload)
     // goes through UIPluginManager so it can run the pre-flight dependent
@@ -209,7 +210,8 @@ signals:
 
     // App-Manager dialog + install lifecycle. See PackageCoordinator for
     // the contract — these are pure re-emits.
-    void addApplicationRequested(const QVariantMap& metadata);
+    void requestOpenAddApplicationDialog(const QVariantMap& metadata);
+    void addApplicationDataUpdated(const QVariantMap& metadata);
     void launchAppRequested(const QString& name);
     void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
     void catalogInstallFinished(const QString& name);

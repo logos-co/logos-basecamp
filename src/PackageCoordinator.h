@@ -12,6 +12,7 @@
 
 class AppsFilterProxy;
 class AppsModel;
+class InstallRegistry;
 class CoreModuleManager;
 class UIPluginManager;
 
@@ -133,6 +134,13 @@ public slots:
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
 
+    // Called by QML when the Add Application dialog closes so stale async
+    // resolver callbacks for previously-opened apps don't mutate the shared
+    // required-packages model or reopen the dialog.
+    Q_INVOKABLE void notifyAddApplicationDialogClosed();
+
+    InstallRegistry* installRegistry() const { return m_installRegistry; }
+
 signals:
     // Tells MainUIBackend to refresh the uiModules / launcherApps / coreModules
     // properties — their values compose installType/missing-deps from here with
@@ -148,7 +156,12 @@ signals:
     // changed.
     void uiPluginsFetched(const QVariantList& uiPlugins);
 
-    void addApplicationRequested(const QVariantMap& metadata);
+    // Sync entry from openApp() only — QML opens the modal if not already
+    // visible (or refreshes in place when re-resolving the same app).
+    void requestOpenAddApplicationDialog(const QVariantMap& metadata);
+    // Passive refresh — never opens the modal; stale callbacks are dropped in
+    // emitDialogMetadata before this is emitted.
+    void addApplicationDataUpdated(const QVariantMap& metadata);
     void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
     void catalogInstallFinished(const QString& name);
     void catalogInstallFailed(const QString& name, const QString& error);
@@ -267,6 +280,10 @@ private:
     QString buildResolverDepsJson(const QString& name,
                                   const QString& repositoryUrl,
                                   const QVariantMap& versionPins) const;
+    // Transitive required-package set ({name, repositoryUrl}) computed purely
+    // from the local catalog dependency graph — no async resolver.
+    QVariantList collectCatalogRequired(const QString& name,
+                                        const QString& repositoryUrl) const;
     QString buildInstalledPackagesJson() const;
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;
@@ -286,7 +303,11 @@ private:
                             const QString& repositoryUrl,
                             const QString& targetVersion,
                             const QVariantMap& catalogRow,
-                            const QVariantList& changes);
+                            const QVariantList& changes,
+                            bool requestOpen);
+    // Recompute resolver overlay from cached raw resolve + current disk state.
+    // Keeps dep badges correct after the install registry is cleared.
+    void refreshOverlayAfterInstall(const QString& topLevelName);
     void installResultsSequential(const QVariantList& results,
                                   const QString& topLevelName,
                                   int index,
@@ -294,8 +315,9 @@ private:
     void installOnePackage(const QVariantMap& downloadResult,
                            std::function<void(bool, const QString&)> onDone);
 
-    // Move a session's stage and emit catalogInstallStageChanged.
-    void setSessionStage(const QString& name, InstallStage::Value stage);
+    // Drive the in-flight registry. setOpStage updates the InstallRegistry entry
+    // and emits catalogInstallStageChanged.
+    void setOpStage(const QString& name, InstallStage::Value stage);
 
     // Wiring (not owned — see ctor comment).
     LogosAPI*          m_logosAPI;
@@ -326,11 +348,13 @@ private:
                                                      // to feed AppsModel's
                                                      // DifferentHash detection.
     QHash<QString, int> m_dialogResolveEpoch;
-    struct InstallSession {
-        QString             name;
-        InstallStage::Value stage = InstallStage::None;
-    };
-    QHash<QString, InstallSession> m_installSessions;
+    QString m_activeAddDialogName;
+
+    // Last resolver output per top-level: raw IPC rows and derived changes.
+    QHash<QString, QVariantList> m_lastResolvedRawByName;
+    QHash<QString, QVariantList> m_lastResolvedChangesByName;
+
+    InstallRegistry* m_installRegistry = nullptr;
 
     QVariantList m_repositories;
     int          m_repositoriesLoadingCount = 0;

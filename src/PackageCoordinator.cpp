@@ -1,4 +1,5 @@
 #include "PackageCoordinator.h"
+#include "InstallRegistry.h"
 #include "AppsFilterProxy.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
@@ -31,6 +32,7 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
     , m_appsModel(appsModel)
+    , m_installRegistry(new InstallRegistry(this))
 {
     subscribeToPackageInstallationEvents();
     subscribeToPackageDownloaderEvents();
@@ -995,11 +997,6 @@ void PackageCoordinator::refreshDependencyInfo()
         [self](QVariantList packages) {
         if (!self) return;
         self->m_installedPackagesCache = packages;
-
-        // Snapshot the previous installed set BEFORE the wholesale assignments
-        // below overwrite it.
-        const QSet<QString> previouslyInstalled = self->m_installedNameSet;
-
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;
         QHash<QString, QString>  versionByName;
@@ -1026,35 +1023,14 @@ void PackageCoordinator::refreshDependencyInfo()
             if (!version.isEmpty()) versionByName.insert(lookupName, version);
             if (!rootHash.isEmpty()) hashByName.insert(lookupName, rootHash);
         }
-        self->m_installTypeByModule    = typeMap;
+        self->m_installTypeByModule    = std::move(typeMap);
         self->m_displayNameByModule    = std::move(displayNameMap);
         self->m_installedNameSet       = std::move(nameSet);
         self->m_installedVersionByName = std::move(versionByName);
-        for (auto it = hashByName.cbegin(); it != hashByName.cend(); ++it) {
-            self->m_installedHashByName.insert(it.key(), it.value());
-        }
-        for (const QString& name : previouslyInstalled) {
-            if (!self->m_installedNameSet.contains(name)) {
-                self->m_installedHashByName.remove(name);
-            }
-        }
-
-        // Replay markInstalled across the full package set — fetchUiPluginMetadata
-        // only saw UI plugins. Idempotent on (version, hash).
+        self->m_installedHashByName    = std::move(hashByName);
         if (self->m_appsModel) {
-            self->m_appsModel->beginBulkInstalledUpdate();
-            for (const QString& name : previouslyInstalled) {
-                if (!self->m_installedNameSet.contains(name)) {
-                    self->m_appsModel->markInstalled(name, QString(), QString());
-                }
-            }
-            for (auto it = self->m_installedVersionByName.cbegin();
-                 it != self->m_installedVersionByName.cend(); ++it) {
-                self->m_appsModel->markInstalled(
-                    it.key(), it.value(),
-                    self->m_installedHashByName.value(it.key()));
-            }
-            self->m_appsModel->endBulkInstalledUpdate();
+            self->m_appsModel->replaceInstalledSet(
+                self->m_installedVersionByName, self->m_installedHashByName);
         }
 
         // Second pass — per-module missing/dependents queries. Dispatched
@@ -1213,6 +1189,34 @@ QVariantMap nameAndRepo(const QString& name, const QString& repo)
     };
 }
 
+QVariantList PackageCoordinator::collectCatalogRequired(const QString& name,
+                                                        const QString& repositoryUrl) const
+{
+    QVariantList out;
+    QSet<QString> seen;
+    out.append(nameAndRepo(name, repositoryUrl));
+    seen.insert(name);
+
+    if (repositoryUrl.isEmpty() || !m_appsModel) return out;
+
+    QStringList queue;
+    queue << name;
+    for (int head = 0; head < queue.size(); ++head) {
+        const QVariantMap row = m_appsModel->rowDataByName(queue[head], repositoryUrl);
+        if (row.isEmpty()) continue;
+        const QVariantList deps = row.value("dependencies").toList();
+        for (const QVariant& d : deps) {
+            const QString depName = d.toMap().value("name").toString();
+            if (depName.isEmpty() || seen.contains(depName)) continue;
+            if (m_appsModel->rowDataByName(depName, repositoryUrl).isEmpty()) continue;
+            seen.insert(depName);
+            out.append(nameAndRepo(depName, repositoryUrl));
+            queue << depName;
+        }
+    }
+    return out;
+}
+
 QString PackageCoordinator::depAction(const QString& installedVersion,
                                       const QString& resolvedVersion,
                                       const QString& installedHash,
@@ -1280,12 +1284,11 @@ QVariantList PackageCoordinator::computeDepChanges(
     return out;
 }
 
-void PackageCoordinator::setSessionStage(const QString& name, InstallStage::Value stage)
+void PackageCoordinator::setOpStage(const QString& name, InstallStage::Value stage)
 {
-    auto it = m_installSessions.find(name);
-    if (it == m_installSessions.end()) return;
-    if (it->stage == stage) return;
-    it->stage = stage;
+    if (!m_installRegistry->has(name)) return;
+    if (m_installRegistry->stage(name) == static_cast<int>(stage)) return;
+    m_installRegistry->setStage(name, stage);
     emit catalogInstallStageChanged(name, stage);
 }
 
@@ -1317,6 +1320,13 @@ void PackageCoordinator::openApp(const QString& name,
     runResolverAndOpenDialog(name, repositoryUrl, versionPins);
 }
 
+void PackageCoordinator::notifyAddApplicationDialogClosed()
+{
+    if (m_activeAddDialogName.isEmpty()) return;
+    ++m_dialogResolveEpoch[m_activeAddDialogName];
+    m_activeAddDialogName.clear();
+}
+
 void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                                                   const QString& repositoryUrl,
                                                   const QVariantMap& versionPins)
@@ -1327,6 +1337,7 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
     const QString targetVersion = versionPins.value(name).toString();
 
     const int epoch = ++m_dialogResolveEpoch[name];
+    m_activeAddDialogName = name;
 
     const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);
 
@@ -1334,7 +1345,12 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
              << "repo=" << repositoryUrl << "targetVersion=" << targetVersion
              << "pins=" << versionPins.size() << "epoch=" << epoch;
 
-    emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, /*changes=*/{});
+    QVariantList initialChanges;
+    if (m_installRegistry->isInFlight(name))
+        initialChanges = m_lastResolvedChangesByName.value(name);
+    // Sync stack frame only — QML may open the modal from this signal.
+    emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
+                       /*requestOpen=*/true);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
@@ -1349,7 +1365,13 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
             }
             const QVariantList changes =
                 self->computeDepChanges(resolved, self->m_installedVersionByName);
-            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes);
+            if (!resolved.isEmpty())
+                self->m_lastResolvedRawByName.insert(name, resolved);
+            if (!changes.isEmpty())
+                self->m_lastResolvedChangesByName.insert(name, changes);
+            // Async refresh only — never reopens the modal.
+            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes,
+                                     /*requestOpen=*/false);
         });
 }
 
@@ -1357,8 +1379,12 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
                                             const QString& repositoryUrl,
                                             const QString& targetVersion,
                                             const QVariantMap& catalogRow,
-                                            const QVariantList& changes)
+                                            const QVariantList& changes,
+                                            bool requestOpen)
 {
+    if (name != m_activeAddDialogName)
+        return;
+
     QVariantMap metadata;
     metadata["name"]          = name;
     metadata["repositoryUrl"] = repositoryUrl;
@@ -1388,10 +1414,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         ? QString()
         : versionsList.first().toMap().value("manifest").toMap().value("version").toString();
 
-    metadata["installStage"] = static_cast<int>(
-        m_installSessions.contains(name)
-            ? m_installSessions.value(name).stage
-            : InstallStage::None);
+    metadata["installStage"] = m_installRegistry->stage(name);
 
     // {name, repo} entries so the filter pins each row to the resolver's
     // chosen repo and multi-repo names don't duplicate. Always at least the
@@ -1424,10 +1447,43 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         m_appsModel->setResolverOverlay(overlay);
     }
 
+    // Union in the catalog-derived dependency set.
+    for (const QVariant& v : collectCatalogRequired(name, repositoryUrl)) {
+        const QString depName = v.toMap().value("name").toString();
+        if (depName.isEmpty() || seen.contains(depName)) continue;
+        seen.insert(depName);
+        requiredEntries.append(v);
+    }
+
     if (m_requiredPackagesModel)
         m_requiredPackagesModel->setRequiredPackages(requiredEntries);
 
-    emit addApplicationRequested(metadata);
+    if (requestOpen)
+        emit requestOpenAddApplicationDialog(metadata);
+    else
+        emit addApplicationDataUpdated(metadata);
+}
+
+void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
+{
+    if (!m_appsModel || topLevelName.isEmpty()) return;
+
+    const QVariantList raw = m_lastResolvedRawByName.value(topLevelName);
+    if (raw.isEmpty()) return;
+
+    const QVariantList changes =
+        computeDepChanges(raw, m_installedVersionByName);
+    if (!changes.isEmpty())
+        m_lastResolvedChangesByName.insert(topLevelName, changes);
+
+    // Only push UI updates while this app's dialog is still the active session.
+    if (topLevelName != m_activeAddDialogName) return;
+
+    const QString repositoryUrl = m_repoByName.value(topLevelName);
+    const QVariantMap catalogRow =
+        m_appsModel->rowDataByName(topLevelName, repositoryUrl);
+    emitDialogMetadata(topLevelName, repositoryUrl, QString(), catalogRow, changes,
+                       /*requestOpen=*/false);
 }
 
 void PackageCoordinator::confirmCatalogInstall(const QString& name,
@@ -1436,26 +1492,28 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
 {
     if (!m_logosAPI || name.isEmpty()) return;
 
-    if (m_installSessions.contains(name)) {
+    if (m_installRegistry->has(name)) {
         qDebug() << "confirmCatalogInstall: session for" << name
                  << "already in progress, ignoring";
         return;
     }
 
-    InstallSession s;
-    s.name  = name;
-    s.stage = InstallStage::Downloading;
-    m_installSessions.insert(name, s);
-
-    if (m_appsModel) m_appsModel->setInstallStage(name, InstallStage::Downloading);
+    m_installRegistry->begin(name, /*targetVersion=*/{}, /*targetHash=*/{},
+                        /*startedByTopLevel=*/name);
+    emit catalogInstallStageChanged(name, InstallStage::Downloading);
 
     const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
+    // Default IPC deadline (20s) is too tight when the catalog blob is many
+    // MB or the user is on a slow connection
+    constexpr int kDownloadIpcDeadlineMs = 5 * 60 * 1000;
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
         [self, name](QVariantList results) {
             if (!self) return;
+            if (!results.isEmpty())
+                self->m_lastResolvedRawByName.insert(name, results);
 
             QVariantList toInstall;
             for (const QVariant& v : results) {
@@ -1478,9 +1536,9 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
                     || installedHash.isEmpty()
                     || resolvedHash == installedHash;
                 if (versionMatches && hashMatches) {
-                    if (self->m_appsModel)
-                        self->m_appsModel->setInstallStage(rowName,
-                            InstallStage::Installed);
+                    self->m_installRegistry->beginOrTrack(rowName, resolvedVersion,
+                                                    resolvedHash, name);
+                    self->m_installRegistry->setStage(rowName, InstallStage::Installed);
                     continue;
                 }
                 toInstall.append(v);
@@ -1489,25 +1547,31 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
             if (toInstall.isEmpty()) {
                 // Nothing left to do after the skip-already-installed
                 // filter; treat as a successful no-op rather than Failed.
-                self->setSessionStage(name, InstallStage::Installed);
+                self->setOpStage(name, InstallStage::Installed);
                 emit self->catalogInstallFinished(name);
+                self->refreshOverlayAfterInstall(name);
                 QTimer::singleShot(1500, self.data(), [self, name]() {
                     if (!self) return;
-                    self->m_installSessions.remove(name);
+                    self->m_installRegistry->clearByTopLevel(name);
                 });
                 return;
             }
 
             for (const QVariant& v : toInstall) {
-                const QString rowName = v.toMap().value("name").toString();
-                if (!rowName.isEmpty() && self->m_appsModel)
-                    self->m_appsModel->setInstallStage(rowName,
-                        InstallStage::Queued);
+                const QVariantMap m = v.toMap();
+                const QString rowName = m.value("name").toString();
+                if (rowName.isEmpty()) continue;
+                self->m_installRegistry->beginOrTrack(rowName,
+                    m.value("version").toString(),
+                    m.value("rootHash").toString(),
+                    name);
+                self->m_installRegistry->setStage(rowName, InstallStage::Queued);
             }
 
-            self->setSessionStage(name, InstallStage::Installing);
+            self->setOpStage(name, InstallStage::Installing);
             self->installResultsSequential(toInstall, name, 0);
-        });
+        },
+        Timeout(kDownloadIpcDeadlineMs));
 }
 
 void PackageCoordinator::installOnePackage(const QVariantMap& dl,
@@ -1547,24 +1611,34 @@ void PackageCoordinator::installResultsSequential(const QVariantList& results,
              << "of" << results.size()
              << "rowName=" << rowName
              << "topLevel=" << topLevelName;
-    if (!rowName.isEmpty() && m_appsModel)
-        m_appsModel->setInstallStage(rowName, InstallStage::Installing);
+    if (!rowName.isEmpty()) {
+        m_installRegistry->beginOrTrack(rowName, dl.value("version").toString(),
+                                   dl.value("rootHash").toString(), topLevelName);
+        m_installRegistry->setStage(rowName, InstallStage::Installing);
+    }
 
     QPointer<PackageCoordinator> self(this);
     installOnePackage(dl,
-        [self, results, topLevelName, rowName, index, failures]
+        [self, results, topLevelName, rowName, index, failures, dl]
         (bool success, const QString& err) mutable {
             qDebug() << "installOnePackage callback rowName=" << rowName
                      << "success=" << success << "err=" << err;
             if (!self) return;
 
             if (!rowName.isEmpty()) {
-                const InstallStage::Value stage = success
-                    ? InstallStage::Installed
-                    : InstallStage::Failed;
-                if (self->m_appsModel)
-                    self->m_appsModel->setInstallStage(rowName, stage,
-                        success ? QString() : err);
+                if (success) {
+                    const QString ver = dl.value("version").toString();
+                    const QString hash = dl.value("rootHash").toString();
+                    if (!ver.isEmpty())
+                        self->m_installedVersionByName.insert(rowName, ver);
+                    if (!hash.isEmpty())
+                        self->m_installedHashByName.insert(rowName, hash);
+                    if (self->m_appsModel)
+                        self->m_appsModel->markInstalled(rowName, ver, hash);
+                    self->m_installRegistry->finish(rowName);
+                } else {
+                    self->m_installRegistry->fail(rowName, err);
+                }
             }
             if (!success) {
                 failures.append(rowName.isEmpty()
@@ -1584,21 +1658,22 @@ void PackageCoordinator::installResultsSequential(const QVariantList& results,
             if (!failures.isEmpty()) {
                 qDebug() << "  install loop complete with failures for"
                          << topLevelName << ":" << failures.size();
-                self->setSessionStage(topLevelName, InstallStage::Failed);
+                self->setOpStage(topLevelName, InstallStage::Failed);
                 emit self->catalogInstallFailed(
                     topLevelName, failures.join(QStringLiteral("; ")));
                 QTimer::singleShot(2500, self.data(), [self, topLevelName]() {
                     if (!self) return;
-                    self->m_installSessions.remove(topLevelName);
+                    self->m_installRegistry->clearByTopLevel(topLevelName);
                 });
                 return;
             }
 
-            self->setSessionStage(topLevelName, InstallStage::Installed);
+            self->setOpStage(topLevelName, InstallStage::Installed);
             emit self->catalogInstallFinished(topLevelName);
+            self->refreshOverlayAfterInstall(topLevelName);
             QTimer::singleShot(1500, self.data(), [self, topLevelName]() {
                 if (!self) return;
-                self->m_installSessions.remove(topLevelName);
+                self->m_installRegistry->clearByTopLevel(topLevelName);
             });
         });
 }
