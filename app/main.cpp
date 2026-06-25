@@ -130,12 +130,15 @@ int main(int argc, char *argv[])
     logos_core_set_persistence_base_path(
         LogosBasecampPaths::moduleDataDirectory().toUtf8().constData());
 
-    // Restrict the package_manager / package_downloader modules to calls
-    // from package_manager_ui. Must be set before logos_core_start().
-    logos_core_set_access_policy(
-        "{\"version\":1,\"mode\":\"enforce\",\"restrictions\":{"
-        "\"package_manager\":{\"allowedCallers\":[\"package_manager_ui\"]},"
-        "\"package_downloader\":{\"allowedCallers\":[\"package_manager_ui\"]}}}");
+    // Access policy temporarily disabled (allow all): passing NULL clears any
+    // policy so no enforcement runs. The enforce mode's derived deny-by-default
+    // gates every ui_qml app's calls to its own backend module, because UI
+    // plugins are loaded out-of-process and aren't tracked as dependents in the
+    // core ModuleRegistry — so they're never in a module's derived allowed-caller
+    // set and get denied (e.g. accounts_ui -> accounts_module). Re-enable once the
+    // access policy is redesigned to account for ui_qml callers.
+    // (Must be set before logos_core_start().)
+    logos_core_set_access_policy(nullptr);
 
     // Start the core
     logos_core_start();
