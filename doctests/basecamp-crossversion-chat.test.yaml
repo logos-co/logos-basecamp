@@ -187,14 +187,16 @@ sections:
               timeout: 60000
               screenshot: "xver-chatA-launch.png"
 
+            # Released chat_ui .lgx carries display_name="Chat"; basecamp's sidebar
+            # renders the friendly label, not the raw plugin name.
             - name: "The chat app appears in the sidebar"
               action: wait_for
-              texts: ["chat_ui"]
+              texts: ["Chat"]
               timeout: 30000
 
             - name: "Open the chat app"
               action: click
-              target: "chat_ui"
+              target: "Chat"
 
             - name: "Chat view renders"
               action: wait_for
@@ -285,6 +287,8 @@ sections:
               timeout: 60000
               screenshot: "xver-chatB-launch.png"
 
+            # Fresh `#install-portable` for chat_ui may omit display_name in the
+            # installed manifest, so the sidebar shows the raw name "chat_ui".
             - name: "The chat app appears in the sidebar"
               action: wait_for
               texts: ["chat_ui"]
