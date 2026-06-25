@@ -116,9 +116,13 @@ void Window::setupUi()
         qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;
     }
 
-    // Set window title and size
+    // Set window title and size. The default launch width is wide enough for
+    // the Package Manager's full table (category sidebar + columns through
+    // Action and Description) to be visible without horizontal scrolling; at
+    // the old 1024px those rightmost columns were clipped off-screen. The
+    // window can still be resized down to MainContainer's 800x600 minimum.
     setWindowTitle("Logos Basecamp");
-    resize(1024, 768);
+    resize(1600, 900);
 
 #ifdef Q_OS_MAC
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
