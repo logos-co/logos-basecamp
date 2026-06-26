@@ -49,11 +49,11 @@ concurrency:
 
 env:
   ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
-  ATTIC_TOKEN: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
 jobs:
   doctests:
     name: basecamp doc-tests (${{ matrix.os }})
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +80,7 @@ jobs:
           endpoint: ${{ secrets.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
-          token: ${{ env.ATTIC_TOKEN }}
+          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
       # The portable bundle (#bin-bundle-dir) is relocatable: it carries the app
       # and its Qt runtime, but NOT host graphics libraries (you can't bundle a

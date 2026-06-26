@@ -10,10 +10,10 @@ on:
 
 env:
   ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
-  ATTIC_TOKEN: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
 jobs:
   build-appimage:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     strategy:
       matrix:
         include:
@@ -39,7 +39,7 @@ jobs:
           endpoint: ${{ secrets.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
-          token: ${{ env.ATTIC_TOKEN }}
+          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
       - name: Build bin-appimage
         run: nix build .#bin-appimage
@@ -62,6 +62,7 @@ jobs:
           path: logos-basecamp-*.AppImage
 
   build-macos-app:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     runs-on: macos-latest
 
     steps:
@@ -79,7 +80,7 @@ jobs:
           endpoint: ${{ secrets.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
-          token: ${{ env.ATTIC_TOKEN }}
+          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
       - name: Build bin-macos-app
         run: nix build .#bin-macos-app
@@ -100,6 +101,7 @@ jobs:
           path: logos-basecamp-aarch64-unsigned.app.tar.gz
 
   test-linux:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     strategy:
       matrix:
         include:
@@ -125,12 +127,13 @@ jobs:
           endpoint: ${{ secrets.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
-          token: ${{ env.ATTIC_TOKEN }}
+          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
   test-macos:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     runs-on: macos-latest
 
     steps:
@@ -148,7 +151,7 @@ jobs:
           endpoint: ${{ secrets.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
-          token: ${{ env.ATTIC_TOKEN }}
+          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L
