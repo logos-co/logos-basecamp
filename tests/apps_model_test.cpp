@@ -874,7 +874,7 @@ private slots:
         for (auto it = roles.cbegin(); it != roles.cend(); ++it) seen.insert(it.value(), true);
         const QList<QByteArray> required{
             "name", "repositoryUrl", "displayName", "description", "category",
-            "type", "iconUrl", "versions", "dependencies", "installedVersion",
+            "type", "color", "iconUrl", "versions", "dependencies", "installedVersion",
             "latestVersion", "hasUpdate", "isInstalled", "missingDeps",
             "installStatus", "installType", "action", "toVersion",
             "isTopLevel", "resolverError", "installStage", "installError",
@@ -928,6 +928,28 @@ private slots:
             QCOMPARE(deps.first().toMap().value("name").toString(),
                      QStringLiteral("wallet_module"));
         }
+    }
+
+    void replaceCatalog_preserves_color_field()
+    {
+        AppsModel model;
+        QVariantMap row;
+        row.insert("name", "storage_ui");
+        row.insert("repositoryUrl", "https://example/repo.json");
+        row.insert("color", "#4a90d9");
+        row.insert("versions", QVariantList{ QVariantMap{
+            {"manifest", QVariantMap{ {"version", "1.0.0"} }}
+        }});
+        model.replaceCatalog({ row });
+
+        int colorRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
+            if (it.value() == "color") { colorRole = it.key(); break; }
+        }
+        QVERIFY(colorRole >= 0);
+        QCOMPARE(model.data(model.index(0), colorRole).toString(),
+                 QStringLiteral("#4a90d9"));
     }
 };
 

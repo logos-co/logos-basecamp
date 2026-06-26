@@ -24,6 +24,7 @@ public:
         DescriptionRole,
         CategoryRole,
         TypeRole,                // "ui_qml" | "core" 
+        ColorRole,               // manifest/catalog accent color; "" → AppColors hash
         IconUrlRole,             // file:// URL when installed; "" otherwise
         VersionsRole,            // QVariantList — all known catalog versions
         DependenciesRole,        // QVariantList — direct deps of versions[0]'s manifest,
@@ -108,6 +109,7 @@ private:
         QString description;
         QString category;
         QString type;
+        QString color;
         QString iconUrl;
         QVariantList versions;
         QString latestVersion;       // computed from versions[0].version

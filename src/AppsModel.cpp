@@ -34,6 +34,7 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case DescriptionRole:      return r.description;
     case CategoryRole:         return r.category;
     case TypeRole:             return r.type;
+    case ColorRole:            return r.color;
     case IconUrlRole:          return r.iconUrl;
     case VersionsRole:         return r.versions;
     case DependenciesRole:     return r.dependencies;
@@ -78,6 +79,7 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {DescriptionRole,      "description"},
         {CategoryRole,         "category"},
         {TypeRole,             "type"},
+        {ColorRole,            "color"},
         {IconUrlRole,          "iconUrl"},
         {VersionsRole,         "versions"},
         {DependenciesRole,     "dependencies"},
@@ -253,6 +255,7 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description    = row.value("description").toString();
             r.category       = row.value("category").toString();
             r.type           = row.value("type").toString();
+            r.color          = row.value("color").toString();
             r.iconUrl        = row.value("iconUrl").toString();
             r.versions       = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
@@ -268,14 +271,15 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description = row.value("description").toString();
             r.category    = row.value("category").toString();
             r.type        = row.value("type").toString();
+            r.color       = row.value("color").toString();
             r.iconUrl     = row.value("iconUrl").toString();
             r.versions    = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
             const QModelIndex mi = index(idx);
             emit dataChanged(mi, mi, {
                 DisplayNameRole, DescriptionRole, CategoryRole, TypeRole,
-                IconUrlRole, VersionsRole, LatestVersionRole, HasUpdateRole,
-                DependenciesRole, InstallStatusRole
+                ColorRole, IconUrlRole, VersionsRole, LatestVersionRole,
+                HasUpdateRole, DependenciesRole, InstallStatusRole
             });
         }
     }

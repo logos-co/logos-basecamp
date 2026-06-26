@@ -63,6 +63,7 @@ public:
     QStringList missingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
     QString     displayNameFor(const QString& name) const;
+    QString     colorFor(const QString& name) const;
 
     // Last-known package_downloader repository list, refreshed on demand via
     // refreshRepositories() and after every successful add/remove/toggle.
