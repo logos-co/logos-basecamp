@@ -222,6 +222,12 @@ QString PackageCoordinator::displayNameFor(const QString& name) const
     return name;
 }
 
+QString PackageCoordinator::colorFor(const QString& name) const
+{
+    if (!m_appsModel) return {};
+    return m_appsModel->rowDataByName(name).value("color").toString();
+}
+
 // ---------------------------------------------------------------------------
 // Install flow
 // ---------------------------------------------------------------------------
@@ -890,6 +896,12 @@ void PackageCoordinator::populateAppsModel(
         m_appsLoading = false;
         emit appsLoadingChanged();
     }
+
+    // launcherApps now sources its tile color from AppsModel via colorFor().
+    // Catalog arrives after the initial uiPluginsFetched/launcherAppsChanged
+    // pair, so re-emit here for the sidebar to repaint with the catalog color
+    // instead of the hash-fallback it picked up on first paint.
+    emit launcherAppsChanged();
 }
 
 // ── Package repository management ──────────────────────────────────────────
@@ -1394,6 +1406,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
                                     : catalogRow.value("displayName");
     metadata["description"]   = catalogRow.value("description");
     metadata["icon"]          = catalogRow.value("iconUrl");
+    metadata["color"]         = catalogRow.value("color");
     metadata["category"]      = catalogRow.value("category");
     metadata["versions"]      = catalogRow.value("versions").toList();
     const QString installedVersion = m_installedVersionByName.value(name);

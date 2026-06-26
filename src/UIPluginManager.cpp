@@ -492,6 +492,9 @@ QVariantList UIPluginManager::launcherApps() const
         app["displayName"] = metaDn;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
         app["iconPath"] = pluginIconUrl(pluginName);
+        app["color"] = m_packageCoordinator
+            ? m_packageCoordinator->colorFor(pluginName)
+            : QString();
         // Sidebar red-cross marker source. The SidebarAppDelegate reads
         // this field directly; we don't ship the full missingDeps list
         // here because the sidebar only draws an indicator — the detailed
