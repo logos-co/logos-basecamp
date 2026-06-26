@@ -12,11 +12,14 @@ name: basecamp Doc-Tests
 #       the identical Modules-view walk against it.
 #   basecamp-crossversion-accounts.test.yaml / -chat.test.yaml — cross-version
 #       compatibility: build one component fresh from source (#install-portable),
-#       download the latest released counterpart from the package manager, assemble
-#       both into a user-dir, launch the portable bundle against it, and drive the
-#       app (accounts: create mnemonics; chat: confirm the Waku node initializes) —
-#       in both directions (fresh module + released UI, and fresh UI + released
-#       module). These need network at runtime and exercise the live ecosystem.
+#       download the latest released counterpart(s) from the package manager,
+#       assemble them into a user-dir, launch the portable bundle against it, and
+#       drive the app (accounts: create mnemonics; chat: confirm the Waku node
+#       initializes). accounts checks both directions (fresh module + released UI,
+#       and fresh UI + released module); chat is three packages (chat_ui,
+#       chat_module, delivery_module) so it checks all three directions, each with
+#       one side fresh and the other two released. These need network at runtime
+#       and exercise the live ecosystem.
 # All specs run into one --report HTML (a dropdown switches between them).
 #
 # ──────────────────────────────────────────────────────────────────────────────
@@ -141,9 +144,10 @@ jobs:
           #     against the dev app (#app) and the portable bundle.
           #   basecamp-crossversion-accounts / -chat — cross-version compatibility:
           #     a freshly-built component (#install-portable) driven against the
-          #     latest released counterpart downloaded from the package manager,
-          #     in both directions. These need network at runtime (catalog
-          #     download + chat's Waku node) and exercise the live ecosystem.
+          #     latest released counterpart(s) downloaded from the package manager
+          #     (accounts: both directions; chat: all three of chat_ui/chat_module/
+          #     delivery_module). These need network at runtime (catalog download +
+          #     chat's Waku node) and exercise the live ecosystem.
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
