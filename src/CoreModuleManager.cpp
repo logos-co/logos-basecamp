@@ -4,10 +4,12 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QTimer>
 #include <QVariantList>
 
 #include "logos_api_client.h"
+#include "logos_types.h"
 
 // The logos_core_* C API is forward-declared here rather than in a shared
 // header so this is the only translation unit that links against it
@@ -39,6 +41,41 @@ QStringList drainCStringArray(char** arr)
     }
     delete[] arr;
     return out;
+}
+
+QJsonValue variantToJsonValue(const QVariant& value)
+{
+    if (!value.isValid()) return QJsonValue();
+
+    if (value.canConvert<LogosResult>()) {
+        const LogosResult result = value.value<LogosResult>();
+        QJsonObject object;
+        object.insert(QStringLiteral("success"), result.success);
+        object.insert(QStringLiteral("value"), variantToJsonValue(result.value));
+        object.insert(QStringLiteral("error"), variantToJsonValue(result.error));
+        return object;
+    }
+
+    switch (value.metaType().id()) {
+    case QMetaType::QVariantMap: {
+        QJsonObject object;
+        const QVariantMap map = value.toMap();
+        for (auto it = map.cbegin(); it != map.cend(); ++it) {
+            object.insert(it.key(), variantToJsonValue(it.value()));
+        }
+        return object;
+    }
+    case QMetaType::QVariantList: {
+        QJsonArray array;
+        const QVariantList list = value.toList();
+        for (const QVariant& item : list) {
+            array.append(variantToJsonValue(item));
+        }
+        return array;
+    }
+    default:
+        return QJsonValue::fromVariant(value);
+    }
 }
 
 }
@@ -176,7 +213,7 @@ QString CoreModuleManager::callMethod(const QString& moduleName,
     }
 
     QJsonObject wrapper;
-    wrapper["result"] = QJsonValue::fromVariant(result);
+    wrapper["result"] = variantToJsonValue(result);
     QJsonDocument resultDoc(wrapper);
     return resultDoc.toJson(QJsonDocument::Compact);
 }
