@@ -122,6 +122,8 @@ Control {
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
                             enabled: !loading
                             checked: modelData.name === (backend.currentVisibleApp || "")
+                            appName: modelData.name
+                            packageColor: modelData.color || ""
                             text: modelData.displayName || modelData.name
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true
@@ -143,6 +145,8 @@ Control {
                             loaded: false
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
                             enabled: !loading
+                            appName: modelData.name
+                            packageColor: modelData.color || ""
                             text: modelData.displayName || modelData.name
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true

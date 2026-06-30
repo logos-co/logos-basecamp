@@ -14,13 +14,14 @@ AbstractButton {
     // When set, a red-cross overlay renders top-right — clicking still emits
     // `clicked`, and the backend decides whether to load or show the popup.
     property bool hasMissingDeps: false
+    property string appName: ""
+    property string packageColor: ""
 
     implicitHeight: 50
 
     QtObject {
         id: d
 
-        readonly property string nameText: root.text || ""
         readonly property int tileSize: 38
         readonly property int iconSize: 19
     }
@@ -35,8 +36,7 @@ AbstractButton {
         }
     }
 
-    background: Rectangle {
-        color: root.loaded ? Theme.palette.backgroundTertiary : Theme.palette.overlayDark
+    background: Item {
         Rectangle {
             anchors.left: parent.left
             width: 3
@@ -49,10 +49,13 @@ AbstractButton {
         AppTile {
             id: tile
             anchors.centerIn: parent
-            appName: d.nameText
+            appName: root.appName
+            packageColor: root.packageColor
             iconSource: root.icon.source
             tileSize: d.tileSize
             iconSize: d.iconSize
+            borderOnHover: true
+            borderEmphasized: root.hovered || root.checked
             dimOpacity: root.loaded ? 1.0 : 0.55
             visible: !root.loading
         }
@@ -94,10 +97,10 @@ AbstractButton {
             height: 14
             radius: 7
             color: "#d32f2f"
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.rightMargin: 6
-            anchors.topMargin: 6
+            anchors.right: tile.right
+            anchors.top: tile.top
+            anchors.rightMargin: -2
+            anchors.topMargin: -2
 
             Rectangle {
                 width: 8
