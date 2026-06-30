@@ -2,7 +2,7 @@
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "MainUIBackend.h"
-#include "mdiview.h"
+#include "WorkspaceArea.h"
 
 #include <QQuickWidget>
 #include <QQmlEngine>
@@ -21,7 +21,7 @@
 #include <QTimer>
 
 namespace {
-constexpr int kAppsStackIndex     = 0;  // MdiView (C++ widget)
+constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
 constexpr int kContentStackIndex  = 1;  // ContentViews.qml (App Manager + Settings)
 constexpr int kModulesStackIndex  = 2;  // package_manager_ui (sandboxed QQuickWidget)
 
@@ -64,7 +64,7 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     , m_backend(nullptr)
     , m_sidebarWidget(nullptr)
     , m_contentStack(nullptr)
-    , m_mdiView(nullptr)
+    , m_workspaceArea(nullptr)
     , m_contentWidget(nullptr)
     , m_overlayWidget(nullptr)
 {
@@ -108,8 +108,8 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     connect(m_backend, &MainUIBackend::pluginWindowActivateRequested,
             this, &MainContainer::onPluginWindowActivateRequested);
 
-    // When user closes a plugin window (tab/window X), notify backend to unload
-    connect(m_mdiView, &MdiView::pluginWindowClosed,
+    // When user closes a plugin tab (× button), notify backend to unload.
+    connect(m_workspaceArea, &WorkspaceArea::pluginClosed,
             m_backend, &MainUIBackend::onPluginWindowClosed);
 
     // Connect to QML signals from SidebarPanel.
@@ -177,9 +177,9 @@ void MainContainer::setupUi()
     m_contentStack = new QStackedWidget(contentArea);
     m_contentStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     
-    // Index 0: MdiView (C++ widget)
-    m_mdiView = new MdiView(m_backend, m_contentStack);
-    m_contentStack->addWidget(m_mdiView);
+    // Index 0: WorkspaceArea (QDockWidget-based)
+    m_workspaceArea = new WorkspaceArea(m_contentStack);
+    m_contentStack->addWidget(m_workspaceArea);
     
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
@@ -257,8 +257,8 @@ void MainContainer::setupUi()
                 this, SLOT(onOverlayActiveChanged(bool)));
     }
 
-    // Set initial state
-    m_contentStack->setCurrentIndex(kAppsStackIndex); // Show MdiView by default
+    // Set initial state — Apps section (workspace) visible by default.
+    m_contentStack->setCurrentIndex(kAppsStackIndex);
 
     // Set reasonable minimum size
     setMinimumSize(800, 600);
@@ -292,7 +292,7 @@ void MainContainer::onViewIndexChanged()
     
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;
 
-    //   0 (Workspace)        → MdiView
+    //   0 (Workspace)        → WorkspaceArea (QDockWidget-based)
     //   1 (Applications)     → ContentViews.qml (App Manager view)
     //   2 (Package Manager)  → package_manager_ui (preloaded in background)
     //   3 (Settings)         → ContentViews.qml (StackLayout picks the page)
@@ -318,30 +318,27 @@ void MainContainer::onNavigateToApps()
 
 void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& title)
 {
-    if (!m_mdiView || !widget) return;
-    const QString resolved = m_backend ? m_backend->displayNameFor(title)
-                                       : title;
-    const QString label = resolved.isEmpty() ? title : resolved;
-    m_mdiView->addPluginWindow(widget, label, title);
-    qDebug() << "MainContainer: Added plugin window to MdiView:" << label
-             << "(module:" << title << ")";
+    if (m_workspaceArea && widget) {
+        const QString resolved = m_backend ? m_backend->displayNameFor(title)
+                                           : title;
+        const QString label = resolved.isEmpty() ? title : resolved;
+        m_workspaceArea->addPluginDock(widget, label);
+        qDebug() << "MainContainer: Added plugin dock to WorkspaceArea:"
+                 << label << "(module:" << title << ")";
+    }
 }
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
     if (widget && widget == m_pmuiWidget) return;
-    if (m_mdiView && widget) {
-        m_mdiView->removePluginWindow(widget);
-        qDebug() << "MainContainer: Removed plugin window from MdiView";
-    }
+    if (m_workspaceArea && widget)
+        m_workspaceArea->removePluginDock(widget);
 }
 
 void MainContainer::onPluginWindowActivateRequested(QWidget* widget)
 {
     if (widget && widget == m_pmuiWidget) return;
-    if (m_mdiView && widget) {
-        m_mdiView->activatePluginWindow(widget);
-        qDebug() << "MainContainer: Activated plugin window in MdiView";
-    }
+    if (m_workspaceArea && widget)
+        m_workspaceArea->activatePluginDock(widget);
 }
 

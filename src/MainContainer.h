@@ -6,7 +6,7 @@
 
 class QQuickWidget;
 class MainUIBackend;
-class MdiView;
+class WorkspaceArea;
 class LogosAPI;
 
 class MainContainer : public QWidget
@@ -17,9 +17,9 @@ public:
     explicit MainContainer(LogosAPI* logosAPI = nullptr, QWidget* parent = nullptr);
     ~MainContainer();
 
-    // Get the MDI view
-    MdiView* getMdiView() const { return m_mdiView; }
-    
+    // Get the workspace area
+    WorkspaceArea* getWorkspaceArea() const { return m_workspaceArea; }
+
     // Get the backend
     MainUIBackend* getBackend() const { return m_backend; }
     
@@ -57,8 +57,8 @@ private:
     // Content area
     QStackedWidget* m_contentStack;
 
-    // MdiView (C++ widget for Apps)
-    MdiView* m_mdiView;
+    // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
+    WorkspaceArea* m_workspaceArea;
 
     QWidget* m_pmuiWidget = nullptr;
     bool m_suppressNextNavToApps = false;

@@ -121,13 +121,12 @@ set(SOURCES
     InstallRegistry.cpp
     AppsModel.cpp
     PluginLoader.cpp
+    WorkspaceArea.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp
     restricted/RestrictedUrlInterceptor.cpp
     restricted/QmlSandbox.cpp
-    mdichild.cpp
-    mdiview.cpp
 )
 
 # Add SDK sources based on layout type
