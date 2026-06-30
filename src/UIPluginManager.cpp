@@ -2,6 +2,7 @@
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
+#include "ModuleModel.h"
 
 #include <QDebug>
 #include <QDir>
@@ -29,7 +30,10 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
     connect(m_pluginLoader, &PluginLoader::pluginLoadFailed,
             this, &UIPluginManager::onPluginLoadFailed);
     connect(m_pluginLoader, &PluginLoader::loadingChanged,
-            this, &UIPluginManager::loadingModulesChanged);
+            this, [this]() {
+                syncUiPluginRuntimeState();
+                emit loadingModulesChanged();
+            });
 }
 
 UIPluginManager::~UIPluginManager()
@@ -65,86 +69,84 @@ void UIPluginManager::setPackageCoordinator(PackageCoordinator* packageCoordinat
     m_packageCoordinator = packageCoordinator;
     if (!m_packageCoordinator) return;
 
-    // Wire the catalog-refresh signal — PackageCoordinator owns the IPC cadence
-    // (and the event subscriptions that trigger refreshes on install /
-    // uninstall); we just consume the resulting UI-plugin list to keep our
-    // load-dispatch cache current.
     connect(m_packageCoordinator, &PackageCoordinator::uiPluginsFetched,
             this, &UIPluginManager::onUiPluginsFetched);
+}
 
-    // When PackageCoordinator's dep-info refresh completes, our uiModules() /
-    // launcherApps() builders need to re-emit so QML binds to the new
-    // installType / missing-deps values.
-    connect(m_packageCoordinator, &PackageCoordinator::uiModulesChanged,
-            this, &UIPluginManager::uiModulesChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::launcherAppsChanged,
-            this, &UIPluginManager::launcherAppsChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::coreModulesChanged,
-            this, &UIPluginManager::coreModulesChanged);
+void UIPluginManager::setModuleModel(ModuleModel* moduleModel)
+{
+    m_moduleModel = moduleModel;
 }
 
 void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
 {
-    m_uiPluginMetadata.clear();
-    for (const QVariant& item : uiPlugins) {
-        QVariantMap pluginInfo = item.toMap();
-        QString name = pluginInfo.value("name").toString();
-        if (name.isEmpty()) continue;
+    // Defer model writes — this slot is driven by PackageCoordinator IPC
+    // callbacks that can land while SidebarPanel Repeaters are still binding
+    // to loadedLauncherProxy / unloadedLauncherProxy. Synchronous inserts
+    // there have caused std::bad_alloc from nested proxy filter remaps.
+    QMetaObject::invokeMethod(this, [this, uiPlugins]() {
+        m_uiPluginMetadata.clear();
+        for (const QVariant& item : uiPlugins) {
+            QVariantMap pluginInfo = item.toMap();
+            QString name = pluginInfo.value("name").toString();
+            if (name.isEmpty()) continue;
 
-        // ui_qml requires "view" (the QML entry point); "main" is optional.
-        // Other types require "mainFilePath" (the backend lib).
-        const QString type = pluginInfo.value("type").toString();
-        if (type == QStringLiteral("ui_qml")) {
-            if (pluginInfo.value("view").toString().isEmpty()) continue;
-        } else {
-            if (pluginInfo.value("mainFilePath").toString().isEmpty()) continue;
+            const QString type = pluginInfo.value("type").toString();
+            if (type == QStringLiteral("ui_qml")) {
+                if (pluginInfo.value("view").toString().isEmpty()) continue;
+            } else {
+                if (pluginInfo.value("mainFilePath").toString().isEmpty()) continue;
+            }
+            m_uiPluginMetadata[name] = pluginInfo;
         }
-        m_uiPluginMetadata[name] = pluginInfo;
-    }
-    // Immediate emit — the package-state caches (installType, missingDeps)
-    // on PackageCoordinator may still be refreshing, but the list of UI plugins
-    // has changed now and QML should reflect that.
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+        syncUiPluginsToModel();
+    }, Qt::QueuedConnection);
 }
 
-QVariantList UIPluginManager::uiModules() const
+void UIPluginManager::syncUiPluginsToModel()
 {
-    QVariantList modules;
-    QStringList availablePlugins = findAvailableUiPlugins();
+    if (!m_moduleModel) return;
+    for (auto it = m_uiPluginMetadata.cbegin(); it != m_uiPluginMetadata.cend(); ++it) {
+        const QString& name = it.key();
+        const QVariantMap& meta = it.value();
+        QString type = meta.value(QStringLiteral("type")).toString();
+        if (type.isEmpty()) type = QStringLiteral("ui_qml");
 
-    for (const QString& pluginName : availablePlugins) {
-        const QVariantMap& meta = m_uiPluginMetadata.value(pluginName);
-        const bool isInstalled = meta.value("isInstalled", true).toBool();
-
-        QVariantMap module;
-        module["name"] = pluginName;
-        module["isInstalled"] = isInstalled;
-        module["isLoaded"] = m_loadedUiModules.contains(pluginName) || m_qmlPluginWidgets.contains(pluginName);
-        module["isMainUi"] = (pluginName == "main_ui");
-        module["iconPath"] = pluginIconUrl(pluginName);
-        module["displayName"] = meta.value("displayName");
-        module["description"] = meta.value("description");
-        module["repositoryUrl"] = meta.value("repositoryUrl");
-        module["version"] = meta.value("version");
-
-        // Dependency-aware fields come from PackageCoordinator. If it hasn't
-        // finished its async refresh yet, the accessors return empty values
-        // which QML treats as "unknown — render safe defaults" (no red-cross,
-        // no Uninstall button).
-        const QStringList missing = (isInstalled && m_packageCoordinator)
-            ? m_packageCoordinator->missingDepsOf(pluginName)
-            : QStringList{};
-        module["installType"] = (isInstalled && m_packageCoordinator)
-            ? m_packageCoordinator->installType(pluginName)
-            : QString(); // "" | "embedded" | "user"
-        module["hasMissingDeps"] = !missing.isEmpty();
-        module["missingDeps"] = missing;
-
-        modules.append(module);
+        QVariantMap fields;
+        fields[QStringLiteral("displayName")] = meta.value(QStringLiteral("displayName"));
+        fields[QStringLiteral("description")] = meta.value(QStringLiteral("description"));
+        fields[QStringLiteral("repositoryUrl")] = meta.value(QStringLiteral("repositoryUrl"));
+        fields[QStringLiteral("version")] = meta.value(QStringLiteral("version"));
+        fields[QStringLiteral("isMainUi")] = (name == QStringLiteral("main_ui"));
+        fields[QStringLiteral("iconPath")] = pluginIconUrl(name);
+        if (m_packageCoordinator)
+            fields[QStringLiteral("installType")] = m_packageCoordinator->installType(name);
+        m_moduleModel->seedInstalledOnly(name, type, fields);
     }
+    syncUiPluginRuntimeState();
+}
 
-    return modules;
+void UIPluginManager::syncUiPluginRuntimeState()
+{
+    if (!m_moduleModel) return;
+    const QStringList loading = m_pluginLoader ? m_pluginLoader->loadingPlugins() : QStringList{};
+    for (auto it = m_uiPluginMetadata.cbegin(); it != m_uiPluginMetadata.cend(); ++it) {
+        const QString& name = it.key();
+        const bool loaded = m_loadedUiModules.contains(name)
+                         || m_qmlPluginWidgets.contains(name);
+        m_moduleModel->setRoleByName(name, ModuleModel::IsLoadedRole, loaded);
+        m_moduleModel->setRoleByName(name, ModuleModel::IsLoadingRole, loading.contains(name));
+    }
+}
+
+void UIPluginManager::updateUiPluginLoadedState(const QString& name)
+{
+    if (!m_moduleModel) return;
+    const bool loaded = m_loadedUiModules.contains(name)
+                     || m_qmlPluginWidgets.contains(name);
+    m_moduleModel->setRoleByName(name, ModuleModel::IsLoadedRole, loaded);
+    const bool loading = m_pluginLoader && m_pluginLoader->loadingPlugins().contains(name);
+    m_moduleModel->setRoleByName(name, ModuleModel::IsLoadingRole, loading);
 }
 
 void UIPluginManager::loadUiModule(const QString& moduleName)
@@ -202,8 +204,7 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     m_uiModuleWidgets[name] = widget;
     m_loadedApps.insert(name);
 
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+    updateUiPluginLoadedState(name);
     emit pluginWindowRequested(widget, name);
     emit navigateToApps();
 
@@ -313,8 +314,7 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
     m_qmlPluginWidgets.remove(moduleName);
     m_loadedApps.remove(moduleName);
 
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+    updateUiPluginLoadedState(moduleName);
 
     qDebug() << "Successfully unloaded UI module:" << moduleName;
 }
@@ -333,7 +333,6 @@ void UIPluginManager::setCurrentVisibleApp(const QString& pluginName)
     if (m_currentVisibleApp != pluginName) {
         m_currentVisibleApp = pluginName;
         emit currentVisibleAppChanged();
-        emit launcherAppsChanged();
     }
 }
 
@@ -352,9 +351,7 @@ void UIPluginManager::onPluginWindowClosed(const QString& pluginName)
         m_loadedUiModules.remove(pluginName);
         m_uiModuleWidgets.remove(pluginName);
         m_loadedApps.remove(pluginName);
-
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
+        updateUiPluginLoadedState(pluginName);
     } else if (m_qmlPluginWidgets.contains(pluginName)) {
         // Stop view module host process if applicable
         if (m_viewModuleHosts.contains(pluginName)) {
@@ -365,9 +362,7 @@ void UIPluginManager::onPluginWindowClosed(const QString& pluginName)
         m_qmlPluginWidgets.remove(pluginName);
         m_uiModuleWidgets.remove(pluginName);
         m_loadedApps.remove(pluginName);
-
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
+        updateUiPluginLoadedState(pluginName);
     }
 }
 
@@ -394,7 +389,6 @@ void UIPluginManager::loadCoreModule(const QString& moduleName)
 
         if (success) {
             qDebug() << "Successfully loaded core module:" << moduleName;
-            emit coreModulesChanged();
         } else {
             qDebug() << "Failed to load core module:" << moduleName;
         }
@@ -452,7 +446,6 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
 
         if (success) {
             qDebug() << "Successfully unloaded core module:" << moduleName;
-            emit coreModulesChanged();
         } else {
             qDebug() << "Failed to unload core module:" << moduleName;
         }
@@ -469,43 +462,6 @@ void UIPluginManager::refreshUiModules()
     if (m_packageCoordinator) {
         m_packageCoordinator->refresh();
     }
-}
-
-QVariantList UIPluginManager::launcherApps() const
-{
-    QVariantList apps;
-    QStringList availablePlugins = findAvailableUiPlugins();
-
-    for (const QString& pluginName : availablePlugins) {
-        if (pluginName == "main_ui") {
-            continue;
-        }
-
-        if (pluginName == "package_manager_ui") {
-            continue;
-        }
-
-        QVariantMap app;
-        app["name"] = pluginName;
-        const QString metaDn =
-            m_uiPluginMetadata.value(pluginName).value("displayName").toString();
-        app["displayName"] = metaDn;
-        app["isLoaded"] = m_loadedApps.contains(pluginName);
-        app["iconPath"] = pluginIconUrl(pluginName);
-        // Sidebar red-cross marker source. The SidebarAppDelegate reads
-        // this field directly; we don't ship the full missingDeps list
-        // here because the sidebar only draws an indicator — the detailed
-        // list lives behind the click-triggered popup which reads from
-        // backend.uiModules.
-        const QStringList missing = m_packageCoordinator
-            ? m_packageCoordinator->missingDepsOf(pluginName)
-            : QStringList{};
-        app["hasMissingDeps"] = !missing.isEmpty();
-
-        apps.append(app);
-    }
-
-    return apps;
 }
 
 void UIPluginManager::onAppLauncherClicked(const QString& appName)
@@ -571,12 +527,6 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
         // scheduling another async hop. m_pendingUnload is inactive so the
         // cascade guard in unloadUiModuleImpl won't re-trigger.
         unloadUiModuleImpl(moduleName);
-
-        // Stats may have shifted; the deferred-emit block that followed
-        // below handles the QML-notification side.
-        emit coreModulesChanged();
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
     }, Qt::QueuedConnection);
 }
 
@@ -628,6 +578,7 @@ void UIPluginManager::teardownUiPluginWidget(const QString& moduleName)
         m_currentVisibleApp.clear();
         emit currentVisibleAppChanged();
     }
+    updateUiPluginLoadedState(moduleName);
 }
 
 QString UIPluginManager::getPluginType(const QString& name) const

@@ -10,8 +10,9 @@
 #include <QSet>
 #include "logos_api.h"
 
-class AppsFilterProxy;
-class AppsModel;
+class ModuleFilterProxy;
+class ModuleModel;
+class RepositoryModel;
 class InstallRegistry;
 class CoreModuleManager;
 class UIPluginManager;
@@ -50,11 +51,12 @@ public:
     explicit PackageCoordinator(LogosAPI* logosAPI,
                             CoreModuleManager* coreModuleManager,
                             UIPluginManager* uiPluginManager,
-                            AppsModel* appsModel,
+                            ModuleModel* moduleModel,
+                            RepositoryModel* repositoryModel,
                             QObject* parent = nullptr);
     ~PackageCoordinator() override;
 
-    void setRequiredPackagesModel(AppsFilterProxy* proxy) { m_requiredPackagesModel = proxy; }
+    void setRequiredPackagesModel(ModuleFilterProxy* proxy) { m_requiredPackagesModel = proxy; }
 
     // Read-only accessors over the package-state caches. Empty when the
     // async refresh chain hasn't completed yet; QML and UIPluginManager
@@ -64,9 +66,7 @@ public:
     QStringList dependentsOf(const QString& name) const;
     QString     displayNameFor(const QString& name) const;
 
-    // Last-known package_downloader repository list, refreshed on demand via
-    // refreshRepositories() and after every successful add/remove/toggle.
-    QVariantList repositories() const { return m_repositories; }
+    // Last-known package_downloader repository list lives in m_repositoryModel.
     bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
 
     // True until the first successful populateAppsModel() — drives the
@@ -142,13 +142,6 @@ public slots:
     InstallRegistry* installRegistry() const { return m_installRegistry; }
 
 signals:
-    // Tells MainUIBackend to refresh the uiModules / launcherApps / coreModules
-    // properties — their values compose installType/missing-deps from here with
-    // loaded-state from UIPluginManager and CoreModuleManager.
-    void uiModulesChanged();
-    void launcherAppsChanged();
-    void coreModulesChanged();
-
     // Raw UI-plugin metadata pushed to UIPluginManager whenever the catalog
     // refreshes. UIPluginManager owns the UI-plugin-specific cache
     // (m_uiPluginMetadata) because that's where the load-dispatch path reads
@@ -204,7 +197,6 @@ signals:
 
     // Repository management — change-notify for the QML-facing cache and
     // an outcome signal for add/remove/toggle (success or error string).
-    void repositoriesChanged();
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
@@ -323,8 +315,9 @@ private:
     LogosAPI*          m_logosAPI;
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
-    AppsModel*         m_appsModel;
-    AppsFilterProxy*   m_requiredPackagesModel = nullptr;
+    ModuleModel*         m_moduleModel;
+    RepositoryModel*     m_repositoryModel;
+    ModuleFilterProxy*   m_requiredPackagesModel = nullptr;
 
     // Package-state caches sourced from the package_manager module.
     QMap<QString, QString>     m_installTypeByModule;
@@ -345,7 +338,7 @@ private:
     QHash<QString, QString>  m_installedHashByName;   // name → rootHash of
                                                      // what's on disk. Used
                                                      // by populateAppsModel
-                                                     // to feed AppsModel's
+                                                     // to feed ModuleModel's
                                                      // DifferentHash detection.
     QHash<QString, int> m_dialogResolveEpoch;
     QString m_activeAddDialogName;
@@ -356,7 +349,6 @@ private:
 
     InstallRegistry* m_installRegistry = nullptr;
 
-    QVariantList m_repositories;
     int          m_repositoriesLoadingCount = 0;
     bool         m_appsLoading              = true;
 };

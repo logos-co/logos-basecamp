@@ -10,10 +10,9 @@ AbstractButton {
 
     property bool loaded: false
     property bool loading: false
-    // True iff the backend reports this plugin has unmet core dependencies.
-    // When set, a red-cross overlay renders top-right — clicking still emits
-    // `clicked`, and the backend decides whether to load or show the popup.
     property bool hasMissingDeps: false
+    property string packageColor: ""
+    property string appName: ""
 
     implicitHeight: 50
 
@@ -49,7 +48,8 @@ AbstractButton {
         AppTile {
             id: tile
             anchors.centerIn: parent
-            appName: d.nameText
+            appName: root.appName || d.nameText
+            packageColor: root.packageColor
             iconSource: root.icon.source
             tileSize: d.tileSize
             iconSize: d.iconSize

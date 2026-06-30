@@ -62,6 +62,7 @@ foreach(slot
     sandboxBlocksFileOutsideRoots
     sandboxAllowsFileUnderInstallDir
     sandboxPassesThroughNonExistentProbe
+    sandboxPassesThroughRelativeQmldirProbe
     sandboxAllowsQrcScheme
     evilApp_allProbesBlocked
     evilApp_qmldirPluginImportRejected)

@@ -95,7 +95,7 @@ Item {
                     spacing: 8
 
                     Repeater {
-                        model: backend.uiModules
+                        model: backend.uiModulesProxy
 
                         // Row shell is shared with CoreModulesView so the two
                         // tabs stay visually consistent. Column layout rules:
@@ -109,7 +109,15 @@ Item {
                         //     had BOTH a fixed-width name AND a fillWidth
                         //     spacer in the same row, which fought layout and
                         //     collapsed everything onto the left edge.
-                        ModuleRow {
+                        delegate: ModuleRow {
+                            required property int index
+                            required property string name
+                            required property string displayName
+                            required property string iconPath
+                            required property bool isMainUi
+                            required property bool isLoaded
+                            required property string installType
+
                             rowIndex: index
                             rowHeight: 50
 
@@ -122,25 +130,25 @@ Item {
 
                                 Image {
                                     anchors.centerIn: parent
-                                    source: modelData.iconPath || ""
+                                    source: iconPath || ""
                                     sourceSize.width: 24
                                     sourceSize.height: 24
-                                    visible: modelData.iconPath && modelData.iconPath.length > 0
+                                    visible: iconPath && iconPath.length > 0
                                 }
 
                                 LogosText {
                                     anchors.centerIn: parent
-                                    text: modelData.name.substring(0, 2).toUpperCase()
+                                    text: name.substring(0, 2).toUpperCase()
                                     font.pixelSize: 12
                                     font.weight: Font.Bold
                                     color: "#808080"
-                                    visible: !modelData.iconPath || modelData.iconPath.length === 0
+                                    visible: !iconPath || iconPath.length === 0
                                 }
                             }
 
                             // Name absorbs the remaining row width.
                             LogosText {
-                                text: modelData.displayName || modelData.name
+                                text: displayName || name
                                 font.pixelSize: 16
                                 color: "#e0e0e0"
                                 elide: Text.ElideRight
@@ -152,18 +160,18 @@ Item {
                             // regardless of which of the three states is
                             // showing ("(Main UI)" / "(Loaded)" / "(Not Loaded)").
                             LogosText {
-                                text: modelData.isMainUi ? "(Main UI)" :
-                                      (modelData.isLoaded ? "(Loaded)" : "(Not Loaded)")
-                                color: modelData.isMainUi ? "#a0a0a0" :
-                                       (modelData.isLoaded ? "#4CAF50" : "#F44336")
+                                text: isMainUi ? "(Main UI)" :
+                                      (isLoaded ? "(Loaded)" : "(Not Loaded)")
+                                color: isMainUi ? "#a0a0a0" :
+                                       (isLoaded ? "#4CAF50" : "#F44336")
                                 Layout.preferredWidth: 100
                             }
 
                             // Load / Unload toggle (hidden for the main UI
                             // module — that's us, can't unload ourselves).
                             Button {
-                                text: modelData.isLoaded ? "Unload Plugin" : "Load Plugin"
-                                visible: !modelData.isMainUi
+                                text: isLoaded ? "Unload Plugin" : "Load Plugin"
+                                visible: !isMainUi
 
                                 contentItem: LogosText {
                                     text: parent.text
@@ -176,29 +184,26 @@ Item {
                                 background: Rectangle {
                                     implicitWidth: 100
                                     implicitHeight: 30
-                                    color: modelData.isLoaded ?
+                                    color: isLoaded ?
                                         (parent.pressed ? "#da190b" : "#F44336") :
                                         (parent.pressed ? "#3d8b40" : "#4b4b4b")
                                     radius: 4
                                 }
 
                                 onClicked: {
-                                    if (modelData.isLoaded) {
-                                        backend.unloadUiModule(modelData.name)
+                                    if (isLoaded) {
+                                        backend.unloadUiModule(name)
                                     } else {
-                                        backend.loadUiModule(modelData.name)
+                                        backend.loadUiModule(name)
                                     }
                                 }
                             }
 
                             // Uninstall — only for user-installed modules.
-                            // Embedded modules are structurally protected
-                            // (backend will refuse), but hiding the button
-                            // keeps the row tidy.
                             Button {
                                 text: "Uninstall"
-                                visible: !modelData.isMainUi
-                                         && modelData.installType === "user"
+                                visible: !isMainUi
+                                         && installType === "user"
 
                                 contentItem: LogosText {
                                     text: parent.text
@@ -215,7 +220,7 @@ Item {
                                     radius: 4
                                 }
 
-                                onClicked: backend.uninstallUiModule(modelData.name)
+                                onClicked: backend.uninstallUiModule(name)
                             }
                         }
                     }
@@ -226,7 +231,7 @@ Item {
                         color: "#606060"
                         Layout.alignment: Qt.AlignHCenter
                         Layout.topMargin: 40
-                        visible: backend.uiModules.length === 0
+                        visible: backend.uiModulesProxy.count === 0
                     }
                 }
             }

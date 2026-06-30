@@ -40,7 +40,8 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp build-unit-tests/apps_model_test $out/ 2>/dev/null || true
+    cp build-unit-tests/module_model_test $out/ 2>/dev/null || true
+    cp build-unit-tests/module_filter_proxy_test $out/ 2>/dev/null || true
     echo "basecamp unit tests passed" > $out/result.txt
     runHook postInstall
   '';

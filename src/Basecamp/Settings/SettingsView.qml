@@ -8,7 +8,7 @@ import Logos.Theme
 Rectangle {
     id: root
 
-    property var    repositories:        []
+    property var    repositoriesModel:   null
     property bool   repositoriesLoading: false
 
     signal repositoryRefreshRequested()
@@ -140,7 +140,7 @@ Rectangle {
                     RepositoriesView {
                         id: repositoriesView
 
-                        repositories: root.repositories
+                        repositoriesModel: root.repositoriesModel
                         loading:      root.repositoriesLoading
 
                         onRefreshRequested:    root.repositoryRefreshRequested()

@@ -9,7 +9,7 @@ import Logos.Theme
 Item {
     id: root
 
-    property var repositories: []
+    property var repositoriesModel: null
     property bool loading: false
 
     signal refreshRequested()
@@ -111,16 +111,18 @@ Item {
 
             // Repository list.
             Repeater {
-                model: root.repositories
+                model: root.repositoriesModel
                 delegate: Rectangle {
-                    required property var modelData
+                    required property int index
+                    required property string url
+                    required property string displayName
+                    required property string name
+                    required property string description
+                    required property string resolveError
+                    required property bool isDefault
+                    required property bool enabled
 
-                    readonly property string url:          modelData.url || ""
-                    readonly property string displayName:  modelData.displayName || modelData.name || ""
-                    readonly property string description:  modelData.description || ""
-                    readonly property string resolveError: modelData.resolveError || ""
-                    readonly property bool   isDefault:    modelData.isDefault === true
-                    readonly property bool   isEnabled:    modelData.enabled !== false
+                    readonly property bool isEnabled: enabled
 
                     Layout.fillWidth: true
                     implicitHeight: rowCol.implicitHeight + Theme.spacing.large * 2
@@ -224,7 +226,7 @@ Item {
             }
 
             LogosText {
-                visible: root.repositories.length === 0
+                visible: !root.repositoriesModel || root.repositoriesModel.count === 0
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
                 text: root.loading

@@ -6,7 +6,7 @@ TestCase {
     name: "RepositoryContract"
     when: windowShown
 
-    function test_AppsFilterProxy_requiredPackages_preserves_insertion_order() {
+    function test_ModuleFilterProxy_requiredPackages_preserves_insertion_order() {
         var proxy = filterProxyComp.createObject(testCase);
         proxy.setRequiredPackages([
             { name: "wallet_ui",     repositoryUrl: "https://repo1/" },
@@ -19,7 +19,7 @@ TestCase {
         compare(proxy.requiredPackages[2], "extras");
     }
 
-    function test_AppsFilterProxy_filters_chain_through() {
+    function test_ModuleFilterProxy_filters_chain_through() {
         var outer = filterProxyComp.createObject(testCase);
         var inner = filterProxyComp.createObject(testCase, {
             sourceModel: outer,
@@ -30,7 +30,7 @@ TestCase {
         compare(inner.repositoryUrlFilter, "https://example/repo.json");
     }
 
-    Component { id: filterProxyComp; AppsFilterProxy {} }
+    Component { id: filterProxyComp; ModuleFilterProxy {} }
 
     property var testCase: this
 }

@@ -23,7 +23,7 @@ TestCase {
         compare(InstallStage.Failed,      5);
     }
 
-    function test_AppsFilterProxy_QML_instantiable_with_defaults() {
+    function test_ModuleFilterProxy_QML_instantiable_with_defaults() {
         var proxy = filterProxyComp.createObject(testCase);
         verify(proxy, "filter proxy created from QML");
         compare(proxy.typeFilter, "", "type filter empty by default");
@@ -34,7 +34,7 @@ TestCase {
         compare(proxy.requiredPackages.length, 0, "no required packages");
     }
 
-    function test_AppsFilterProxy_repositoryUrlFilter_setter_emits_change() {
+    function test_ModuleFilterProxy_repositoryUrlFilter_setter_emits_change() {
         var proxy = filterProxyComp.createObject(testCase);
         var spy = spyComp.createObject(testCase, {
             target: proxy, signalName: "repositoryUrlFilterChanged",
@@ -47,7 +47,7 @@ TestCase {
         compare(spy.count, 1, "no spurious re-emit");
     }
 
-    Component { id: filterProxyComp; AppsFilterProxy {} }
+    Component { id: filterProxyComp; ModuleFilterProxy {} }
     Component { id: spyComp; SignalSpy {} }
 
     property var testCase: this

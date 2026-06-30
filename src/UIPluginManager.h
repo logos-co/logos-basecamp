@@ -15,6 +15,7 @@ class PluginLoader;
 class ViewModuleHost;
 class CoreModuleManager;
 class PackageCoordinator;
+class ModuleModel;
 enum class UIPluginType;
 
 // UIPluginManager — owns UI plugin widget lifecycle in this process.
@@ -66,10 +67,8 @@ public:
     // uiPluginsFetched signal so catalog refreshes flow into
     // m_uiPluginMetadata without this class having to talk to the module.
     void setPackageCoordinator(PackageCoordinator* packageCoordinator);
+    void setModuleModel(ModuleModel* moduleModel);
 
-    // QML-bound getters (surfaced via MainUIBackend's Q_PROPERTYs).
-    QVariantList uiModules() const;
-    QVariantList launcherApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
 
@@ -90,6 +89,10 @@ public:
     //   forWidgetIcon=false → "file://…" (the form QML's Image wants)
     //   forWidgetIcon=true  → raw "qrc:…" path (for QWidget::setWindowIcon)
     QString pluginIconUrl(const QString& moduleName, bool forWidgetIcon = false) const;
+
+    // Re-push cached UI-plugin scan rows into ModuleModel. Called after
+    // catalog refresh so isUiPluginRecord rows survive replaceCatalog.
+    void syncUiPluginsToModel();
 
 public slots:
     // UI module lifecycle
@@ -117,20 +120,9 @@ public slots:
     void setCurrentVisibleApp(const QString& pluginName);
 
 signals:
-    // QML-visible property-change signals. MainUIBackend re-emits each into
-    // its own matching signal via a signal-to-signal connect.
-    void uiModulesChanged();
-    void launcherAppsChanged();
     void loadingModulesChanged();
     void currentVisibleAppChanged();
     void navigateToApps();
-
-    // Core-modules state can flip as a side effect of cascade paths — QML
-    // binds to MainUIBackend::coreModulesChanged which aggregates this
-    // plus CoreModuleManager::coreModulesChanged.
-    void coreModulesChanged();
-
-    // Dependency-aware UX. missingDepsPopup fires when the user clicks a
     // UI plugin that can't load because its core deps aren't installed;
     // unloadCascade fires when they try to unload a module other running
     // things depend on.
@@ -160,6 +152,9 @@ private slots:
     void onUiPluginsFetched(const QVariantList& uiPlugins);
 
 private:
+    void syncUiPluginRuntimeState();
+    void updateUiPluginLoadedState(const QString& name);
+
     // Local unload-cascade pending slot. Set when unloadUiModule /
     // unloadCoreModule detects a loaded dependent and asks the user to
     // confirm the cascade. No package_manager involvement — this is purely
@@ -191,6 +186,7 @@ private:
     LogosAPI*          m_logosAPI;          // not owned
     CoreModuleManager* m_coreModuleManager; // not owned (sibling Qt child)
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator
+    ModuleModel*           m_moduleModel = nullptr; // not owned
     PluginLoader*      m_pluginLoader;      // owned (parent=this)
 
     // Loaded-plugin state
