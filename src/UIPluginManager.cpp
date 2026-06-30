@@ -607,9 +607,10 @@ void UIPluginManager::teardownUiPluginWidget(const QString& moduleName)
     QWidget* widget = m_uiModuleWidgets.value(moduleName);
     IComponent* component = m_loadedUiModules.value(moduleName);
 
-    // Order matters here: ask MdiView to drop the tab first so the widget
-    // isn't reparented to a dying container; then destroy it via the
-    // component's hook (which may own it) or deleteLater on the bare QML host.
+    // Order matters here: ask the workspace to drop the dock first so
+    // the widget isn't reparented to a dying container; then destroy it
+    // via the component's hook (which may own it) or deleteLater on the
+    // bare QML host.
     if (widget) emit pluginWindowRemoveRequested(widget);
     if (component && widget) component->destroyWidget(widget);
     if (m_qmlPluginWidgets.contains(moduleName) && widget) widget->deleteLater();

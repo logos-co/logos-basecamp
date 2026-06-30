@@ -125,8 +125,9 @@ public:
     void setSidebarTooltipText(const QString& text);
     void setSidebarTooltipY(qreal y);
 
-    // Accessors for C++ coordination code (MdiView etc.) that needs a handle
-    // to the managers directly. QML goes through the delegating slots/signals.
+    // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
+    // a handle to the managers directly. QML goes through the delegating
+    // slots/signals.
     CoreModuleManager* coreModuleManager() const { return m_coreModuleManager; }
     UIPluginManager*   uiPluginManager()   const { return m_uiPluginManager; }
     PackageCoordinator*    packageCoordinator()    const { return m_packageCoordinator; }
