@@ -1,5 +1,5 @@
 #include "MainContainer.h"
-#include "AppsFilterProxy.h"
+#include "ModuleFilterProxy.h"
 #include "InstallEnums.h"
 #include "MainUIBackend.h"
 #include "mdiview.h"

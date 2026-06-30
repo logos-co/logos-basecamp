@@ -11,9 +11,9 @@
 
 class InstallRegistry;
 
-// AppsModel — the single source of truth for every package the App Manager
-// (and Modules tab) cares about.
-class AppsModel : public QAbstractListModel {
+// ModuleModel — single source of truth for catalog rows, installed UI plugins,
+// and known core modules across Basecamp views.
+class ModuleModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(QStringList categories READ categories NOTIFY categoriesChanged)
 public:
@@ -24,6 +24,7 @@ public:
         DescriptionRole,
         CategoryRole,
         TypeRole,                // "ui_qml" | "core" 
+        ColorRole,               // manifest/catalog accent color; "" → AppColors hash
         IconUrlRole,             // file:// URL when installed; "" otherwise
         VersionsRole,            // QVariantList — all known catalog versions
         DependenciesRole,        // QVariantList — direct deps of versions[0]'s manifest,
@@ -46,10 +47,19 @@ public:
         ResolverErrorRole,
         InstallStageRole,        // InstallStage::Value (int) — see InstallEnums.h
         InstallErrorRole,        // failure message when InstallStage == Failed
+        IsLoadedRole,
+        IsLoadingRole,
+        IsMainUiRole,
+        IconPathRole,            // file:// or qrc path for sidebar / modules tab
+        HasMissingDepsRole,
+        CpuRole,                 // core-module CPU % string
+        MemoryRole,              // core-module memory MB string
+        IsUiPluginRecordRole,    // row seeded from installed UI plugin scan
+        IsCoreModuleRecordRole,  // row seeded from liblogos known-modules list
     };
     Q_ENUM(Roles)
 
-    explicit AppsModel(QObject* parent = nullptr);
+    explicit ModuleModel(QObject* parent = nullptr);
 
     // ── QAbstractListModel
     int rowCount(const QModelIndex& parent = {}) const override;
@@ -72,9 +82,16 @@ public:
                              const QHash<QString, QString>& hashByName);
 
     void setInstallType(const QString& name, const QString& installType);
+    void setDisplayName(const QString& name, const QString& displayName);
     void setIconUrl(const QString& name, const QString& iconUrl);
     void setMissingDeps(const QString& name, const QStringList& missing);
     void setInstallRegistry(InstallRegistry* installRegistry);
+
+    // Insert or update a row for an installed-only module (UI plugin or core).
+    void seedInstalledOnly(const QString& name,
+                           const QString& type,
+                           const QVariantMap& fields);
+    void setRoleByName(const QString& name, int role, const QVariant& value);
 
     void beginBulkInstalledUpdate();
     void endBulkInstalledUpdate();
@@ -108,6 +125,7 @@ private:
         QString description;
         QString category;
         QString type;
+        QString color;
         QString iconUrl;
         QVariantList versions;
         QString latestVersion;       // computed from versions[0].version
@@ -127,6 +145,15 @@ private:
         QString toVersion;
         bool    isTopLevel = false;
         QString resolverError;
+
+        bool    isLoaded = false;
+        bool    isLoading = false;
+        bool    isMainUi = false;
+        QString iconPath;
+        QString cpu;
+        QString memory;
+        bool    isUiPluginRecord = false;
+        bool    isCoreModuleRecord = false;
     };
 
     static QString key(const QString& repo, const QString& name);

@@ -13,7 +13,7 @@ Rectangle {
 
     // ─── Public API ───
     property var appsProxy: null
-    property var repositories: []
+    property var repositoriesModel: null
     property bool loading: false
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
@@ -301,20 +301,25 @@ Rectangle {
                             spacing: Theme.spacing.large
 
                             Repeater {
-                                model: root.repositories
+                                model: root.repositoriesModel
                                 delegate: ColumnLayout {
-                                    required property var modelData
+                                    required property int index
+                                    required property string url
+                                    required property string displayName
+                                    required property string name
+                                    required property bool isDefault
+                                    required property bool enabled
 
-                                    AppsFilterProxy {
+                                    ModuleFilterProxy {
                                         id: repoFilter
                                         sourceModel: root.appsProxy
-                                        repositoryUrlFilter: modelData.url || ""
+                                        repositoryUrlFilter: url || ""
                                         excludeMainUi: false
                                     }
 
                                     Layout.fillWidth: true
                                     spacing: Theme.spacing.medium
-                                    visible: modelData.enabled !== false
+                                    visible: enabled !== false
                                              && repoFilter.visibleCount > 0
 
                                     RowLayout {
@@ -322,11 +327,11 @@ Rectangle {
                                         spacing: Theme.spacing.small
 
                                         LogosText {
-                                            text: modelData.isDefault === true
+                                            text: isDefault === true
                                                 ? qsTr("Starter Apps")
-                                                : (modelData.displayName
-                                                   || modelData.name
-                                                   || modelData.url
+                                                : (displayName
+                                                   || name
+                                                   || url
                                                    || qsTr("Repository"))
                                             font.pixelSize: Theme.typography.subtitleText
                                             font.weight: Theme.typography.weightMedium

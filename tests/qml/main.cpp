@@ -1,7 +1,7 @@
 #include <QtQuickTest/quicktest.h>
 #include <QtQml/qqml.h>
 
-#include "AppsFilterProxy.h"
+#include "ModuleFilterProxy.h"
 #include "InstallEnums.h"
 
 class Setup : public QObject {
@@ -18,7 +18,7 @@ public slots:
         qmlRegisterUncreatableType<InstallStatus>("Basecamp.Backend", 1, 0,
             "InstallStatus",
             QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));
-        qmlRegisterType<AppsFilterProxy>("Basecamp.Backend", 1, 0, "AppsFilterProxy");
+        qmlRegisterType<ModuleFilterProxy>("Basecamp.Backend", 1, 0, "ModuleFilterProxy");
     }
 };
 

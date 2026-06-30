@@ -1,5 +1,6 @@
 #include "mdichild.h"
 #include "MainUIBackend.h"
+#include <QAbstractItemModel>
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -64,8 +65,13 @@ MdiChild::MdiChild(MainUIBackend* backend, QWidget *parent)
         connect(installButton, &QPushButton::clicked, m_backend, [this]() {
             m_backend->setCurrentActiveSectionIndex(1);
         });
-        connect(m_backend, &MainUIBackend::launcherAppsChanged,
-                this, &MdiChild::refreshState);
+        const auto hookLauncherModel = [this](QAbstractItemModel* model) {
+            connect(model, &QAbstractItemModel::rowsInserted, this, &MdiChild::refreshState);
+            connect(model, &QAbstractItemModel::rowsRemoved, this, &MdiChild::refreshState);
+            connect(model, &QAbstractItemModel::modelReset, this, &MdiChild::refreshState);
+        };
+        hookLauncherModel(m_backend->loadedLauncherProxy());
+        hookLauncherModel(m_backend->unloadedLauncherProxy());
     } else {
         installButton->setEnabled(false);
     }
@@ -79,7 +85,7 @@ MdiChild::~MdiChild()
 
 void MdiChild::refreshState()
 {
-    const bool hasApps = m_backend && !m_backend->launcherApps().isEmpty();
+    const bool hasApps = m_backend && m_backend->hasLauncherApps();
 
     if (hasApps) {
         titleLabel->setText(tr("Welcome back"));

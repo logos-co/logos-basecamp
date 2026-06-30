@@ -1,7 +1,9 @@
 #pragma once
 
 #include "InstallEnums.h"
-#include "AppsFilterProxy.h"
+#include "ModuleFilterProxy.h"
+#include "ModuleModel.h"
+#include "RepositoryModel.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -9,7 +11,8 @@
 #include <QStringList>
 #include "logos_api.h"
 
-class AppsModel;
+class ModuleModel;
+class RepositoryModel;
 class CoreModuleManager;
 class PackageCoordinator;
 class QWidget;
@@ -32,52 +35,42 @@ class UIPluginManager;
 // ctor takes it (for cascade cooperation — checking loaded state, tearing
 // down UI widgets). PackageCoordinator is then injected into UIPluginManager via
 // setPackageCoordinator so UIPluginManager can query installType / missing-deps
-// for its uiModules() / launcherApps() builders. Qt's reverse-order child
+// when syncing rows into ModuleModel. Qt's reverse-order child
 // destruction tears PackageCoordinator → UIPluginManager → CoreModuleManager,
 // which matches the data-flow dependencies (PackageCoordinator stops emitting
 // before UIPluginManager tears down its widgets, which stop before the C
 // API handle goes away).
 //
 // Everything the QML layer calls (`backend.loadUiModule(...)`, etc.) is a
-// one-line delegation into one of the three managers. Every signal the QML
-// layer listens to (`uiModulesChanged`, `coreModulesChanged`, …) is
-// re-emitted here from whichever manager is driving that change via
-// signal-to-signal connect. Navigation is the only behavior that lives on
-// this class itself.
+// one-line delegation into one of the three managers. Manager signals the QML
+// layer cares about are re-emitted here via signal-to-signal connect.
+// Navigation is the only behavior that lives on this class itself.
 class MainUIBackend : public QObject {
     Q_OBJECT
 
     // Navigation
     Q_PROPERTY(int currentActiveSectionIndex READ currentActiveSectionIndex WRITE setCurrentActiveSectionIndex NOTIFY currentActiveSectionIndexChanged)
 
-    // UI Modules (Apps)
-    Q_PROPERTY(QVariantList uiModules READ uiModules NOTIFY uiModulesChanged)
-    // AppsModel — the single source of truth for catalog rows + installed
-    // state + live install pipeline. QML views bind directly. Lifetime is
-    // tied to MainUIBackend; the pointer is stable across the app's life.
-    Q_PROPERTY(AppsModel* appsModel READ appsModel CONSTANT)
-    // Prebuilt filter proxy over appsModel, pre-configured with
-    // type="ui_qml" and excludeMainUi=true
-    Q_PROPERTY(AppsFilterProxy* uiAppsProxy READ uiAppsProxy CONSTANT)
-    // Prebuilt filter proxy used exclusively by AddApplicationDialog's
-    // "Required Packages" list. PackageCoordinator sets its
-    // requiredPackages per resolver call so the ListView shows only the
-    // resolver's tree in install order.
-    Q_PROPERTY(AppsFilterProxy* requiredPackagesModel READ requiredPackagesModel CONSTANT)
-
-    // Core Modules — composed here from all three managers (known list +
-    // stats from CoreModuleManager, installType from PackageCoordinator).
-    Q_PROPERTY(QVariantList coreModules READ coreModules NOTIFY coreModulesChanged)
+    // Prebuilt filter proxies over ModuleModel (one preset per view).
+    Q_PROPERTY(ModuleFilterProxy* uiAppsProxy READ uiAppsProxy CONSTANT)
+    Q_PROPERTY(ModuleFilterProxy* uiModulesProxy READ uiModulesProxy CONSTANT)
+    Q_PROPERTY(ModuleFilterProxy* coreModulesProxy READ coreModulesProxy CONSTANT)
+    Q_PROPERTY(ModuleFilterProxy* loadedLauncherProxy READ loadedLauncherProxy CONSTANT)
+    Q_PROPERTY(ModuleFilterProxy* unloadedLauncherProxy READ unloadedLauncherProxy CONSTANT)
+    Q_PROPERTY(ModuleFilterProxy* requiredPackagesModel READ requiredPackagesModel CONSTANT)
 
     // App Launcher
-    Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
     Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
 
+    // Package repositories
+    Q_PROPERTY(RepositoryModel* repositoriesModel READ repositoriesModel CONSTANT)
+    Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
+
+    // App Manager loading state — true until the first catalog populate.
+    Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
+
     // Build info (baked in at nix build time). See Dashboard view.
-    //   * buildVersion: VERSION file contents (empty when not baked in).
-    //   * isPortableBuild: true for distributed/release builds, false for dev.
-    //   * buildCommits: list of { name, commit } for basecamp + each flake input.
     Q_PROPERTY(QString buildVersion READ buildVersion CONSTANT)
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
@@ -87,13 +80,6 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QString sidebarTooltipText READ sidebarTooltipText WRITE setSidebarTooltipText NOTIFY sidebarTooltipChanged)
     Q_PROPERTY(qreal sidebarTooltipY READ sidebarTooltipY WRITE setSidebarTooltipY NOTIFY sidebarTooltipChanged)
 
-    // Package repositories
-    Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
-    Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
-
-    // App Manager loading state — true until the first catalog populate.
-    Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
-
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -102,13 +88,8 @@ public:
     int currentActiveSectionIndex() const;
 
     // Delegations to UIPluginManager.
-    QVariantList uiModules() const;
-    QVariantList launcherApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
-
-    // Composed from multiple managers.
-    QVariantList coreModules() const;
 
     // Build info accessors (see Q_PROPERTY declarations above).
     QString buildVersion() const;
@@ -119,8 +100,8 @@ public:
     QString sidebarTooltipText() const { return m_sidebarTooltipText; }
     qreal sidebarTooltipY() const { return m_sidebarTooltipY; }
 
-    QVariantList repositories() const;
     bool repositoriesLoading() const;
+    bool hasLauncherApps() const;
     bool appsLoading() const;
     void setSidebarTooltipText(const QString& text);
     void setSidebarTooltipY(qreal y);
@@ -130,9 +111,14 @@ public:
     CoreModuleManager* coreModuleManager() const { return m_coreModuleManager; }
     UIPluginManager*   uiPluginManager()   const { return m_uiPluginManager; }
     PackageCoordinator*    packageCoordinator()    const { return m_packageCoordinator; }
-    AppsModel*         appsModel()         const { return m_appsModel; }
-    AppsFilterProxy*   uiAppsProxy()           const { return m_uiAppsProxy; }
-    AppsFilterProxy*   requiredPackagesModel() const { return m_requiredPackagesModel; }
+    ModuleModel*           moduleModel()            const { return m_moduleModel; }
+    RepositoryModel*       repositoriesModel()      const { return m_repositoryModel; }
+    ModuleFilterProxy*     uiAppsProxy()            const { return m_uiAppsProxy; }
+    ModuleFilterProxy*     uiModulesProxy()         const { return m_uiModulesProxy; }
+    ModuleFilterProxy*     coreModulesProxy()       const { return m_coreModulesProxy; }
+    ModuleFilterProxy*     loadedLauncherProxy()    const { return m_loadedLauncherProxy; }
+    ModuleFilterProxy*     unloadedLauncherProxy()  const { return m_unloadedLauncherProxy; }
+    ModuleFilterProxy*     requiredPackagesModel()  const { return m_requiredPackagesModel; }
 
 public slots:
     // Navigation
@@ -205,8 +191,6 @@ public slots:
 
 signals:
     void currentActiveSectionIndexChanged();
-    void uiModulesChanged();
-    void coreModulesChanged();
 
     // App-Manager dialog + install lifecycle. See PackageCoordinator for
     // the contract — these are pure re-emits.
@@ -216,7 +200,6 @@ signals:
     void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
     void catalogInstallFinished(const QString& name);
     void catalogInstallFailed(const QString& name, const QString& error);
-    void launcherAppsChanged();
     void currentVisibleAppChanged();
     void loadingModulesChanged();
     void navigateToApps();
@@ -252,7 +235,6 @@ signals:
     void pluginWindowActivateRequested(QWidget* widget);
     void sidebarTooltipChanged();
 
-    void repositoriesChanged();
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
@@ -271,9 +253,14 @@ private:
     // Owned children (parent=this). Order matters: coreModuleManager first,
     // uiPluginManager second, packageCoordinator third. See class comment for
     // lifetime reasoning.
-    AppsModel*         m_appsModel;
-    AppsFilterProxy*   m_uiAppsProxy;
-    AppsFilterProxy*   m_requiredPackagesModel;
+    ModuleModel*           m_moduleModel;
+    RepositoryModel*       m_repositoryModel;
+    ModuleFilterProxy*     m_uiAppsProxy;
+    ModuleFilterProxy*     m_uiModulesProxy;
+    ModuleFilterProxy*     m_coreModulesProxy;
+    ModuleFilterProxy*     m_loadedLauncherProxy;
+    ModuleFilterProxy*     m_unloadedLauncherProxy;
+    ModuleFilterProxy*     m_requiredPackagesModel;
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;

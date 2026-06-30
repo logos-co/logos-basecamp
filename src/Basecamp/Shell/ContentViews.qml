@@ -40,7 +40,7 @@ Item {
         AppManagerView {
             id: appManagerView
             appsProxy:    backend.uiAppsProxy
-            repositories: backend.repositories
+            repositoriesModel: backend.repositoriesModel
             loading:      backend.appsLoading
             onAppClicked: function(name, repositoryUrl) {
                 // Primary click — fast-path launch for installed apps.
@@ -61,7 +61,7 @@ Item {
         SettingsView {
             id: settingsView
 
-            repositories:        backend.repositories
+            repositoriesModel:        backend.repositoriesModel
             repositoriesLoading: backend.repositoriesLoading
 
             onRepositoryRefreshRequested: backend.refreshRepositories()

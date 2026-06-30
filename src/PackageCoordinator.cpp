@@ -1,7 +1,8 @@
 #include "PackageCoordinator.h"
 #include "InstallRegistry.h"
-#include "AppsFilterProxy.h"
-#include "AppsModel.h"
+#include "ModuleFilterProxy.h"
+#include "ModuleModel.h"
+#include "RepositoryModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
@@ -25,13 +26,15 @@
 PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
                                CoreModuleManager* coreModuleManager,
                                UIPluginManager* uiPluginManager,
-                               AppsModel* appsModel,
+                               ModuleModel* moduleModel,
+                               RepositoryModel* repositoryModel,
                                QObject* parent)
     : QObject(parent)
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
-    , m_appsModel(appsModel)
+    , m_moduleModel(moduleModel)
+    , m_repositoryModel(repositoryModel)
     , m_installRegistry(new InstallRegistry(this))
 {
     subscribeToPackageInstallationEvents();
@@ -508,9 +511,6 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
             });
     }
 
-    emit coreModulesChanged();
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
     }, Qt::QueuedConnection);  // run the cascade off the click stack
 }
 
@@ -743,9 +743,6 @@ void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleN
             }
         });
 
-    emit coreModulesChanged();
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
 }
 
 void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
@@ -775,34 +772,34 @@ void PackageCoordinator::fetchUiPluginMetadata()
     QPointer<PackageCoordinator> self(this);
     logos.package_manager.getInstalledUiPluginsAsync([self](QVariantList uiPlugins) {
         if (!self) return;
+        QMetaObject::invokeMethod(self.data(), [self, uiPlugins]() {
+            if (!self) return;
 
-        // Seed installType for the UI-plugin subset. refreshDependencyInfo's
-        // full-scan pass will overwrite this with the core-inclusive version;
-        // we do this first so QML has a non-empty map to key on during the
-        // window between the two async calls.
-        self->m_installTypeByModule.clear();
-        QHash<QString, QString> installedByName;  // name → installed version
-        for (const QVariant& item : uiPlugins) {
-            QVariantMap pluginInfo = item.toMap();
-            const QString name = pluginInfo.value("name").toString();
-            if (name.isEmpty()) continue;
-            self->m_installTypeByModule[name] = pluginInfo.value("installType").toString();
-            const QString version = pluginInfo.value("version").toString();
-            installedByName.insert(name, version);
-            const QString rootHash =
-                pluginInfo.value("hashes").toMap().value("root").toString();
-            self->m_installedHashByName.insert(name, rootHash);
-        }
+            self->m_installTypeByModule.clear();
+            QHash<QString, QString> installedByName;
+            for (const QVariant& item : uiPlugins) {
+                QVariantMap pluginInfo = item.toMap();
+                const QString name = pluginInfo.value("name").toString();
+                if (name.isEmpty()) continue;
+                self->m_installTypeByModule[name] =
+                    pluginInfo.value("installType").toString();
+                const QString version = pluginInfo.value("version").toString();
+                installedByName.insert(name, version);
+                const QString rootHash =
+                    pluginInfo.value("hashes").toMap().value("root").toString();
+                self->m_installedHashByName.insert(name, rootHash);
+            }
 
-        // Push the raw UI-plugin list to UIPluginManager — that's where the
-        // UI-specific cache (used for widget loading) lives.
-        emit self->uiPluginsFetched(uiPlugins);
-        emit self->uiModulesChanged();
-        emit self->launcherAppsChanged();
-        self->refreshDependencyInfo();
-
-        // Kick off the App-Manager catalog fetch.
-        self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
+            emit self->uiPluginsFetched(uiPlugins);
+            if (self->m_moduleModel) {
+                for (auto it = self->m_installTypeByModule.cbegin();
+                     it != self->m_installTypeByModule.cend(); ++it) {
+                    self->m_moduleModel->setInstallType(it.key(), it.value());
+                }
+            }
+            self->refreshDependencyInfo();
+            self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
+        }, Qt::QueuedConnection);
     });
 }
 
@@ -859,32 +856,39 @@ void PackageCoordinator::populateAppsModel(
     const QVariantList& catalog,
     const QHash<QString, QString>& installedByName)
 {
-    if (!m_appsModel) return;
-    m_appsModel->replaceCatalog(catalog);
+    if (!m_moduleModel) return;
+    m_moduleModel->replaceCatalog(catalog);
     const QHash<QString, QString>& fullInstalled = m_installedVersionByName.isEmpty()
         ? installedByName
         : m_installedVersionByName;
 
-    m_appsModel->beginBulkInstalledUpdate();
+    m_moduleModel->beginBulkInstalledUpdate();
     for (auto it = fullInstalled.cbegin(); it != fullInstalled.cend(); ++it) {
         const QString& name = it.key();
         const QString& ver  = it.value();
         const QString hash  = m_installedHashByName.value(name);
-        m_appsModel->markInstalled(name, ver, hash);
+        m_moduleModel->markInstalled(name, ver, hash);
         const QString installType = m_installTypeByModule.value(name);
         if (!installType.isEmpty())
-            m_appsModel->setInstallType(name, installType);
+            m_moduleModel->setInstallType(name, installType);
         if (m_uiPluginManager) {
             const QString iconUrl = m_uiPluginManager->pluginIconUrl(name);
-            if (!iconUrl.isEmpty()) m_appsModel->setIconUrl(name, iconUrl);
+            if (!iconUrl.isEmpty()) m_moduleModel->setIconUrl(name, iconUrl);
         }
     }
 
     for (auto it = m_missingDepsByModule.cbegin();
          it != m_missingDepsByModule.cend(); ++it) {
-        m_appsModel->setMissingDeps(it.key(), it.value());
+        m_moduleModel->setMissingDeps(it.key(), it.value());
     }
-    m_appsModel->endBulkInstalledUpdate();
+    m_moduleModel->endBulkInstalledUpdate();
+
+    // Catalog replace can upsert parallel rows for the same package name;
+    // re-sync on-disk scans so isUiPluginRecord / runtime fields stay current.
+    if (m_uiPluginManager)
+        m_uiPluginManager->syncUiPluginsToModel();
+    if (m_coreModuleManager)
+        m_coreModuleManager->syncKnownModulesToModel();
 
     if (m_appsLoading) {
         m_appsLoading = false;
@@ -910,10 +914,13 @@ void PackageCoordinator::refreshRepositories()
         "package_downloader", "listRepositories", QVariantList{},
         [self](QVariant result) {
             if (!self) return;
-            self->m_repositories = result.toList();
-            const int remaining = --self->m_repositoriesLoadingCount;
-            emit self->repositoriesChanged();
-            if (remaining == 0) emit self->repositoriesLoadingChanged();
+            QMetaObject::invokeMethod(self.data(), [self, result]() {
+                if (!self) return;
+                if (self->m_repositoryModel && result.canConvert<QVariantList>())
+                    self->m_repositoryModel->replaceAll(result.toList());
+                const int remaining = --self->m_repositoriesLoadingCount;
+                if (remaining == 0) emit self->repositoriesLoadingChanged();
+            }, Qt::QueuedConnection);
         });
 }
 
@@ -1028,9 +1035,17 @@ void PackageCoordinator::refreshDependencyInfo()
         self->m_installedNameSet       = std::move(nameSet);
         self->m_installedVersionByName = std::move(versionByName);
         self->m_installedHashByName    = std::move(hashByName);
-        if (self->m_appsModel) {
-            self->m_appsModel->replaceInstalledSet(
+        if (self->m_moduleModel) {
+            self->m_moduleModel->replaceInstalledSet(
                 self->m_installedVersionByName, self->m_installedHashByName);
+            for (auto it = self->m_installTypeByModule.cbegin();
+                 it != self->m_installTypeByModule.cend(); ++it) {
+                self->m_moduleModel->setInstallType(it.key(), it.value());
+            }
+            for (auto it = self->m_displayNameByModule.cbegin();
+                 it != self->m_displayNameByModule.cend(); ++it) {
+                self->m_moduleModel->setDisplayName(it.key(), it.value());
+            }
         }
 
         // Second pass — per-module missing/dependents queries. Dispatched
@@ -1041,11 +1056,16 @@ void PackageCoordinator::refreshDependencyInfo()
         if (names.isEmpty()) {
             self->m_missingDepsByModule.clear();
             self->m_dependentsByModule.clear();
-            emit self->uiModulesChanged();
-            emit self->coreModulesChanged();
-            // Sidebar reads from launcherApps (not uiModules) so it needs its
-            // own kick whenever hasMissingDeps may have flipped.
-            emit self->launcherAppsChanged();
+            if (self->m_moduleModel) {
+                for (auto it = self->m_installTypeByModule.cbegin();
+                     it != self->m_installTypeByModule.cend(); ++it) {
+                    self->m_moduleModel->setInstallType(it.key(), it.value());
+                }
+                for (auto it = self->m_displayNameByModule.cbegin();
+                     it != self->m_displayNameByModule.cend(); ++it) {
+                    self->m_moduleModel->setDisplayName(it.key(), it.value());
+                }
+            }
             return;
         }
 
@@ -1060,17 +1080,18 @@ void PackageCoordinator::refreshDependencyInfo()
             if (--(*remaining) > 0) return;
             selfCopy->m_missingDepsByModule = *missingMap;
             selfCopy->m_dependentsByModule = *dependentsMap;
-            if (selfCopy->m_appsModel) {
+            if (selfCopy->m_moduleModel) {
                 for (auto it = missingMap->cbegin(); it != missingMap->cend(); ++it)
-                    selfCopy->m_appsModel->setMissingDeps(it.key(), it.value());
+                    selfCopy->m_moduleModel->setMissingDeps(it.key(), it.value());
+                for (auto it = selfCopy->m_installTypeByModule.cbegin();
+                     it != selfCopy->m_installTypeByModule.cend(); ++it) {
+                    selfCopy->m_moduleModel->setInstallType(it.key(), it.value());
+                }
+                for (auto it = selfCopy->m_displayNameByModule.cbegin();
+                     it != selfCopy->m_displayNameByModule.cend(); ++it) {
+                    selfCopy->m_moduleModel->setDisplayName(it.key(), it.value());
+                }
             }
-            emit selfCopy->uiModulesChanged();
-            emit selfCopy->coreModulesChanged();
-            // Critical for the sidebar red-cross marker — without this, the
-            // SidebarPanel's launcherApps binding doesn't re-evaluate and the
-            // marker only appears on the next side-effect that triggers a
-            // launcher refresh (e.g. clicking the plugin to load it).
-            emit selfCopy->launcherAppsChanged();
         };
 
         for (const QString& name : names) {
@@ -1127,19 +1148,19 @@ QString PackageCoordinator::buildResolverDepsJson(const QString& name,
 
     append(name, repositoryUrl, versionPins.value(name).toString());
 
-    if (!repositoryUrl.isEmpty() && m_appsModel) {
+    if (!repositoryUrl.isEmpty() && m_moduleModel) {
         QStringList queue;
         queue << name;
         for (int head = 0; head < queue.size(); ++head) {
             const QString cur = queue[head];
-            const QVariantMap row = m_appsModel->rowDataByName(cur, repositoryUrl);
+            const QVariantMap row = m_moduleModel->rowDataByName(cur, repositoryUrl);
             if (row.isEmpty()) continue;
             const QVariantList deps = row.value("dependencies").toList();
             for (const QVariant& d : deps) {
                 const QString depName = d.toMap().value("name").toString();
                 if (depName.isEmpty() || seenDeps.contains(depName)) continue;
                 const QVariantMap depRow =
-                    m_appsModel->rowDataByName(depName, repositoryUrl);
+                    m_moduleModel->rowDataByName(depName, repositoryUrl);
                 if (depRow.isEmpty()) continue;  // not in this repo — leave unpinned
                 append(depName, repositoryUrl, versionPins.value(depName).toString());
                 queue << depName;
@@ -1197,18 +1218,18 @@ QVariantList PackageCoordinator::collectCatalogRequired(const QString& name,
     out.append(nameAndRepo(name, repositoryUrl));
     seen.insert(name);
 
-    if (repositoryUrl.isEmpty() || !m_appsModel) return out;
+    if (repositoryUrl.isEmpty() || !m_moduleModel) return out;
 
     QStringList queue;
     queue << name;
     for (int head = 0; head < queue.size(); ++head) {
-        const QVariantMap row = m_appsModel->rowDataByName(queue[head], repositoryUrl);
+        const QVariantMap row = m_moduleModel->rowDataByName(queue[head], repositoryUrl);
         if (row.isEmpty()) continue;
         const QVariantList deps = row.value("dependencies").toList();
         for (const QVariant& d : deps) {
             const QString depName = d.toMap().value("name").toString();
             if (depName.isEmpty() || seen.contains(depName)) continue;
-            if (m_appsModel->rowDataByName(depName, repositoryUrl).isEmpty()) continue;
+            if (m_moduleModel->rowDataByName(depName, repositoryUrl).isEmpty()) continue;
             seen.insert(depName);
             out.append(nameAndRepo(depName, repositoryUrl));
             queue << depName;
@@ -1300,13 +1321,13 @@ void PackageCoordinator::openApp(const QString& name,
     if (!m_logosAPI || name.isEmpty()) return;
 
     // Fast-launch only for the tile whose repo's rootHash matches what's
-    // on disk. installStatus is already missing-deps-aware: AppsModel's
+    // on disk. installStatus is already missing-deps-aware: ModuleModel's
     // recomputeInstallStatus demotes a row with non-empty missingDeps to
     // NotInstalled, so tileStatus == Installed implies healthy deps.
     int tileStatus = InstallStatus::NotInstalled;
-    if (m_appsModel) {
+    if (m_moduleModel) {
         const QVariantMap row =
-            m_appsModel->rowDataByName(name, repositoryUrl);
+            m_moduleModel->rowDataByName(name, repositoryUrl);
         tileStatus = row.value("installStatus").toInt();
     }
     if (allowFastLaunch && tileStatus == InstallStatus::Installed) {
@@ -1332,7 +1353,7 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                                                   const QVariantMap& versionPins)
 {
     QVariantMap catalogRow =
-        m_appsModel ? m_appsModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
+        m_moduleModel ? m_moduleModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
 
     const QString targetVersion = versionPins.value(name).toString();
 
@@ -1398,12 +1419,12 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     metadata["versions"]      = catalogRow.value("versions").toList();
     const QString installedVersion = m_installedVersionByName.value(name);
     // Per-tile installStatus from the CLICKED row. Already missing-deps-aware
-    // (AppsModel::recomputeInstallStatus returns NotInstalled when missingDeps
+    // (ModuleModel::recomputeInstallStatus returns NotInstalled when missingDeps
     // is non-empty), so the dialog reads Install instead of Launch for a
     // partial install.
     int tileStatus = InstallStatus::NotInstalled;
-    if (m_appsModel) {
-        const QVariantMap clickedRow = m_appsModel->rowDataByName(name, repositoryUrl);
+    if (m_moduleModel) {
+        const QVariantMap clickedRow = m_moduleModel->rowDataByName(name, repositoryUrl);
         tileStatus = clickedRow.value("installStatus").toInt();
     }
     metadata["installStatus"]    = tileStatus;
@@ -1425,12 +1446,12 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     requiredEntries.reserve(changes.size() + 1);
     requiredEntries.append(nameAndRepo(name, repositoryUrl));
     seen.insert(name);
-    if (m_appsModel) {
-        QList<AppsModel::ResolverRow> overlay;
+    if (m_moduleModel) {
+        QList<ModuleModel::ResolverRow> overlay;
         overlay.reserve(changes.size());
         for (const QVariant& v : changes) {
             const QVariantMap c = v.toMap();
-            AppsModel::ResolverRow rr;
+            ModuleModel::ResolverRow rr;
             rr.name          = c.value("name").toString();
             rr.repositoryUrl = c.value("repositoryUrl").toString();
             rr.action        = c.value("action").toString();
@@ -1444,7 +1465,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
                     nameAndRepo(rr.name, c.value("repositoryUrl").toString()));
             }
         }
-        m_appsModel->setResolverOverlay(overlay);
+        m_moduleModel->setResolverOverlay(overlay);
     }
 
     // Union in the catalog-derived dependency set.
@@ -1466,7 +1487,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
 
 void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
 {
-    if (!m_appsModel || topLevelName.isEmpty()) return;
+    if (!m_moduleModel || topLevelName.isEmpty()) return;
 
     const QVariantList raw = m_lastResolvedRawByName.value(topLevelName);
     if (raw.isEmpty()) return;
@@ -1481,7 +1502,7 @@ void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
 
     const QString repositoryUrl = m_repoByName.value(topLevelName);
     const QVariantMap catalogRow =
-        m_appsModel->rowDataByName(topLevelName, repositoryUrl);
+        m_moduleModel->rowDataByName(topLevelName, repositoryUrl);
     emitDialogMetadata(topLevelName, repositoryUrl, QString(), catalogRow, changes,
                        /*requestOpen=*/false);
 }
@@ -1633,8 +1654,8 @@ void PackageCoordinator::installResultsSequential(const QVariantList& results,
                         self->m_installedVersionByName.insert(rowName, ver);
                     if (!hash.isEmpty())
                         self->m_installedHashByName.insert(rowName, hash);
-                    if (self->m_appsModel)
-                        self->m_appsModel->markInstalled(rowName, ver, hash);
+                    if (self->m_moduleModel)
+                        self->m_moduleModel->markInstalled(rowName, ver, hash);
                     self->m_installRegistry->finish(rowName);
                 } else {
                     self->m_installRegistry->fail(rowName, err);

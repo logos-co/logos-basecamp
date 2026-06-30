@@ -1,11 +1,11 @@
-// Unit tests for AppsFilterProxy's filter chain. Lives in this test target
-// alongside apps_model_test.cpp; both link the same AppsModel + AppsFilterProxy
+// Unit tests for ModuleFilterProxy's filter chain. Lives in this test target
+// alongside module_model_test.cpp; both link the same ModuleModel + ModuleFilterProxy
 // sources. The filter proxy was previously only exercised indirectly through
 // QML, which let the multi-repo / case-sensitivity / install-state edge cases
 // drift without warning. These tests pin each filter behaviour directly.
 
-#include "AppsFilterProxy.h"
-#include "AppsModel.h"
+#include "ModuleFilterProxy.h"
+#include "ModuleModel.h"
 #include "InstallEnums.h"
 
 #include <QtTest/QtTest>
@@ -38,14 +38,14 @@ QVariantMap row(const QString& name,
 
 } // namespace
 
-class AppsFilterProxyTest : public QObject {
+class ModuleFilterProxyTest : public QObject {
     Q_OBJECT
 
 private slots:
     void init()
     {
-        m_model = std::make_unique<AppsModel>();
-        m_proxy = std::make_unique<AppsFilterProxy>();
+        m_model = std::make_unique<ModuleModel>();
+        m_proxy = std::make_unique<ModuleFilterProxy>();
         m_proxy->setSourceModel(m_model.get());
         // Production default is excludeMainUi=true; turn off here so the
         // fixture's rows aren't accidentally hidden.
@@ -168,7 +168,7 @@ private slots:
         QCOMPARE(m_proxy->rowCount(), 1);
         // It really is the repo2 row, not repo1.
         const QModelIndex mi = m_proxy->index(0, 0);
-        QCOMPARE(m_proxy->data(mi, AppsModel::RepositoryUrlRole).toString(),
+        QCOMPARE(m_proxy->data(mi, ModuleModel::RepositoryUrlRole).toString(),
                  QStringLiteral("https://repo2"));
     }
 
@@ -244,6 +244,66 @@ private slots:
         m_proxy->setSearchText("");
     }
 
+    void isLoadedFilter_splits_loaded_and_unloaded()
+    {
+        m_model->replaceCatalog({
+            row("loaded_app", "r", "1.0", "H1", "ui_qml"),
+            row("fresh_app", "r", "1.0", "H2", "ui_qml"),
+        });
+        m_model->markInstalled("loaded_app", "1.0", "H1");
+        m_model->markInstalled("fresh_app", "1.0", "H2");
+        m_model->seedInstalledOnly(QStringLiteral("loaded_app"), QStringLiteral("ui_qml"), {});
+        m_model->seedInstalledOnly(QStringLiteral("fresh_app"), QStringLiteral("ui_qml"), {});
+        m_model->setRoleByName("loaded_app", ModuleModel::IsLoadedRole, true);
+        m_proxy->setRequireUiPluginRecord(true);
+
+        m_proxy->setIsLoadedFilter(1);
+        QCOMPARE(m_proxy->rowCount(), 1);
+        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), ModuleModel::NameRole).toString(),
+                 QStringLiteral("loaded_app"));
+
+        m_proxy->setIsLoadedFilter(0);
+        QCOMPARE(m_proxy->rowCount(), 1);
+        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), ModuleModel::NameRole).toString(),
+                 QStringLiteral("fresh_app"));
+    }
+
+    // Regression: toggling IsLoadedRole on an existing row must move it
+    // across the isLoadedFilter=1 / =0 partitions. QSortFilterProxyModel
+    // only re-evaluates filterAcceptsRow on dataChanged when filterRole()
+    // is in the emitted roles list; the launcher proxies filter on custom
+    // roles, so without an explicit invalidateRowsFilter() the sidebar
+    // tile stayed in the "loaded" section after the user closed the app.
+    void isLoadedFilter_reevaluates_on_role_change()
+    {
+        m_model->replaceCatalog({
+            row("app_a", "r", "1.0", "H1", "ui_qml"),
+        });
+        m_model->markInstalled("app_a", "1.0", "H1");
+        m_model->seedInstalledOnly("app_a", "ui_qml", {});
+        m_model->setRoleByName("app_a", ModuleModel::IsLoadedRole, true);
+        m_proxy->setRequireUiPluginRecord(true);
+        m_proxy->setIsLoadedFilter(1);
+
+        QCOMPARE(m_proxy->rowCount(), 1);
+
+        // Simulate UIPluginManager::updateUiPluginLoadedState(false)
+        // after onPluginWindowClosed.
+        m_model->setRoleByName("app_a", ModuleModel::IsLoadedRole, false);
+
+        QCOMPARE(m_proxy->rowCount(), 0);
+
+        // And it must show up in the unloaded proxy.
+        ModuleFilterProxy unloaded;
+        unloaded.setSourceModel(m_model.get());
+        unloaded.setExcludeMainUi(false);
+        unloaded.setRequireUiPluginRecord(true);
+        unloaded.setIsLoadedFilter(0);
+        QCOMPARE(unloaded.rowCount(), 1);
+        QCOMPARE(unloaded.data(unloaded.index(0, 0), ModuleModel::NameRole).toString(),
+                 QStringLiteral("app_a"));
+    }
+
     // ── visibleCount stays in sync with rowCount ──────────────────────
     // QML bindings consume visibleCount; if it drifts the "Loading…"
     // collapse / "(N)" badge breaks. The proxy emits visibleCountChanged
@@ -254,16 +314,16 @@ private slots:
             row("a", "r", "1.0", "H1"),
             row("b", "r", "1.0", "H2"),
         });
-        QSignalSpy spy(m_proxy.get(), &AppsFilterProxy::visibleCountChanged);
+        QSignalSpy spy(m_proxy.get(), &ModuleFilterProxy::visibleCountChanged);
         m_proxy->setSearchText("a");
         QVERIFY(spy.count() >= 1);
         QCOMPARE(m_proxy->visibleCount(), 1);
     }
 
 private:
-    std::unique_ptr<AppsModel>       m_model;
-    std::unique_ptr<AppsFilterProxy> m_proxy;
+    std::unique_ptr<ModuleModel>       m_model;
+    std::unique_ptr<ModuleFilterProxy> m_proxy;
 };
 
-QTEST_GUILESS_MAIN(AppsFilterProxyTest)
-#include "apps_filter_proxy_test.moc"
+QTEST_GUILESS_MAIN(ModuleFilterProxyTest)
+#include "module_filter_proxy_test.moc"

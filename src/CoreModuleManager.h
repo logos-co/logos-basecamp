@@ -8,6 +8,7 @@
 #include "logos_api.h"
 
 class QTimer;
+class ModuleModel;
 
 // CoreModuleManager — single owner of the logos_core_* C API.
 //
@@ -30,6 +31,9 @@ class CoreModuleManager : public QObject {
 public:
     explicit CoreModuleManager(LogosAPI* logosAPI, QObject* parent = nullptr);
     ~CoreModuleManager() override;
+
+    void setModuleModel(ModuleModel* moduleModel);
+    void syncKnownModulesToModel();
 
     // Thin C API wrappers — each is a one-liner over the corresponding
     // logos_core_* call with char*/QStringList marshalling. Callers get
@@ -69,16 +73,17 @@ public:
                                    const QString& argsJson);
 
 signals:
-    // Emitted by refresh() and after every stats-timer tick. MainUIBackend
-    // forwards this into its own signal of the same name via a signal-to-
-    // signal connect — QML binds to that forwarder.
     void coreModulesChanged();
 
 private slots:
     void updateModuleStats();
 
 private:
+    void pushStatsToModel(const QString& name, const QVariantMap& stats);
+    void syncLoadedStateToModel();
+
     LogosAPI* m_logosAPI;   // not owned
+    ModuleModel* m_moduleModel = nullptr;
     QTimer*   m_statsTimer; // owned (parent=this)
     QMap<QString, QVariantMap> m_moduleStats;
 };

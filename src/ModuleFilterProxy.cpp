@@ -1,11 +1,11 @@
-#include "AppsFilterProxy.h"
+#include "ModuleFilterProxy.h"
 
-#include "AppsModel.h"
+#include "ModuleModel.h"
 #include "InstallEnums.h"
 
 #include <climits>
 
-AppsFilterProxy::AppsFilterProxy(QObject* parent)
+ModuleFilterProxy::ModuleFilterProxy(QObject* parent)
     : QSortFilterProxyModel(parent)
 {
     setDynamicSortFilter(true);
@@ -25,29 +25,35 @@ AppsFilterProxy::AppsFilterProxy(QObject* parent)
     connect(this, &QAbstractItemModel::layoutChanged, this, bump);
 }
 
-void AppsFilterProxy::setSourceModel(QAbstractItemModel* sourceModel)
+void ModuleFilterProxy::setSourceModel(QAbstractItemModel* sourceModel)
 {
     QSortFilterProxyModel::setSourceModel(sourceModel);
     if (sourceModel) {
         connect(sourceModel, &QAbstractItemModel::rowsInserted,
-                this, &AppsFilterProxy::categoriesChanged);
+                this, &ModuleFilterProxy::categoriesChanged);
         connect(sourceModel, &QAbstractItemModel::rowsRemoved,
-                this, &AppsFilterProxy::categoriesChanged);
+                this, &ModuleFilterProxy::categoriesChanged);
         connect(sourceModel, &QAbstractItemModel::modelReset,
-                this, &AppsFilterProxy::categoriesChanged);
+                this, &ModuleFilterProxy::categoriesChanged);
         connect(sourceModel, &QAbstractItemModel::dataChanged,
-                this, &AppsFilterProxy::categoriesChanged);
+                this, &ModuleFilterProxy::categoriesChanged);
+        // QSortFilterProxyModel only re-evaluates filterAcceptsRow on
+        // dataChanged when filterRole() appears in the emitted roles list.
+        // Our filter reads many custom roles (IsLoadedRole, TypeRole, …),
+        // so force a re-evaluation whenever the source row changes.
+        connect(sourceModel, &QAbstractItemModel::dataChanged,
+                this, [this]() { invalidateRowsFilter(); });
     }
 }
 
-int AppsFilterProxy::installedCount() const
+int ModuleFilterProxy::installedCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
         const QModelIndex mi = index(i, 0);
-        if (data(mi, AppsModel::IsInstalledRole).toBool()
-            || data(mi, AppsModel::InstallStageRole).toInt()
+        if (data(mi, ModuleModel::IsInstalledRole).toBool()
+            || data(mi, ModuleModel::InstallStageRole).toInt()
                    == InstallStage::Installed) {
             ++c;
         }
@@ -55,87 +61,87 @@ int AppsFilterProxy::installedCount() const
     return c;
 }
 
-int AppsFilterProxy::installFreshCount() const
+int ModuleFilterProxy::installFreshCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("install")) ++c;
     }
     return c;
 }
 
-int AppsFilterProxy::upgradeCount() const
+int ModuleFilterProxy::upgradeCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("upgrade")) ++c;
     }
     return c;
 }
 
-int AppsFilterProxy::reinstallCount() const
+int ModuleFilterProxy::reinstallCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("reinstall")) ++c;
     }
     return c;
 }
 
-int AppsFilterProxy::alreadyInstalledCount() const
+int ModuleFilterProxy::alreadyInstalledCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("installed")) ++c;
     }
     return c;
 }
 
-int AppsFilterProxy::installingCount() const
+int ModuleFilterProxy::installingCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("installing")) ++c;
     }
     return c;
 }
 
-int AppsFilterProxy::errorCount() const
+int ModuleFilterProxy::errorCount() const
 {
     int c = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
-        if (data(index(i, 0), AppsModel::ActionRole).toString()
+        if (data(index(i, 0), ModuleModel::ActionRole).toString()
                 == QStringLiteral("error")) ++c;
     }
     return c;
 }
 
-qlonglong AppsFilterProxy::totalDownloadBytes() const
+qlonglong ModuleFilterProxy::totalDownloadBytes() const
 {
     qlonglong total = 0;
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
         const QModelIndex mi = index(i, 0);
-        const QString action = data(mi, AppsModel::ActionRole).toString();
+        const QString action = data(mi, ModuleModel::ActionRole).toString();
         if (action != QStringLiteral("install")
             && action != QStringLiteral("upgrade")
             && action != QStringLiteral("downgrade")
             && action != QStringLiteral("reinstall")) {
             continue;
         }
-        const QString toVersion = data(mi, AppsModel::ToVersionRole).toString();
-        const QVariantList versions = data(mi, AppsModel::VersionsRole).toList();
+        const QString toVersion = data(mi, ModuleModel::ToVersionRole).toString();
+        const QVariantList versions = data(mi, ModuleModel::VersionsRole).toList();
         for (const QVariant& v : versions) {
             const QVariantMap entry = v.toMap();
             const QString entryVersion =
@@ -149,18 +155,18 @@ qlonglong AppsFilterProxy::totalDownloadBytes() const
     return total;
 }
 
-bool AppsFilterProxy::hasResolutionErrors() const
+bool ModuleFilterProxy::hasResolutionErrors() const
 {
     const int n = rowCount();
     for (int i = 0; i < n; ++i) {
         const QModelIndex mi = index(i, 0);
-        if (data(mi, AppsModel::ActionRole).toString() == QStringLiteral("error"))
+        if (data(mi, ModuleModel::ActionRole).toString() == QStringLiteral("error"))
             return true;
     }
     return false;
 }
 
-QStringList AppsFilterProxy::categories() const
+QStringList ModuleFilterProxy::categories() const
 {
     QAbstractItemModel* src = sourceModel();
     QStringList out;
@@ -172,14 +178,14 @@ QStringList AppsFilterProxy::categories() const
     for (int i = 0; i < n; ++i) {
         const QModelIndex mi = src->index(i, 0);
         if (m_excludeMainUi) {
-            const QString nm = src->data(mi, AppsModel::NameRole).toString();
+            const QString nm = src->data(mi, ModuleModel::NameRole).toString();
             if (nm == QStringLiteral("main_ui")) continue;
         }
         if (!m_typeFilter.isEmpty()) {
-            const QString t = src->data(mi, AppsModel::TypeRole).toString();
+            const QString t = src->data(mi, ModuleModel::TypeRole).toString();
             if (t != m_typeFilter) continue;
         }
-        QString c = src->data(mi, AppsModel::CategoryRole).toString();
+        QString c = src->data(mi, ModuleModel::CategoryRole).toString();
         if (c.isEmpty()) continue;
         c[0] = c[0].toUpper();
         if (!seen.contains(c)) seen.append(c);
@@ -189,7 +195,7 @@ QStringList AppsFilterProxy::categories() const
     return out;
 }
 
-void AppsFilterProxy::setTypeFilter(const QString& t)
+void ModuleFilterProxy::setTypeFilter(const QString& t)
 {
     if (m_typeFilter == t) return;
     m_typeFilter = t;
@@ -198,7 +204,7 @@ void AppsFilterProxy::setTypeFilter(const QString& t)
     emit categoriesChanged();
 }
 
-void AppsFilterProxy::setCategoryFilter(const QString& c)
+void ModuleFilterProxy::setCategoryFilter(const QString& c)
 {
     if (m_categoryFilter == c) return;
     m_categoryFilter = c;
@@ -206,7 +212,7 @@ void AppsFilterProxy::setCategoryFilter(const QString& c)
     emit categoryFilterChanged();
 }
 
-void AppsFilterProxy::setSearchText(const QString& s)
+void ModuleFilterProxy::setSearchText(const QString& s)
 {
     if (m_searchText == s) return;
     m_searchText = s;
@@ -214,7 +220,7 @@ void AppsFilterProxy::setSearchText(const QString& s)
     emit searchTextChanged();
 }
 
-void AppsFilterProxy::setInstallStateFilter(const QString& s)
+void ModuleFilterProxy::setInstallStateFilter(const QString& s)
 {
     if (m_installStateFilter == s) return;
     m_installStateFilter = s;
@@ -222,7 +228,7 @@ void AppsFilterProxy::setInstallStateFilter(const QString& s)
     emit installStateFilterChanged();
 }
 
-void AppsFilterProxy::setExcludeMainUi(bool e)
+void ModuleFilterProxy::setExcludeMainUi(bool e)
 {
     if (m_excludeMainUi == e) return;
     m_excludeMainUi = e;
@@ -231,7 +237,39 @@ void AppsFilterProxy::setExcludeMainUi(bool e)
     emit categoriesChanged();
 }
 
-void AppsFilterProxy::setRepositoryUrlFilter(const QString& url)
+void ModuleFilterProxy::setExcludedNames(const QStringList& names)
+{
+    if (m_excludedNames == names) return;
+    m_excludedNames = names;
+    invalidateFilter();
+    emit excludedNamesChanged();
+}
+
+void ModuleFilterProxy::setIsLoadedFilter(int value)
+{
+    if (m_isLoadedFilter == value) return;
+    m_isLoadedFilter = value;
+    invalidateFilter();
+    emit isLoadedFilterChanged();
+}
+
+void ModuleFilterProxy::setRequireUiPluginRecord(bool value)
+{
+    if (m_requireUiPluginRecord == value) return;
+    m_requireUiPluginRecord = value;
+    invalidateFilter();
+    emit requireUiPluginRecordChanged();
+}
+
+void ModuleFilterProxy::setRequireCoreModuleRecord(bool value)
+{
+    if (m_requireCoreModuleRecord == value) return;
+    m_requireCoreModuleRecord = value;
+    invalidateFilter();
+    emit requireCoreModuleRecordChanged();
+}
+
+void ModuleFilterProxy::setRepositoryUrlFilter(const QString& url)
 {
     if (m_repositoryUrlFilter == url) return;
     m_repositoryUrlFilter = url;
@@ -239,7 +277,7 @@ void AppsFilterProxy::setRepositoryUrlFilter(const QString& url)
     emit repositoryUrlFilterChanged();
 }
 
-QStringList AppsFilterProxy::requiredPackages() const
+QStringList ModuleFilterProxy::requiredPackages() const
 {
     QStringList out;
     out.resize(m_requiredPackagesOrder.size());
@@ -251,7 +289,7 @@ QStringList AppsFilterProxy::requiredPackages() const
     return out;
 }
 
-void AppsFilterProxy::setRequiredPackages(const QVariantList& entries)
+void ModuleFilterProxy::setRequiredPackages(const QVariantList& entries)
 {
     m_requiredPackagesActive = true;
     m_requiredPackagesByName.clear();
@@ -268,13 +306,13 @@ void AppsFilterProxy::setRequiredPackages(const QVariantList& entries)
     emit requiredPackagesChanged();
 }
 
-QString AppsFilterProxy::capitalizeFirst(const QString& s)
+QString ModuleFilterProxy::capitalizeFirst(const QString& s)
 {
     if (s.isEmpty()) return s;
     return s.left(1).toUpper() + s.mid(1);
 }
 
-bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
+bool ModuleFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
 {
     QAbstractItemModel* src = sourceModel();
     if (!src) return false;
@@ -282,36 +320,57 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
 
     // main_ui exclusion — basecamp's own placeholder
     if (m_excludeMainUi) {
-        const QString name = src->data(idx, AppsModel::NameRole).toString();
+        const QString name = src->data(idx, ModuleModel::NameRole).toString();
         if (name == QStringLiteral("main_ui")) return false;
+    }
+
+    if (!m_excludedNames.isEmpty()) {
+        const QString name = src->data(idx, ModuleModel::NameRole).toString();
+        if (m_excludedNames.contains(name)) return false;
+    }
+
+    if (m_isLoadedFilter >= 0) {
+        const bool loaded = src->data(idx, ModuleModel::IsLoadedRole).toBool();
+        if (m_isLoadedFilter == 1 && !loaded) return false;
+        if (m_isLoadedFilter == 0 && loaded) return false;
+    }
+
+    if (m_requireUiPluginRecord
+        && !src->data(idx, ModuleModel::IsUiPluginRecordRole).toBool()) {
+        return false;
+    }
+
+    if (m_requireCoreModuleRecord
+        && !src->data(idx, ModuleModel::IsCoreModuleRecordRole).toBool()) {
+        return false;
     }
 
     // Type filter.
     if (!m_typeFilter.isEmpty()) {
-        const QString t = src->data(idx, AppsModel::TypeRole).toString();
+        const QString t = src->data(idx, ModuleModel::TypeRole).toString();
         if (t != m_typeFilter) return false;
     }
 
     // Category filter. "All" / "" both mean "no filter".
     if (!m_categoryFilter.isEmpty() && m_categoryFilter != QStringLiteral("All")) {
         const QString c = capitalizeFirst(
-            src->data(idx, AppsModel::CategoryRole).toString());
+            src->data(idx, ModuleModel::CategoryRole).toString());
         if (c != m_categoryFilter) return false;
     }
 
     // Install-state filter.
     if (m_installStateFilter == QStringLiteral("installed")) {
-        if (!src->data(idx, AppsModel::IsInstalledRole).toBool()) return false;
+        if (!src->data(idx, ModuleModel::IsInstalledRole).toBool()) return false;
     } else if (m_installStateFilter == QStringLiteral("notInstalled")) {
-        if (src->data(idx, AppsModel::IsInstalledRole).toBool()) return false;
+        if (src->data(idx, ModuleModel::IsInstalledRole).toBool()) return false;
     }
 
     // Search the visible fields — users type what they see, not the internal
     // package name. (DisplayNameRole falls back to name, so name search works.)
     if (!m_searchText.isEmpty()) {
-        const QString n  = src->data(idx, AppsModel::NameRole).toString();
-        const QString dn = src->data(idx, AppsModel::DisplayNameRole).toString();
-        const QString ds = src->data(idx, AppsModel::DescriptionRole).toString();
+        const QString n  = src->data(idx, ModuleModel::NameRole).toString();
+        const QString dn = src->data(idx, ModuleModel::DisplayNameRole).toString();
+        const QString ds = src->data(idx, ModuleModel::DescriptionRole).toString();
         if (!n.contains(m_searchText, Qt::CaseInsensitive)
             && !dn.contains(m_searchText, Qt::CaseInsensitive)
             && !ds.contains(m_searchText, Qt::CaseInsensitive))
@@ -321,19 +380,19 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
     // Repository URL — exact match. Used by the App Manager's per-repo
     // sections.
     if (!m_repositoryUrlFilter.isEmpty()) {
-        const QString repo = src->data(idx, AppsModel::RepositoryUrlRole).toString();
+        const QString repo = src->data(idx, ModuleModel::RepositoryUrlRole).toString();
         if (repo != m_repositoryUrlFilter) return false;
     }
 
     // requiredPackages: name in map AND (pinned repo empty OR matches row).
     // Without the repo pin, two repos publishing the same name both pass.
     if (m_requiredPackagesActive) {
-        const QString n = src->data(idx, AppsModel::NameRole).toString();
+        const QString n = src->data(idx, ModuleModel::NameRole).toString();
         const auto it = m_requiredPackagesByName.constFind(n);
         if (it == m_requiredPackagesByName.constEnd()) return false;
         if (!it.value().isEmpty()) {
             const QString rowRepo =
-                src->data(idx, AppsModel::RepositoryUrlRole).toString();
+                src->data(idx, ModuleModel::RepositoryUrlRole).toString();
             if (rowRepo != it.value()) return false;
         }
     }
@@ -341,11 +400,11 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
     return true;
 }
 
-bool AppsFilterProxy::lessThan(const QModelIndex& left, const QModelIndex& right) const
+bool ModuleFilterProxy::lessThan(const QModelIndex& left, const QModelIndex& right) const
 {
     if (m_requiredPackagesActive) {
-        const QString ln = sourceModel()->data(left,  AppsModel::NameRole).toString();
-        const QString rn = sourceModel()->data(right, AppsModel::NameRole).toString();
+        const QString ln = sourceModel()->data(left,  ModuleModel::NameRole).toString();
+        const QString rn = sourceModel()->data(right, ModuleModel::NameRole).toString();
         return m_requiredPackagesOrder.value(ln, INT_MAX)
              < m_requiredPackagesOrder.value(rn, INT_MAX);
     }

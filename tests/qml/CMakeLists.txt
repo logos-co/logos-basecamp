@@ -13,8 +13,8 @@ set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
 
 add_executable(qml_tests
     main.cpp
-    ${BASECAMP_SRC}/AppsModel.cpp
-    ${BASECAMP_SRC}/AppsFilterProxy.cpp
+    ${BASECAMP_SRC}/ModuleModel.cpp
+    ${BASECAMP_SRC}/ModuleFilterProxy.cpp
     ${BASECAMP_SRC}/InstallEnums.cpp
 )
 target_include_directories(qml_tests PRIVATE ${BASECAMP_SRC})

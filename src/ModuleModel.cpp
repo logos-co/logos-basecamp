@@ -1,28 +1,34 @@
-#include "AppsModel.h"
+#include "ModuleModel.h"
 
 #include "InstallRegistry.h"
 
+#include <QDebug>
 #include <QSet>
 
 namespace {
 constexpr QChar kSep = QLatin1Char('\n');
+
+bool isUiPluginType(const QString& type)
+{
+    return type == QStringLiteral("ui_qml") || type == QStringLiteral("ui");
+}
 }
 
-QString AppsModel::key(const QString& repo, const QString& name)
+QString ModuleModel::key(const QString& repo, const QString& name)
 {
     return repo + kSep + name;
 }
 
-AppsModel::AppsModel(QObject* parent) : QAbstractListModel(parent) {}
+ModuleModel::ModuleModel(QObject* parent) : QAbstractListModel(parent) {}
 
 // ── QAbstractListModel ─────────────────────────────────────────────────────
 
-int AppsModel::rowCount(const QModelIndex& parent) const
+int ModuleModel::rowCount(const QModelIndex& parent) const
 {
     return parent.isValid() ? 0 : m_rows.size();
 }
 
-QVariant AppsModel::data(const QModelIndex& index, int role) const
+QVariant ModuleModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_rows.size())
         return {};
@@ -34,6 +40,7 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case DescriptionRole:      return r.description;
     case CategoryRole:         return r.category;
     case TypeRole:             return r.type;
+    case ColorRole:            return r.color;
     case IconUrlRole:          return r.iconUrl;
     case VersionsRole:         return r.versions;
     case DependenciesRole:     return r.dependencies;
@@ -65,11 +72,20 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
                             : static_cast<int>(InstallStage::None);
     case InstallErrorRole:
         return m_installRegistry ? m_installRegistry->error(r.name) : QString();
+    case IsLoadedRole:         return r.isLoaded;
+    case IsLoadingRole:        return r.isLoading;
+    case IsMainUiRole:         return r.isMainUi;
+    case IconPathRole:         return r.iconPath.isEmpty() ? r.iconUrl : r.iconPath;
+    case HasMissingDepsRole:   return !r.missingDeps.isEmpty();
+    case CpuRole:              return r.cpu;
+    case MemoryRole:           return r.memory;
+    case IsUiPluginRecordRole: return r.isUiPluginRecord;
+    case IsCoreModuleRecordRole: return r.isCoreModuleRecord;
     }
     return {};
 }
 
-QHash<int, QByteArray> AppsModel::roleNames() const
+QHash<int, QByteArray> ModuleModel::roleNames() const
 {
     return {
         {NameRole,             "name"},
@@ -78,6 +94,7 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {DescriptionRole,      "description"},
         {CategoryRole,         "category"},
         {TypeRole,             "type"},
+        {ColorRole,            "color"},
         {IconUrlRole,          "iconUrl"},
         {VersionsRole,         "versions"},
         {DependenciesRole,     "dependencies"},
@@ -94,10 +111,19 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {ResolverErrorRole,    "resolverError"},
         {InstallStageRole,     "installStage"},
         {InstallErrorRole,     "installError"},
+        {IsLoadedRole,         "isLoaded"},
+        {IsLoadingRole,        "isLoading"},
+        {IsMainUiRole,         "isMainUi"},
+        {IconPathRole,         "iconPath"},
+        {HasMissingDepsRole,   "hasMissingDeps"},
+        {CpuRole,              "cpu"},
+        {MemoryRole,           "memory"},
+        {IsUiPluginRecordRole, "isUiPluginRecord"},
+        {IsCoreModuleRecordRole, "isCoreModuleRecord"},
     };
 }
 
-QStringList AppsModel::categories() const
+QStringList ModuleModel::categories() const
 {
     QStringList seen;
     seen.append(QStringLiteral("All"));
@@ -127,7 +153,7 @@ static int versionCmp(const QString& a, const QString& b)
     return 0;
 }
 
-void AppsModel::recomputeInstallStatus(Row& r)
+void ModuleModel::recomputeInstallStatus(Row& r)
 {
     if (r.installedVersion.isEmpty()) {
         r.installStatus = InstallStatus::NotInstalled;
@@ -174,7 +200,7 @@ void AppsModel::recomputeInstallStatus(Row& r)
     r.installStatus = InstallStatus::Installed;
 }
 
-void AppsModel::recomputeVersionDerivedFields(Row& r)
+void ModuleModel::recomputeVersionDerivedFields(Row& r)
 {
     QVariantMap firstManifest;
     if (!r.versions.isEmpty()) {
@@ -204,7 +230,7 @@ void AppsModel::recomputeVersionDerivedFields(Row& r)
 
 // ── Mutation: bulk replace from catalog ────────────────────────────────────
 
-void AppsModel::replaceCatalog(const QVariantList& catalogRows)
+void ModuleModel::replaceCatalog(const QVariantList& catalogRows)
 {
     QSet<QString> incoming;
     incoming.reserve(catalogRows.size());
@@ -217,7 +243,12 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
 
     QList<int> toRemove;
     for (int i = 0; i < m_rows.size(); ++i) {
-        const QString k = key(m_rows[i].repositoryUrl, m_rows[i].name);
+        const Row& r = m_rows[i];
+        // Rows seeded from on-disk scans (UI plugins / core modules) use keys
+        // that often don't match catalog (repo, name) pairs. Never drop them
+        // here — sidebar and settings tabs filter on these flags.
+        if (r.isUiPluginRecord || r.isCoreModuleRecord) continue;
+        const QString k = key(r.repositoryUrl, r.name);
         if (!incoming.contains(k)) toRemove.append(i);
     }
     for (int i = toRemove.size() - 1; i >= 0; --i) {
@@ -253,6 +284,7 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description    = row.value("description").toString();
             r.category       = row.value("category").toString();
             r.type           = row.value("type").toString();
+            r.color          = row.value("color").toString();
             r.iconUrl        = row.value("iconUrl").toString();
             r.versions       = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
@@ -268,14 +300,15 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description = row.value("description").toString();
             r.category    = row.value("category").toString();
             r.type        = row.value("type").toString();
+            r.color       = row.value("color").toString();
             r.iconUrl     = row.value("iconUrl").toString();
             r.versions    = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
             const QModelIndex mi = index(idx);
             emit dataChanged(mi, mi, {
                 DisplayNameRole, DescriptionRole, CategoryRole, TypeRole,
-                IconUrlRole, VersionsRole, LatestVersionRole, HasUpdateRole,
-                DependenciesRole, InstallStatusRole
+                ColorRole, IconUrlRole, VersionsRole, LatestVersionRole,
+                HasUpdateRole, DependenciesRole, InstallStatusRole
             });
         }
     }
@@ -284,7 +317,7 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
 
 // ── Mutation: on-disk state ────────────────────────────────────────────────
 
-void AppsModel::markInstalled(const QString& name,
+void ModuleModel::markInstalled(const QString& name,
                               const QString& installedVersion,
                               const QString& installedHash)
 {
@@ -315,7 +348,7 @@ void AppsModel::markInstalled(const QString& name,
     }
 }
 
-void AppsModel::replaceInstalledSet(const QHash<QString, QString>& versionByName,
+void ModuleModel::replaceInstalledSet(const QHash<QString, QString>& versionByName,
                                     const QHash<QString, QString>& hashByName)
 {
     const bool wasBulk = m_inBulkInstalledUpdate;
@@ -339,12 +372,12 @@ void AppsModel::replaceInstalledSet(const QHash<QString, QString>& versionByName
     if (!wasBulk) endBulkInstalledUpdate();
 }
 
-void AppsModel::beginBulkInstalledUpdate()
+void ModuleModel::beginBulkInstalledUpdate()
 {
     m_inBulkInstalledUpdate = true;
 }
 
-void AppsModel::endBulkInstalledUpdate()
+void ModuleModel::endBulkInstalledUpdate()
 {
     if (!m_inBulkInstalledUpdate) return;
     m_inBulkInstalledUpdate = false;
@@ -360,7 +393,7 @@ void AppsModel::endBulkInstalledUpdate()
     }
 }
 
-void AppsModel::setInstallType(const QString& name, const QString& installType)
+void ModuleModel::setInstallType(const QString& name, const QString& installType)
 {
     for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
@@ -371,7 +404,18 @@ void AppsModel::setInstallType(const QString& name, const QString& installType)
     }
 }
 
-void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
+void ModuleModel::setDisplayName(const QString& name, const QString& displayName)
+{
+    for (int idx : m_indicesByName.values(name)) {
+        Row& r = m_rows[idx];
+        if (r.displayName == displayName) continue;
+        r.displayName = displayName;
+        const QModelIndex mi = index(idx);
+        emit dataChanged(mi, mi, {DisplayNameRole});
+    }
+}
+
+void ModuleModel::setIconUrl(const QString& name, const QString& iconUrl)
 {
     for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
@@ -382,7 +426,7 @@ void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
     }
 }
 
-void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
+void ModuleModel::setMissingDeps(const QString& name, const QStringList& missing)
 {
     for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
@@ -396,7 +440,7 @@ void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
 
 // ── Wiring: live install state ────────────────────────────────────────────
 
-void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
+void ModuleModel::setInstallRegistry(InstallRegistry* installRegistry)
 {
     if (m_installRegistry == installRegistry) return;
     if (m_installRegistry) m_installRegistry->disconnect(this);
@@ -418,9 +462,15 @@ void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
 
 // ── Mutation: resolver overlay ─────────────────────────────────────────────
 
-void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
+void ModuleModel::setResolverOverlay(const QList<ResolverRow>& rows)
 {
     clearResolverOverlay();
+    if (m_installRegistry) {
+        for (const ResolverRow& src : rows) {
+            if (!src.name.isEmpty())
+                m_installRegistry->clear(src.name);
+        }
+    }
     for (const ResolverRow& src : rows) {
         const int idx = rowOf(src.name, src.repositoryUrl);
         if (idx < 0) continue;
@@ -435,7 +485,7 @@ void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
     }
 }
 
-void AppsModel::clearResolverOverlay()
+void ModuleModel::clearResolverOverlay()
 {
     for (int i = 0; i < m_rows.size(); ++i) {
         Row& r = m_rows[i];
@@ -453,7 +503,7 @@ void AppsModel::clearResolverOverlay()
 
 // ── Lookup ─────────────────────────────────────────────────────────────────
 
-int AppsModel::rowOf(const QString& name, const QString& repositoryUrl) const
+int ModuleModel::rowOf(const QString& name, const QString& repositoryUrl) const
 {
     if (!repositoryUrl.isEmpty()) {
         const auto it = m_indexByKey.find(key(repositoryUrl, name));
@@ -464,7 +514,7 @@ int AppsModel::rowOf(const QString& name, const QString& repositoryUrl) const
     return -1;
 }
 
-QVariantMap AppsModel::rowData(int row) const
+QVariantMap ModuleModel::rowData(int row) const
 {
     if (row < 0 || row >= m_rows.size()) return {};
     const QModelIndex mi = index(row);
@@ -475,8 +525,169 @@ QVariantMap AppsModel::rowData(int row) const
     return m;
 }
 
-QVariantMap AppsModel::rowDataByName(const QString& name,
+QVariantMap ModuleModel::rowDataByName(const QString& name,
                                      const QString& repositoryUrl) const
 {
     return rowData(rowOf(name, repositoryUrl));
+}
+
+void ModuleModel::seedInstalledOnly(const QString& name,
+                                    const QString& type,
+                                    const QVariantMap& fields)
+{
+    if (name.isEmpty() || type.isEmpty()) return;
+
+    int idx = rowOf(name);
+    if (idx >= 0) {
+        Row& r = m_rows[idx];
+        if (!r.type.isEmpty() && r.type != type) {
+            qWarning() << "ModuleModel::seedInstalledOnly: type mismatch for"
+                       << name << "(" << r.type << "vs" << type << ")";
+            return;
+        }
+        const auto merge = [&](const QString& key, auto setter) {
+            const QVariant v = fields.value(key);
+            if (!v.isValid() || v.isNull()) return;
+            setter(v);
+        };
+        merge(QStringLiteral("displayName"), [&](const QVariant& v) {
+            if (r.displayName.isEmpty()) r.displayName = v.toString();
+        });
+        merge(QStringLiteral("description"), [&](const QVariant& v) {
+            if (r.description.isEmpty()) r.description = v.toString();
+        });
+        merge(QStringLiteral("repositoryUrl"), [&](const QVariant& v) {
+            if (r.repositoryUrl.isEmpty()) r.repositoryUrl = v.toString();
+        });
+        merge(QStringLiteral("version"), [&](const QVariant& v) {
+            if (r.installedVersion.isEmpty()) r.installedVersion = v.toString();
+        });
+        merge(QStringLiteral("installType"), [&](const QVariant& v) {
+            r.installType = v.toString();
+        });
+        merge(QStringLiteral("iconPath"), [&](const QVariant& v) {
+            r.iconPath = v.toString();
+            if (r.iconUrl.isEmpty()) r.iconUrl = v.toString();
+        });
+        merge(QStringLiteral("iconUrl"), [&](const QVariant& v) {
+            if (r.iconUrl.isEmpty()) r.iconUrl = v.toString();
+            if (r.iconPath.isEmpty()) r.iconPath = v.toString();
+        });
+        if (fields.contains(QStringLiteral("isMainUi")))
+            r.isMainUi = fields.value(QStringLiteral("isMainUi")).toBool();
+        if (isUiPluginType(type)) r.isUiPluginRecord = true;
+        if (type == QStringLiteral("core")) r.isCoreModuleRecord = true;
+        if (!r.type.isEmpty()) {
+            recomputeInstallStatus(r);
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, {
+                DisplayNameRole, DescriptionRole, RepositoryUrlRole,
+                InstalledVersionRole, InstallTypeRole, IconUrlRole, IconPathRole,
+                IsMainUiRole, IsInstalledRole, InstallStatusRole,
+                IsUiPluginRecordRole, IsCoreModuleRecordRole
+            });
+        } else {
+            r.type = type;
+            if (isUiPluginType(type)) r.isUiPluginRecord = true;
+            if (type == QStringLiteral("core")) r.isCoreModuleRecord = true;
+            if (r.installedVersion.isEmpty() && !fields.value(QStringLiteral("version")).toString().isEmpty())
+                r.installedVersion = fields.value(QStringLiteral("version")).toString();
+            else if (r.installedVersion.isEmpty())
+                r.installedVersion = QStringLiteral("0");
+            recomputeInstallStatus(r);
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, {
+                TypeRole, DisplayNameRole, InstalledVersionRole, InstallTypeRole,
+                IconUrlRole, IconPathRole, IsMainUiRole, IsInstalledRole,
+                InstallStatusRole, IsUiPluginRecordRole, IsCoreModuleRecordRole
+            });
+        }
+        return;
+    }
+
+    const int newIdx = m_rows.size();
+    beginInsertRows({}, newIdx, newIdx);
+    Row r;
+    r.name = name;
+    r.type = type;
+    r.displayName = fields.value(QStringLiteral("displayName")).toString();
+    r.description = fields.value(QStringLiteral("description")).toString();
+    r.repositoryUrl = fields.value(QStringLiteral("repositoryUrl")).toString();
+    r.installedVersion = fields.value(QStringLiteral("version")).toString();
+    if (r.installedVersion.isEmpty()) r.installedVersion = QStringLiteral("0");
+    r.installType = fields.value(QStringLiteral("installType")).toString();
+    r.iconPath = fields.value(QStringLiteral("iconPath")).toString();
+    r.iconUrl = fields.value(QStringLiteral("iconUrl")).toString();
+    if (r.iconUrl.isEmpty()) r.iconUrl = r.iconPath;
+    if (r.iconPath.isEmpty()) r.iconPath = r.iconUrl;
+    r.isMainUi = fields.value(QStringLiteral("isMainUi")).toBool();
+    r.isUiPluginRecord = isUiPluginType(type);
+    r.isCoreModuleRecord = (type == QStringLiteral("core"));
+    recomputeInstallStatus(r);
+    m_rows.append(std::move(r));
+    m_indexByKey.insert(key(r.repositoryUrl, name), newIdx);
+    m_indicesByName.insert(name, newIdx);
+    endInsertRows();
+    emit categoriesChanged();
+}
+
+void ModuleModel::setRoleByName(const QString& name, int role, const QVariant& value)
+{
+    const QList<int> indices = m_indicesByName.values(name);
+    if (indices.isEmpty()) return;
+
+    QList<int> changedRoles;
+    for (int idx : indices) {
+        if (idx < 0 || idx >= m_rows.size()) continue;
+        Row& r = m_rows[idx];
+        bool changed = false;
+        switch (role) {
+        case IsLoadedRole:
+            if (r.isLoaded != value.toBool()) { r.isLoaded = value.toBool(); changed = true; }
+            break;
+        case IsLoadingRole:
+            if (r.isLoading != value.toBool()) { r.isLoading = value.toBool(); changed = true; }
+            break;
+        case IsMainUiRole:
+            if (r.isMainUi != value.toBool()) { r.isMainUi = value.toBool(); changed = true; }
+            break;
+        case IconPathRole:
+        case IconUrlRole: {
+            const QString path = value.toString();
+            if (r.iconPath != path) { r.iconPath = path; changed = true; }
+            if (r.iconUrl != path) { r.iconUrl = path; changed = true; }
+            if (changed) changedRoles << IconPathRole << IconUrlRole;
+            break;
+        }
+        case CpuRole:
+            if (r.cpu != value.toString()) { r.cpu = value.toString(); changed = true; }
+            break;
+        case MemoryRole:
+            if (r.memory != value.toString()) { r.memory = value.toString(); changed = true; }
+            break;
+        case InstallTypeRole:
+            if (r.installType != value.toString()) { r.installType = value.toString(); changed = true; }
+            break;
+        case MissingDepsRole: {
+            const QStringList missing = value.toStringList();
+            if (r.missingDeps != missing) {
+                r.missingDeps = missing;
+                recomputeInstallStatus(r);
+                changed = true;
+                changedRoles << MissingDepsRole << HasMissingDepsRole
+                             << IsInstalledRole << InstallStatusRole;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        if (changed && changedRoles.isEmpty())
+            changedRoles << role;
+        if (!changedRoles.isEmpty()) {
+            const QModelIndex mi = index(idx);
+            emit dataChanged(mi, mi, changedRoles);
+            changedRoles.clear();
+        }
+    }
 }

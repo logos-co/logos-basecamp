@@ -9,8 +9,6 @@ import Basecamp.Icons
 Control {
     id: root
 
-    /** Property to set the different ui modules discovered **/
-    property var launcherApps: backend.launcherApps
     /** Current active section index **/
     property int currentActiveSectionIndex: backend.currentActiveSectionIndex
 
@@ -35,14 +33,6 @@ Control {
             { name: "Package Manager", icon: BasecampIcons.modules },
             { name: "Settings",        icon: BasecampIcons.settings }
         ]
-
-        readonly property var loadedApps: (root.launcherApps || []).filter(function(item) {
-            return item && item.isLoaded === true
-        })
-
-        readonly property var unloadedApps: (root.launcherApps || []).filter(function(item) {
-            return item && item.isLoaded === false
-        })
 
         readonly property int systemTitleBarPadding: Qt.platform.os === "osx" ? 30: 0
     }
@@ -115,17 +105,26 @@ Control {
                     // Loaded apps
                     Repeater {
                         id: loadedAppsRepeater
-                        model: _d.loadedApps
+                        model: backend.loadedLauncherProxy
                         delegate: SidebarAppDelegate {
+                            required property int index
+                            required property string name
+                            required property string displayName
+                            required property string iconPath
+                            required property string color
+                            required property bool hasMissingDeps
+
                             Layout.fillWidth: true
                             loaded: true
-                            loading: backend.loadingModules.indexOf(modelData.name) >= 0
+                            loading: backend.loadingModules.indexOf(name) >= 0
                             enabled: !loading
-                            checked: modelData.name === (backend.currentVisibleApp || "")
-                            text: modelData.displayName || modelData.name
-                            icon.source: modelData.iconPath
-                            hasMissingDeps: modelData.hasMissingDeps === true
-                            onClicked: root.launchUIModule(modelData.name)
+                            checked: name === (backend.currentVisibleApp || "")
+                            appName: name
+                            packageColor: color
+                            text: displayName || name
+                            icon.source: iconPath
+                            hasMissingDeps: hasMissingDeps === true
+                            onClicked: root.launchUIModule(name)
                         }
                     }
 
@@ -137,16 +136,25 @@ Control {
 
                     // Unloaded apps
                     Repeater {
-                        model: _d.unloadedApps
+                        model: backend.unloadedLauncherProxy
                         delegate: SidebarAppDelegate {
+                            required property int index
+                            required property string name
+                            required property string displayName
+                            required property string iconPath
+                            required property string color
+                            required property bool hasMissingDeps
+
                             Layout.fillWidth: true
                             loaded: false
-                            loading: backend.loadingModules.indexOf(modelData.name) >= 0
+                            loading: backend.loadingModules.indexOf(name) >= 0
                             enabled: !loading
-                            text: modelData.displayName || modelData.name
-                            icon.source: modelData.iconPath
-                            hasMissingDeps: modelData.hasMissingDeps === true
-                            onClicked: root.launchUIModule(modelData.name)
+                            appName: name
+                            packageColor: color
+                            text: displayName || name
+                            icon.source: iconPath
+                            hasMissingDeps: hasMissingDeps === true
+                            onClicked: root.launchUIModule(name)
                         }
                     }
                 }

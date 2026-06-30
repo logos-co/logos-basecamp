@@ -1,10 +1,12 @@
 #include "CoreModuleManager.h"
+#include "ModuleModel.h"
 
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QSet>
 #include <QTimer>
 #include <QVariantList>
 
@@ -110,17 +112,23 @@ QStringList CoreModuleManager::loadedModules() const
 
 bool CoreModuleManager::loadModule(const QString& name)
 {
-    return logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    const bool ok = logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    if (ok) syncLoadedStateToModel();
+    return ok;
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    const bool ok = logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    if (ok) syncLoadedStateToModel();
+    return ok;
 }
 
 bool CoreModuleManager::unloadModuleWithDependents(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    const bool ok = logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    if (ok) syncLoadedStateToModel();
+    return ok;
 }
 
 QVariantMap CoreModuleManager::moduleStats(const QString& name) const
@@ -130,10 +138,43 @@ QVariantMap CoreModuleManager::moduleStats(const QString& name) const
 
 void CoreModuleManager::refresh()
 {
-    // Re-scan all module directories via the lib, then let the Modules tab
-    // re-read the composed list through Q_PROPERTY.
     logos_core_refresh_modules();
+    syncKnownModulesToModel();
     emit coreModulesChanged();
+}
+
+void CoreModuleManager::setModuleModel(ModuleModel* moduleModel)
+{
+    m_moduleModel = moduleModel;
+}
+
+void CoreModuleManager::syncKnownModulesToModel()
+{
+    if (!m_moduleModel) return;
+    for (const QString& name : knownModules()) {
+        QVariantMap fields;
+        fields[QStringLiteral("displayName")] = name;
+        fields[QStringLiteral("isCoreModuleRecord")] = true;
+        m_moduleModel->seedInstalledOnly(name, QStringLiteral("core"), fields);
+    }
+    syncLoadedStateToModel();
+}
+
+void CoreModuleManager::syncLoadedStateToModel()
+{
+    if (!m_moduleModel) return;
+    const QStringList loadedList = loadedModules();
+    const QSet<QString> loaded(loadedList.begin(), loadedList.end());
+    for (const QString& name : knownModules()) {
+        m_moduleModel->setRoleByName(name, ModuleModel::IsLoadedRole, loaded.contains(name));
+    }
+}
+
+void CoreModuleManager::pushStatsToModel(const QString& name, const QVariantMap& stats)
+{
+    if (!m_moduleModel) return;
+    m_moduleModel->setRoleByName(name, ModuleModel::CpuRole, stats.value(QStringLiteral("cpu")));
+    m_moduleModel->setRoleByName(name, ModuleModel::MemoryRole, stats.value(QStringLiteral("memory")));
 }
 
 QString CoreModuleManager::getMethods(const QString& moduleName)
@@ -261,8 +302,9 @@ void CoreModuleManager::updateModuleStats()
             stats["cpu"] = QString::number(cpu, 'f', 1);
             stats["memory"] = QString::number(memory, 'f', 1);
             m_moduleStats[name] = stats;
+            pushStatsToModel(name, stats);
         }
     }
 
-    emit coreModulesChanged();
+    syncLoadedStateToModel();
 }

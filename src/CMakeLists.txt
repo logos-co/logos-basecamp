@@ -119,7 +119,8 @@ set(SOURCES
     UIPluginManager.cpp
     PackageCoordinator.cpp
     InstallRegistry.cpp
-    AppsModel.cpp
+    ModuleModel.cpp
+    RepositoryModel.cpp
     PluginLoader.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
@@ -215,8 +216,8 @@ qt_add_qml_module(basecamp_backend_qml
     SOURCES
         InstallEnums.h
         InstallEnums.cpp
-        AppsFilterProxy.h
-        AppsFilterProxy.cpp
+        ModuleFilterProxy.h
+        ModuleFilterProxy.cpp
 )
 
 qt_add_qml_module(basecamp_sidebar_qml

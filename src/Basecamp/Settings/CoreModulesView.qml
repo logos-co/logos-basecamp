@@ -94,21 +94,23 @@ Item {
                         spacing: 8
 
                         Repeater {
-                            model: backend.coreModules
+                            model: backend.coreModulesProxy
 
-                            // Row shell is shared with UiModulesTab. Column
-                            // rules: name absorbs slack via `Layout.fillWidth`
-                            // + elide so long names like
-                            // `liblogos_blockchain_module` don't bleed into
-                            // the status column. Every other column uses an
-                            // explicit `Layout.preferredWidth`.
                             ModuleRow {
+                                required property int index
+                                required property string name
+                                required property string displayName
+                                required property bool isLoaded
+                                required property string cpu
+                                required property string memory
+                                required property string installType
+
                                 rowIndex: index
                                 rowHeight: 50
 
                                 // Plugin name — flex-sized.
                                 LogosText {
-                                    text: modelData.displayName || modelData.name
+                                    text: displayName || name
                                     font.pixelSize: 16
                                     color: "#e0e0e0"
                                     elide: Text.ElideRight
@@ -120,29 +122,29 @@ Item {
                                 // line up the same whether the row says
                                 // "(Loaded)" or "(Not Loaded)".
                                 LogosText {
-                                    text: modelData.isLoaded ? "(Loaded)" : "(Not Loaded)"
-                                    color: modelData.isLoaded ? "#4CAF50" : "#F44336"
+                                    text: isLoaded ? "(Loaded)" : "(Not Loaded)"
+                                    color: isLoaded ? "#4CAF50" : "#F44336"
                                     Layout.preferredWidth: 100
                                 }
 
                                 // CPU (blank for not-loaded, but the column
                                 // stays so the row shape is stable).
                                 LogosText {
-                                    text: modelData.isLoaded ? "CPU: " + modelData.cpu + "%" : ""
+                                    text: isLoaded ? "CPU: " + cpu + "%" : ""
                                     color: "#64B5F6"
                                     Layout.preferredWidth: 80
                                 }
 
                                 // Memory
                                 LogosText {
-                                    text: modelData.isLoaded ? "Mem: " + modelData.memory + " MB" : ""
+                                    text: isLoaded ? "Mem: " + memory + " MB" : ""
                                     color: "#81C784"
                                     Layout.preferredWidth: 100
                                 }
 
                                 // Load/Unload button
                                 Button {
-                                    text: modelData.isLoaded ? "Unload Plugin" : "Load Plugin"
+                                    text: isLoaded ? "Unload Plugin" : "Load Plugin"
 
                                     contentItem: LogosText {
                                         text: parent.text
@@ -155,25 +157,24 @@ Item {
                                     background: Rectangle {
                                         implicitWidth: 100
                                         implicitHeight: 30
-                                        color: modelData.isLoaded ?
+                                        color: isLoaded ?
                                             (parent.pressed ? "#da190b" : "#F44336") :
                                             (parent.pressed ? "#3d8b40" : "#4b4b4b")
                                         radius: 4
                                     }
 
                                     onClicked: {
-                                        if (modelData.isLoaded) {
-                                            backend.unloadCoreModule(modelData.name)
+                                        if (isLoaded) {
+                                            backend.unloadCoreModule(name)
                                         } else {
-                                            backend.loadCoreModule(modelData.name)
+                                            backend.loadCoreModule(name)
                                         }
                                     }
                                 }
 
-                                // Interface button (methods + events; only for loaded)
                                 Button {
                                     text: "Interface"
-                                    visible: modelData.isLoaded
+                                    visible: isLoaded
 
                                     contentItem: LogosText {
                                         text: parent.text
@@ -191,21 +192,14 @@ Item {
                                     }
 
                                     onClicked: {
-                                        root.selectedPlugin = modelData.name
+                                        root.selectedPlugin = name
                                         root.showingInterface = true
                                     }
                                 }
 
-                                // Uninstall button — only shown for
-                                // user-installed core modules. Embedded
-                                // modules (package_manager, core_manager,
-                                // capability_module, etc. in release
-                                // builds) are structurally protected.
-                                // Backend also refuses non-user uninstalls
-                                // so an accidental rogue call is a no-op.
                                 Button {
                                     text: "Uninstall"
-                                    visible: modelData.installType === "user"
+                                    visible: installType === "user"
 
                                     contentItem: LogosText {
                                         text: parent.text
@@ -222,7 +216,7 @@ Item {
                                         radius: 4
                                     }
 
-                                    onClicked: backend.uninstallCoreModule(modelData.name)
+                                    onClicked: backend.uninstallCoreModule(name)
                                 }
                             }
                         }
@@ -233,7 +227,7 @@ Item {
                             color: "#606060"
                             Layout.alignment: Qt.AlignHCenter
                             Layout.topMargin: 40
-                            visible: backend.coreModules.length === 0
+                            visible: backend.coreModulesProxy.count === 0
                         }
                     }
                 }

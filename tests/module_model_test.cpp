@@ -1,7 +1,7 @@
-// Unit tests for AppsModel's per-row install-status compute. Built and
+// Unit tests for ModuleModel's per-row install-status compute. Built and
 // driven the same way the sandbox-test is — plain QtTest, standalone
 // CMakeLists in this directory, run via `nix build .#unit-tests`. No
-// logos-test-framework dependency: AppsModel is a pure Qt model, not a
+// logos-test-framework dependency: ModuleModel is a pure Qt model, not a
 // Logos module.
 //
 // What's tested: recomputeInstallStatus + markInstalled + setMissingDeps
@@ -10,7 +10,8 @@
 //
 //   nix build .#unit-tests -L
 
-#include "AppsModel.h"
+#include "ModuleModel.h"
+#include "InstallRegistry.h"
 #include "InstallEnums.h"
 
 #include <QtTest/QtTest>
@@ -40,7 +41,7 @@ QVariantMap makeCatalogRow(const QString& repo,
     // refs/heads/main/logos-repo.json → indexUrl). Version lives INSIDE
     // manifest, rootHash sits at the top of the version entry. Earlier
     // tests put `version` at the top of the version entry which let
-    // AppsModel's version-in-manifest read miss silently — the prod
+    // ModuleModel's version-in-manifest read miss silently — the prod
     // bug we're now catching.
     QVariantMap manifest;
     manifest.insert(QStringLiteral("version"),      version);
@@ -59,7 +60,7 @@ QVariantMap makeCatalogRow(const QString& repo,
 }
 
 // Read InstallStatus for a (name, repo) row through the public role API.
-InstallStatus::Value statusOf(const AppsModel& model,
+InstallStatus::Value statusOf(const ModuleModel& model,
                                   const QString& name,
                                   const QString& repo)
 {
@@ -85,16 +86,33 @@ InstallStatus::Value statusOf(const AppsModel& model,
     return InstallStatus::NotInstalled;
 }
 
+void applyInstallStage(ModuleModel& model,
+                       InstallRegistry& registry,
+                       const QString& name,
+                       InstallStage::Value stage,
+                       const QString& error = {})
+{
+    model.setInstallRegistry(&registry);
+    if (!registry.has(name))
+        registry.begin(name, QStringLiteral("1.0"), QString(), QString());
+    if (stage == InstallStage::Failed)
+        registry.fail(name, error);
+    else if (stage == InstallStage::Installed)
+        registry.finish(name);
+    else
+        registry.setStage(name, stage);
+}
+
 } // namespace
 
-class AppsModelTest : public QObject {
+class ModuleModelTest : public QObject {
     Q_OBJECT
 
 private slots:
     // ── Fresh state ─────────────────────────────────────────────────────
     void notInstalledByDefault()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui"),
         });
@@ -105,7 +123,7 @@ private slots:
     // ── Single repo, identity & version ─────────────────────────────────
     void singleRepoInstalled()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui"),
         });
@@ -116,7 +134,7 @@ private slots:
 
     void singleRepoUpgradeAvailable()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "2.0", "H_v2"),
         });
@@ -127,7 +145,7 @@ private slots:
 
     void singleRepoDowngradeAvailable()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_v1"),
         });
@@ -138,7 +156,7 @@ private slots:
 
     void singleRepoDifferentHash_topLevel()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_repo1"),
         });
@@ -151,7 +169,7 @@ private slots:
     // ── Multi-repo: identical builds → both Installed ───────────────────
     void twoReposSameHash_bothInstalled()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_shared"),
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H_shared"),
@@ -166,7 +184,7 @@ private slots:
     // ── Multi-repo: different top-level hash ────────────────────────────
     void twoReposDifferentTopLevelHash()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H1"),
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H2"),
@@ -183,7 +201,7 @@ private slots:
     // differs. Installing from repo1 must mark repo2's tile Reinstall.
     void twoReposDifferentDepHash()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui_shared",
                            { makeDep("wallet_modules") }),
@@ -208,7 +226,7 @@ private slots:
     // ── Partial install (deps missing) ──────────────────────────────────
     void missingDepsForcesNotInstalled()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui",
                            { makeDep("wallet_modules") }),
@@ -229,7 +247,7 @@ private slots:
     // ── markInstalled cascades to dependents ────────────────────────────
     void markInstalledCascadesToDependents()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui",
                            { makeDep("wallet_modules") }),
@@ -261,7 +279,7 @@ private slots:
     // ── Uninstall ───────────────────────────────────────────────────────
     void uninstallReturnsToNotInstalled()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui"),
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H_ui"),
@@ -280,7 +298,7 @@ private slots:
     // ── Resolver-fallback: dep only in one repo ─────────────────────────
     void resolverFallbackDepNotInThisRepo()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui",
                            { makeDep("wallet_modules") }),
@@ -300,7 +318,7 @@ private slots:
     }
 
     // ── Regression: version lives in manifest.version, not at the top ─
-    // Previously AppsModel read versions[i].version, which is empty for the
+    // Previously ModuleModel read versions[i].version, which is empty for the
     // real catalog shape (the index puts version inside manifest). That
     // made latestVersion = "" → recomputeInstallStatus's best-effort branch
     // returned Installed for every row regardless of state, skipping
@@ -325,7 +343,7 @@ private slots:
         row.insert(QStringLiteral("repositoryUrl"), "repo1");
         row.insert(QStringLiteral("versions"), QVariantList{versionEntry});
 
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({ row });
 
         // Installed at older version. With the bug, latestVersion was ""
@@ -386,7 +404,7 @@ private slots:
             return row;
         };
 
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             // repo1's wallet_ui depends on wallet_module — strings, like
             // the real manifest uses (["wallet_module"]).
@@ -428,7 +446,7 @@ private slots:
     // ── missingDeps cleared → flips back to Installed ───────────────────
     void missingDepsClearedFlipsBackToInstalled()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H_ui",
                            { makeDep("wallet_modules") }),
@@ -454,7 +472,7 @@ private slots:
     // BOTH dep rows for a fresh install in repo2.
     void resolverOverlayPinsByRepo()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui",     "1.0", "H_ui1",
                            { makeDep("wallet_module") }),
@@ -467,13 +485,13 @@ private slots:
         // Simulate the SECOND open of the dialog: click on repo2's tile.
         // The resolver result targets (wallet_ui, repo2) and
         // (wallet_module, repo2).
-        AppsModel::ResolverRow top;
+        ModuleModel::ResolverRow top;
         top.name          = "wallet_ui";
         top.repositoryUrl = "repo2";
         top.action        = "install";
         top.toVersion     = "1.0";
         top.isTopLevel    = true;
-        AppsModel::ResolverRow dep;
+        ModuleModel::ResolverRow dep;
         dep.name          = "wallet_module";
         dep.repositoryUrl = "repo2";
         dep.action        = "install";
@@ -517,7 +535,7 @@ private slots:
     // the setters used rowOf(name) and only updated the first match.
     void installTypeAndIconUrlPropagateAcrossRepos()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H"),
@@ -561,18 +579,18 @@ private slots:
     // top-level session.
     void installStageIsolatedAcrossRowsOnPartialFailure()
     {
-        AppsModel model;
+        ModuleModel model;
+        InstallRegistry registry;
         model.replaceCatalog({
             makeCatalogRow("repo1", "module_a", "1.0", "H_a"),
             makeCatalogRow("repo1", "module_b", "1.0", "H_b"),
         });
 
-        // Simulate installResultsSequential's per-row stage transitions.
-        model.setInstallStage("module_a", InstallStage::Installing);
-        model.setInstallStage("module_a", InstallStage::Installed);
-        model.setInstallStage("module_b", InstallStage::Installing);
-        model.setInstallStage("module_b", InstallStage::Failed,
-                              "package_manager returned no path");
+        applyInstallStage(model, registry, "module_a", InstallStage::Installing);
+        applyInstallStage(model, registry, "module_a", InstallStage::Installed);
+        applyInstallStage(model, registry, "module_b", InstallStage::Installing);
+        applyInstallStage(model, registry, "module_b", InstallStage::Failed,
+                          QStringLiteral("package_manager returned no path"));
 
         int stageRole = -1, errorRole = -1, nameRole = -1;
         const auto& roles = model.roleNames();
@@ -612,11 +630,13 @@ private slots:
     // Upgrade or Reinstall.
     void resolverOverlayClearsStickyInstallStage()
     {
-        AppsModel model;
+        ModuleModel model;
+        InstallRegistry registry;
+        model.setInstallRegistry(&registry);
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_module", "1.0", "H_mod"),
         });
-        model.setInstallStage("wallet_module", InstallStage::Installed);
+        applyInstallStage(model, registry, "wallet_module", InstallStage::Installed);
 
         int stageRole = -1, nameRole = -1, repoRole = -1;
         const auto& roles = model.roleNames();
@@ -641,7 +661,7 @@ private slots:
 
         QCOMPARE(stageFor("wallet_module", "repo1"), InstallStage::Installed);
 
-        AppsModel::ResolverRow rr;
+        ModuleModel::ResolverRow rr;
         rr.name          = "wallet_module";
         rr.repositoryUrl = "repo1";
         rr.action        = "reinstall";
@@ -655,15 +675,15 @@ private slots:
 
     // ── Regression: dep-walk needs the DEP'S installedHash populated.
     // Reproduces the runtime bug where wallet_module (a core module, not a
-    // UI plugin) never had its installedHash set on the AppsModel row, so
+    // UI plugin) never had its installedHash set on the ModuleModel row, so
     // wallet_ui's dep walk skipped the per-dep DifferentHash check. The
-    // fix in populateAppsModel iterates the full installed set, not just
+    // fix in populateModuleModel iterates the full installed set, not just
     // the UI-plugin subset. This test stays at the model layer by simply
     // omitting the markInstalled call for the dep — same observable
     // effect.
     void dependentTileStaysInstalledWhenDepNotMarked()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0.0", "H_ui_same",
                            { makeDep("wallet_module") }),
@@ -683,7 +703,7 @@ private slots:
         QCOMPARE(statusOf(model, "wallet_ui", "repo2"),
                  InstallStatus::Installed);
 
-        // After the full replay (now done by populateAppsModel), the dep
+        // After the full replay (now done by populateModuleModel), the dep
         // walk has data and repo2 correctly demotes to DifferentHash.
         model.markInstalled("wallet_module", "1.0.1", "H_mod_a");
         QCOMPARE(statusOf(model, "wallet_ui", "repo1"),
@@ -700,7 +720,7 @@ private slots:
     // mismatched wallet_module).
     void userRuntimeData_walletMultiRepoDepWalk()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("logos-co", "wallet_ui", "1.0.0",
                            "831f345bd9c9...",
@@ -740,7 +760,7 @@ private slots:
 
     void markInstalled_idempotent_no_op_when_unchanged()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
         });
@@ -755,7 +775,7 @@ private slots:
 
     void replaceCatalog_removes_rows_not_in_incoming()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui",     "1.0", "H1"),
             makeCatalogRow("repo1", "wallet_module", "1.0", "H2"),
@@ -770,7 +790,7 @@ private slots:
 
     void replaceCatalog_preserves_installState_on_existing_row_update()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
         });
@@ -790,7 +810,7 @@ private slots:
 
     void setMissingDeps_unknownName_is_silent_noop()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
         });
@@ -802,11 +822,11 @@ private slots:
 
     void clearResolverOverlay_resets_action_and_isTopLevel()
     {
-        AppsModel model;
+        ModuleModel model;
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
         });
-        AppsModel::ResolverRow rr;
+        ModuleModel::ResolverRow rr;
         rr.name = "wallet_ui"; rr.repositoryUrl = "repo1";
         rr.action = "install"; rr.toVersion = "1.0"; rr.isTopLevel = true;
         model.setResolverOverlay({rr});
@@ -839,7 +859,7 @@ private slots:
         // Catalog row exists but has no usable version data (older publishers,
         // partial entries). Once installed, recomputeInstallStatus has nothing
         // to compare against — best-effort Installed, NOT NotInstalled.
-        AppsModel model;
+        ModuleModel model;
         QVariantMap row;
         row.insert("name",          "ghost_app");
         row.insert("repositoryUrl", "repo1");
@@ -852,32 +872,104 @@ private slots:
 
     void emptyCatalog_zero_rows_no_crash()
     {
-        AppsModel model;
+        ModuleModel model;
+        InstallRegistry registry;
+        model.setInstallRegistry(&registry);
         model.replaceCatalog({});
         QCOMPARE(model.rowCount(), 0);
-        // Mutators against empty model are no-ops.
         model.markInstalled("anything", "1.0", "H");
         model.setMissingDeps("anything", { "x" });
-        model.setInstallStage("anything", InstallStage::Installed);
+        applyInstallStage(model, registry, "anything", InstallStage::Installed);
         QCOMPARE(model.rowCount(), 0);
     }
 
+    void seedInstalledOnly_inserts_ui_plugin_row_with_flags()
+    {
+        ModuleModel model;
+        QVariantMap fields;
+        fields.insert(QStringLiteral("displayName"), QStringLiteral("Chat"));
+        fields.insert(QStringLiteral("isMainUi"), false);
+        model.seedInstalledOnly(QStringLiteral("chat_ui"), QStringLiteral("ui_qml"), fields);
+
+        QCOMPARE(model.rowCount(), 1);
+        const QModelIndex idx = model.index(0);
+        QCOMPARE(model.data(idx, ModuleModel::NameRole).toString(),
+                 QStringLiteral("chat_ui"));
+        QCOMPARE(model.data(idx, ModuleModel::TypeRole).toString(),
+                 QStringLiteral("ui_qml"));
+        QCOMPARE(model.data(idx, ModuleModel::IsUiPluginRecordRole).toBool(), true);
+        QCOMPARE(model.data(idx, ModuleModel::IsCoreModuleRecordRole).toBool(), false);
+    }
+
+    void seedInstalledOnly_marks_legacy_ui_type_as_ui_plugin_record()
+    {
+        ModuleModel model;
+        model.seedInstalledOnly(QStringLiteral("main_ui"), QStringLiteral("ui"), {
+            {QStringLiteral("displayName"), QStringLiteral("Main UI")},
+            {QStringLiteral("isMainUi"), true},
+        });
+
+        QCOMPARE(model.rowCount(), 1);
+        const QModelIndex idx = model.index(0);
+        QCOMPARE(model.data(idx, ModuleModel::TypeRole).toString(),
+                 QStringLiteral("ui"));
+        QCOMPARE(model.data(idx, ModuleModel::IsUiPluginRecordRole).toBool(), true);
+        QCOMPARE(model.data(idx, ModuleModel::IsMainUiRole).toBool(), true);
+    }
+
+    void replaceCatalog_preserves_seeded_ui_plugin_and_core_rows()
+    {
+        ModuleModel model;
+        model.seedInstalledOnly(QStringLiteral("chat_ui"), QStringLiteral("ui_qml"), {});
+        model.seedInstalledOnly(QStringLiteral("waku_module"), QStringLiteral("core"), {});
+
+        QVariantMap catalogRow;
+        catalogRow.insert(QStringLiteral("name"), QStringLiteral("other_app"));
+        catalogRow.insert(QStringLiteral("repositoryUrl"), QStringLiteral("https://repo.example"));
+        catalogRow.insert(QStringLiteral("type"), QStringLiteral("ui_qml"));
+        catalogRow.insert(QStringLiteral("versions"), QVariantList{});
+        model.replaceCatalog({ catalogRow });
+
+        QCOMPARE(model.rowCount(), 3);
+        QCOMPARE(model.data(model.index(0), ModuleModel::IsUiPluginRecordRole).toBool(), true);
+        QCOMPARE(model.data(model.index(1), ModuleModel::IsCoreModuleRecordRole).toBool(), true);
+    }
+
+    void setRoleByName_updates_loaded_and_stats()
+    {
+        ModuleModel model;
+        model.seedInstalledOnly(QStringLiteral("accounts_module"),
+                                QStringLiteral("core"), {});
+        model.setRoleByName(QStringLiteral("accounts_module"),
+                            ModuleModel::IsLoadedRole, true);
+        model.setRoleByName(QStringLiteral("accounts_module"),
+                            ModuleModel::CpuRole, QStringLiteral("12.3"));
+        model.setRoleByName(QStringLiteral("accounts_module"),
+                            ModuleModel::MemoryRole, QStringLiteral("45.6"));
+
+        const QModelIndex idx = model.index(0);
+        QCOMPARE(model.data(idx, ModuleModel::IsLoadedRole).toBool(), true);
+        QCOMPARE(model.data(idx, ModuleModel::CpuRole).toString(),
+                 QStringLiteral("12.3"));
+        QCOMPARE(model.data(idx, ModuleModel::MemoryRole).toString(),
+                 QStringLiteral("45.6"));
+    }
+
     // ── Role-name contract ────────────────────────────────────────────
-    // QML reads roles by NAME (e.g. `model.installStatus`, `appRow.action`),
-    // so renaming any of these silently breaks every binding. Locks the
-    // exact string each role serialises to.
     void roleNames_stable()
     {
-        AppsModel model;
+        ModuleModel model;
         const auto roles = model.roleNames();
         QHash<QByteArray, bool> seen;
         for (auto it = roles.cbegin(); it != roles.cend(); ++it) seen.insert(it.value(), true);
         const QList<QByteArray> required{
             "name", "repositoryUrl", "displayName", "description", "category",
-            "type", "iconUrl", "versions", "dependencies", "installedVersion",
+            "type", "color", "iconUrl", "versions", "dependencies", "installedVersion",
             "latestVersion", "hasUpdate", "isInstalled", "missingDeps",
             "installStatus", "installType", "action", "toVersion",
             "isTopLevel", "resolverError", "installStage", "installError",
+            "isLoaded", "isLoading", "isMainUi", "iconPath", "hasMissingDeps",
+            "cpu", "memory", "isUiPluginRecord", "isCoreModuleRecord",
         };
         for (const QByteArray& r : required)
             QVERIFY2(seen.contains(r), qPrintable("missing role: " + r));
@@ -890,7 +982,7 @@ private slots:
     // detection downstream.
     void dependencies_normalise_string_and_object_inputs()
     {
-        AppsModel model;
+        ModuleModel model;
         QVariantMap manifestStr;
         manifestStr.insert("version",      "1.0");
         manifestStr.insert("dependencies", QVariantList{ QVariant("wallet_module") });
@@ -931,5 +1023,5 @@ private slots:
     }
 };
 
-QTEST_GUILESS_MAIN(AppsModelTest)
-#include "apps_model_test.moc"
+QTEST_GUILESS_MAIN(ModuleModelTest)
+#include "module_model_test.moc"
