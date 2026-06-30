@@ -113,7 +113,6 @@ public slots:
 
     // App launcher
     void onAppLauncherClicked(const QString& appName);
-    void onPluginWindowClosed(const QString& pluginName);
     void setCurrentVisibleApp(const QString& pluginName);
 
 signals:
@@ -142,7 +141,8 @@ signals:
     // failure to the QML overlay instead of only logging it.
     void pluginLoadFailedNotice(const QString& name, const QString& error);
 
-    // MDI coordination — consumed by C++ MdiView via MainUIBackend's forwarders.
+    // Plugin-window coordination — consumed by WorkspaceArea via
+    // MainUIBackend's forwarders.
     void pluginWindowRequested(QWidget* widget, const QString& title);
     void pluginWindowRemoveRequested(QWidget* widget);
     void pluginWindowActivateRequested(QWidget* widget);

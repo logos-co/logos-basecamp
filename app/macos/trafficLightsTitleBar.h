@@ -3,10 +3,13 @@
 
 #include <QWidget>
 #include <QPoint>
+#include <QPointer>
 #include <QEvent>
 
 class QPushButton;
 class QMouseEvent;
+class QTabBar;
+class QDockWidget;
 
 class TrafficLightsTitleBar : public QWidget
 {
@@ -32,6 +35,9 @@ protected:
 private:
     bool isOverButton(const QPoint& pos) const;
     void forwardEventToCentralWidget(QMouseEvent* e);
+    QTabBar* tabBarAt(const QPoint& globalPos) const;
+    QDockWidget* dockTitleAt(const QPoint& globalPos) const;
+    void forwardEventTo(QWidget* target, QMouseEvent* e);
     void setButtonIcon(QPushButton* btn, const QString& iconPath);
     void setAllButtonIcons();
     void clearAllButtonIcons();
@@ -43,6 +49,7 @@ private:
     bool m_dragActive = false;
     QPoint m_dragStartPos;
     static const int kDragThresholdPx = 4;
+    QPointer<QWidget> m_forwardTarget;
 };
 
 #endif // TRAFFICLIGHTSTITLEBAR_H

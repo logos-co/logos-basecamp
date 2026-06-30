@@ -169,6 +169,21 @@ Control {
                 }
             }
         }
+
+        // Version footer — falls back to the build-type label
+        // ("Dev build" / "Portable build")
+        Text {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
+            horizontalAlignment: Text.AlignHCenter
+            text: backend.buildVersion.length > 0
+                ? backend.buildVersion
+                : (backend.isPortableBuild ? qsTr("Portable build")
+                                           : qsTr("Dev build"))
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.badgeText
+            elide: Text.ElideRight
+        }
     }
 
     // Reusable component for SeparatorLine

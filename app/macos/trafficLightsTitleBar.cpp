@@ -5,7 +5,10 @@
 #include <QWindow>
 #include <QIcon>
 #include <QApplication>
+#include <QDockWidget>
 #include <QMainWindow>
+#include <QStyle>
+#include <QTabBar>
 
 QPushButton* makeTrafficButton(const QString& colorHex, const QString& borderHex, int size, QWidget* parent) {
     auto* btn = new QPushButton(parent);
@@ -154,6 +157,45 @@ void TrafficLightsTitleBar::forwardEventToCentralWidget(QMouseEvent* e) {
     QApplication::sendEvent(targetWidget, &mappedEvent);
 }
 
+QTabBar* TrafficLightsTitleBar::tabBarAt(const QPoint& globalPos) const {
+    QWidget* win = window();
+    if (!win) return nullptr;
+    for (QTabBar* bar : win->findChildren<QTabBar*>()) {
+        if (!bar->isVisible()) continue;
+        const QPoint localPos = bar->mapFromGlobal(globalPos);
+        for (int i = 0; i < bar->count(); ++i) {
+            if (bar->tabRect(i).contains(localPos)) return bar;
+        }
+    }
+    return nullptr;
+}
+
+QDockWidget* TrafficLightsTitleBar::dockTitleAt(const QPoint& globalPos) const {
+    QWidget* win = window();
+    if (!win) return nullptr;
+    for (QDockWidget* d : win->findChildren<QDockWidget*>()) {
+        if (!d->isVisible() || d->isFloating()) continue;
+        // If a custom titleBarWidget is installed (e.g. tabbed mode's
+        // ZeroTitleWidget), Qt doesn't draw its own title bar — skip.
+        if (d->titleBarWidget() != nullptr) continue;
+        const int titleH = d->style()->pixelMetric(
+            QStyle::PM_TitleBarHeight, nullptr, d);
+        const QRect localTitle(0, 0, d->width(), titleH);
+        const QRect globalTitle(d->mapToGlobal(localTitle.topLeft()),
+                                localTitle.size());
+        if (globalTitle.contains(globalPos)) return d;
+    }
+    return nullptr;
+}
+
+void TrafficLightsTitleBar::forwardEventTo(QWidget* target, QMouseEvent* e) {
+    if (!target) return;
+    const QPointF localPos = target->mapFromGlobal(e->globalPosition().toPoint());
+    QMouseEvent forwarded(e->type(), localPos, e->globalPosition(),
+                          e->button(), e->buttons(), e->modifiers());
+    QApplication::sendEvent(target, &forwarded);
+}
+
 void TrafficLightsTitleBar::mousePressEvent(QMouseEvent* e) {
     if (isOverButton(e->pos())) {
         QWidget::mousePressEvent(e);
@@ -167,8 +209,27 @@ void TrafficLightsTitleBar::mousePressEvent(QMouseEvent* e) {
         e->ignore();
         return;
     }
-    
-    // Left button: prepare for potential drag
+
+    // Left button over a workspace tab: forward to the deepest child
+    // at that position
+    if (QTabBar* bar = tabBarAt(e->globalPosition().toPoint())) {
+        const QPoint local = bar->mapFromGlobal(e->globalPosition().toPoint());
+        QWidget* target = bar->childAt(local);
+        if (!target) target = bar;
+        m_forwardTarget = target;
+        forwardEventTo(target, e);
+        e->accept();
+        return;
+    }
+
+    if (QDockWidget* dock = dockTitleAt(e->globalPosition().toPoint())) {
+        m_forwardTarget = dock;
+        forwardEventTo(dock, e);
+        e->accept();
+        return;
+    }
+
+    // Left button on empty gap: prepare for potential drag
     m_dragActive = false;
     m_dragStartPos = e->pos();
     e->accept();
@@ -179,7 +240,14 @@ void TrafficLightsTitleBar::mouseMoveEvent(QMouseEvent* e) {
         QWidget::mouseMoveEvent(e);
         return;
     }
-    
+
+    // Mid-gesture over a tab bar → keep forwarding to it so the tab
+    // bar's drag-detect / drag-detach machinery sees a coherent stream.
+    if (m_forwardTarget && (e->buttons() & Qt::LeftButton)) {
+        forwardEventTo(m_forwardTarget, e);
+        return;
+    }
+
     // If left button is pressed and we haven't started dragging yet
     if (!m_dragActive && (e->buttons() & Qt::LeftButton)) {
         // Check if we've moved enough to start a drag
@@ -203,7 +271,15 @@ void TrafficLightsTitleBar::mouseReleaseEvent(QMouseEvent* e) {
         QWidget::mouseReleaseEvent(e);
         return;
     }
-    
+
+    // Close out any in-flight tab-bar forwarding first.
+    if (m_forwardTarget) {
+        forwardEventTo(m_forwardTarget, e);
+        m_forwardTarget = nullptr;
+        e->accept();
+        return;
+    }
+
     // If this was a left button release and we never started dragging,
     // it was a click - forward it to the central widget
     if (e->button() == Qt::LeftButton) {

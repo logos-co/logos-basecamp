@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Qml Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Qml Test Widgets Quick QuickWidgets)
 
 enable_testing()
 
@@ -30,6 +30,7 @@ add_executable(apps_filter_proxy_test
     ${BASECAMP_SRC}/AppsModel.cpp
     ${BASECAMP_SRC}/AppsFilterProxy.cpp
     ${BASECAMP_SRC}/InstallEnums.cpp
+    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel now depends on InstallRegistry
 )
 target_include_directories(apps_filter_proxy_test PRIVATE ${BASECAMP_SRC})
 target_link_libraries(apps_filter_proxy_test PRIVATE
@@ -44,3 +45,18 @@ add_executable(install_plugin_success_test
 )
 target_link_libraries(install_plugin_success_test PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME install_plugin_success_test COMMAND install_plugin_success_test)
+
+add_executable(workspace_area_test
+    workspace_area_test.cpp
+    ${BASECAMP_SRC}/WorkspaceArea.cpp
+)
+target_include_directories(workspace_area_test PRIVATE ${BASECAMP_SRC})
+target_link_libraries(workspace_area_test PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    Qt6::Test
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickWidgets
+)
+add_test(NAME workspace_area_test COMMAND workspace_area_test)

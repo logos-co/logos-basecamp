@@ -121,13 +121,12 @@ set(SOURCES
     InstallRegistry.cpp
     AppsModel.cpp
     PluginLoader.cpp
+    WorkspaceArea.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp
     restricted/RestrictedUrlInterceptor.cpp
     restricted/QmlSandbox.cpp
-    mdichild.cpp
-    mdiview.cpp
 )
 
 # Add SDK sources based on layout type
@@ -276,7 +275,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/ContentViews.qml
         Basecamp/Shell/OverlayDialogs.qml
         Basecamp/Shell/ConfirmationDialog.qml
-        Basecamp/Shell/BottomToolbar.qml
+        Basecamp/Shell/WelcomePage.qml
 )
 
 qt_add_qml_module(basecamp_icons_qml

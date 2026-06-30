@@ -9,7 +9,7 @@ Item {
     id: root
 
     // Sidebar section indices (backend's m_sections list, defined by
-    // SidebarPanel.qml). 0 = Apps (MdiView), 1 = App Manager,
+    // SidebarPanel.qml). 0 = Apps (WorkspaceArea), 1 = App Manager,
     // 2 = Modules, 3 = Settings.
     readonly property int sidebarAppManager: 1
     readonly property int sidebarSettings:   3
@@ -26,9 +26,10 @@ Item {
         color: "#1e1e1e"
     }
 
-    // Content views stack — only App Manager and Settings now live here.
-    // Apps (backend idx 0) is the C++ MdiView, and Modules (backend idx 2)
-    // is the sandboxed package_manager_ui QQuickWidgetxwx
+    // Content views stack — only App Manager and Settings live here.
+    // Apps (backend idx 0) is the C++ WorkspaceArea (QDockWidget-based),
+    // and Modules (backend idx 2) is the sandboxed package_manager_ui
+    // QQuickWidget.
     StackLayout {
         id: contentStack
         anchors.fill: parent

@@ -8,14 +8,15 @@ import Basecamp.Backend 1.0
 // Global dialog layer hosted in a transparent top-level QQuickWidget
 // (MainContainer::m_overlayWidget). Keeps the ContentViews-scoped layer
 // from being the only place these dialogs can render — the user can now
-// click a plugin icon in the sidebar while on the Apps/MDI screen and
-// get the missing-deps popup, which previously needed them to navigate
-// to Modules first.
+// click a plugin icon in the sidebar while on the Apps/workspace screen
+// and get the missing-deps popup, which previously needed them to
+// navigate to Modules first.
 //
 // Why not just move these from ContentViews.qml? The contentStack swaps
-// between MdiView (C++ widget) and the ContentViews QQuickWidget — when
-// MDI is showing, ContentViews is hidden, and its Dialog children never
-// render. An independent overlay widget sidesteps the stacking entirely.
+// between WorkspaceArea (C++ widget) and the ContentViews QQuickWidget —
+// when the workspace is showing, ContentViews is hidden, and its Dialog
+// children never render. An independent overlay widget sidesteps the
+// stacking entirely.
 //
 // The overlay widget is kept visible all the time with
 // WA_TransparentForMouseEvents so the sidebar + content below can still

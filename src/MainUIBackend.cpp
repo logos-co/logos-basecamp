@@ -224,7 +224,6 @@ void MainUIBackend::loadCoreModule(const QString& n)          { m_uiPluginManage
 void MainUIBackend::unloadCoreModule(const QString& n)        { m_uiPluginManager->unloadCoreModule(n); }
 void MainUIBackend::refreshUiModules()                        { m_uiPluginManager->refreshUiModules(); }
 void MainUIBackend::onAppLauncherClicked(const QString& n)    { m_uiPluginManager->onAppLauncherClicked(n); }
-void MainUIBackend::onPluginWindowClosed(const QString& n)    { m_uiPluginManager->onPluginWindowClosed(n); }
 void MainUIBackend::setCurrentVisibleApp(const QString& n)    { m_uiPluginManager->setCurrentVisibleApp(n); }
 
 // PackageCoordinator — package_manager IPC and package-lifecycle cascade.

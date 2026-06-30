@@ -28,10 +28,11 @@ Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
 will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
 embedded qrc resource. Relaunch the app to pick up edits.
 
-Covered entries (the three QQuickWidgets MainContainer creates):
-- `Basecamp/Sidebar/SidebarPanel.qml`
-- `Basecamp/Shell/ContentViews.qml`
-- `Basecamp/Shell/OverlayDialogs.qml`
+Covered entries:
+- `Basecamp/Sidebar/SidebarPanel.qml` (MainContainer)
+- `Basecamp/Shell/ContentViews.qml` (MainContainer)
+- `Basecamp/Shell/OverlayDialogs.qml` (MainContainer)
+- `Basecamp/Shell/WelcomePage.qml` (WorkspaceArea — central widget when no docks are open)
 
 Sub-components imported by those entries (anything reached via
 `import Basecamp.<Feature>`) still load from the embedded qrc — qt_add_qml_module's
@@ -96,7 +97,7 @@ Owns UI plugin widget lifecycle in-process: PluginLoader wiring, widget teardown
 
 - **Load/unload**: `loadUiModule`, `unloadUiModule`, `loadCoreModule`, `unloadCoreModule` — pre-flight dependency checks, then delegates to CoreModuleManager
 - **Unload cascade**: `confirmUnloadCascade`, `cancelUnloadCascade` — single-slot `m_pendingUnload` drives the QML dialog
-- **App launcher**: `activateApp`, `onAppLauncherClicked`, `onPluginWindowClosed`, `setCurrentVisibleApp`
+- **App launcher**: `activateApp`, `onAppLauncherClicked`, `setCurrentVisibleApp`
 
 ### PackageCoordinator (`src/PackageCoordinator.h/.cpp`)
 Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install-confirmation dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.

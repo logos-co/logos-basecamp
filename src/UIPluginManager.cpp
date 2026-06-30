@@ -342,35 +342,6 @@ QString UIPluginManager::currentVisibleApp() const
     return m_currentVisibleApp;
 }
 
-void UIPluginManager::onPluginWindowClosed(const QString& pluginName)
-{
-    qDebug() << "Plugin window closed:" << pluginName;
-
-    // Called when user closes the plugin window (tab X or subwindow close). The MDI
-    // subwindow and plugin widget are already destroyed
-    if (m_loadedUiModules.contains(pluginName)) {
-        m_loadedUiModules.remove(pluginName);
-        m_uiModuleWidgets.remove(pluginName);
-        m_loadedApps.remove(pluginName);
-
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
-    } else if (m_qmlPluginWidgets.contains(pluginName)) {
-        // Stop view module host process if applicable
-        if (m_viewModuleHosts.contains(pluginName)) {
-            m_viewModuleHosts[pluginName]->stop();
-            delete m_viewModuleHosts.take(pluginName);
-        }
-
-        m_qmlPluginWidgets.remove(pluginName);
-        m_uiModuleWidgets.remove(pluginName);
-        m_loadedApps.remove(pluginName);
-
-        emit uiModulesChanged();
-        emit launcherAppsChanged();
-    }
-}
-
 void UIPluginManager::loadCoreModule(const QString& moduleName)
 {
     // Defer the ENTIRE body — not just the emit. Callers are typically
@@ -607,9 +578,10 @@ void UIPluginManager::teardownUiPluginWidget(const QString& moduleName)
     QWidget* widget = m_uiModuleWidgets.value(moduleName);
     IComponent* component = m_loadedUiModules.value(moduleName);
 
-    // Order matters here: ask MdiView to drop the tab first so the widget
-    // isn't reparented to a dying container; then destroy it via the
-    // component's hook (which may own it) or deleteLater on the bare QML host.
+    // Order matters here: ask the workspace to drop the dock first so
+    // the widget isn't reparented to a dying container; then destroy it
+    // via the component's hook (which may own it) or deleteLater on the
+    // bare QML host.
     if (widget) emit pluginWindowRemoveRequested(widget);
     if (component && widget) component->destroyWidget(widget);
     if (m_qmlPluginWidgets.contains(moduleName) && widget) widget->deleteLater();
