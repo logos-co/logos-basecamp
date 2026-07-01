@@ -184,6 +184,7 @@ void MainContainer::setupUi()
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    m_contentWidget->setClearColor(bgColor);
     applyDevQmlImportPath(m_contentWidget->engine());
     m_contentWidget->rootContext()->setContextProperty("backend", m_backend);
     m_contentWidget->setSource(resolveQmlView(
@@ -211,8 +212,7 @@ void MainContainer::setupUi()
     // === BOTTOM TOOLBAR
     m_bottomToolbar = new QQuickWidget(contentArea);
     m_bottomToolbar->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    m_bottomToolbar->setClearColor(Qt::transparent);
-    m_bottomToolbar->setAttribute(Qt::WA_TranslucentBackground);
+    m_bottomToolbar->setClearColor(bgColor);
     applyDevQmlImportPath(m_bottomToolbar->engine());
     m_bottomToolbar->rootContext()->setContextProperty("backend", m_backend);
     m_bottomToolbar->setSource(resolveQmlView(
@@ -256,6 +256,7 @@ void MainContainer::setupUi()
         connect(overlayRoot, SIGNAL(overlayActiveChanged(bool)),
                 this, SLOT(onOverlayActiveChanged(bool)));
     }
+    m_overlayWidget->setVisible(false);
 
     // Set initial state
     m_contentStack->setCurrentIndex(kAppsStackIndex); // Show MdiView by default
@@ -283,6 +284,7 @@ void MainContainer::onOverlayActiveChanged(bool active)
     // dialog is showing, pass every click through to the sidebar /
     // content behind it.
     m_overlayWidget->setAttribute(Qt::WA_TransparentForMouseEvents, !active);
+    m_overlayWidget->setVisible(active);
     if (active) m_overlayWidget->raise();
 }
 
