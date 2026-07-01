@@ -164,13 +164,20 @@ Item {
                             }
                         }
 
-                        LogosText {
+                        TextEdit {
                             visible: url.length > 0
                             Layout.fillWidth: true
                             text: url
                             font.pixelSize: Theme.typography.secondaryText
                             color: Theme.palette.textSecondary
-                            elide: Text.ElideRight
+                            wrapMode: TextEdit.WrapAnywhere
+                            readOnly: true
+                            selectByMouse: true
+                            selectByKeyboard: true
+                            selectionColor: Theme.palette.accentOrange
+                            activeFocusOnPress: true
+                            persistentSelection: true
+                            textFormat: TextEdit.PlainText
                         }
 
                         LogosText {
