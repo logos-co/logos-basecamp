@@ -50,8 +50,9 @@ import Logos.Theme
 //
 // The dialog is controlled by calling `openWith(mode, name, items)` for the
 // one-list modes, `openWithTwoLists(mode, name, items, loadedItems)` for
-// uninstallCascade, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps)`
-// for upgradeCascade, or `openWithMetadata(metadata)` for installConfirm.
+// uninstallCascade, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
+// for upgradeCascade, `openWithInstallGate(name, version, depChanges)` for the
+// catalog install gate, or `openWithMetadata(metadata)` for installConfirm.
 // Backend wiring listens for continueClicked/cancelClicked and calls the
 // appropriate slot with `name`.
 Dialog {

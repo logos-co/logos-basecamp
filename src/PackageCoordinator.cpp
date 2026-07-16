@@ -706,7 +706,7 @@ void PackageCoordinator::confirmInstallGate(const QString& name)
     logos.package_manager.confirmInstallAsync(name, [self, name](QVariantMap result) {
         if (!self) return;
         if (!result.value("success", false).toBool())
-            qWarning() << "confirmInstall rejected for" << name << ":"
+            qWarning() << "confirmInstallGate rejected for" << name << ":"
                        << result.value("error").toString();
     });
 }
@@ -719,7 +719,7 @@ void PackageCoordinator::cancelInstallGate(const QString& name)
     logos.package_manager.cancelInstallAsync(name, [self, name](QVariantMap result) {
         if (!self) return;
         if (!result.value("success", false).toBool())
-            qWarning() << "cancelInstall rejected for" << name << ":"
+            qWarning() << "cancelInstallGate rejected for" << name << ":"
                        << result.value("error").toString();
     });
 }
