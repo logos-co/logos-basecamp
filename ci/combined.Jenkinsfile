@@ -1,5 +1,5 @@
 #!/usr/bin/env groovy
-library 'status-jenkins-lib@v1.9.41'
+library 'status-jenkins-lib@v1.9.47'
 
 urls = [:]
 

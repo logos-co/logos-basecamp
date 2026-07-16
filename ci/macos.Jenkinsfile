@@ -1,6 +1,6 @@
 #!/usr/bin/env groovy
 
-library 'status-jenkins-lib@v1.9.43'
+library 'status-jenkins-lib@v1.9.47'
 
 def isPRBuild = utils.isPRBuild()
 
@@ -52,7 +52,7 @@ pipeline {
     stage('Sign & Notarize') {
       steps {
         script {
-          logos.codesignApp(
+          logos.codesign(
             bundlePath: 'result/LogosBasecamp.app',
             outputPath: env.ARTIFACT,
             mode: 'both',
