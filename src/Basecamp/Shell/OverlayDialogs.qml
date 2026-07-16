@@ -32,6 +32,7 @@ Item {
                                   || uninstallCascadeDialog.visible
                                   || upgradeCascadeDialog.visible
                                   || installConfirmDialog.visible
+                                  || installGateDialog.visible
                                   || addApplicationDialog.visible
 
     signal overlayActiveChanged(bool active)
@@ -89,6 +90,19 @@ Item {
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: backend.confirmInstall()
         onCancelClicked: backend.cancelInstall()
+    }
+
+    // Fresh catalog-install gate initiated by package_manager_ui (via the
+    // module's requestInstall). Distinct from installConfirmDialog (local-LGX
+    // inspect flow): confirm/cancel forward the decision back through the
+    // module gate so PMU downloads+installs (or aborts). Lists the resolved
+    // transitive dep changes so this is the single install confirmation.
+    ConfirmationDialog {
+        id: installGateDialog
+        mode: "installGate"
+        displayNameLookup: _dialogDeps.displayNameLookup
+        onContinueClicked: (name) => backend.confirmInstallGate(name)
+        onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
     // App-Manager "Add Application" dialog.
@@ -183,13 +197,21 @@ Item {
         // "Upgrade to vX.Y.Z" / "Downgrade to vX.Y.Z" / "Reinstall vX.Y.Z"
         // instead of a bare uninstall heading.
         function onUpgradeCascadeConfirmationRequested(name, releaseTag, mode,
-                                                       installedDependents, loadedDependents) {
+                                                       installedDependents, loadedDependents,
+                                                       depChanges) {
             upgradeCascadeDialog.openWithUpgrade(name, releaseTag, mode,
-                                                 installedDependents, loadedDependents);
+                                                 installedDependents, loadedDependents,
+                                                 depChanges);
         }
 
         function onInstallConfirmationRequested(metadata) {
             installConfirmDialog.openWithMetadata(metadata);
+        }
+
+        // Fresh catalog-install gate (package_manager_ui-initiated). releaseTag
+        // is the target version; depChanges is the resolved transitive set.
+        function onInstallGateConfirmationRequested(name, releaseTag, depChanges) {
+            installGateDialog.openWithInstallGate(name, releaseTag, depChanges);
         }
 
         function onLaunchAppRequested(name) {

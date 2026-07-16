@@ -155,7 +155,28 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
         for (const QJsonValue& v : obj.value("installedDependents").toArray()) {
             if (v.isString()) installedDeps.append(v.toString());
         }
-        onBeforeUpgrade(name, releaseTag, mode, installedDeps);
+        // Transitive dep changes the initiator (PMU) resolved for this swap —
+        // opaque display data the dialog lists. Absent/empty on a bare upgrade.
+        const QVariantList depChanges = obj.value("depChanges").toArray().toVariantList();
+        onBeforeUpgrade(name, releaseTag, mode, installedDeps, depChanges);
+    });
+
+    // beforeInstall — the catalog-install gate. Same ack-then-dialog shape as
+    // beforeUpgrade, but with no dependents (a fresh install unloads nothing).
+    logos.package_manager.on("beforeInstall", [this](const QVariantList& data) {
+        if (data.isEmpty()) return;
+        const QByteArray payload = data.first().toString().toUtf8();
+        QJsonParseError err{};
+        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            qWarning() << "beforeInstall payload parse error:" << err.errorString();
+            return;
+        }
+        const QJsonObject obj = doc.object();
+        const QString name       = obj.value("name").toString();
+        const QString releaseTag = obj.value("releaseTag").toString();
+        const QVariantList depChanges = obj.value("depChanges").toArray().toVariantList();
+        onBeforeInstall(name, releaseTag, depChanges);
     });
 
     // Multi-uninstall is a separate event so existing single-uninstall handlers
@@ -613,7 +634,8 @@ void PackageCoordinator::onBeforeUninstall(const QString& name, const QStringLis
 }
 
 void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& releaseTag,
-                                     int mode, const QStringList& installedDeps)
+                                     int mode, const QStringList& installedDeps,
+                                     const QVariantList& depChanges)
 {
     if (!m_logosAPI) return;
 
@@ -626,7 +648,7 @@ void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& rel
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
     logos.package_manager.ackPendingActionAsync(name,
-        [self, name, releaseTag, mode, installedDeps](QVariantMap result) {
+        [self, name, releaseTag, mode, installedDeps, depChanges](QVariantMap result) {
             if (!self) return;
             if (!result.value("success", false).toBool()) {
                 qWarning() << "ackPendingAction rejected for" << name << ":"
@@ -646,8 +668,60 @@ void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& rel
             // Dependents?" — which previously caused user confusion on
             // downgrades that looked like a pure uninstall.
             emit self->upgradeCascadeConfirmationRequested(
-                name, releaseTag, mode, installedDeps, loadedDeps);
+                name, releaseTag, mode, installedDeps, loadedDeps, depChanges);
         });
+}
+
+void PackageCoordinator::onBeforeInstall(const QString& name, const QString& releaseTag,
+                                         const QVariantList& depChanges)
+{
+    if (!m_logosAPI) return;
+
+    if (name.isEmpty()) {
+        qWarning() << "PackageCoordinator::onBeforeInstall received empty name — ignoring";
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_manager.ackPendingActionAsync(name,
+        [self, name, releaseTag, depChanges](QVariantMap result) {
+            if (!self) return;
+            if (!result.value("success", false).toBool()) {
+                qWarning() << "ackPendingAction rejected for" << name << ":"
+                           << result.value("error").toString();
+                return;
+            }
+            // No pending-slot / cascade work — a fresh install unloads nothing.
+            // The dialog's confirm/cancel forward straight to the module gate.
+            emit self->installGateConfirmationRequested(name, releaseTag, depChanges);
+        });
+}
+
+void PackageCoordinator::confirmInstallGate(const QString& name)
+{
+    if (!m_logosAPI || name.isEmpty()) return;
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_manager.confirmInstallAsync(name, [self, name](QVariantMap result) {
+        if (!self) return;
+        if (!result.value("success", false).toBool())
+            qWarning() << "confirmInstall rejected for" << name << ":"
+                       << result.value("error").toString();
+    });
+}
+
+void PackageCoordinator::cancelInstallGate(const QString& name)
+{
+    if (!m_logosAPI || name.isEmpty()) return;
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_manager.cancelInstallAsync(name, [self, name](QVariantMap result) {
+        if (!self) return;
+        if (!result.value("success", false).toBool())
+            qWarning() << "cancelInstall rejected for" << name << ":"
+                       << result.value("error").toString();
+    });
 }
 
 void PackageCoordinator::onBeforeMultiUninstall(const QStringList& names,

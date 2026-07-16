@@ -7,7 +7,7 @@ import Logos.Theme
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
-// Five display variants, selected via `mode`:
+// Six display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
 //                       dependencies aren't installed. Primary action is a
 //                       "Continue" that closes the dialog (the primary
@@ -39,6 +39,14 @@ import Logos.Theme
 //                       file. Renders package metadata (name, version, type,
 //                       signature status). For upgrades, shows the installed
 //                       version alongside the new version.
+//  - "installGate"    — confirmation before a fresh catalog install initiated
+//                       by another UI (package_manager_ui), routed through the
+//                       module's requestInstall gate. Leads with the package +
+//                       target version and lists the resolved transitive
+//                       `depChanges`. No dependent-impact lists (a fresh
+//                       install unloads nothing). Confirm/Cancel flow through
+//                       continueClicked / cancelClicked → confirmInstallGate /
+//                       cancelInstallGate.
 //
 // The dialog is controlled by calling `openWith(mode, name, items)` for the
 // one-list modes, `openWithTwoLists(mode, name, items, loadedItems)` for
@@ -67,6 +75,15 @@ Dialog {
     //   0 = Upgrade, 1 = Downgrade, 2 = Sidegrade (Reinstall).
     property string upgradeTargetVersion: ""
     property int upgradeModeKind: 0
+
+    // Transitive dependency changes for the upgradeCascade + installGate modes.
+    // Each entry: { name, action: "install"|"upgrade"|"downgrade",
+    //               fromVersion, toVersion, repository }. Resolved by the
+    //               initiator (package_manager_ui) and passed through the
+    //               module's beforeUpgrade / beforeInstall gate so this single
+    //               dialog lists exactly what else will change. Empty = nothing
+    //               else needs to change.
+    property var depChanges: []
 
     property var displayNameLookup: function(name) { return name; }
 
@@ -127,13 +144,31 @@ Dialog {
     // the same cascade semantics) but the title + body line lead with
     // the target version and the UpgradeMode so the user sees the full
     // operation, not just "Uninstall and Unload Dependents?".
-    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_) {
+    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_) {
         root.mode = "upgradeCascade";
         root.moduleName = name_ || "";
         root.upgradeTargetVersion = version_ || "";
         root.upgradeModeKind = upgradeMode_ | 0;
         root.items = installedDeps_ || [];
         root.loadedItems = loadedDeps_ || [];
+        root.depChanges = depChanges_ || [];
+        root.targets = [];
+        root._explicitClose = false;
+        open();
+    }
+
+    // Fresh catalog-install variant. Unlike upgradeCascade there is no
+    // dependent-impact set (nothing is uninstalled/unloaded); the dialog
+    // simply confirms the install and lists the transitive `depChanges`.
+    // Continue / Cancel still flow through continueClicked / cancelClicked;
+    // the backend routes those to confirmInstallGate / cancelInstallGate.
+    function openWithInstallGate(name_, version_, depChanges_) {
+        root.mode = "installGate";
+        root.moduleName = name_ || "";
+        root.upgradeTargetVersion = version_ || "";
+        root.items = [];
+        root.loadedItems = [];
+        root.depChanges = depChanges_ || [];
         root.targets = [];
         root._explicitClose = false;
         open();
@@ -197,6 +232,8 @@ Dialog {
                             return "Upgrade Package?";
                         return "Install Package?";
                     }
+                    if (root.mode === "installGate")
+                        return "Install Package?";
                     return "";
                 }
                 font.pixelSize: Theme.typography.panelTitleText
@@ -267,6 +304,18 @@ Dialog {
                         return "An existing version is installed. Review the details "
                              + "below and confirm the upgrade:";
                     return "Review the package details below before installing:";
+                }
+                if (root.mode === "installGate") {
+                    var ivPhrase = root.upgradeTargetVersion.length > 0
+                                   ? " v" + root.upgradeTargetVersion : "";
+                    var iHead = "Install '" + _label + "'" + ivPhrase + ".";
+                    // The dep-change list below spells out the transitive set.
+                    // When it's empty, say so plainly so a bare install still
+                    // reads as a deliberate, complete confirmation.
+                    if ((root.depChanges || []).length === 0)
+                        return iHead + " No other packages need to change.";
+                    return iHead + " Installing it also applies the dependency "
+                                 + "changes listed below:";
                 }
                 return "";
             }
@@ -426,6 +475,103 @@ Dialog {
                         text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: "#e0e0e0"
                         font.pixelSize: 13
+                    }
+                }
+            }
+        }
+
+        // Transitive dependency-change list — shared by upgradeCascade and
+        // installGate. Renders each change as [action chip] name (repo) vA → vB,
+        // mirroring the package_manager_ui per-row confirm so the single
+        // basecamp dialog surfaces exactly what else the operation installs /
+        // upgrades / downgrades. Hidden when the initiator resolved no changes.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            visible: (root.mode === "upgradeCascade" || root.mode === "installGate")
+                     && (root.depChanges || []).length > 0
+
+            LogosText {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+                text: "Dependency changes:"
+                color: "#c0c0c0"
+                font.pixelSize: 13
+                font.weight: Theme.typography.weightBold
+                wrapMode: Text.Wrap
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                color: "#1e1e1e"
+                radius: 4
+                border.color: "#3d3d3d"
+                border.width: 1
+                implicitHeight: depChangeList.implicitHeight + 16
+
+                ListView {
+                    id: depChangeList
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    model: root.depChanges
+                    spacing: 4
+                    clip: true
+                    interactive: contentHeight > height
+                    implicitHeight: Math.min(160, Math.max(contentHeight, 0))
+
+                    delegate: RowLayout {
+                        width: ListView.view ? ListView.view.width : 0
+                        spacing: 8
+
+                        // Action chip — colour-keyed like the PMU row pills.
+                        Rectangle {
+                            Layout.preferredWidth: 76
+                            Layout.preferredHeight: 20
+                            radius: 10
+                            color: {
+                                switch (modelData.action) {
+                                case "install":   return Theme.colors.getColor(Theme.palette.success, 0.18);
+                                case "upgrade":   return Theme.colors.getColor(Theme.palette.info,    0.18);
+                                case "downgrade": return Theme.colors.getColor(Theme.palette.warning, 0.18);
+                                default:          return Theme.colors.getColor(Theme.palette.info,    0.18);
+                                }
+                            }
+                            LogosText {
+                                anchors.centerIn: parent
+                                text: {
+                                    var a = modelData.action || "";
+                                    return a ? a.charAt(0).toUpperCase() + a.slice(1) : "";
+                                }
+                                color: {
+                                    switch (modelData.action) {
+                                    case "install":   return Theme.palette.success;
+                                    case "upgrade":   return Theme.palette.info;
+                                    case "downgrade": return Theme.palette.warning;
+                                    default:          return Theme.palette.text;
+                                    }
+                                }
+                                font.pixelSize: 12
+                                font.weight: Theme.typography.weightMedium
+                            }
+                        }
+
+                        // name (repo)  vFrom → vTo
+                        LogosText {
+                            Layout.fillWidth: true
+                            text: {
+                                var name = modelData.name || "";
+                                var repo = modelData.repository || "";
+                                var to   = modelData.toVersion ? "v" + modelData.toVersion : "";
+                                var from = modelData.fromVersion ? "v" + modelData.fromVersion : "";
+                                var ver  = (from && to && from !== to) ? (from + " → " + to)
+                                                                       : (to ? to : "");
+                                var head = repo ? (name + " (" + repo + ")") : name;
+                                return ver ? (head + "  " + ver) : head;
+                            }
+                            color: "#e0e0e0"
+                            font.pixelSize: 13
+                            elide: Text.ElideMiddle
+                        }
                     }
                 }
             }
@@ -666,6 +812,7 @@ Dialog {
                         if (root.metadata.isAlreadyInstalled) return "Upgrade";
                         return "Install";
                     }
+                    if (root.mode === "installGate") return "Install";
                     return "OK";
                 }
 
@@ -726,7 +873,8 @@ Dialog {
             return;
         }
         if (root.mode === "unloadCascade" || root.mode === "uninstallCascade"
-            || root.mode === "upgradeCascade" || root.mode === "installConfirm") {
+            || root.mode === "upgradeCascade" || root.mode === "installConfirm"
+            || root.mode === "installGate") {
             if (root.targets.length > 0)
                 root.cancelClickedMulti(root.targets);
             else

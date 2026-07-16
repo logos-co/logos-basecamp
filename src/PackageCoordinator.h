@@ -85,6 +85,14 @@ public slots:
     Q_INVOKABLE void confirmInstall();
     Q_INVOKABLE void cancelInstall();
 
+    // Catalog-install gate (package_manager_ui-initiated). The module holds the
+    // pending install; these just forward the user's decision back so it either
+    // emits installApproved (PMU then downloads+installs) or installCancelled.
+    // Distinct from confirmInstall()/cancelInstall() above, which drive the
+    // local-LGX inspect-then-install flow.
+    Q_INVOKABLE void confirmInstallGate(const QString& name);
+    Q_INVOKABLE void cancelInstallGate(const QString& name);
+
     Q_INVOKABLE void openApp(const QString& name,
                              const QString& repositoryUrl,
                              const QVariantMap& versionPins = QVariantMap(),
@@ -192,7 +200,20 @@ signals:
                                              const QString& releaseTag,
                                              int mode,
                                              const QStringList& installedDependents,
-                                             const QStringList& loadedDependents);
+                                             const QStringList& loadedDependents,
+                                             const QVariantList& depChanges);
+
+    // Fresh-install confirmation dialog trigger — the sibling of the upgrade
+    // cascade for a not-yet-installed package coming through the module's
+    // requestInstall gate. Unlike a fresh local-LGX install (which uses
+    // installConfirmationRequested with inspected metadata), this is a catalog
+    // install initiated by another UI (package_manager_ui): it carries the
+    // target version and the resolved transitive `depChanges` so the single
+    // basecamp dialog lists exactly what else will be installed. No dependents
+    // list — a fresh install removes/unloads nothing.
+    void installGateConfirmationRequested(const QString& name,
+                                          const QString& releaseTag,
+                                          const QVariantList& depChanges);
 
     // Multi-uninstall cascade dialog trigger. `names` is the full batch of
     // packages being uninstalled. `installedDependents` is the union of each
@@ -225,7 +246,17 @@ private slots:
     // we stay silent rather than showing a dead dialog.
     void onBeforeUninstall(const QString& name, const QStringList& installedDeps);
     void onBeforeUpgrade(const QString& name, const QString& releaseTag,
-                         int mode, const QStringList& installedDeps);
+                         int mode, const QStringList& installedDeps,
+                         const QVariantList& depChanges);
+
+    // beforeInstall handler — the catalog-install counterpart of onBeforeUpgrade.
+    // Acks synchronously (cancelling the module's ack timer), then emits
+    // installGateConfirmationRequested so the shared dialog can confirm the
+    // install and list its transitive dep changes. No pending-slot / cascade
+    // work: a fresh install unloads nothing, so confirm/cancel just forward the
+    // decision to the module via confirmInstallGate / cancelInstallGate.
+    void onBeforeInstall(const QString& name, const QString& releaseTag,
+                         const QVariantList& depChanges);
 
     // Multi-uninstall variant — same ack-then-emit-dialog shape, but holds the
     // batch's full name list in m_pendingAction.names so confirm/cancel can
