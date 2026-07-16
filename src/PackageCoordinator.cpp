@@ -1522,7 +1522,7 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
     // Default IPC deadline (20s) is too tight when the catalog blob is many
     // MB or the user is on a slow connection
     constexpr int kDownloadIpcDeadlineMs = 5 * 60 * 1000;
-    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
+    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, QString(),
         [self, name](QVariantList results) {
             if (!self) return;
             if (!results.isEmpty())

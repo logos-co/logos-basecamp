@@ -426,14 +426,25 @@ void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
 void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
 {
     clearResolverOverlay();
+    // A package can appear in the overlay more than once — as a user-pinned
+    // top-level entry AND as a transitive dependency of another pinned package
+    // (resolved to the newest catalog version). Both map to the SAME row via
+    // rowOf(name, repo), so without a guard the transitive copy overwrites the
+    // pin and the version dropdown snaps back to the newest release. An explicit
+    // top-level entry is authoritative: once one has written a row, a later
+    // non-top-level duplicate of the same package must not clobber it.
+    // (Defensive — the resolver also no longer emits that duplicate.)
+    QSet<int> pinnedRows;
     for (const ResolverRow& src : rows) {
         const int idx = rowOf(src.name, src.repositoryUrl);
         if (idx < 0) continue;
+        if (!src.isTopLevel && pinnedRows.contains(idx)) continue;
         Row& r = m_rows[idx];
         r.action        = src.action;
         r.toVersion     = src.toVersion;
         r.isTopLevel    = src.isTopLevel;
         r.resolverError = src.resolverError;
+        if (src.isTopLevel) pinnedRows.insert(idx);
         const QModelIndex mi = index(idx);
         emit dataChanged(mi, mi,
             {ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole});
