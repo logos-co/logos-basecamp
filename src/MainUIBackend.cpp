@@ -98,6 +98,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // "upgradeCascade" mode of ConfirmationDialog.
     connect(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
+            this,             &MainUIBackend::installGateConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
@@ -240,6 +242,8 @@ void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_p
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::confirmInstall()                          { m_packageCoordinator->confirmInstall(); }
 void MainUIBackend::cancelInstall()                           { m_packageCoordinator->cancelInstall(); }
+void MainUIBackend::confirmInstallGate(const QString& n)      { m_packageCoordinator->confirmInstallGate(n); }
+void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
 { m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
 void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins)

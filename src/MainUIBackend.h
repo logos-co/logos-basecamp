@@ -167,6 +167,13 @@ public slots:
     Q_INVOKABLE void confirmInstall();
     Q_INVOKABLE void cancelInstall();
 
+    // Fresh catalog-install gate (package_manager_ui-initiated) — delegated to
+    // PackageCoordinator, which forwards the decision to the module's
+    // confirmInstall / cancelInstall gate. Distinct from confirmInstall()
+    // above (the local-LGX inspect flow).
+    Q_INVOKABLE void confirmInstallGate(const QString& name);
+    Q_INVOKABLE void cancelInstallGate(const QString& name);
+
     // App-Manager catalog open — delegated to PackageCoordinator.
     Q_INVOKABLE void openApp(const QString& name,
                              const QString& repositoryUrl,
@@ -237,7 +244,8 @@ signals:
                                              const QString& releaseTag,
                                              int mode,
                                              const QStringList& installedDependents,
-                                             const QStringList& loadedDependents);
+                                             const QStringList& loadedDependents,
+                                             const QVariantList& depChanges);
     void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
                                                     const QStringList& installedDependents,
                                                     const QStringList& loadedDependents);
@@ -245,6 +253,14 @@ signals:
     // Install confirmation — emitted when the user picks an LGX file and we've
     // inspected it. metadata contains name, version, type, signatureStatus, etc.
     void installConfirmationRequested(const QVariantMap& metadata);
+
+    // Fresh catalog-install gate (package_manager_ui-initiated) — pure re-emit
+    // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
+    // target version; depChanges is the resolved transitive set the single
+    // basecamp dialog lists.
+    void installGateConfirmationRequested(const QString& name,
+                                          const QString& releaseTag,
+                                          const QVariantList& depChanges);
 
     // MDI coordination (re-emitted from UIPluginManager).
     void pluginWindowRequested(QWidget* widget, const QString& title);
