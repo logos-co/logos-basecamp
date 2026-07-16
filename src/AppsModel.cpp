@@ -2,6 +2,8 @@
 
 #include "InstallRegistry.h"
 
+#include <logos/semver.hpp>
+
 #include <QSet>
 
 namespace {
@@ -115,18 +117,17 @@ QStringList AppsModel::categories() const
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Three-way version compare. Returns -1 / 0 / +1.
+//
+// Delegates to the shared semver implementation in logos-package — the same
+// code lgx, lgpm, lgpd and the package-manager UI use. It used to split on '.'
+// and QString::toInt() each component (dropping the `ok` flag), so
+// "0-rc1".toInt() silently yielded 0 and every pre-release compared EQUAL to
+// its own release: an installed 1.0.0-rc.1 against an available 1.0.0 showed no
+// Upgrade, and 1.0.0-rc.2 vs 1.0.0-rc.10 compared equal.
 static int versionCmp(const QString& a, const QString& b)
 {
-    const QStringList aParts = a.split('.');
-    const QStringList bParts = b.split('.');
-    const int n = std::max(aParts.size(), bParts.size());
-    for (int i = 0; i < n; ++i) {
-        const int av = (i < aParts.size()) ? aParts[i].toInt() : 0;
-        const int bv = (i < bParts.size()) ? bParts[i].toInt() : 0;
-        if (av < bv) return -1;
-        if (av > bv) return  1;
-    }
-    return 0;
+    return logos::semver::compare(a.toStdString(), b.toStdString());
 }
 
 void AppsModel::recomputeInstallStatus(Row& r)

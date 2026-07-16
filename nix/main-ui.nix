@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
 
 let
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
@@ -59,6 +59,13 @@ pkgs.stdenv.mkDerivation {
     else
       echo "Warning: No include directory found in logos-package-downloader-module"
     fi
+
+    # Stage the shared semver headers (logos/semver.hpp + its <semver/semver.hpp>)
+    # so AppsModel can use logos::semver::compare. generated_code is already on
+    # main_ui's include path. Headers only — nothing here links liblgx.
+    echo "Copying shared semver headers from logos-package..."
+    cp -r "${logosPackageHeaders}/include/logos"  ./src/generated_code/
+    cp -r "${logosPackageHeaders}/include/semver" ./src/generated_code/
 
     # Run logos-cpp-generator with metadata.json and --general-only flag
     echo "Running logos-cpp-generator (general-only) for main_ui..."
