@@ -655,9 +655,8 @@ void WorkspaceArea::styleAllTabBars()
             }
         }
 
-        QTimer::singleShot(0, this, [this, tb = QPointer<QTabBar>(tabBar)]() {
-            if (tb) insetTabBarGeometry(tb, kTabBarInsetPx);
-        });
+        if (tabBar->x() != kTabBarInsetPx)
+            insetTabBarGeometry(tabBar, kTabBarInsetPx);
     }
 }
 
@@ -702,6 +701,12 @@ bool WorkspaceArea::eventFilter(QObject* watched, QEvent* event)
 
     if (auto* tabBar = qobject_cast<QTabBar*>(watched)) {
         switch (event->type()) {
+        case QEvent::Resize:
+        case QEvent::Move: {
+            if (tabBar->x() != kTabBarInsetPx)
+                insetTabBarGeometry(tabBar, kTabBarInsetPx);
+            break;
+        }
         case QEvent::MouseMove: {
             const QPoint pos = static_cast<QMouseEvent*>(event)->position().toPoint();
             for (int i = 0; i < tabBar->count(); ++i) {

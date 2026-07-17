@@ -10,13 +10,15 @@ AbstractButton {
     checkable: true
     autoExclusive: true
 
+    signal tooltipRequested(string text, real y)
+    signal tooltipCleared()
+
     onHoveredChanged: {
         if (hovered && text) {
             var pos = root.mapToItem(null, root.width, root.height / 2)
-            backend.sidebarTooltipY = pos.y
-            backend.sidebarTooltipText = root.text
+            root.tooltipRequested(text, pos.y)
         } else {
-            backend.sidebarTooltipText = ""
+            root.tooltipCleared()
         }
     }
 

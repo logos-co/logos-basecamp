@@ -25,9 +25,9 @@ import Basecamp.Backend 1.0
 Item {
     id: root
 
-    // True iff any dialog is currently visible. C++ watches this via the
-    // overlayActiveChanged signal and toggles mouse-event passthrough on
-    // the hosting QQuickWidget.
+    // True iff any dialog is currently visible. Drives input-blocking
+    // (WA_TransparentForMouseEvents flip) on the hosting QQuickWidget
+    // — see MainContainer::onOverlayActiveChanged.
     property bool anyDialogOpen: missingDepsDialog.visible
                                   || unloadCascadeDialog.visible
                                   || uninstallCascadeDialog.visible
@@ -35,6 +35,8 @@ Item {
                                   || installConfirmDialog.visible
                                   || installGateDialog.visible
                                   || addApplicationDialog.visible
+    property string sidebarTooltipText: ""
+    property real   sidebarTooltipY:    0
 
     signal overlayActiveChanged(bool active)
 
@@ -123,46 +125,16 @@ Item {
         }
     }
 
-    Rectangle {
-        id: sidebarTooltip
-        visible: opacity > 0
-        opacity: tooltipTimer.showIt ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 150 } }
+    LogosToolTip {
+        id: sidebarTip
+        parent: root
+        text: root.sidebarTooltipText
+        visible: text !== ""
+        placement: LogosToolTip.Right
         x: 68
-        y: backend.sidebarTooltipY - height / 2
-        width: tooltipLabel.implicitWidth + 16
-        height: tooltipLabel.implicitHeight + 8
-        radius: 4
-        color: Theme.palette.surface
-
-        LogosText {
-            id: tooltipLabel
-            anchors.centerIn: parent
-            text: backend.sidebarTooltipText
-            font.pixelSize: 12
-            color: Theme.palette.textSecondary
-        }
-
-        Timer {
-            id: tooltipTimer
-            property bool showIt: false
-            interval: 500
-            onTriggered: showIt = true
-        }
+        y: root.sidebarTooltipY - height / 2
     }
 
-    Connections {
-        target: backend
-        function onSidebarTooltipChanged() {
-            if (backend.sidebarTooltipText !== "") {
-                tooltipTimer.showIt = false
-                tooltipTimer.restart()
-            } else {
-                tooltipTimer.stop()
-                tooltipTimer.showIt = false
-            }
-        }
-    }
 
     Connections {
         target: backend

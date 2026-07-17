@@ -44,6 +44,8 @@ private slots:
     // input when no dialog is open (so the sidebar / content still
     // receive clicks), intercepting when one is.
     void onOverlayActiveChanged(bool active);
+    void onSidebarTooltipRequested(const QString& text, qreal y);
+    void onSidebarTooltipCleared();
 
 private:
     void setupUi();

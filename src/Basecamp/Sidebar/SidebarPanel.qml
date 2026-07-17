@@ -16,6 +16,8 @@ Control {
 
     signal launchUIModule(string name)
     signal updateLauncherIndex(int index)
+    signal tooltipRequested(string text, real y)
+    signal tooltipCleared()
 
     padding: 0
     bottomPadding: Theme.spacing.large
@@ -84,6 +86,8 @@ Control {
                     text: modelData.name
                     icon.source: modelData.icon
                     onClicked: root.updateLauncherIndex(index)
+                    onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
+                    onTooltipCleared: root.tooltipCleared()
                 }
             }
         }
@@ -128,6 +132,8 @@ Control {
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
+                            onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
+                            onTooltipCleared: root.tooltipCleared()
                         }
                     }
 
@@ -151,6 +157,8 @@ Control {
                             icon.source: modelData.iconPath
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
+                            onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
+                            onTooltipCleared: root.tooltipCleared()
                         }
                     }
                 }
@@ -170,6 +178,8 @@ Control {
                     text: modelData.name
                     icon.source: modelData.icon
                     onClicked: root.updateLauncherIndex(_d.workspaceSections.length + index)
+                    onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
+                    onTooltipCleared: root.tooltipCleared()
                 }
             }
         }

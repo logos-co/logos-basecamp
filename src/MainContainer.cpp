@@ -135,6 +135,10 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
                 Qt::QueuedConnection);
         connect(sidebarRoot, SIGNAL(updateLauncherIndex(int)),
                 m_backend, SLOT(setCurrentActiveSectionIndex(int)));
+        connect(sidebarRoot, SIGNAL(tooltipRequested(QString, qreal)),
+                this, SLOT(onSidebarTooltipRequested(QString, qreal)));
+        connect(sidebarRoot, SIGNAL(tooltipCleared()),
+                this, SLOT(onSidebarTooltipCleared()));
     }
 
     qDebug() << "MainContainer created";
@@ -279,6 +283,29 @@ void MainContainer::onOverlayActiveChanged(bool active)
     m_overlayWidget->setAttribute(Qt::WA_TransparentForMouseEvents, !active);
     m_overlayWidget->setVisible(active);
     if (active) m_overlayWidget->raise();
+}
+
+void MainContainer::onSidebarTooltipRequested(const QString& text, qreal y)
+{
+    if (!m_overlayWidget) return;
+    QObject* overlayRoot = m_overlayWidget->rootObject();
+    if (!overlayRoot) return;
+    overlayRoot->setProperty("sidebarTooltipText", text);
+    overlayRoot->setProperty("sidebarTooltipY", y);
+    if (!m_overlayWidget->isVisible()) {
+        m_overlayWidget->setVisible(true);
+        m_overlayWidget->raise();
+    }
+}
+
+void MainContainer::onSidebarTooltipCleared()
+{
+    if (!m_overlayWidget) return;
+    QObject* overlayRoot = m_overlayWidget->rootObject();
+    if (!overlayRoot) return;
+    overlayRoot->setProperty("sidebarTooltipText", QString());
+    const bool dialogUp = overlayRoot->property("anyDialogOpen").toBool();
+    if (!dialogUp) m_overlayWidget->setVisible(false);
 }
 
 void MainContainer::onViewIndexChanged()

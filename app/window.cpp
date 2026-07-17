@@ -124,6 +124,13 @@ void Window::setupUi()
     setWindowTitle("Logos Basecamp");
     resize(1600, 900);
 
+    setAutoFillBackground(true);
+    {
+        QPalette p = palette();
+        p.setColor(QPalette::Window, QColor("#171717"));
+        setPalette(p);
+    }
+
 #ifdef Q_OS_MAC
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setupMacOSDockReopen();
