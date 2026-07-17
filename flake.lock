@@ -61580,11 +61580,11 @@
         "logos-package-manager": "logos-package-manager_51"
       },
       "locked": {
-        "lastModified": 1784232744,
-        "narHash": "sha256-f6txL+Wnlxx5eTdu5klr8qtzvPy49dFtNo30qd74PtQ=",
+        "lastModified": 1784254343,
+        "narHash": "sha256-3+JOesTqQsSy2y0EYphzQXSL5c4TDnzT4lzPF32xO0E=",
         "owner": "logos-co",
         "repo": "logos-package-manager-module",
-        "rev": "411ea1135780741acd243564c33840bc838729f7",
+        "rev": "cad6bab044d09eb54fe9a8efb20ed94694eb44ff",
         "type": "github"
       },
       "original": {
