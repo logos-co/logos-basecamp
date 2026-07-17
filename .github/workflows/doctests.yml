@@ -259,7 +259,7 @@ jobs:
           # index.html at the Pages root, that URL 404s even though the per-ref
           # reports exist under main/ and pr-<N>/. Regenerate it on pushes to the
           # default branch (BASE=main) so the home page always points at the
-          # latest master report. keep_files:true preserves it across PR runs.
+          # latest main/ report. keep_files:true preserves it across PR runs.
           if [ "$BASE" = "main" ]; then
             {
               echo "<!doctype html><meta charset=utf-8>"
@@ -269,7 +269,7 @@ jobs:
               echo "<p>Executable end-to-end doc-tests for" \
                    "<a href=\"https://github.com/${GITHUB_REPOSITORY}\">${GITHUB_REPOSITORY##*/}</a>," \
                    "rendered as a two-column HTML report (each command/action run alongside its output).</p>"
-              echo "<h2>Latest (master)</h2><ul>"
+              echo "<h2>Latest (main)</h2><ul>"
               for os in ubuntu-latest macos-latest; do
                 if [ -d "site/$BASE/$os" ]; then
                   echo "<li><a href=\"./main/$os/\">$os</a></li>"
