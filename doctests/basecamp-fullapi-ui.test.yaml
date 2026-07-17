@@ -1,0 +1,159 @@
+name: "Driving the full API surface through a UI plugin in Basecamp"
+output: basecamp-fullapi-ui.md
+release: ""
+
+intro: |
+  This doc-test drives the **entire supported API surface** of a Logos module
+  through a **QML+Qt UI plugin** running inside Basecamp. The plugin
+  (`test_fullapi_ui`) consumes the `full_api` contract via an **interface
+  dependency**: its backend binds the interface to a runtime-chosen provider,
+  calls every method type, and subscribes to every event — surfacing the results
+  and the most recent event to the QML view, which we assert on.
+
+  Everything is built from `logos-test-modules` and the Nix binary cache and
+  installed into a local `--user-dir`: there is **no package-catalog download and
+  no network peer connection**, so the check is fully hermetic. It replaces the
+  flaky cross-version chat check, which needed a live catalog fetch and a Waku
+  node connection.
+
+what_you_build:
+  - The Basecamp bundle (inspector-enabled) and the logos-qt-mcp UI driver
+  - A user-dir containing two providers, a proxy, and the full_api UI plugin
+  - A headless UI run that clicks through the plugin and asserts method + event results
+
+what_you_learn:
+  - How a ui_qml plugin consumes another module's full API via an interface dependency
+  - How to stage locally-built modules into a Basecamp `--user-dir` (no catalog)
+  - How the UI drives every method type and receives typed events at runtime
+  - How the same UI drives a C++ provider and a Rust provider interchangeably
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - |
+    **Network access** to fetch the flakes and Nix binary cache. Once everything
+    is built, the run itself is offline — no catalog download, no peer connection.
+
+sections:
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      Build the logos-qt-mcp driver that connects to the app's QML inspector.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: "nix build \"${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}\" -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build the inspector-enabled portable bundle — the same shippable dir bundle,
+      with the QML inspector compiled in so the driver can attach.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Install the full_api modules into a user-dir"
+    step: true
+    text: |
+      Build the two providers, the proxy, and the UI plugin from
+      `logos-test-modules` as **portable** install outputs, then assemble a
+      `--user-dir` by plain copy: core modules under `modules/`, the UI plugin
+      under `plugins/`. No `lgpd`, no catalog, no network.
+    steps:
+      - title: "Build and stage the modules"
+        run: |
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          rm -rf testdata/fullapi
+          mkdir -p testdata/fullapi/modules testdata/fullapi/plugins
+          for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy; do
+            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "result-port-$m"
+            cp -RL "result-port-$m/modules/." testdata/fullapi/modules/
+          done
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" --out-link result-port-ui
+          cp -RL result-port-ui/plugins/. testdata/fullapi/plugins/
+          chmod -R u+w testdata/fullapi
+          echo "modules:"; ls testdata/fullapi/modules
+          echo "plugins:"; ls testdata/fullapi/plugins
+        expect_contains:
+          - "test_fullapi_cpp"
+          - "test_fullapi_proxy"
+          - "test_fullapi_ui"
+
+  - title: "Launch Basecamp and drive the UI plugin"
+    step: true
+    text: |
+      Launch the bundle against the assembled user-dir and drive the Full API UI
+      plugin headlessly: open it, run every method type against the C++ provider,
+      re-bind to the Rust provider, and finally fire events and confirm the UI
+      received a typed event.
+    steps:
+      - title: "Drive the plugin"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the assembled user-dir."
+              screenshot: "fullapi-launch.png"
+
+            - name: "Open the Full API UI plugin"
+              action: click
+              target: "Full API UI"
+
+            - name: "The plugin view renders with its controls"
+              action: wait_for
+              texts: ["Run All Methods", "Fire Events", "Bind Rust Provider"]
+              timeout: 30000
+              screenshot: "fullapi-view.png"
+
+            - name: "Run every method type against the C++ provider"
+              action: click
+              target: "Run All Methods"
+
+            - name: "Every method type round-trips through the C++ provider"
+              action: wait_for
+              texts: ["ALL_OK:test_fullapi_cpp"]
+              timeout: 60000
+              text: "The backend verified every method type and published a single ALL_OK token naming the bound provider."
+              screenshot: "fullapi-cpp-results.png"
+
+            - name: "Re-bind the interface to the Rust provider"
+              action: click
+              target: "Bind Rust Provider"
+
+            - name: "Run the methods again against the Rust provider"
+              action: click
+              target: "Run All Methods"
+
+            - name: "The same UI now round-trips every type through the Rust provider"
+              action: wait_for
+              texts: ["ALL_OK:test_fullapi_rust"]
+              timeout: 60000
+              screenshot: "fullapi-rust-results.png"
+
+            - name: "Bind back to the C++ provider for the event check"
+              action: click
+              target: "Bind CPP Provider"
+
+            - name: "Fire events and confirm the UI received a typed event"
+              action: click
+              target: "Fire Events"
+
+            - name: "The typed event arrived in the UI backend"
+              action: wait_for
+              texts: ["intEvent:123"]
+              timeout: 15000
+              screenshot: "fullapi-event.png"

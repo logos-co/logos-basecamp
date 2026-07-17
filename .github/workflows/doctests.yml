@@ -145,17 +145,20 @@ jobs:
           # single --report HTML (a dropdown switches between them):
           #   basecamp-modules / basecamp-modules-bundle — the Modules-view walk
           #     against the dev app (#app) and the portable bundle.
-          #   basecamp-crossversion-accounts / -chat — cross-version compatibility:
+          #   basecamp-crossversion-accounts — cross-version compatibility:
           #     a freshly-built component (#install-portable) driven against the
-          #     latest released counterpart(s) downloaded from the package manager
-          #     (accounts: both directions; chat: all three of chat_ui/chat_module/
-          #     delivery_module). These need network at runtime (catalog download +
-          #     chat's Waku node) and exercise the live ecosystem.
+          #     latest released counterpart downloaded from the package manager
+          #     (both directions). Needs network at runtime (catalog download).
+          #   basecamp-fullapi-ui — hermetic full-API check: a ui_qml plugin
+          #     consumes the full_api contract via an interface dependency and
+          #     drives every method type + receives typed events, all from local
+          #     install-portable outputs (no catalog, no peer connection). This
+          #     replaces the flaky cross-version chat check.
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
             doctests/basecamp-crossversion-accounts.test.yaml \
-            doctests/basecamp-crossversion-chat.test.yaml \
+            doctests/basecamp-fullapi-ui.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -183,7 +186,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-crossversion-accounts basecamp-crossversion-chat; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-crossversion-accounts basecamp-fullapi-ui; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
