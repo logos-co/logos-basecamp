@@ -16,10 +16,11 @@ intro: |
   flaky cross-version chat check, which needed a live catalog fetch and a Waku
   node connection.
 
-what_you_build:
-  - The Basecamp bundle (inspector-enabled) and the logos-qt-mcp UI driver
-  - A user-dir containing two providers, a proxy, and the full_api UI plugin
-  - A headless UI run that clicks through the plugin and asserts method + event results
+what_you_build: |
+  The Basecamp bundle (inspector-enabled) and the logos-qt-mcp UI driver, a
+  user-dir containing two providers, a proxy, and the full_api UI plugin, and a
+  headless UI run that clicks through the plugin and asserts method + event
+  results.
 
 what_you_learn:
   - How a ui_qml plugin consumes another module's full API via an interface dependency
@@ -85,6 +86,7 @@ sections:
           echo "plugins:"; ls testdata/fullapi/plugins
         expect_contains:
           - "test_fullapi_cpp"
+          - "test_fullapi_rust"
           - "test_fullapi_proxy"
           - "test_fullapi_ui"
 
