@@ -7,7 +7,8 @@ intro: |
   through a **QML+Qt UI plugin** running inside Basecamp. The plugin
   (`test_fullapi_ui`) consumes the `full_api` contract via an **interface
   dependency**: its backend binds the interface to a runtime-chosen provider,
-  calls every method type, and subscribes to every event — surfacing the results
+  calls every method type — both **synchronously** and through the non-blocking
+  `<method>Async` wrappers — and subscribes to every event, surfacing the results
   and the most recent event to the QML view, which we assert on.
 
   Everything is built from `logos-test-modules` and the Nix binary cache and
@@ -16,17 +17,28 @@ intro: |
   flaky cross-version chat check, which needed a live catalog fetch and a Waku
   node connection.
 
+  On top of the same-version run, two **cross-version** cases rebuild the chain's
+  components from *different* module-builder toolchains — the latest release
+  (`0.2.3`) vs master — and drive the full method surface through the
+  UI → proxy → provider boundary, so a component built one way is proven to
+  interoperate with one built the other way (a hermetic replacement for the old
+  chat test's "fresh build vs latest release" coverage).
+
 what_you_build: |
   The Basecamp bundle (inspector-enabled) and the logos-qt-mcp UI driver, a
-  user-dir containing two providers, a proxy, and the full_api UI plugin, and a
+  user-dir containing two providers, a proxy, and the full_api UI plugin, a
   headless UI run that clicks through the plugin and asserts method + event
-  results.
+  results, and two more user-dirs whose UI / proxy / provider are built from a
+  mix of the module-builder release and master.
 
 what_you_learn:
   - How a ui_qml plugin consumes another module's full API via an interface dependency
   - How to stage locally-built modules into a Basecamp `--user-dir` (no catalog)
   - How the UI drives every method type and receives typed events at runtime
+  - How the UI drives the same surface through the non-blocking async wrappers
   - How the same UI drives a C++ provider and a Rust provider interchangeably
+  - How the UI → proxy → provider chain holds up when its components are built from
+    different module-builder toolchains (release vs master)
 
 prerequisites:
   - |
@@ -132,6 +144,17 @@ sections:
               text: "The backend verified every method type and published a single ALL_OK token naming the bound provider."
               screenshot: "fullapi-cpp-results.png"
 
+            - name: "Run every method type again, this time via the async wrappers"
+              action: click
+              target: "Run All (Async)"
+
+            - name: "Every method type round-trips through the async client path"
+              action: wait_for
+              texts: ["ALL_OK_ASYNC:test_fullapi_cpp"]
+              timeout: 60000
+              text: "The same verification, but every call goes through the non-blocking <method>Async wrappers; each completion lands on the UI's Qt event loop and the backend publishes ALL_OK_ASYNC once all have arrived."
+              screenshot: "fullapi-cpp-async-results.png"
+
             - name: "Re-bind the interface to the Rust provider"
               action: click
               target: "Bind Rust Provider"
@@ -146,6 +169,17 @@ sections:
               timeout: 60000
               screenshot: "fullapi-rust-results.png"
 
+            - name: "Run every method type asynchronously against the Rust provider"
+              action: click
+              target: "Run All (Async)"
+
+            - name: "The async client path also round-trips every type through the Rust provider"
+              action: wait_for
+              texts: ["ALL_OK_ASYNC:test_fullapi_rust"]
+              timeout: 60000
+              text: "Full async surface against the Rust provider too, so the Qt backend -> module path is proven sync AND async for both the C++ and the Rust implementation."
+              screenshot: "fullapi-rust-async-results.png"
+
             - name: "Bind back to the C++ provider for the event check"
               action: click
               target: "Bind CPP Provider"
@@ -159,3 +193,182 @@ sections:
               texts: ["intEvent:123"]
               timeout: 15000
               screenshot: "fullapi-event.png"
+
+  - title: "Cross-version A — UI + provider from the module-builder release, proxy from master"
+    step: true
+    text: |
+      The same `full_api` chain, but with its components built from **different
+      module-builder toolchains**: the UI plugin and the C++ provider from the
+      latest release (`0.2.3`), the proxy from master. Everything is still
+      assembled the hermetic way — plain copy of `install-portable` outputs into
+      a fresh `--user-dir`, no catalog, no network. Driving it through the
+      UI → proxy → provider boundary proves a module built one way still
+      interoperates with a module built the other way. (`install-portable` is
+      single-module, so the versions never clobber each other; `capability_module`
+      comes from the Basecamp bundle.)
+    steps:
+      - title: "Build the version-mixed modules (UI@release, proxy@master, provider@release)"
+        run: |
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          MB_RELEASE="github:logos-co/logos-module-builder/0.2.3"
+          rm -rf testdata/fullapi-xva
+          mkdir -p testdata/fullapi-xva/modules testdata/fullapi-xva/plugins
+          # C++ provider (the one the proxy forwards to) — release toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_cpp.install-portable" \
+            --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-cpp
+          cp -RL result-xva-cpp/modules/. testdata/fullapi-xva/modules/
+          # Rust provider — release toolchain. The proxy declares BOTH providers
+          # as dependencies, so it needs this present to load even though it
+          # forwards to the C++ one by default.
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_rust.install-portable" \
+            --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-rust
+          cp -RL result-xva-rust/modules/. testdata/fullapi-xva/modules/
+          # proxy — master toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_proxy.install-portable" \
+            --out-link result-xva-proxy
+          cp -RL result-xva-proxy/modules/. testdata/fullapi-xva/modules/
+          # UI plugin — release toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" \
+            --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-ui
+          cp -RL result-xva-ui/plugins/. testdata/fullapi-xva/plugins/
+          chmod -R u+w testdata/fullapi-xva
+          echo "modules:"; ls testdata/fullapi-xva/modules
+          echo "plugins:"; ls testdata/fullapi-xva/plugins
+        expect_contains:
+          - "test_fullapi_cpp"
+          - "test_fullapi_rust"
+          - "test_fullapi_proxy"
+          - "test_fullapi_ui"
+
+      - title: "Drive the version-mixed chain (UI@release → proxy@master → provider@release)"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-xva"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens (cross-version A)"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              screenshot: "fullapi-xva-launch.png"
+
+            - name: "Open the Full API UI plugin (cross-version A)"
+              action: click
+              target: "Full API UI"
+
+            - name: "The plugin view renders (cross-version A)"
+              action: wait_for
+              texts: ["Run All Methods", "Bind Proxy"]
+              timeout: 30000
+
+            - name: "Bind the interface to the proxy so the chain is UI → proxy → provider"
+              action: click
+              target: "Bind Proxy"
+
+            - name: "Run every method type across the release/master boundary"
+              action: click
+              target: "Run All Methods"
+
+            - name: "Every method type round-trips across the version mix"
+              action: wait_for
+              texts: ["ALL_OK:test_fullapi_cpp"]
+              timeout: 60000
+              text: "The release-built UI drives the master-built proxy, which forwards to the release-built C++ provider; the whole method surface round-trips and the token names the resolved provider."
+              screenshot: "fullapi-xva-results.png"
+
+            - name: "Run the method surface asynchronously across the version mix"
+              action: click
+              target: "Run All (Async)"
+
+            - name: "The async client path also round-trips UI → proxy → provider across versions"
+              action: wait_for
+              texts: ["ALL_OK_ASYNC:test_fullapi_cpp"]
+              timeout: 60000
+              text: "The non-blocking wrappers hold up across the release/master boundary too: the release-built UI fires async calls through the master-built proxy to the release-built provider."
+              screenshot: "fullapi-xva-async-results.png"
+
+  - title: "Cross-version B — UI + provider from master, proxy from the release"
+    step: true
+    text: |
+      The mirror image: UI plugin and C++ provider from master, proxy from the
+      release (`0.2.3`). Same hermetic assembly and drive, with the release/master
+      split on the opposite components.
+    steps:
+      - title: "Build the version-mixed modules (UI@master, proxy@release, provider@master)"
+        run: |
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          MB_RELEASE="github:logos-co/logos-module-builder/0.2.3"
+          rm -rf testdata/fullapi-xvb
+          mkdir -p testdata/fullapi-xvb/modules testdata/fullapi-xvb/plugins
+          # C++ provider (the one the proxy forwards to) — master toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_cpp.install-portable" \
+            --out-link result-xvb-cpp
+          cp -RL result-xvb-cpp/modules/. testdata/fullapi-xvb/modules/
+          # Rust provider — master toolchain. The proxy declares BOTH providers
+          # as dependencies, so it needs this present to load even though it
+          # forwards to the C++ one by default.
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_rust.install-portable" \
+            --out-link result-xvb-rust
+          cp -RL result-xvb-rust/modules/. testdata/fullapi-xvb/modules/
+          # proxy — release toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_proxy.install-portable" \
+            --override-input logos-module-builder "$MB_RELEASE" --out-link result-xvb-proxy
+          cp -RL result-xvb-proxy/modules/. testdata/fullapi-xvb/modules/
+          # UI plugin — master toolchain
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" \
+            --out-link result-xvb-ui
+          cp -RL result-xvb-ui/plugins/. testdata/fullapi-xvb/plugins/
+          chmod -R u+w testdata/fullapi-xvb
+          echo "modules:"; ls testdata/fullapi-xvb/modules
+          echo "plugins:"; ls testdata/fullapi-xvb/plugins
+        expect_contains:
+          - "test_fullapi_cpp"
+          - "test_fullapi_rust"
+          - "test_fullapi_proxy"
+          - "test_fullapi_ui"
+
+      - title: "Drive the version-mixed chain (UI@master → proxy@release → provider@master)"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-xvb"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens (cross-version B)"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              screenshot: "fullapi-xvb-launch.png"
+
+            - name: "Open the Full API UI plugin (cross-version B)"
+              action: click
+              target: "Full API UI"
+
+            - name: "The plugin view renders (cross-version B)"
+              action: wait_for
+              texts: ["Run All Methods", "Bind Proxy"]
+              timeout: 30000
+
+            - name: "Bind the interface to the proxy so the chain is UI → proxy → provider"
+              action: click
+              target: "Bind Proxy"
+
+            - name: "Run every method type across the master/release boundary"
+              action: click
+              target: "Run All Methods"
+
+            - name: "Every method type round-trips across the version mix"
+              action: wait_for
+              texts: ["ALL_OK:test_fullapi_cpp"]
+              timeout: 60000
+              screenshot: "fullapi-xvb-results.png"
+
+            - name: "Run the method surface asynchronously across the version mix"
+              action: click
+              target: "Run All (Async)"
+
+            - name: "The async client path also round-trips UI → proxy → provider across versions"
+              action: wait_for
+              texts: ["ALL_OK_ASYNC:test_fullapi_cpp"]
+              timeout: 60000
+              text: "The non-blocking wrappers hold up across the master/release boundary too: the master-built UI fires async calls through the release-built proxy to the master-built provider."
+              screenshot: "fullapi-xvb-async-results.png"
