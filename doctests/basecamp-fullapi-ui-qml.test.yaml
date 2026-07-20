@@ -1,0 +1,146 @@
+name: "Driving the full API surface through a QML-only UI plugin in Basecamp"
+output: basecamp-fullapi-ui-qml.md
+release: ""
+
+intro: |
+  This doc-test drives the **entire QML-expressible API surface** of a Logos
+  module through a **QML-only UI plugin** (no C++ backend) running inside
+  Basecamp. The plugin (`test_fullapi_ui_qml`) consumes `test_fullapi_cpp`
+  **directly from QML/JS** through the `logos` bridge injected by the view
+  runtime: `logos.callModule(...)` for every method type and
+  `logos.onModuleEvent(...)` / `onModuleEventReceived` for every typed event.
+  All of the pass/fail logic lives in QML/JS — there is no generated backend,
+  no `.rep`, and no interface dependency.
+
+  It complements `basecamp-fullapi-ui.test.yaml`, which drives the same surface
+  through a C++ (QtRO) backend. `bstr` is the one type not exercised here:
+  QML/JS has no native byte literal, so `echoBytes` / `bytesEvent` aren't
+  expressible from QML (the C++-backend variant covers them).
+
+  Everything is built from `logos-test-modules` and the Nix binary cache and
+  installed into a local `--user-dir`: **no package-catalog download and no
+  network peer connection**, so the check is fully hermetic.
+
+what_you_build: |
+  The Basecamp bundle (inspector-enabled) and the logos-qt-mcp UI driver, a
+  user-dir containing the `test_fullapi_cpp` provider and the QML-only UI
+  plugin, and a headless UI run that clicks through the plugin and asserts that
+  every method type and every typed event round-tripped purely from QML.
+
+what_you_learn:
+  - How a QML-only ui_qml plugin consumes another module with no C++ backend
+  - How QML calls module methods via `logos.callModule` and reads the JSON result
+  - How QML subscribes to typed events via `logos.onModuleEvent` + `onModuleEventReceived`
+  - How to stage locally-built modules into a Basecamp `--user-dir` (no catalog)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - |
+    **Network access** to fetch the flakes and Nix binary cache. Once everything
+    is built, the run itself is offline — no catalog download, no peer connection.
+
+sections:
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      Build the logos-qt-mcp driver that connects to the app's QML inspector.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: "nix build \"${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}\" -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build the inspector-enabled portable bundle — the same shippable dir
+      bundle, with the QML inspector compiled in so the driver can attach.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Install the provider + QML-only UI into a user-dir"
+    step: true
+    text: |
+      Build the `test_fullapi_cpp` provider and the `test_fullapi_ui_qml`
+      QML-only UI plugin from `logos-test-modules` as **portable** install
+      outputs, then assemble a `--user-dir` by plain copy: the provider under
+      `modules/`, the UI plugin under `plugins/`. No `lgpd`, no catalog, no
+      network.
+    steps:
+      - title: "Build and stage the modules"
+        run: |
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          rm -rf testdata/fullapi-qml
+          mkdir -p testdata/fullapi-qml/modules testdata/fullapi-qml/plugins
+          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-cpp
+          cp -RL result-port-cpp/modules/. testdata/fullapi-qml/modules/
+          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_ui_qml.install-portable" --out-link result-port-ui-qml
+          cp -RL result-port-ui-qml/plugins/. testdata/fullapi-qml/plugins/
+          chmod -R u+w testdata/fullapi-qml
+          echo "modules:"; ls testdata/fullapi-qml/modules
+          echo "plugins:"; ls testdata/fullapi-qml/plugins
+        expect_contains:
+          - "test_fullapi_cpp"
+          - "test_fullapi_ui_qml"
+
+  - title: "Launch Basecamp and drive the QML-only plugin"
+    step: true
+    text: |
+      Launch the bundle against the assembled user-dir and drive the QML-only
+      Full API UI plugin headlessly: open it, run every QML-expressible method
+      type against the provider (aggregated in QML), then fire every typed event
+      and confirm they all arrived back in QML.
+    steps:
+      - title: "Drive the plugin"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-qml"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the assembled user-dir."
+              screenshot: "fullapi-qml-launch.png"
+
+            - name: "Open the QML-only Full API UI plugin"
+              action: click
+              target: "Full API UI (QML-only)"
+
+            - name: "The plugin view renders with its controls"
+              action: wait_for
+              texts: ["Run All Methods", "Fire Events"]
+              timeout: 30000
+              screenshot: "fullapi-qml-view.png"
+
+            - name: "Run every QML-expressible method type from QML"
+              action: click
+              target: "Run All Methods"
+
+            - name: "Every method type round-trips through logos.callModule"
+              action: wait_for
+              texts: ["ALL_OK_QML:test_fullapi_cpp"]
+              timeout: 60000
+              text: "QML/JS called every method type via logos.callModule, parsed each JSON result, and published a single ALL_OK_QML token."
+              screenshot: "fullapi-qml-methods.png"
+
+            - name: "Fire every typed event from QML"
+              action: click
+              target: "Fire Events"
+
+            - name: "Every typed event arrives back in QML via onModuleEventReceived"
+              action: wait_for
+              texts: ["ALL_EVENTS_OK_QML:test_fullapi_cpp"]
+              timeout: 30000
+              text: "QML subscribed via logos.onModuleEvent, triggered every fire<X>Event, and matched each received payload."
+              screenshot: "fullapi-qml-events.png"
