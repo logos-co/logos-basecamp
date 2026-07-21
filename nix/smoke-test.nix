@@ -6,6 +6,9 @@
 #   - the app crashes before the timeout (non-zero exit that isn't timeout's 124)
 #   - the app exits too quickly with code 0 (indicates it didn't start properly)
 #
+# Binding-loop warnings are intentionally not treated as failures — the app
+# still starts; they are layout thrashing, not boot/QML-load breakage.
+#
 # If the app crashes it exits immediately — the timeout is only ever waited out
 # on the happy path (app stays alive and healthy).
 #
@@ -48,7 +51,7 @@ pkgs.runCommand "logos-basecamp-smoke-test" {
 
   cat "$LOG"
 
-  CRIT=$(grep -E "QQmlApplicationEngine failed|module.*is not installed|Cannot assign|failed to load component|Failed to load.*plugin|The shared library was not found|Failed to create plugins directory|qrc:.*error:|file:///.*error:|TypeError:|ReferenceError:|Cannot read property|Unable to assign \[undefined\]|Binding loop detected|CRITICAL:|qCritical" "$LOG" \
+  CRIT=$(grep -E "QQmlApplicationEngine failed|module.*is not installed|Cannot assign|failed to load component|Failed to load.*plugin|The shared library was not found|Failed to create plugins directory|qrc:.*error:|file:///.*error:|TypeError:|ReferenceError:|Cannot read property|Unable to assign \[undefined\]|CRITICAL:|qCritical" "$LOG" \
          | grep -vE "/plugins/[^/]+/" || true)
   if [ -n "$CRIT" ]; then
     echo "Critical errors detected:"

@@ -18,8 +18,8 @@ Release candidates are marked as pre-release, so `/releases/latest` skips them. 
 The local build produces a standard Nix derivation whose dependencies live in `/nix/store`. It is the fastest way to iterate during development but is **not portable** — it only runs on the machine that built it.
 
 ```bash
-nix build '.#app'
-./result/bin/LogosBasecamp
+nix run .
+# or: nix build '.#app' && ./result/bin/LogosBasecamp
 ```
 
 Local builds require **local** `.lgx` packages, generated with:
@@ -43,8 +43,8 @@ nix bundle --bundler github:logos-co/nix-bundle-lgx#portable github:your-user/yo
 
 ##### Self-contained directory bundle (all platforms)
 ```bash
-nix build '.#bin-bundle-dir'
-./result/bin/LogosBasecamp
+nix run .#bin-bundle-dir
+# or: nix build '.#bin-bundle-dir' && ./result/bin/LogosBasecamp
 ```
 
 ##### Linux AppImage (Linux only)
@@ -52,7 +52,6 @@ nix build '.#bin-bundle-dir'
 nix build '.#bin-appimage'
 ./result/logos-basecamp.AppImage
 ```
-
 
 ##### MacOS App bundle (macOS only)
 

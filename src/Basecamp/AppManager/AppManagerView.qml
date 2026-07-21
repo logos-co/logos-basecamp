@@ -195,89 +195,109 @@ Rectangle {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacing.large
+                    anchors.margins: Theme.spacing.medium
                     spacing: Theme.spacing.medium
 
-                    // ─── Panel header: title + install-state tabs + view toggle ───
-                    RowLayout {
+                    // ─── Panel header: mirrors Package Manager TableHeader ───
+                    // Left: title + install-state tabs. Right: actions + view toggle.
+                    GridLayout {
+                        id: panelHeader
                         Layout.fillWidth: true
-                        spacing: Theme.spacing.xlarge
+                        columnSpacing: Theme.spacing.large
+                        rowSpacing: Theme.spacing.medium
+                        columns: (leftHalf.implicitWidth + rightHalf.implicitWidth + columnSpacing) <= width
+                                 ? 2 : 1
 
-                        LogosText {
-                            Layout.preferredHeight: implicitHeight
-                            text: qsTr("Apps")
-                            font.pixelSize: Theme.typography.panelTitleText
-                            font.weight: Theme.typography.weightMedium
-                            color: Theme.palette.text
-                        }
-
-                        LogosTabBar {
-                            id: stateTabBar
+                        RowLayout {
+                            id: leftHalf
+                            Layout.fillWidth: true
                             spacing: Theme.spacing.large
 
-                            LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
-                            LogosTabButton { text: qsTr("Installed") }
-                            LogosTabButton { text: qsTr("Not Installed") }
-                        }
+                            LogosText {
+                                text: qsTr("Apps")
+                                font.pixelSize: Theme.typography.panelTitleText
+                                font.weight: Theme.typography.weightMedium
+                                color: Theme.palette.text
+                            }
 
-                        Item { Layout.fillWidth: true }
+                            LogosTabBar {
+                                id: stateTabBar
+                                spacing: Theme.spacing.large
 
-                        LogosButton {
-                            id: reloadBtn
-                            objectName: "appManager.reloadButton"
-                            Layout.minimumWidth: 80
-                            Layout.preferredWidth: 130
-                            Layout.maximumWidth: 130
-                            Layout.preferredHeight: 40
-                            radius: Theme.spacing.radiusLarge
-                            text: qsTr("Reload")
-                            icon.source: LogosIcons.refresh
-                            icon.size: 18
-                            enabled: !root.loading
-                            onClicked: root.refreshRequested()
-                        }
+                                LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
+                                LogosTabButton { text: qsTr("Installed") }
+                                LogosTabButton { text: qsTr("Not Installed") }
+                            }
 
-                        LogosButton {
-                            Layout.minimumWidth: 100
-                            Layout.preferredWidth: 150
-                            Layout.maximumWidth: 150
-                            Layout.preferredHeight: 40
-                            radius: Theme.spacing.radiusLarge
-                            text: qsTr("Manage Repositories")
-                            onClicked: root.navigateToRepositories()
+                            Item { Layout.fillWidth: true }
                         }
 
                         RowLayout {
-                            spacing: 24
-                            Layout.preferredHeight: 36
+                            id: rightHalf
+                            Layout.fillWidth: true
+                            spacing: Theme.spacing.medium
 
-                            LogosText {
-                                Layout.alignment: Qt.AlignVCenter
-                                verticalAlignment: Text.AlignVCenter
-                                text: qsTr("View:")
-                                color:  Theme.palette.textTertiary
+                            Item { Layout.fillWidth: panelHeader.columns === 2 }
+
+                            LogosButton {
+                                id: reloadBtn
+                                objectName: "appManager.reloadButton"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 80
+                                Layout.preferredWidth: 100
+                                Layout.maximumWidth: 100
+                                Layout.preferredHeight: 40
+                                radius: Theme.spacing.radiusLarge
+                                text: qsTr("Reload")
+                                icon.source: LogosIcons.refresh
+                                icon.size: 18
+                                enabled: !root.loading
+                                onClicked: root.refreshRequested()
                             }
 
-                            LogosIconButton {
-                                iconSource: LogosIcons.grid
-                                size: 20
-                                iconSize: 20
-                                iconColor: d.viewMode === "grid"
-                                           ? Theme.palette.text
-                                           : Theme.palette.textTertiary
-                                onClicked: d.viewMode = "grid"
-                                background: Item{}
+                            LogosButton {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 100
+                                Layout.preferredWidth: 130
+                                Layout.maximumWidth: 130
+                                Layout.preferredHeight: 40
+                                radius: Theme.spacing.radiusLarge
+                                text: qsTr("Repositories")
+                                onClicked: root.navigateToRepositories()
                             }
 
-                            LogosIconButton {
-                                iconSource: LogosIcons.list
-                                size: 20
-                                iconSize: 20
-                                iconColor: d.viewMode === "list"
-                                           ? Theme.palette.text
-                                           : Theme.palette.textTertiary
-                                onClicked: d.viewMode = "list"
-                                background: Item{}
+                            RowLayout {
+                                spacing: 24
+                                Layout.preferredHeight: 36
+
+                                LogosText {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: qsTr("View:")
+                                    color: Theme.palette.textTertiary
+                                }
+
+                                LogosIconButton {
+                                    iconSource: LogosIcons.grid
+                                    size: 20
+                                    iconSize: 20
+                                    iconColor: d.viewMode === "grid"
+                                               ? Theme.palette.text
+                                               : Theme.palette.textTertiary
+                                    onClicked: d.viewMode = "grid"
+                                    background: Item {}
+                                }
+
+                                LogosIconButton {
+                                    iconSource: LogosIcons.list
+                                    size: 20
+                                    iconSize: 20
+                                    iconColor: d.viewMode === "list"
+                                               ? Theme.palette.text
+                                               : Theme.palette.textTertiary
+                                    onClicked: d.viewMode = "list"
+                                    background: Item {}
+                                }
                             }
                         }
                     }

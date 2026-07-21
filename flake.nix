@@ -232,28 +232,39 @@
               version = common.version;
             }
           else null;
+
+          # Self-contained directory bundle: appDistributed modules expect host Qt
+          # via @rpath; qtApp copies Qt frameworks into lib/ and rewrites the binary.
+          # (appDistributed alone is an intermediate used by AppImage / .app wrappers.)
+          withMainProgram = drv: drv.overrideAttrs (old: {
+            meta = (old.meta or {}) // {
+              mainProgram = "LogosBasecamp";
+            };
+          });
+          binBundleDir = withMainProgram (dirBundler appDistributed);
+          binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
         in
         {
           # Individual outputs
           main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
           app = app;
-          portable = appDistributed;
-          
-          # Bundle outputs
-          bin-bundle-dir = dirBundler appDistributed;
+
+          # Self-contained flat directory (bin/ + lib/ with Qt).
+          # Run: nix run .#bin-bundle-dir
+          bin-bundle-dir = binBundleDir;
 
           # Test-only twin of bin-bundle-dir WITH the QML inspector compiled in,
           # so logos-qt-mcp can connect and drive the UI headlessly. Identical to
           # the shipping bundle in every other respect.
           #
           # The inspector is a compile-time feature and is deliberately OFF in the
-          # shipping bin-bundle-dir / portable / appimage / macos outputs — we do
-          # NOT ship the inspector in release builds. This output exists purely so
-          # the package-manager doc-test can install and exercise modules through
+          # shipping bin-bundle-dir / appimage / macos outputs — we do NOT ship
+          # the inspector in release builds. This output exists purely so the
+          # package-manager doc-test can install and exercise modules through
           # the real bundled UI; it is not a release artifact.
           # Build: nix build .#bin-bundle-dir-inspector
-          bin-bundle-dir-inspector = dirBundler appDistributedWithInspector;
+          bin-bundle-dir-inspector = binBundleDirInspector;
 
           # QML Inspector MCP server: nix build .#mcp-server -o result-mcp
           mcp-server = logos-qt-mcp.packages.${system}.mcp-server;
@@ -317,16 +328,16 @@
         } else {})
       );
 
-      # nix run .                 → dev build  (depends on /nix/store at runtime)
-      # nix run .#portable        → portable build (self-contained, no nix-store paths)
+      # nix run .                   → dev build  (depends on /nix/store at runtime)
+      # nix run .#bin-bundle-dir    → self-contained bundle (Qt frameworks in lib/)
       apps = forAllSystems ({ system, ... }: {
         default = {
           type = "app";
           program = "${self.packages.${system}.app}/bin/LogosBasecamp";
         };
-        portable = {
+        bin-bundle-dir = {
           type = "app";
-          program = "${self.packages.${system}.portable}/bin/LogosBasecamp";
+          program = "${self.packages.${system}.bin-bundle-dir}/bin/LogosBasecamp";
         };
       });
 

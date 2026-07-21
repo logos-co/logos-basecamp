@@ -505,7 +505,7 @@ The result includes the application binary at `result/bin/LogosBasecamp` with al
 
 ```bash
 nix build '.#app'                  # Standard development build
-nix build '.#portable'             # Self-contained portable build
+nix build '.#bin-bundle-dir'             # Self-contained portable build
 nix build '.#bin-appimage'         # Linux AppImage
 nix build '.#bin-macos-app'        # macOS .app bundle
 nix build '.#bin-macos-dmg'        # macOS DMG
