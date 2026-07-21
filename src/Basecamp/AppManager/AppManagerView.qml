@@ -97,7 +97,7 @@ Rectangle {
             LogosSearchBar {
                 id: searchBar
                 Layout.alignment: Qt.AlignRight
-                Layout.preferredWidth: 480
+                Layout.preferredWidth: 605
                 Layout.minimumWidth: 200
                 text: d.searchText
                 placeholderText: qsTr("Search apps…")
@@ -275,10 +275,51 @@ Rectangle {
                         color: Theme.palette.borderSubtle
                     }
 
+                    // Empty state — shown when no repositories are configured.
+                    // Replaces the grid so the user gets a direct call-to-action.
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: root.repositories.length === 0 && !root.loading
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: Theme.spacing.medium
+                            width: Math.min(parent.width * 0.6, 420)
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("No repositories configured")
+                                font.pixelSize: Theme.typography.subtitleText
+                                font.weight: Theme.typography.weightMedium
+                                color: Theme.palette.text
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.fillWidth: true
+                                text: qsTr("Add a package repository to browse and install apps.")
+                                font.pixelSize: Theme.typography.primaryText
+                                color: Theme.palette.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+
+                            LogosButton {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.topMargin: Theme.spacing.small
+                                text: qsTr("Manage Repositories")
+                                onClicked: root.navigateToRepositories()
+                            }
+                        }
+                    }
+
                     Flickable {
                         id: gridScroll
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        visible: root.repositories.length > 0 || root.loading
                         clip: true
                         contentWidth: width
                         contentHeight: gridColumn.implicitHeight

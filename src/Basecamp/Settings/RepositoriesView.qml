@@ -266,7 +266,6 @@ Item {
                             Item { Layout.fillWidth: true }
 
                             LogosButton {
-                                visible: !isDefault
                                 text: qsTr("Remove")
                                 implicitWidth: 100
                                 implicitHeight: 32
