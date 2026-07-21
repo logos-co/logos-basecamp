@@ -547,6 +547,28 @@ void PackageCoordinator::refresh()
     refreshRepositories();
 }
 
+void PackageCoordinator::remoteRefresh()
+{
+    LogosAPIClient* dlClient = m_logosAPI
+        ? m_logosAPI->getClient("package_downloader")
+        : nullptr;
+    if (!dlClient || !dlClient->isConnected()) {
+        // Downloader unreachable — fall back to a local re-sync
+        refresh();
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
+        if (!self) return;
+        const QString err = r.value(QStringLiteral("error")).toString();
+        if (!err.isEmpty())
+            qWarning() << "package_downloader.refreshCatalog reported:" << err;
+        self->refresh();
+    });
+}
+
 void PackageCoordinator::cancelPendingAction(const QString& moduleName)
 {
     if (m_pendingAction.op == PendingOp::None || m_pendingAction.name != moduleName) {

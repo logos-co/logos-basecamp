@@ -219,7 +219,7 @@ Rectangle {
                             iconSource: LogosIcons.refresh
                             size: 36
                             iconSize: 18
-                            iconColor: Theme.palette.textTertiary
+                            iconColor: Theme.palette.text
                             background: Rectangle {
                                 radius: Theme.spacing.radiusLarge
                                 color: parent.hovered ? Theme.palette.backgroundButton

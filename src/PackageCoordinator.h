@@ -136,6 +136,10 @@ public slots:
     // had a chance to connect.
     Q_INVOKABLE void refresh();
 
+    // User-initiated "Reload apps" from the App Manager. Forces the
+    // downloader to re-fetch every enabled repo's logos-repo.json
+    Q_INVOKABLE void remoteRefresh();
+
     // Package-repository management — thin wrappers around the
     // package_downloader IPC surface
     Q_INVOKABLE void refreshRepositories();
