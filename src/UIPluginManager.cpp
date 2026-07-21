@@ -10,9 +10,12 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QPointer>
+#include <QQmlContext>
 #include <QQuickWidget>
 #include <QSet>
 #include <QUrl>
+
+#include "LogosQmlBridge.h"
 
 #include <ViewModuleHost.h>
 
@@ -226,6 +229,32 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
         m_viewModuleHosts[name] = viewHost;
     m_uiModuleWidgets[name] = widget;
     m_loadedApps.insert(name);
+
+    // TODO - check if this generic enough for extedning different capabilities 
+    // from basecamp to other apps
+    // For ui_qml view modules, wire up any signals we care about from the
+    // QtRO replica before QML sees the widget. The replica is already
+    // created inside LogosQmlBridge at this point (setViewModuleSocket was
+    // called in PluginLoader::onHostReady before pluginLoaded was emitted);
+    // it may not yet be Valid, but Qt signal/slot connections work regardless
+    // of replica state — the connection will fire when the source emits.
+    if (type == UIPluginType::UiQml) {
+        auto* qw = m_qmlPluginWidgets.value(name);
+        if (qw) {
+            auto* bridge = qobject_cast<LogosQmlBridge*>(
+                qw->rootContext()->contextProperty(QStringLiteral("logos"))
+                    .value<QObject*>());
+            if (bridge) {
+                if (name == QStringLiteral("package_manager_ui")) {
+                    QObject* replica = bridge->module(name);
+                    if (replica) {
+                        connect(replica, SIGNAL(navigateToRepositoriesRequested()),
+                                this,    SIGNAL(navigateToRepositoriesRequested()));
+                    }
+                }
+            }
+        }
+    }
 
     emit uiModulesChanged();
     emit launcherAppsChanged();

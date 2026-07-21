@@ -82,6 +82,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,              &MainUIBackend::currentVisibleAppChanged);
     connect(m_uiPluginManager, &UIPluginManager::navigateToApps,
             this,              &MainUIBackend::navigateToApps);
+    connect(m_uiPluginManager, &UIPluginManager::navigateToRepositoriesRequested,
+            this,              &MainUIBackend::navigateToRepositoriesRequested);
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
             this,              &MainUIBackend::missingDepsPopupRequested);
     connect(m_uiPluginManager, &UIPluginManager::unloadCascadeConfirmationRequested,

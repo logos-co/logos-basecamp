@@ -19,6 +19,10 @@ Item {
         function onRepositoryOperationCompleted(operation, url, success, error) {
             settingsView.reportRepositoryResult(operation, url, success, error)
         }
+        function onNavigateToRepositoriesRequested() {
+            backend.setCurrentActiveSectionIndex(root.sidebarSettings)
+            settingsView.showRepositories()
+        }
     }
 
     Rectangle {

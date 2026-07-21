@@ -222,6 +222,7 @@ signals:
     void currentVisibleAppChanged();
     void loadingModulesChanged();
     void navigateToApps();
+    void navigateToRepositoriesRequested();
 
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installConfirm + uninstallCascade come from
