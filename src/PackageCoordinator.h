@@ -70,9 +70,9 @@ public:
     QVariantList repositories() const { return m_repositories; }
     bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
 
-    // True until the first successful populateAppsModel() — drives the
-    // App Manager's loading placeholder. Stays false on subsequent refreshes
-    // so a background catalog re-fetch doesn't wipe the visible grid.
+    // True during the initial catalog populate and during a user-initiated
+    // App Manager Reload (remoteRefresh). Background refreshes (file-install
+    // events, etc.) leave this false so they don't flash the overlay.
     bool appsLoading() const { return m_appsLoading; }
 
 public slots:

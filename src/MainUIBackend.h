@@ -86,8 +86,13 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
 
-    // App Manager loading state — true until the first catalog populate.
+    // App Manager loading state — true until the first catalog populate,
+    // and again during a user-initiated Reload (remoteRefresh).
     Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
+
+    // Settings → Modules Reload overlay. Ref-counted so UI + Core refreshes
+    // kicked together (e.g. on tab show) share one spinner.
+    Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
@@ -113,6 +118,7 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     bool appsLoading() const;
+    bool modulesLoading() const;
 
     // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
     // a handle to the managers directly. QML goes through the delegating
@@ -259,12 +265,16 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
+    void modulesLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
                                       const QString& url,
                                       bool success,
                                       const QString& error);
 
 private:
+    void beginModulesLoading();
+    void endModulesLoading();
+
     // Navigation state — the only state this facade class holds.
     int m_currentActiveSectionIndex;
 
@@ -281,4 +291,8 @@ private:
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;
+
+    // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
+    int  m_modulesLoadingCount = 0;
+    bool m_pendingUiModulesRefresh = false;
 };

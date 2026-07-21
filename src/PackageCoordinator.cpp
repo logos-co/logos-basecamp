@@ -549,6 +549,11 @@ void PackageCoordinator::refresh()
 
 void PackageCoordinator::remoteRefresh()
 {
+    if (!m_appsLoading) {
+        m_appsLoading = true;
+        emit appsLoadingChanged();
+    }
+
     LogosAPIClient* dlClient = m_logosAPI
         ? m_logosAPI->getClient("package_downloader")
         : nullptr;
@@ -871,7 +876,14 @@ void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
 
 void PackageCoordinator::fetchUiPluginMetadata()
 {
-    if (!m_logosAPI) return;
+    if (!m_logosAPI) {
+        if (m_appsLoading) {
+            m_appsLoading = false;
+            emit appsLoadingChanged();
+        }
+        emit uiModulesChanged();
+        return;
+    }
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
@@ -928,6 +940,11 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
     }
 
     if (retriesLeft <= 0) {
+        // Give up — drop the App Manager overlay so Reload doesn't stick.
+        if (m_appsLoading) {
+            m_appsLoading = false;
+            emit appsLoadingChanged();
+        }
         return;
     }
 

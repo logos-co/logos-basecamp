@@ -218,6 +218,16 @@ qt_add_qml_module(basecamp_backend_qml
         AppsFilterProxy.cpp
 )
 
+qt_add_qml_module(basecamp_common_qml
+    URI Basecamp.Common
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Common
+    QML_FILES
+        Basecamp/Common/LoadingOverlay.qml
+)
+
 qt_add_qml_module(basecamp_sidebar_qml
     URI Basecamp.Sidebar
     VERSION 1.0
@@ -382,12 +392,14 @@ target_link_libraries(main_ui
         component-interfaces
         ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
         basecamp_backend_qml
+        basecamp_common_qml
         basecamp_sidebar_qml
         basecamp_appmanager_qml
         basecamp_settings_qml
         basecamp_shell_qml
         basecamp_icons_qml
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_backend_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_sidebar_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_settings_qmlplugin>

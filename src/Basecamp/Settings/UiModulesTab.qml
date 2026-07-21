@@ -1,7 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+
 import Logos.Controls
+import Logos.Icons
+import Logos.Theme
+
+import Basecamp.Common
 
 Item {
     id: root
@@ -31,30 +36,21 @@ Item {
                 }
             }
 
-            // Reload — matches the Core Modules tab. Pushes a full metadata
-            // + dependency-info refresh; useful after installing a package
-            // from disk when you want to see installType / deps update
-            // without restarting Basecamp.
-            Button {
-                text: "Reload"
+            LogosButton {
+                id: reloadBtn
+                objectName: "uiModules.reloadButton"
+                Layout.minimumWidth: 80
+                Layout.preferredWidth: 130
+                Layout.maximumWidth: 130
+                Layout.preferredHeight: 40
+                radius: Theme.spacing.radiusLarge
+                text: qsTr("Reload")
+                enabled: !backend.modulesLoading
+                Component.onCompleted: {
+                    reloadBtn.icon.source = LogosIcons.refresh
+                    reloadBtn.icon.size = 18
+                }
                 onClicked: backend.refreshUiModules()
-
-                contentItem: LogosText {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: "#ffffff"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 100
-                    implicitHeight: 32
-                    color: parent.pressed ? "#3d3d3d" : "#4d4d4d"
-                    radius: 4
-                    border.color: "#5d5d5d"
-                    border.width: 1
-                }
             }
         }
 
@@ -231,5 +227,11 @@ Item {
                 }
             }
         }
+    }
+
+    // Same Reload feedback as Package Manager UI / App Manager.
+    LoadingOverlay {
+        anchors.fill: parent
+        visible: backend.modulesLoading
     }
 }

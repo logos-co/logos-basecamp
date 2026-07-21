@@ -66,6 +66,14 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // we only need to listen to UIPluginManager here.
     connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged,
             this,              &MainUIBackend::uiModulesChanged);
+    // Clear the Modules Reload overlay once the user-initiated UI refresh
+    // lands its first uiModulesChanged (list is already updated by then).
+    connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged,
+            this, [this]() {
+                if (!m_pendingUiModulesRefresh) return;
+                m_pendingUiModulesRefresh = false;
+                endModulesLoading();
+            });
     connect(m_uiPluginManager, &UIPluginManager::launcherAppsChanged,
             this,              &MainUIBackend::launcherAppsChanged);
     connect(m_uiPluginManager, &UIPluginManager::loadingModulesChanged,
@@ -224,7 +232,14 @@ void MainUIBackend::activateApp(const QString& n)             { m_uiPluginManage
 void MainUIBackend::confirmUnloadCascade(const QString& n)    { m_uiPluginManager->confirmUnloadCascade(n); }
 void MainUIBackend::loadCoreModule(const QString& n)          { m_uiPluginManager->loadCoreModule(n); }
 void MainUIBackend::unloadCoreModule(const QString& n)        { m_uiPluginManager->unloadCoreModule(n); }
-void MainUIBackend::refreshUiModules()                        { m_uiPluginManager->refreshUiModules(); }
+void MainUIBackend::refreshUiModules()
+{
+    if (!m_pendingUiModulesRefresh) {
+        beginModulesLoading();
+        m_pendingUiModulesRefresh = true;
+    }
+    m_uiPluginManager->refreshUiModules();
+}
 void MainUIBackend::onAppLauncherClicked(const QString& n)    { m_uiPluginManager->onAppLauncherClicked(n); }
 void MainUIBackend::setCurrentVisibleApp(const QString& n)    { m_uiPluginManager->setCurrentVisibleApp(n); }
 
@@ -265,6 +280,23 @@ QVariantList MainUIBackend::repositories() const        { return m_packageCoordi
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
+
+bool MainUIBackend::modulesLoading() const
+{ return m_modulesLoadingCount > 0; }
+
+void MainUIBackend::beginModulesLoading()
+{
+    if (++m_modulesLoadingCount == 1)
+        emit modulesLoadingChanged();
+}
+
+void MainUIBackend::endModulesLoading()
+{
+    if (m_modulesLoadingCount <= 0) return;
+    if (--m_modulesLoadingCount == 0)
+        emit modulesLoadingChanged();
+}
+
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
 void MainUIBackend::refreshAppCatalog()                                    { m_packageCoordinator->remoteRefresh(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
@@ -273,7 +305,12 @@ void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_p
 
 // --- CoreModuleManager delegations ----------------------------------------
 
-void    MainUIBackend::refreshCoreModules()                         { m_coreModuleManager->refresh(); }
+void MainUIBackend::refreshCoreModules()
+{
+    beginModulesLoading();
+    m_coreModuleManager->refresh();
+    QTimer::singleShot(0, this, [this]() { endModulesLoading(); });
+}
 QString MainUIBackend::getCoreModuleMethods(const QString& n)       { return m_coreModuleManager->getMethods(n); }
 QString MainUIBackend::getCoreModuleEvents(const QString& n)        { return m_coreModuleManager->getEvents(n); }
 QString MainUIBackend::callCoreModuleMethod(const QString& n,

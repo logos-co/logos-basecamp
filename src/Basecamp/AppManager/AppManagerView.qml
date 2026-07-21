@@ -7,6 +7,7 @@ import Logos.Icons
 import Logos.Theme
 
 import Basecamp.Backend
+import Basecamp.Common
 
 Rectangle {
     id: root
@@ -173,17 +174,10 @@ Rectangle {
                 radius: Theme.spacing.radiusXlarge
                 clip: true
 
-                LogosSpinner {
-                    anchors.centerIn: parent
-                    visible: root.loading
-                    running: root.loading
-                }
-
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: Theme.spacing.large
                     spacing: Theme.spacing.medium
-                    visible: !root.loading
 
                     // ─── Panel header: title + install-state tabs + view toggle ───
                     RowLayout {
@@ -215,29 +209,28 @@ Rectangle {
 
                         Item { Layout.fillWidth: true }
 
-                        LogosIconButton {
-                            iconSource: LogosIcons.refresh
-                            size: 36
-                            iconSize: 18
-                            iconColor: Theme.palette.text
-                            background: Rectangle {
-                                radius: Theme.spacing.radiusLarge
-                                color: parent.hovered ? Theme.palette.backgroundButton
-                                                      : "transparent"
-                            }
-                            ToolTip.text: qsTr("Reload apps")
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 500
+                        LogosButton {
+                            id: reloadBtn
+                            objectName: "appManager.reloadButton"
+                            Layout.minimumWidth: 80
+                            Layout.preferredWidth: 130
+                            Layout.maximumWidth: 130
+                            Layout.preferredHeight: 40
+                            radius: Theme.spacing.radiusLarge
+                            text: qsTr("Reload")
+                            icon.source: LogosIcons.refresh
+                            icon.size: 18
+                            enabled: !root.loading
                             onClicked: root.refreshRequested()
                         }
 
                         LogosButton {
                             Layout.minimumWidth: 100
-                            Layout.preferredWidth: 130
-                            Layout.maximumWidth: 130
+                            Layout.preferredWidth: 150
+                            Layout.maximumWidth: 150
                             Layout.preferredHeight: 40
                             radius: Theme.spacing.radiusLarge
-                            text: qsTr("Repositories")
+                            text: qsTr("Manage Repositories")
                             onClicked: root.navigateToRepositories()
                         }
 
@@ -367,5 +360,11 @@ Rectangle {
                 }
             }
         }
+    }
+
+    // Global loading overlay — matches Package Manager UI's Reload feedback.
+    LoadingOverlay {
+        anchors.fill: parent
+        visible: root.loading
     }
 }
