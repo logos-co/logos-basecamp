@@ -171,6 +171,10 @@ private:
 
     // UI-plugin helpers. All read from m_uiPluginMetadata.
     QStringList findAvailableUiPlugins() const;
+
+    // Force-reload a currently-loaded plugin's widget windowIcon from
+    // disk, bypassing Qt's path-keyed pixmap cache
+    void reloadLoadedPluginIcon(const QString& name, QWidget* widget) const;
     void loadLegacyUiModule(const QString& moduleName);
     QString resolveQmlViewPath(const QVariantMap& meta) const;
     QString getPluginPath(const QString& name) const;

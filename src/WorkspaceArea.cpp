@@ -14,6 +14,7 @@
 #include <QKeySequence>
 #include <QMouseEvent>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -415,6 +416,7 @@ void WorkspaceArea::addPluginDock(QWidget* pluginWidget,
         dock->setTitleBarWidget(new ZeroTitleWidget(dock));
     }
     dock->installEventFilter(this);
+    pluginWidget->installEventFilter(this);
 
     const QIcon icon = pluginWidget->windowIcon();
     if (!icon.isNull()) dock->setWindowIcon(icon);
@@ -772,6 +774,30 @@ bool WorkspaceArea::eventFilter(QObject* watched, QEvent* event)
                 emit pluginClosed(moduleName);
                 event->ignore();
                 return true;
+            }
+        }
+    }
+
+    // Plugin widget's windowIcon was refreshed
+    if (event->type() == QEvent::WindowIconChange) {
+        if (auto* widget = qobject_cast<QWidget*>(watched)) {
+            for (auto it = m_docks.cbegin(); it != m_docks.cend(); ++it) {
+                QWidget* dw = it.value()->widget();
+                if (auto* card = dynamic_cast<DockCard*>(dw))
+                    dw = card->pluginWidget();
+                if (dw != widget) continue;
+
+                const QIcon icon = widget->windowIcon();
+                it.value()->setWindowIcon(icon);
+                const QString& name = it.key();
+                for (QTabBar* tabBar : std::as_const(m_styledTabBars)) {
+                    if (!tabBar) continue;
+                    for (int i = 0; i < tabBar->count(); ++i) {
+                        if (moduleNameForTabText(tabBar->tabText(i)) == name)
+                            tabBar->setTabIcon(i, icon);
+                    }
+                }
+                break;
             }
         }
     }

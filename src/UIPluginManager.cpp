@@ -6,6 +6,9 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QIcon>
+#include <QPixmap>
 #include <QPointer>
 #include <QQuickWidget>
 #include <QSet>
@@ -101,11 +104,33 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
         }
         m_uiPluginMetadata[name] = pluginInfo;
     }
+
+    for (auto it = m_qmlPluginWidgets.cbegin(); it != m_qmlPluginWidgets.cend(); ++it)
+        reloadLoadedPluginIcon(it.key(), it.value());
+    for (auto it = m_uiModuleWidgets.cbegin(); it != m_uiModuleWidgets.cend(); ++it)
+        reloadLoadedPluginIcon(it.key(), it.value());
+
     // Immediate emit — the package-state caches (installType, missingDeps)
     // on PackageCoordinator may still be refreshing, but the list of UI plugins
     // has changed now and QML should reflect that.
     emit uiModulesChanged();
     emit launcherAppsChanged();
+}
+
+void UIPluginManager::reloadLoadedPluginIcon(const QString& name, QWidget* widget) const
+{
+    if (!widget) return;
+    const QString iconPath = pluginIconUrl(name, /*forWidgetIcon=*/true);
+    if (iconPath.isEmpty()) return;
+    // qrc-scheme icons are compiled in and can't have changed on disk.
+    if (iconPath.startsWith(QLatin1String(":/"))) return;
+
+    QFile f(iconPath);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    QPixmap pm;
+    if (!pm.loadFromData(f.readAll())) return;
+
+    widget->setWindowIcon(QIcon(pm));
 }
 
 QVariantList UIPluginManager::uiModules() const
@@ -739,7 +764,12 @@ QString UIPluginManager::pluginIconUrl(const QString& pluginName, bool forWidget
         qWarning() << "Plugin icon not found, expected:" << filePath;
         return QString();
     }
-    return exists ? QUrl::fromLocalFile(filePath).toString() : (iconPath.startsWith(":/") ? "qrc" + iconPath : QString());
+    if (!exists) {
+        return iconPath.startsWith(":/") ? "qrc" + iconPath : QString();
+    }
+    const qint64 mtimeMs = QFileInfo(filePath).lastModified().toMSecsSinceEpoch();
+    return QUrl::fromLocalFile(filePath).toString()
+         + QStringLiteral("?v=") + QString::number(mtimeMs);
 }
 
 QStringList UIPluginManager::intersectWithLoaded(const QStringList& moduleNames) const
