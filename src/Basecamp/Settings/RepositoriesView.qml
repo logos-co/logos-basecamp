@@ -109,6 +109,53 @@ Item {
                 }
             }
 
+            // Add a repository form.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing.small
+
+                LogosText {
+                    text: qsTr("Add a repository")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightMedium
+                    color: Theme.palette.text
+                }
+                LogosText {
+                    text: qsTr("Paste the URL of a logos-repo.json index.")
+                    font.pixelSize: Theme.typography.secondaryText
+                    color: Theme.palette.textTertiary
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing.tiny
+                    spacing: Theme.spacing.small
+
+                    LogosTextField {
+                        id: urlInput
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("https://example.com/logos-repo.json")
+                        text: d.newRepoUrl
+                        onTextChanged: if (text !== d.newRepoUrl) d.newRepoUrl = text
+                    }
+                    LogosButton {
+                        text: qsTr("Add")
+                        enabled: d.newRepoUrl.trim().length > 0
+                        implicitWidth: 100
+                        implicitHeight: 40
+                        onClicked: root.addRequested(d.newRepoUrl.trim())
+                    }
+                }
+            }
+
+            // Divider below the add form.
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.bottomMargin: Theme.spacing.medium
+                Layout.preferredHeight: 1
+                color: Theme.palette.borderSubtle
+            }
+
             // Repository list.
             Repeater {
                 model: root.repositories
@@ -239,52 +286,6 @@ Item {
                       : qsTr("No repositories configured.")
                 color: Theme.palette.textTertiary
                 font.pixelSize: Theme.typography.secondaryText
-            }
-
-            // Divider above the add form.
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing.medium
-                Layout.preferredHeight: 1
-                color: Theme.palette.borderSubtle
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacing.small
-
-                LogosText {
-                    text: qsTr("Add a repository")
-                    font.pixelSize: Theme.typography.subtitleText
-                    font.weight: Theme.typography.weightMedium
-                    color: Theme.palette.text
-                }
-                LogosText {
-                    text: qsTr("Paste the URL of a logos-repo.json index.")
-                    font.pixelSize: Theme.typography.secondaryText
-                    color: Theme.palette.textTertiary
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: Theme.spacing.tiny
-                    spacing: Theme.spacing.small
-
-                    LogosTextField {
-                        id: urlInput
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("https://example.com/logos-repo.json")
-                        text: d.newRepoUrl
-                        onTextChanged: if (text !== d.newRepoUrl) d.newRepoUrl = text
-                    }
-                    LogosButton {
-                        text: qsTr("Add")
-                        enabled: d.newRepoUrl.trim().length > 0
-                        implicitWidth: 100
-                        implicitHeight: 40
-                        onClicked: root.addRequested(d.newRepoUrl.trim())
-                    }
-                }
             }
 
             Item { Layout.fillHeight: true; Layout.minimumHeight: 1 }
