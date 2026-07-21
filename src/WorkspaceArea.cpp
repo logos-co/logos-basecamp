@@ -584,9 +584,16 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
                 emit pluginClosed(moduleName);
             });
 
-    // Track tab-current changes so we can update plugin isActiveTab.
+    // Track tab-current changes so we can update plugin isActiveTab and
+    // sync the sidebar's active-app highlight (backend.currentVisibleApp).
     connect(tabBar, &QTabBar::currentChanged, this,
-            [this]() { updateQmlPluginActiveStates(); });
+            [this, tabBar](int index) {
+                updateQmlPluginActiveStates();
+                const QString name = index >= 0
+                    ? moduleNameForTabText(tabBar->tabText(index))
+                    : QString();
+                emit activeAppChanged(name);
+            });
 }
 
 void WorkspaceArea::installTabBarCloseButtons(QTabBar* tabBar)

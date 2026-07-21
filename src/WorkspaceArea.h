@@ -37,6 +37,9 @@ public:
 signals:
     void pluginClosed(const QString& moduleName);
     void installClicked();
+    // Emitted when the front-most dock changes (tab click, close, activate).
+    // Empty string when no real dock is current (welcome page).
+    void activeAppChanged(const QString& moduleName);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

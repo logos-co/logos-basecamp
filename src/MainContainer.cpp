@@ -112,6 +112,12 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     connect(m_workspaceArea, &WorkspaceArea::pluginClosed,
             m_backend, &MainUIBackend::unloadUiModule);
 
+    // Keep the sidebar's active-app highlight in sync with the front-most
+    // dock — QDockWidget tab clicks bypass onAppLauncherClicked, so without
+    // this the sidebar stays stuck on whichever app was last launched.
+    connect(m_workspaceArea, &WorkspaceArea::activeAppChanged,
+            m_backend, &MainUIBackend::setCurrentVisibleApp);
+
     // WelcomePage "Install now" CTA → jump to Applications view.
     connect(m_workspaceArea, &WorkspaceArea::installClicked, m_backend, [this]() {
         m_backend->setCurrentActiveSectionIndex(1);
