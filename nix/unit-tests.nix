@@ -1,4 +1,4 @@
-{ pkgs, src }:
+{ pkgs, src, logosPackageHeaders }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-unit-tests";
@@ -21,7 +21,8 @@ pkgs.stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    cmake -S tests -B build-unit-tests -GNinja -DCMAKE_BUILD_TYPE=Debug
+    cmake -S tests -B build-unit-tests -GNinja -DCMAKE_BUILD_TYPE=Debug \
+      -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include"
     cmake --build build-unit-tests
     runHook postBuild
   '';

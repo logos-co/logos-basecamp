@@ -637,14 +637,12 @@ void WorkspaceArea::insetTabBarGeometry(QTabBar* tabBar, int insetPx)
 
 void WorkspaceArea::styleAllTabBars()
 {
+    static const char* kStyledMarker = "logosStyled";
     for (auto* tabBar : findChildren<QTabBar*>()) {
-        if (!m_styledTabBars.contains(tabBar)) {
-            m_styledTabBars.insert(tabBar);
+        if (!tabBar->property(kStyledMarker).toBool()) {
+            tabBar->setProperty(kStyledMarker, true);
             customizeTabBarStyle(tabBar);
             tabBar->installEventFilter(this);
-            connect(tabBar, &QObject::destroyed, this, [this, tabBar]() {
-                m_styledTabBars.remove(tabBar);
-            });
         }
         // Re-run close-button install in case Qt grew the tab count.
         installTabBarCloseButtons(tabBar);
@@ -790,8 +788,7 @@ bool WorkspaceArea::eventFilter(QObject* watched, QEvent* event)
                 const QIcon icon = widget->windowIcon();
                 it.value()->setWindowIcon(icon);
                 const QString& name = it.key();
-                for (QTabBar* tabBar : std::as_const(m_styledTabBars)) {
-                    if (!tabBar) continue;
+                for (QTabBar* tabBar : findChildren<QTabBar*>()) {
                     for (int i = 0; i < tabBar->count(); ++i) {
                         if (moduleNameForTabText(tabBar->tabText(i)) == name)
                             tabBar->setTabIcon(i, icon);

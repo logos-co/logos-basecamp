@@ -496,6 +496,102 @@ private slots:
             QVERIFY(bar->tabIcon(i).isNull());
     }
 
+    // --- Icon refresh on live plugin widget (basecamp#137) ----------------
+    //
+    // After a .lgx reinstall, UIPluginManager reloads the plugin widget's
+    // windowIcon in place
+
+    void iconChangeOnPluginWidget_propagatesToDock()
+    {
+        WorkspaceArea ws;
+
+        QPixmap redPm(16, 16);  redPm.fill(Qt::red);
+        QPixmap bluePm(16, 16); bluePm.fill(Qt::blue);
+
+        QWidget* w = makePluginWidget("A");
+        w->setWindowIcon(QIcon(redPm));
+        ws.addPluginDock(w, "A");
+        processDeferred();
+
+        QDockWidget* dock = ws.dockFor("A");
+        QVERIFY(dock != nullptr);
+        const auto initialKey = dock->windowIcon().cacheKey();
+        QVERIFY(!dock->windowIcon().isNull());
+
+        // Simulate the reinstall: UIPluginManager calls setWindowIcon
+        // with a fresh QIcon on the widget. This fires WindowIconChange.
+        w->setWindowIcon(QIcon(bluePm));
+        processDeferred();
+
+        QVERIFY2(dock->windowIcon().cacheKey() != initialKey,
+                 "Dock windowIcon must update when the plugin widget's "
+                 "windowIcon changes — WindowIconChange event filter is "
+                 "the propagation mechanism (basecamp#137).");
+    }
+
+    void iconChangeOnPluginWidget_propagatesToTabBar()
+    {
+        WorkspaceArea ws;
+
+        QPixmap redPm(16, 16);   redPm.fill(Qt::red);
+        QPixmap bluePm(16, 16);  bluePm.fill(Qt::blue);
+        QPixmap greenPm(16, 16); greenPm.fill(Qt::green);
+
+        // Two docks so a tab bar is guaranteed (single dock has no tab bar).
+        QWidget* a = makePluginWidget("A");
+        a->setWindowIcon(QIcon(redPm));
+        QWidget* b = makePluginWidget("B");
+        b->setWindowIcon(QIcon(bluePm));
+
+        ws.addPluginDock(a, "A");
+        ws.addPluginDock(b, "B");
+        processDeferred();
+
+        QTabBar* bar = tabBarOf(ws);
+        QVERIFY(bar != nullptr);
+        const int iA = tabIndexFor(bar, "A");
+        QVERIFY2(iA >= 0, "Tab for plugin A must exist");
+        const auto initialKey = bar->tabIcon(iA).cacheKey();
+        QVERIFY(!bar->tabIcon(iA).isNull());
+
+        a->setWindowIcon(QIcon(greenPm));
+        processDeferred();
+
+        QVERIFY2(bar->tabIcon(iA).cacheKey() != initialKey,
+                 "Tab-bar icon for A must update when plugin widget A's "
+                 "windowIcon changes (basecamp#137).");
+    }
+
+    // Regression: setWindowIcon on plugin B must NOT touch dock A's icon.
+    // Guards against the event filter mis-matching widget → dock via
+    // (say) always taking the first dock, or forgetting the widget-equality
+    // check inside the eventFilter branch.
+    void iconChangeIsScopedToCorrectDock()
+    {
+        WorkspaceArea ws;
+
+        QPixmap redPm(16, 16);  redPm.fill(Qt::red);
+        QPixmap bluePm(16, 16); bluePm.fill(Qt::blue);
+        QPixmap greenPm(16, 16); greenPm.fill(Qt::green);
+
+        QWidget* a = makePluginWidget("A");
+        a->setWindowIcon(QIcon(redPm));
+        QWidget* b = makePluginWidget("B");
+        b->setWindowIcon(QIcon(bluePm));
+
+        ws.addPluginDock(a, "A");
+        ws.addPluginDock(b, "B");
+        processDeferred();
+
+        const auto initialAKey = ws.dockFor("A")->windowIcon().cacheKey();
+
+        // Change only B's icon.
+        b->setWindowIcon(QIcon(greenPm));
+        processDeferred();
+
+        QCOMPARE(ws.dockFor("A")->windowIcon().cacheKey(), initialAKey);
+    }
+
     // --- Welcome-page central widget --------------------------------------
     //
     // WorkspaceArea shows a QML WelcomePage as its central widget when

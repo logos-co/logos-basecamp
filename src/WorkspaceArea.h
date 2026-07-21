@@ -3,7 +3,6 @@
 #include <QMainWindow>
 #include <QMap>
 #include <QPointer>
-#include <QSet>
 #include <QStringList>
 
 class QDockWidget;
@@ -68,7 +67,6 @@ private:
     QStringList                 m_dockOrder;
     QDockWidget*                m_firstDock = nullptr;
     QPointer<QDockWidget>       m_phantomDock;
-    QSet<QTabBar*>              m_styledTabBars;
     bool                        m_sideBySide = false;
     QQuickWidget*               m_welcomeWidget = nullptr;
 };

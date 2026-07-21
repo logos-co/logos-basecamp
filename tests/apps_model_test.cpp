@@ -12,6 +12,7 @@
 
 #include "AppsModel.h"
 #include "InstallEnums.h"
+#include "InstallRegistry.h"
 
 #include <QtTest/QtTest>
 #include <QVariantList>
@@ -20,6 +21,34 @@
 namespace {
 
 // ── DSL: small builders so each test reads like its scenario ──────────────
+
+// Bridge to the pre-InstallRegistry AppsModel API. Older tests called
+// model.setInstallStage(name, stage[, error]); today AppsModel reads stage
+// via a separate InstallRegistry. These helpers keep the tests readable
+// without touching the InstallRegistry contract line-by-line:
+//   - `stage(reg, name, InstallStage::Installing)` — begin() + setStage()
+//   - `stageFailed(reg, name, err)`                — begin() + fail()
+// InstallRegistry::setStage/fail no-op if the name isn't already begun,
+// so begin() first (using empty target strings — not part of the assertion).
+inline void stage(InstallRegistry& reg,
+                  const QString& name,
+                  InstallStage::Value s)
+{
+    reg.begin(name, /*targetVersion=*/QString(),
+                    /*targetHash=*/QString(),
+                    /*startedByTopLevel=*/name);
+    reg.setStage(name, s);
+}
+
+inline void stageFailed(InstallRegistry& reg,
+                        const QString& name,
+                        const QString& error)
+{
+    reg.begin(name, /*targetVersion=*/QString(),
+                    /*targetHash=*/QString(),
+                    /*startedByTopLevel=*/name);
+    reg.fail(name, error);
+}
 
 QVariantMap makeDep(const QString& name, const QString& version = {})
 {
@@ -562,17 +591,18 @@ private slots:
     void installStageIsolatedAcrossRowsOnPartialFailure()
     {
         AppsModel model;
+        InstallRegistry reg;
+        model.setInstallRegistry(&reg);
         model.replaceCatalog({
             makeCatalogRow("repo1", "module_a", "1.0", "H_a"),
             makeCatalogRow("repo1", "module_b", "1.0", "H_b"),
         });
 
         // Simulate installResultsSequential's per-row stage transitions.
-        model.setInstallStage("module_a", InstallStage::Installing);
-        model.setInstallStage("module_a", InstallStage::Installed);
-        model.setInstallStage("module_b", InstallStage::Installing);
-        model.setInstallStage("module_b", InstallStage::Failed,
-                              "package_manager returned no path");
+        stage(reg, "module_a", InstallStage::Installing);
+        stage(reg, "module_a", InstallStage::Installed);
+        stage(reg, "module_b", InstallStage::Installing);
+        stageFailed(reg, "module_b", "package_manager returned no path");
 
         int stageRole = -1, errorRole = -1, nameRole = -1;
         const auto& roles = model.roleNames();
@@ -605,7 +635,9 @@ private slots:
                  QStringLiteral("package_manager returned no path"));
     }
 
-    // ── Regression: setResolverOverlay clears sticky installStage ──────
+    // ── Regression: coordinator clears sticky installStage on resolver
+    // overlay apply ────────────────────────────────────────────────────
+    //
     // Without this, a row left at InstallStage::Installed from a previous
     // install session keeps reading "Installed" in PackageRowDelegate's
     // stage switch on the next dialog open, masking a fresh action like
@@ -613,10 +645,12 @@ private slots:
     void resolverOverlayClearsStickyInstallStage()
     {
         AppsModel model;
+        InstallRegistry reg;
+        model.setInstallRegistry(&reg);
         model.replaceCatalog({
             makeCatalogRow("repo1", "wallet_module", "1.0", "H_mod"),
         });
-        model.setInstallStage("wallet_module", InstallStage::Installed);
+        stage(reg, "wallet_module", InstallStage::Installed);
 
         int stageRole = -1, nameRole = -1, repoRole = -1;
         const auto& roles = model.roleNames();
@@ -647,9 +681,8 @@ private slots:
         rr.action        = "reinstall";
         rr.toVersion     = "1.0";
         model.setResolverOverlay({rr});
+        reg.clear("wallet_module");
 
-        // Stage must be cleared so PackageRowDelegate's badge falls through
-        // to the action switch and renders "Reinstall".
         QCOMPARE(stageFor("wallet_module", "repo1"), InstallStage::None);
     }
 
@@ -853,12 +886,16 @@ private slots:
     void emptyCatalog_zero_rows_no_crash()
     {
         AppsModel model;
+        InstallRegistry reg;
+        model.setInstallRegistry(&reg);
         model.replaceCatalog({});
         QCOMPARE(model.rowCount(), 0);
-        // Mutators against empty model are no-ops.
+        // Mutators against empty model are no-ops — no row for AppsModel to
+        // mutate, and stage() through the registry has no matching row so
+        // the InstallStageRole read still yields None.
         model.markInstalled("anything", "1.0", "H");
         model.setMissingDeps("anything", { "x" });
-        model.setInstallStage("anything", InstallStage::Installed);
+        stage(reg, "anything", InstallStage::Installed);
         QCOMPARE(model.rowCount(), 0);
     }
 

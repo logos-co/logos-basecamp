@@ -11,12 +11,20 @@ enable_testing()
 
 set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 
+if(DEFINED LOGOS_PACKAGE_HEADERS)
+    set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
+endif()
+
 add_executable(apps_model_test
     apps_model_test.cpp
     ${BASECAMP_SRC}/AppsModel.cpp
     ${BASECAMP_SRC}/InstallEnums.cpp
+    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel reads/writes stage via InstallRegistry
 )
-target_include_directories(apps_model_test PRIVATE ${BASECAMP_SRC})
+target_include_directories(apps_model_test PRIVATE
+    ${BASECAMP_SRC}
+    ${LOGOS_PACKAGE_HEADERS_INCLUDE}
+)
 target_link_libraries(apps_model_test PRIVATE
     Qt6::Core
     Qt6::Qml     # InstallEnums.h pulls in <QtQml/qqml.h>
@@ -32,7 +40,10 @@ add_executable(apps_filter_proxy_test
     ${BASECAMP_SRC}/InstallEnums.cpp
     ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel now depends on InstallRegistry
 )
-target_include_directories(apps_filter_proxy_test PRIVATE ${BASECAMP_SRC})
+target_include_directories(apps_filter_proxy_test PRIVATE
+    ${BASECAMP_SRC}
+    ${LOGOS_PACKAGE_HEADERS_INCLUDE}
+)
 target_link_libraries(apps_filter_proxy_test PRIVATE
     Qt6::Core
     Qt6::Qml

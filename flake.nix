@@ -274,7 +274,9 @@
           # Pure-model unit tests (AppsModel install-status logic, etc.). Same
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
-          unit-tests = import ./nix/unit-tests.nix { inherit pkgs src; };
+          unit-tests = import ./nix/unit-tests.nix {
+            inherit pkgs src logosPackageHeaders;
+          };
 
           # QML component tests (Qt Quick Test)
           qml-tests = import ./nix/qml-tests.nix { inherit pkgs src; };
