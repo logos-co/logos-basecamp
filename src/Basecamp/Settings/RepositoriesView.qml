@@ -30,6 +30,7 @@ Item {
         id: d
         property string newRepoUrl: ""
         property string lastError: ""
+        property string pendingRemoveUrl: ""
     }
 
     ScrollView {
@@ -269,7 +270,14 @@ Item {
                                 text: qsTr("Remove")
                                 implicitWidth: 100
                                 implicitHeight: 32
-                                onClicked: root.removeRequested(url)
+                                onClicked: {
+                                    if (isDefault) {
+                                        d.pendingRemoveUrl = url
+                                        removeDefaultDialog.open()
+                                    } else {
+                                        root.removeRequested(url)
+                                    }
+                                }
                             }
                         }
                     }
@@ -289,5 +297,43 @@ Item {
 
             Item { Layout.fillHeight: true; Layout.minimumHeight: 1 }
         }
+    }
+
+    // Confirmation dialog for removing the default repository.
+    LogosWarningDialog {
+        id: removeDefaultDialog
+
+        anchors.centerIn: parent
+        title: qsTr("Remove default repository?")
+        width: 420
+
+        message: qsTr("The default Logos repository provides the official package catalog. "
+                      + "Copy the URL first if you want to restore it later — you can re-add it "
+                      + "by pasting it into the \"Add a repository\" field.")
+
+        leftActions: [
+            LogosButton {
+                text: qsTr("Cancel")
+                implicitWidth: 100
+                implicitHeight: 36
+                onClicked: {
+                    d.pendingRemoveUrl = ""
+                    removeDefaultDialog.close()
+                }
+            }
+        ]
+
+        rightActions: [
+            LogosButton {
+                text: qsTr("Remove")
+                implicitWidth: 100
+                implicitHeight: 36
+                onClicked: {
+                    root.removeRequested(d.pendingRemoveUrl)
+                    d.pendingRemoveUrl = ""
+                    removeDefaultDialog.close()
+                }
+            }
+        ]
     }
 }
