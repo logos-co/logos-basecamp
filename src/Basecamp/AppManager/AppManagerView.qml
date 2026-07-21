@@ -24,14 +24,13 @@ Rectangle {
     QtObject {
         id: d
 
-        readonly property var stateTabs: [
-            { label: qsTr("All"),           filter: "all" },
-            { label: qsTr("Installed"),     filter: "installed" },
-            { label: qsTr("Not Installed"), filter: "notInstalled" },
-        ]
-
-        readonly property string installStateFilter:
-            (d.stateTabs[stateTabBar.currentIndex]).filter || "all"
+        readonly property string installStateFilter: {
+            switch (stateTabBar.currentIndex) {
+            case 1:  return "installed"
+            case 2:  return "notInstalled"
+            default: return "all"
+            }
+        }
         onInstallStateFilterChanged:
             if (root.appsProxy) root.appsProxy.installStateFilter = installStateFilter
 
@@ -122,48 +121,68 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Theme.spacing.xlarge
+            spacing: Theme.spacing.medium
 
             // ─── Categories sidebar ───
-            ColumnLayout {
+            Item {
                 Layout.preferredWidth: 200
                 Layout.minimumWidth: 160
                 Layout.maximumWidth: 200
                 Layout.fillHeight: true
-                spacing: Theme.spacing.tiny
 
-                LogosText {
-                    Layout.topMargin: Theme.spacing.tiny
-                    Layout.bottomMargin: Theme.spacing.tiny
-                    text: qsTr("Categories")
-                    font.pixelSize: Theme.typography.subtitleText
-                    font.weight: Theme.typography.weightRegular
-                    color: Theme.palette.text
-                }
+                Flickable {
+                    id: categoriesScroll
+                    anchors.fill: parent
+                    clip: true
+                    contentWidth: width
+                    contentHeight: categoriesCol.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: LogosScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        visible: categoriesScroll.contentHeight > categoriesScroll.height
+                    }
 
-                ListView {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: contentHeight
-                    interactive: false
-                    spacing: Theme.spacing.tiny
-                    model: d.categories
-                    currentIndex: d.selectedCategoryIndex
+                    ColumnLayout {
+                        id: categoriesCol
+                        width: categoriesScroll.width
+                        spacing: Theme.spacing.tiny
 
-                    delegate: LogosItemDelegate {
-                        width: ListView.view.width
-                        text: modelData
-                        highlighted: ListView.isCurrentItem
-                        radius: Theme.spacing.radiusLarge
-                        highlightColor: Theme.palette.backgroundButton
-                        hoverColor: "transparent"
-                        textColor: (highlighted || hovered)
-                                       ? Theme.palette.text
-                                       : Theme.palette.textTertiary
-                        onClicked: d.selectedCategoryIndex = index
+                        LogosText {
+                            Layout.topMargin: Theme.spacing.tiny
+                            Layout.bottomMargin: Theme.spacing.tiny
+                            text: qsTr("Categories")
+                            font.pixelSize: Theme.typography.subtitleText
+                            font.weight: Theme.typography.weightRegular
+                            color: Theme.palette.text
+                        }
+
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: contentHeight
+                            interactive: false
+                            spacing: Theme.spacing.tiny
+                            model: d.categories
+                            currentIndex: d.selectedCategoryIndex
+
+                            delegate: SidebarNavItem {
+                                width: ListView.view.width
+                                text: modelData
+                                highlighted: ListView.isCurrentItem
+                                onClicked: d.selectedCategoryIndex = index
+                            }
+                        }
                     }
                 }
 
-                Item { Layout.fillWidth: true; Layout.fillHeight: true }
+                component SidebarNavItem: LogosItemDelegate {
+                    id: cell
+                    radius: Theme.spacing.radiusLarge
+                    highlightColor: Theme.palette.backgroundButton
+                    hoverColor: "transparent"
+                    textColor: (cell.highlighted || cell.hovered)
+                                   ? Theme.palette.text
+                                   : Theme.palette.textTertiary
+                }
             }
 
             // ─── Apps panel ───
@@ -194,17 +213,11 @@ Rectangle {
 
                         LogosTabBar {
                             id: stateTabBar
-
-                            Layout.preferredWidth: implicitWidth
                             spacing: Theme.spacing.large
 
-                            Repeater {
-                                model: d.stateTabs
-                                LogosTabButton {
-                                    required property var modelData
-                                    text: modelData.label
-                                }
-                            }
+                            LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
+                            LogosTabButton { text: qsTr("Installed") }
+                            LogosTabButton { text: qsTr("Not Installed") }
                         }
 
                         Item { Layout.fillWidth: true }
@@ -267,12 +280,6 @@ Rectangle {
                                 background: Item{}
                             }
                         }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.palette.borderSubtle
                     }
 
                     // Empty state — shown when no repositories are configured.

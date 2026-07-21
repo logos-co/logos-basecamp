@@ -69,48 +69,68 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Theme.spacing.xlarge
+            spacing: Theme.spacing.medium
 
             // ─── Sections sidebar (mirrors AppManagerView's categories pane) ───
-            ColumnLayout {
+            Item {
                 Layout.preferredWidth: 200
                 Layout.minimumWidth: 160
                 Layout.maximumWidth: 200
                 Layout.fillHeight: true
-                spacing: Theme.spacing.tiny
 
-                LogosText {
-                    Layout.topMargin: Theme.spacing.tiny
-                    Layout.bottomMargin: Theme.spacing.tiny
-                    text: qsTr("Sections")
-                    font.pixelSize: Theme.typography.subtitleText
-                    font.weight: Theme.typography.weightRegular
-                    color: Theme.palette.text
-                }
+                Flickable {
+                    id: sectionsScroll
+                    anchors.fill: parent
+                    clip: true
+                    contentWidth: width
+                    contentHeight: sectionsCol.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: LogosScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        visible: sectionsScroll.contentHeight > sectionsScroll.height
+                    }
 
-                ListView {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: contentHeight
-                    interactive: false
-                    spacing: Theme.spacing.tiny
-                    model: d.sections
-                    currentIndex: d.selectedIndex
+                    ColumnLayout {
+                        id: sectionsCol
+                        width: sectionsScroll.width
+                        spacing: Theme.spacing.tiny
 
-                    delegate: LogosItemDelegate {
-                        width: ListView.view.width
-                        text: modelData.label
-                        highlighted: ListView.isCurrentItem
-                        radius: Theme.spacing.radiusLarge
-                        highlightColor: Theme.palette.backgroundButton
-                        hoverColor: "transparent"
-                        textColor: (highlighted || hovered)
-                                       ? Theme.palette.text
-                                       : Theme.palette.textTertiary
-                        onClicked: d.selectedIndex = index
+                        LogosText {
+                            Layout.topMargin: Theme.spacing.tiny
+                            Layout.bottomMargin: Theme.spacing.tiny
+                            text: qsTr("Sections")
+                            font.pixelSize: Theme.typography.subtitleText
+                            font.weight: Theme.typography.weightRegular
+                            color: Theme.palette.text
+                        }
+
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: contentHeight
+                            interactive: false
+                            spacing: Theme.spacing.tiny
+                            model: d.sections
+                            currentIndex: d.selectedIndex
+
+                            delegate: SidebarNavItem {
+                                width: ListView.view.width
+                                text: modelData.label
+                                highlighted: ListView.isCurrentItem
+                                onClicked: d.selectedIndex = index
+                            }
+                        }
                     }
                 }
 
-                Item { Layout.fillWidth: true; Layout.fillHeight: true }
+                component SidebarNavItem: LogosItemDelegate {
+                    id: cell
+                    radius: Theme.spacing.radiusLarge
+                    highlightColor: Theme.palette.backgroundButton
+                    hoverColor: "transparent"
+                    textColor: (cell.highlighted || cell.hovered)
+                                   ? Theme.palette.text
+                                   : Theme.palette.textTertiary
+                }
             }
 
             // ─── Right pane ───
