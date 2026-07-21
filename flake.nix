@@ -317,6 +317,19 @@
         } else {})
       );
 
+      # nix run .                 → dev build  (depends on /nix/store at runtime)
+      # nix run .#portable        → portable build (self-contained, no nix-store paths)
+      apps = forAllSystems ({ system, ... }: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.app}/bin/LogosBasecamp";
+        };
+        portable = {
+          type = "app";
+          program = "${self.packages.${system}.portable}/bin/LogosBasecamp";
+        };
+      });
+
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;

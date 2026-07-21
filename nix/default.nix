@@ -51,5 +51,6 @@
   meta = with pkgs.lib; {
     description = "Logos Basecamp - Qt application with UI plugins";
     platforms = platforms.unix;
+    mainProgram = "LogosBasecamp";
   };
 }
