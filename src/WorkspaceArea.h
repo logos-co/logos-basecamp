@@ -33,6 +33,9 @@ public:
     QDockWidget* dockFor(const QString& moduleName) const { return m_docks.value(moduleName); }
     QString nameForWidget(QWidget* w) const;
     QQuickWidget* welcomePageWidget() const { return m_welcomeWidget; }
+    // Front-most plugin dock's QQuickWidget, or nullptr if none is up.
+    // Used by ShortcutBridge to reach dock plugin QML shortcuts.
+    QQuickWidget* activeDockWidget() const;
 
 signals:
     void pluginClosed(const QString& moduleName);

@@ -677,6 +677,20 @@ void WorkspaceArea::updateWelcomeVisibility()
     m_welcomeWidget->setVisible(m_docks.isEmpty());
 }
 
+QQuickWidget* WorkspaceArea::activeDockWidget() const
+{
+    for (auto it = m_docks.cbegin(); it != m_docks.cend(); ++it) {
+        QDockWidget* dock = it.value();
+        if (!dock || dock->visibleRegion().isEmpty()) continue;
+        QWidget* dockChild = dock->widget();
+        if (auto* card = dynamic_cast<DockCard*>(dockChild))
+            dockChild = card->pluginWidget();
+        if (auto* qw = qobject_cast<QQuickWidget*>(dockChild))
+            return qw;
+    }
+    return nullptr;
+}
+
 void WorkspaceArea::updateQmlPluginActiveStates()
 {
     const bool workspaceVisible = isVisible();

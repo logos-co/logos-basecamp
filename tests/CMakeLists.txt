@@ -15,59 +15,40 @@ if(DEFINED LOGOS_PACKAGE_HEADERS)
     set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
 endif()
 
-add_executable(apps_model_test
-    apps_model_test.cpp
-    ${BASECAMP_SRC}/AppsModel.cpp
-    ${BASECAMP_SRC}/InstallEnums.cpp
-    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel reads/writes stage via InstallRegistry
-)
-target_include_directories(apps_model_test PRIVATE
-    ${BASECAMP_SRC}
-    ${LOGOS_PACKAGE_HEADERS_INCLUDE}
-)
-target_link_libraries(apps_model_test PRIVATE
-    Qt6::Core
-    Qt6::Qml     # InstallEnums.h pulls in <QtQml/qqml.h>
-    Qt6::Test
-)
+# -----------------------------------------------------------------------
+# Auto-discovery: any tests/*_test.cpp file is picked up automatically.
+# -----------------------------------------------------------------------
 
-add_test(NAME apps_model_test COMMAND apps_model_test)
+file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*_test.cpp")
 
-add_executable(apps_filter_proxy_test
-    apps_filter_proxy_test.cpp
-    ${BASECAMP_SRC}/AppsModel.cpp
-    ${BASECAMP_SRC}/AppsFilterProxy.cpp
-    ${BASECAMP_SRC}/InstallEnums.cpp
-    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel now depends on InstallRegistry
-)
-target_include_directories(apps_filter_proxy_test PRIVATE
-    ${BASECAMP_SRC}
-    ${LOGOS_PACKAGE_HEADERS_INCLUDE}
-)
-target_link_libraries(apps_filter_proxy_test PRIVATE
-    Qt6::Core
-    Qt6::Qml
-    Qt6::Test
-)
-add_test(NAME apps_filter_proxy_test COMMAND apps_filter_proxy_test)
+foreach(test_src IN LISTS TEST_SOURCES)
+    get_filename_component(test_name "${test_src}" NAME_WE)
 
-add_executable(install_plugin_success_test
-    install_plugin_success_test.cpp
-)
-target_link_libraries(install_plugin_success_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME install_plugin_success_test COMMAND install_plugin_success_test)
+    # Read the top of the file and look for `// srcdeps: A.cpp B.cpp`.
+    file(READ "${test_src}" _head LIMIT 1024)
+    set(_extra_srcs "")
+    if(_head MATCHES "//[ \t]*srcdeps:[ \t]*([^\n]*)")
+        string(STRIP "${CMAKE_MATCH_1}" _deps_line)
+        string(REGEX REPLACE "[ \t]+" ";" _dep_list "${_deps_line}")
+        foreach(dep IN LISTS _dep_list)
+            if(dep)
+                list(APPEND _extra_srcs "${BASECAMP_SRC}/${dep}")
+            endif()
+        endforeach()
+    endif()
 
-add_executable(workspace_area_test
-    workspace_area_test.cpp
-    ${BASECAMP_SRC}/WorkspaceArea.cpp
-)
-target_include_directories(workspace_area_test PRIVATE ${BASECAMP_SRC})
-target_link_libraries(workspace_area_test PRIVATE
-    Qt6::Core
-    Qt6::Widgets
-    Qt6::Test
-    Qt6::Qml
-    Qt6::Quick
-    Qt6::QuickWidgets
-)
-add_test(NAME workspace_area_test COMMAND workspace_area_test)
+    add_executable(${test_name} ${test_src} ${_extra_srcs})
+    target_include_directories(${test_name} PRIVATE
+        ${BASECAMP_SRC}
+        ${LOGOS_PACKAGE_HEADERS_INCLUDE}
+    )
+    target_link_libraries(${test_name} PRIVATE
+        Qt6::Core
+        Qt6::Qml
+        Qt6::Widgets
+        Qt6::Quick
+        Qt6::QuickWidgets
+        Qt6::Test
+    )
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endforeach()

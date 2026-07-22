@@ -2,6 +2,7 @@
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "MainUIBackend.h"
+#include "ShortcutBridge.h"
 #include "WorkspaceArea.h"
 
 #include <QQuickWidget>
@@ -75,7 +76,22 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     m_backend = new MainUIBackend(m_logosAPI, this);
     
     setupUi();
-    
+
+    // Provider lets the bridge scan the front-most dock's shortcuts
+    // when Workspace is the current section.
+    m_shortcutBridge = new ShortcutBridge(this, m_contentStack, [this]() {
+        return m_workspaceArea ? m_workspaceArea->activeDockWidget()
+                               : nullptr;
+    });
+    // Tab-switching inside the workspace changes the dock without
+    // touching m_contentStack — force a rebind so the new dock's
+    // shortcuts become live.
+    if (m_workspaceArea) {
+        connect(m_workspaceArea, &WorkspaceArea::activeAppChanged,
+                m_shortcutBridge,
+                [this](const QString&) { m_shortcutBridge->rebindDeferred(); });
+    }
+
     // Connect section index changes
     connect(m_backend, &MainUIBackend::currentActiveSectionIndexChanged, 
             this, &MainContainer::onViewIndexChanged);
@@ -98,6 +114,10 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
                     m_contentStack->removeWidget(placeholder);
                     placeholder->deleteLater();
                 }
+                // A new pane's QML just materialised — ask the bridge to
+                // pick up any Shortcut { } blocks inside it. Deferred, so
+                // the QML tree has time to instantiate.
+                if (m_shortcutBridge) m_shortcutBridge->rebindDeferred();
                 m_suppressNextNavToApps = true;
                 return;
             }

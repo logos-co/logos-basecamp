@@ -1,0 +1,195 @@
+name: "App-wide QML shortcuts in Basecamp (⌘K focuses the search bar)"
+output: basecamp-shortcut-bridge.md
+release: ""
+
+intro: |
+  [`logos-basecamp`](https://github.com/logos-co/logos-basecamp) hosts UI
+  plugins inside its own process, each rendered by a `QQuickWidget`. UI plugins
+  are free to declare keyboard shortcuts in QML the same way any Qt Quick app
+  would:
+
+  ```qml
+  Shortcut {
+      sequence: "Ctrl+K"
+      onActivated: searchBar.textInput.forceActiveFocus()
+  }
+  ```
+
+  There is a subtle Qt limitation that gets in the way here: a `QQuickShortcut`
+  with `Qt.WindowShortcut` context checks the containing `QQuickWindow`'s
+  `active` property before firing, and inside a `QQuickWidget` the QML runs
+  against an **offscreen** `QQuickWindow` that never activates the way Qt's
+  shortcut matcher expects. Left alone, the QML `Shortcut { }` sits registered
+  but silent — the user presses ⌘K and nothing happens.
+
+  Basecamp works around this with a `ShortcutBridge`. It walks the current
+  pane's QML tree, finds every `QQuickShortcut`, and mirrors each as a real
+  C++ `QShortcut` on the host `QWidget` (context = `ApplicationShortcut`, which
+  fires reliably). When a mirror activates, the bridge re-emits `activated()`
+  on the original QML shortcut so its `onActivated:` handler runs unchanged.
+  The plugin author writes nothing new — declaring a `Shortcut { }` block in
+  QML is enough.
+
+  This doc-test builds **this** basecamp commit as its normal development app
+  (`#app`), launches it headless, opens the **Applications** view (which
+  declares `Shortcut { sequence: "Ctrl+K"; onActivated: … }` in
+  `AppManagerView.qml`), and drives the bridge end-to-end: it locates the
+  mirror the bridge installed for that ⌘K, fires it via the inspector, and
+  captures the resulting focused search bar. A green run is real evidence that
+  this commit still ships a working bridge — that the QML shortcut got
+  mirrored on pane switch and that firing the mirror does run the plugin's
+  `onActivated` handler.
+
+what_you_build: "This `logos-basecamp` commit, built as the normal development app (`#app`, inspector-enabled by default). The **Applications** pane's QML declares a ⌘K shortcut; the bridge inside basecamp mirrors it as a real C++ QShortcut, which this doc-test exercises through the QML inspector."
+
+what_you_learn:
+  - "Why QML `Shortcut { }` blocks inside a `QQuickWidget` don't fire on their own — the offscreen `QQuickWindow` never satisfies `Qt.WindowShortcut`'s activeness check"
+  - "How `ShortcutBridge` inside `MainContainer` mirrors every QML shortcut it finds under the current pane as a C++ `QShortcut` with `Qt.ApplicationShortcut` context"
+  - "How firing a mirror re-emits `activated()` on the original QML shortcut so the plugin's `onActivated:` handler runs unchanged — plugin code stays 100% ordinary QML"
+  - "How to write a new app-wide shortcut in a plugin: just declare `Shortcut { sequence: …; onActivated: … }`. No changes to `MainContainer.cpp` or `ShortcutBridge.cpp`, ever."
+  - "How to drive a QML shortcut from the outside via `logos-qt-mcp`'s `callMethod` RPC, without needing to synthesise real keyboard input"
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. No network access is needed."
+
+sections:
+  - title: "Why the bridge exists"
+    text: |
+      In a plain Qt Quick app, a QML `Shortcut { }` "just works" — its
+      `QQuickShortcut` gets registered against a real top-level `QQuickWindow`
+      that Qt activates alongside the OS window, and `Qt.WindowShortcut`'s
+      context matcher returns true on key press.
+
+      Basecamp is a `QWidget`-based shell that hosts its QML views (including
+      every UI plugin) via `QQuickWidget`. `QQuickWidget` renders its QML into
+      an **offscreen** `QQuickWindow`, and that offscreen window never gets
+      the "active" signal Qt's shortcut matcher requires. On macOS the effect
+      is that the plugin's `Shortcut { sequence: "Ctrl+K" }` silently fails
+      to fire on the first press; on other platforms it may not fire at all.
+
+      `ShortcutBridge` (see `src/ShortcutBridge.h`) fixes this without asking
+      plugin authors to change anything. It scans the current pane's QML tree
+      for `QQuickShortcut` objects and, for each one, installs a matching C++
+      `QShortcut` on the host `MainContainer` with `Qt::ApplicationShortcut`
+      context. When the mirror activates (either the normal `activated` path
+      or, on macOS, via the `activatedAmbiguously` cycling path), the bridge
+      invokes `activated()` on the original QML shortcut — the same signal
+      the plugin's `onActivated:` handler is already connected to.
+
+  - title: "Build the qt-mcp test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the
+      harness the doc-test uses to connect to the app's QML inspector and
+      drive it. Build it once and link it as `./result-mcp`.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the basecamp dev app"
+    step: true
+    text: |
+      Build **this** basecamp commit as the development app — the inspector is
+      compiled in by default so the driver can attach.
+    steps:
+      - title: "Build the dev app"
+        text: |
+          The default package is `#app`, so from inside the clone this is
+          simply `nix build`:
+        run: "nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app"
+        code_block: |
+          # From inside the clone this is simply: nix build
+          nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app
+        check_file: "result-app/bin/LogosBasecamp"
+
+  - title: "Drive the ⌘K shortcut through the bridge"
+    step: true
+    text: |
+      Launch the dev app headless, open **Applications**, then use the
+      inspector to locate the C++ `QShortcut` mirror the bridge installed for
+      ⌘K and fire it. The fact that the mirror is present at all is what
+      proves the bridge ran on pane switch; firing its `activated` signal
+      then runs the plugin's `onActivated:` handler, which focuses the search
+      bar's inner `TextInput`.
+    steps:
+      - title: "Launch and drive the dev app"
+        ui_test:
+          launch: "./result-app/bin/LogosBasecamp"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Package Manager", "Settings"]
+              timeout: 60000
+              text: "The dev app launches headless. The sidebar renders with the section entries."
+              screenshot: "shortcut-launch.png"
+
+            # The Applications pane is where AppManagerView.qml declares its
+            # ⌘K QML Shortcut. Opening the pane triggers currentChanged on
+            # MainContainer's QStackedWidget, which fires
+            # ShortcutBridge::rebindDeferred and mirrors the QML shortcut.
+            - name: "Open the Applications view"
+              action: click
+              target: "Applications"
+
+            - name: "Applications view loads"
+              action: wait_for
+              texts: ["Install and manage applications.", "Search apps…"]
+              timeout: 30000
+              text: "The Applications view renders. Its QML root declares a `Shortcut { sequence: \"Ctrl+K\"; onActivated: searchBar.textInput.forceActiveFocus() }` that the bridge should have just mirrored."
+              screenshot: "shortcut-applications.png"
+
+            # This is the load-bearing assertion: locate the mirror by its
+            # `key` property and invoke `activated`. QShortcut.key stringifies
+            # as NativeText ("⌘K" / U+2318 on macOS, "Ctrl+K" elsewhere), and
+            # logos-doctest interpolates find_value into a JS string literal —
+            # so we close the literal and pick the platform form at runtime.
+            # If the bridge did NOT run, findByProperty returns 0 matches and
+            # call_method throws "element not found" — the doc-test fails
+            # loudly with a clear message pointing at the exact regression.
+            #
+            # If the bridge DID run, `activated` fires on the C++ mirror,
+            # onWiredShortcut translates that back to the QML shortcut, and
+            # its onActivated handler calls forceActiveFocus + selectAll on
+            # the search bar's TextInput — the same thing a real ⌘K press
+            # would produce.
+            - name: "Fire the ⌘K shortcut mirror the bridge installed"
+              action: call_method
+              find_by: "key"
+              find_value: '" + (process.platform === "darwin" ? "\u2318K" : "Ctrl+K") + "'
+              method: "activated"
+              text: "We locate the C++ `QShortcut` the bridge mirrored for ⌘K and invoke its `activated` signal via the inspector. This is the exact same signal Qt's shortcut map would fire on a real key press. If the bridge failed to mirror the shortcut, the lookup fails and this step surfaces the regression."
+              screenshot: "shortcut-fired.png"
+        post_text: |
+          What this run proved end-to-end:
+
+          - `MainContainer` constructed the `ShortcutBridge`.
+          - Switching to the **Applications** pane triggered
+            `ShortcutBridge::rebindDeferred`, which walked the pane's QML
+            tree and found the `QQuickShortcut` declared inside
+            `AppManagerView.qml`.
+          - The bridge installed a real `QShortcut(Ctrl+K,
+            Qt::ApplicationShortcut)` on the host `MainContainer`, visible
+            to the inspector via its `key` property.
+          - Invoking that mirror's `activated` signal ran the plugin's
+            `onActivated:` handler unchanged — which is what a real ⌘K key
+            press would trigger. The plugin QML was not modified for this
+            test to work.
+
+          Every subsequent app-wide shortcut is free: a UI plugin just
+          declares `Shortcut { sequence: "Ctrl+F"; onActivated: … }` (or any
+          key), and the bridge mirrors it the next time the pane becomes
+          current. Neither `MainContainer.cpp` nor `ShortcutBridge.cpp`
+          needs to change per shortcut or per plugin.

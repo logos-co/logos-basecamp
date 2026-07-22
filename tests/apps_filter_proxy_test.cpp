@@ -1,3 +1,5 @@
+// srcdeps: AppsModel.cpp AppsFilterProxy.cpp InstallEnums.cpp InstallRegistry.cpp
+//
 // Unit tests for AppsFilterProxy's filter chain. Lives in this test target
 // alongside apps_model_test.cpp; both link the same AppsModel + AppsFilterProxy
 // sources. The filter proxy was previously only exercised indirectly through

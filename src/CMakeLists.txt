@@ -122,6 +122,7 @@ set(SOURCES
     AppsModel.cpp
     PluginLoader.cpp
     WorkspaceArea.cpp
+    ShortcutBridge.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp

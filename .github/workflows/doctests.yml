@@ -164,6 +164,7 @@ jobs:
             doctests/basecamp-crossversion-accounts.test.yaml \
             doctests/basecamp-fullapi-ui.test.yaml \
             doctests/basecamp-fullapi-ui-qml.test.yaml \
+            doctests/basecamp-shortcut-bridge.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -191,7 +192,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-crossversion-accounts basecamp-fullapi-ui basecamp-fullapi-ui-qml; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-crossversion-accounts basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
