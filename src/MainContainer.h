@@ -8,6 +8,7 @@ class QQuickWidget;
 class MainUIBackend;
 class WorkspaceArea;
 class LogosAPI;
+class ShortcutBridge;
 
 class MainContainer : public QWidget
 {
@@ -81,5 +82,6 @@ private:
 
     // LogosAPI instance
     LogosAPI* m_logosAPI;
+    ShortcutBridge* m_shortcutBridge = nullptr;
 };
 

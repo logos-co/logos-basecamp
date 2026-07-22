@@ -221,6 +221,56 @@ test("app manager: panel + categories sidebar render on first open", async (app)
   );
 });
 
+// ---------------------------------------------------------------------------
+// ShortcutBridge end-to-end
+// ---------------------------------------------------------------------------
+test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Apps", "Categories"]); },
+    { timeout: 15000, interval: 500, description: "App Manager visible" }
+  );
+
+  // QML declares sequence: "Ctrl+K". QShortcut.key stringifies as NativeText
+  // — "⌘K" on macOS, "Ctrl+K" elsewhere — so try both.
+  const keyForms = ["Ctrl+K", "⌘K"];
+  let mirrors = [];
+  for (const value of keyForms) {
+    const mirrorSearch = await app.inspector.send("findByProperty", {
+      property: "key", value,
+    });
+    mirrors = (mirrorSearch.matches ?? []).filter(
+      m => (m.type ?? "").startsWith("QShortcut")
+    );
+    if (mirrors.length > 0) break;
+  }
+  if (mirrors.length === 0) {
+    throw new Error(
+      `ShortcutBridge did not mirror Ctrl+K on the host (tried ${keyForms.join(", ")})`
+    );
+  }
+
+  const activated = await app.inspector.send("callMethod", {
+    objectId: mirrors[0].id, method: "activated",
+  });
+  if (activated.error) {
+    throw new Error(`callMethod(activated) failed: ${activated.error}`);
+  }
+
+  await app.waitFor(async () => {
+    const bar = await app.inspector.send("findByProperty", {
+      property: "placeholderText", value: "Search apps…",
+    });
+    const bid = bar.matches?.[0]?.id;
+    if (!bid) throw new Error("Search apps… bar not found");
+    const evalR = await app.inspector.send("evaluate", {
+      objectId: bid, expression: "textInput.activeFocus",
+    });
+    if (evalR.result !== true)
+      throw new Error(`textInput.activeFocus = ${evalR.result}, expected true`);
+  }, { timeout: 3000, interval: 200, description: "search bar to focus" });
+});
+
 // --- Run ---
 
 run();

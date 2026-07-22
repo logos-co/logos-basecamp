@@ -1,5 +1,7 @@
-// Unit tests for WorkspaceArea. 
-// Verifies dock lifecycle, widget ownership, tab bar state, and 
+// srcdeps: WorkspaceArea.cpp
+//
+// Unit tests for WorkspaceArea.
+// Verifies dock lifecycle, widget ownership, tab bar state, and
 // wheel/close behavior.
 //
 //   nix build .#unit-tests -L
