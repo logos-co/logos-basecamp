@@ -308,7 +308,8 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
     if (QQmlEngine* engine = qmlWidget->engine()) {
         const QString appLibDir =
             QDir(QCoreApplication::applicationDirPath() + "/../lib").canonicalPath();
-        QmlSandbox::configure(engine, request.installDir, request.qmlViewPath, appLibDir);
+        QmlSandbox::configure(engine, request.installDir, request.qmlViewPath,
+                              appLibDir, request.name);
         engine->setBaseUrl(QUrl::fromLocalFile(request.installDir + "/"));
     }
 

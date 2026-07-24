@@ -128,6 +128,7 @@ set(SOURCES
     restricted/DenyAllNAMFactory.cpp
     restricted/RestrictedUrlInterceptor.cpp
     restricted/QmlSandbox.cpp
+    restricted/SandboxLogging.cpp
 )
 
 # Add SDK sources based on layout type

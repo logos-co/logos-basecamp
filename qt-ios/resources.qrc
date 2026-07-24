@@ -2,7 +2,6 @@
     <qresource prefix="/">
         <file>Main.qml</file>
         <file>icons/logos.png</file>
-        <file>icons/logos.svg</file>
     </qresource>
 </RCC>
 
