@@ -131,13 +131,13 @@
 
           # Plugin packages (development builds)
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo;
             distributed = true;
           };
 
