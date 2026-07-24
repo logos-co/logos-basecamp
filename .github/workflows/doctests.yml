@@ -55,6 +55,8 @@ concurrency:
 
 env:
   ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
+  # Empty on fork PRs (secrets not available) — Attic steps skip via the if below.
+  ATTIC_ENDPOINT: ${{ secrets.ATTIC_ENDPOINT }}
 
 jobs:
   doctests:
@@ -81,9 +83,10 @@ jobs:
             fallback = true
 
       - name: Setup Attic cache
+        if: ${{ env.ATTIC_ENDPOINT != '' }}
         uses: ryanccn/attic-action@v0.4.1
         with:
-          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          endpoint: ${{ env.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
           token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
