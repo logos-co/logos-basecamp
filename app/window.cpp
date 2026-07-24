@@ -9,7 +9,10 @@
 #include <QFile>
 #include <QSystemTrayIcon>
 #include <QMenu>
+#include <QMenuBar>
 #include <QAction>
+#include <QKeySequence>
+#include <QShortcut>
 #include <QCloseEvent>
 #include <QIcon>
 #include <QPixmap>
@@ -30,8 +33,19 @@ Window::Window(QWidget *parent)
     , m_showHideAction(nullptr)
     , m_quitAction(nullptr)
 {
+    setObjectName(QStringLiteral("logosMainWindow"));
     setupUi();
     createTrayIcon();
+#ifdef Q_OS_MAC
+    createMenuBar();
+#endif
+#ifdef Q_OS_LINUX
+    // GNOME/KDE convention: Ctrl+Q quits. QKeySequence::Quit maps to Ctrl+Q
+    // on X11/Wayland and is empty on Windows.
+    auto* quitShortcut = new QShortcut(QKeySequence::Quit, this);
+    quitShortcut->setObjectName(QStringLiteral("logosQuitShortcut"));
+    connect(quitShortcut, &QShortcut::activated, this, &Window::quitApplication);
+#endif
 }
 
 Window::Window(LogosAPI* logosAPI, QWidget *parent)
@@ -42,8 +56,19 @@ Window::Window(LogosAPI* logosAPI, QWidget *parent)
     , m_showHideAction(nullptr)
     , m_quitAction(nullptr)
 {
+    setObjectName(QStringLiteral("logosMainWindow"));
     setupUi();
     createTrayIcon();
+#ifdef Q_OS_MAC
+    createMenuBar();
+#endif
+#ifdef Q_OS_LINUX
+    // GNOME/KDE convention: Ctrl+Q quits. QKeySequence::Quit maps to Ctrl+Q
+    // on X11/Wayland and is empty on Windows.
+    auto* quitShortcut = new QShortcut(QKeySequence::Quit, this);
+    quitShortcut->setObjectName(QStringLiteral("logosQuitShortcut"));
+    connect(quitShortcut, &QShortcut::activated, this, &Window::quitApplication);
+#endif
 }
 
 Window::~Window()
@@ -197,6 +222,18 @@ void Window::setupMacOSDockReopen()
         }
     });
 }
+
+// Override Qt's default macOS "Quit" (which posts a close event and gets
+// swallowed by hide-to-tray). QuitRole promotes this action into the native
+// app menu so Cmd+Q actually terminates the process.
+void Window::createMenuBar()
+{
+    QAction* quit = menuBar()->addMenu(tr("File"))->addAction(tr("Quit"));
+    quit->setObjectName(QStringLiteral("logosQuitAction"));
+    quit->setShortcut(QKeySequence::Quit);
+    quit->setMenuRole(QAction::QuitRole);
+    connect(quit, &QAction::triggered, this, &Window::quitApplication);
+}
 #endif
 
 void Window::createTrayIcon()
@@ -221,6 +258,7 @@ void Window::createTrayIcon()
     m_trayIconMenu->addSeparator();
 
     m_quitAction = m_trayIconMenu->addAction(tr("Quit"));
+    m_quitAction->setObjectName(QStringLiteral("logosTrayQuitAction"));
     connect(m_quitAction, &QAction::triggered, this, &Window::quitApplication);
 
     m_trayIcon->setContextMenu(m_trayIconMenu);

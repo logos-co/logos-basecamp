@@ -280,6 +280,10 @@
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
+          # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
+          # app per case and asserts orderly exit (code 0).
+          shutdown-test = import ./nix/shutdown-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+
           # Default package
           default = app;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
@@ -325,6 +329,7 @@
         unit-tests = self.packages.${system}.unit-tests;
         qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
+        shutdown-test = self.packages.${system}.shutdown-test;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
