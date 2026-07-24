@@ -3,7 +3,28 @@
 #include <QTimer>
 #include <QUrl>
 
-DenyAllReply::DenyAllReply(const QNetworkRequest& request, QObject* parent)
+#include "restricted/SandboxLogging.h"
+
+namespace {
+const char* operationName(QNetworkAccessManager::Operation op)
+{
+    switch (op) {
+        case QNetworkAccessManager::HeadOperation:   return "HEAD";
+        case QNetworkAccessManager::GetOperation:    return "GET";
+        case QNetworkAccessManager::PutOperation:    return "PUT";
+        case QNetworkAccessManager::PostOperation:   return "POST";
+        case QNetworkAccessManager::DeleteOperation: return "DELETE";
+        case QNetworkAccessManager::CustomOperation: return "CUSTOM";
+        case QNetworkAccessManager::UnknownOperation: break;
+    }
+    return "UNKNOWN";
+}
+}
+
+DenyAllReply::DenyAllReply(const QNetworkRequest& request,
+                           QNetworkAccessManager::Operation op,
+                           QObject* parent,
+                           const QString& pluginLabel)
     : QNetworkReply(parent)
 {
     setRequest(request);
@@ -11,6 +32,16 @@ DenyAllReply::DenyAllReply(const QNetworkRequest& request, QObject* parent)
     setOpenMode(QIODevice::ReadOnly);
     setError(QNetworkReply::ContentOperationNotPermittedError,
              QStringLiteral("Network access disabled for this QML engine"));
+
+    qCWarning(lcBasecampSandbox).noquote()
+        << QStringLiteral("Blocked network %1 \"%2\"%3: sandboxed ui_qml modules "
+                          "may not use the network.")
+               .arg(QString::fromLatin1(operationName(op)),
+                    request.url().toString(QUrl::RemoveUserInfo),
+                    pluginLabel.isEmpty()
+                        ? QString()
+                        : QStringLiteral(" [plugin=%1]").arg(pluginLabel));
+
     QTimer::singleShot(0, this, [this]() {
         emit errorOccurred(error());
         emit finished();

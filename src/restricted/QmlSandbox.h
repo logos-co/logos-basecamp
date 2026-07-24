@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QString>
 #include <QStringList>
 
 class QQmlEngine;
@@ -14,18 +15,22 @@ namespace QmlSandbox {
 //                     defaults, so the module's own QML/JS resolves;
 //   * a deny-all QQmlNetworkAccessManagerFactory (no network);
 //   * a RestrictedUrlInterceptor confining file/qmldir resolution to the
-//     module's dir + the vetted/Qt roots, and forbidding a qmldir under the
-//     module's (untrusted) dir from declaring a native C++ plugin.
+//     module's dir + the vetted/Qt roots, forbidding a qmldir under the
+//     module's (untrusted) dir from declaring a native C++ plugin, and forcing
+//     `import Logos.<Reserved>` to always resolve from the vetted appLibDir.
 //
 // Deliberately does NOT add the untrusted installDir to the engine's native
 // plugin search path, and keeps Qt's default pluginPathList intact.
 //
 // `appLibDir` is the vetted application library dir (in production
-// <appDir>/../lib); tests pass an explicit value (often empty). Returns the set
-// of import roots that were treated as untrusted — useful for assertions.
+// <appDir>/../lib); tests pass an explicit value (often empty). `pluginLabel`
+// is an optional identifier (e.g. the module name) prefixed onto every sandbox
+// diagnostic — omit in tests. Returns the set of import roots that were treated
+// as untrusted — useful for assertions.
 QStringList configure(QQmlEngine* engine,
                       const QString& installDir,
                       const QString& qmlViewPath,
-                      const QString& appLibDir);
+                      const QString& appLibDir,
+                      const QString& pluginLabel = QString());
 
 } // namespace QmlSandbox

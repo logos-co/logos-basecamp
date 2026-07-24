@@ -37,6 +37,7 @@ add_executable(tst_qml_sandbox
     ${BASECAMP_SRC}/restricted/DenyAllNAMFactory.cpp
     ${BASECAMP_SRC}/restricted/DenyAllNetworkAccessManager.cpp
     ${BASECAMP_SRC}/restricted/DenyAllReply.cpp
+    ${BASECAMP_SRC}/restricted/SandboxLogging.cpp
 )
 target_include_directories(tst_qml_sandbox PRIVATE ${BASECAMP_SRC})
 target_compile_definitions(tst_qml_sandbox PRIVATE
