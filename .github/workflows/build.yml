@@ -10,6 +10,8 @@ on:
 
 env:
   ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
+  # Empty on fork PRs (secrets not available) — Attic steps skip via the if below.
+  ATTIC_ENDPOINT: ${{ secrets.ATTIC_ENDPOINT }}
 
 jobs:
   build-appimage:
@@ -35,8 +37,9 @@ jobs:
             fallback = true
 
       - uses: ryanccn/attic-action@v0.4.1
+        if: ${{ env.ATTIC_ENDPOINT != '' }}
         with:
-          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          endpoint: ${{ env.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
           token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
@@ -76,8 +79,9 @@ jobs:
             fallback = true
 
       - uses: ryanccn/attic-action@v0.4.1
+        if: ${{ env.ATTIC_ENDPOINT != '' }}
         with:
-          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          endpoint: ${{ env.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
           token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
@@ -123,8 +127,9 @@ jobs:
             fallback = true
 
       - uses: ryanccn/attic-action@v0.4.1
+        if: ${{ env.ATTIC_ENDPOINT != '' }}
         with:
-          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          endpoint: ${{ env.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
           token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
@@ -147,8 +152,9 @@ jobs:
             fallback = true
 
       - uses: ryanccn/attic-action@v0.4.1
+        if: ${{ env.ATTIC_ENDPOINT != '' }}
         with:
-          endpoint: ${{ secrets.ATTIC_ENDPOINT }}
+          endpoint: ${{ env.ATTIC_ENDPOINT }}
           cache: ${{ env.ATTIC_CACHE }}
           inputs-from: "."
           token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
