@@ -38,6 +38,7 @@ private:
     void setIcon();
 #ifdef Q_OS_MAC
     void setupMacOSDockReopen();
+    void createMenuBar();
 #endif
 
     LogosAPI* m_logosAPI;

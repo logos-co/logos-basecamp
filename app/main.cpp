@@ -28,6 +28,12 @@
 #include "logos_provider_object.h"
 #include "qt_provider_object.h"
 #include "BuildInfo.h"
+#ifdef Q_OS_UNIX
+#include <QSocketNotifier>
+#include <signal.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 // Replace CoreManager with direct C API functions
 extern "C" {
@@ -41,6 +47,43 @@ extern "C" {
     char* logos_core_process_module(const char* module_path);
     char* logos_core_get_module_stats();
 }
+
+#ifdef Q_OS_UNIX
+// Self-pipe pattern for SIGTERM/SIGINT: the signal handler writes one byte
+// to a socketpair; a QSocketNotifier on the main thread wakes the event loop
+// and calls QApplication::quit(), which lets the orderly teardown below
+// (~Window, logos_core_cleanup, log flush) run. Doing anything Qt-related
+// directly from a signal handler is undefined behaviour.
+static int gSignalFd[2] = {-1, -1};
+
+static void unixSignalHandler(int)
+{
+    char a = 1;
+    ::write(gSignalFd[0], &a, sizeof(a));
+}
+
+static void installUnixSignalHandlers(QApplication& app)
+{
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, gSignalFd) != 0) {
+        qWarning() << "Failed to create signal socketpair; SIGTERM/SIGINT will not trigger graceful shutdown";
+        return;
+    }
+    auto* notifier = new QSocketNotifier(gSignalFd[1], QSocketNotifier::Read, &app);
+    QObject::connect(notifier, &QSocketNotifier::activated, &app, [notifier]() {
+        notifier->setEnabled(false);
+        char tmp;
+        ::read(gSignalFd[1], &tmp, sizeof(tmp));
+        QApplication::quit();
+    });
+
+    struct sigaction sa {};
+    sa.sa_handler = unixSignalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    ::sigaction(SIGTERM, &sa, nullptr);
+    ::sigaction(SIGINT, &sa, nullptr);
+}
+#endif
 
 // Drain a NULL-terminated char** from liblogos: copy each entry into the
 // returned QStringList and release the heap memory. liblogos allocates with
@@ -205,6 +248,10 @@ int main(int argc, char *argv[])
 
     // Don't quit when last window is closed (for system tray support)
     app.setQuitOnLastWindowClosed(false);
+
+#ifdef Q_OS_UNIX
+    installUnixSignalHandlers(app);
+#endif
 
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
