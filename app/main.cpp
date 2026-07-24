@@ -61,6 +61,21 @@ int main(int argc, char *argv[])
     // Set logos mode to Local for testing
     //LogosModeConfig::setMode(LogosMode::Local);
 
+    // Kill the per-file .qmlc disk cache under QStandardPaths::CacheLocation
+    // for every QQmlEngine in this process. It must be set before Qt is up:
+    // Qt reads the env var when the first engine is constructed, and no later.
+    //
+    // Rationale: basecamp's own QML modules and the design system are STATIC-
+    // embedded via qt_add_qml_module — nothing on disk to cache, so this flag
+    // is a no-op for them. The load-bearing effect is on plugin QML under
+    // Contents/plugins/<name>/qml/, which ships with nix-frozen mtimes; Qt's
+    // (path, mtime + content-hash) cache key can reuse stale .qmlc across app
+    // upgrades when a bundled plugin's Q_PROPERTY / signal signatures change
+    // between releases. Disabling disk cache costs ~30-100ms of QML parse on
+    // the first activation of each plugin per session and makes cross-version
+    // plugin upgrades physically immune to that class of staleness
+    qputenv("QML_DISABLE_DISK_CACHE", "1");
+
     // Create QApplication first
     QApplication app(argc, argv);
     app.setOrganizationName("Logos");
