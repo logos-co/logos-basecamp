@@ -41,6 +41,11 @@ pipeline {
             'Linux', jenkins.Build('logos-basecamp/systems/linux/x86_64/package')
           )
         } } }
+        stage('Linux/aarch64') { steps { script {
+          linux_aarch64 = getArtifacts(
+            'Linux-ARM', jenkins.Build('logos-basecamp/systems/linux/aarch64/package')
+          )
+        } } }
         stage('macOS/aarch64') { steps { script {
           macos_aarch64 = getArtifacts(
             'macOS', jenkins.Build('logos-basecamp/systems/macos/aarch64/package')

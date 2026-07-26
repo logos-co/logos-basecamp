@@ -7,8 +7,8 @@ def isPRBuild = utils.isPRBuild()
 pipeline {
   agent {
     docker {
-      label 'linuxcontainer'
-      image 'harbor.status.im/infra/ci-build-containers:linux-base-1.0.0'
+      label getAgentLabel()
+      image 'harbor.status.im/infra/ci-build-containers:linux-base-1.0.2'
       args '--volume=/nix:/nix ' +
            '--volume=/etc/nix:/etc/nix '
     }
@@ -52,14 +52,14 @@ pipeline {
 
     stage('Build AppImage') {
       steps { script {
-        nix.flake("bin-appimage")
+        nix.flake('bin-appimage')
       } }
     }
 
     stage('Package') {
       steps {
         sh 'mkdir -p pkg'
-        sh "cp result/logos-basecamp.AppImage '${env.ARTIFACT}'"
+        sh "cp \$(find result/ -name '*.AppImage' -print -quit) '${env.ARTIFACT}'"
       }
     }
 
@@ -92,4 +92,8 @@ def getArch() {
   for (def arch in ['x86_64', 'aarch64']) {
     if (tokens.contains(arch)) { return arch }
   }
+}
+
+def getAgentLabel() {
+  return getArch() == 'aarch64' ? 'linux-arm-container' : 'linuxcontainer'
 }
