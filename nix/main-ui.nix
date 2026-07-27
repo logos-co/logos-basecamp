@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, buildInfo, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, logosDesignSystem, buildInfo, distributed ? false }:
 
 let
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
@@ -13,7 +13,7 @@ pkgs.stdenv.mkDerivation {
   
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
   nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk ];
-  buildInputs = common.buildInputs ++ [ logosProtocolPkg logosQtSdk ];
+  buildInputs = common.buildInputs ++ [ logosProtocolPkg logosQtSdk logosDesignSystem ];
   
   preConfigure = ''
     runHook prePreConfigure
@@ -111,7 +111,8 @@ pkgs.stdenv.mkDerivation {
       -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
-      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime}
+      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
+      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem
     
     runHook postConfigure
   '';

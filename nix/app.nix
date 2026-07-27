@@ -292,12 +292,9 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
-    # Copy design system QML modules for runtime
-    if [ -d "${logosDesignSystem}/lib/Logos" ]; then
-      mkdir -p "$out/lib/Logos"
-      cp -R "${logosDesignSystem}/lib/Logos/." "$out/lib/Logos/"
-      echo "Copied design system contents from ${logosDesignSystem}/lib/Logos to lib/Logos/"
-    fi
+    # Logos.Theme / .Icons / .Controls are STATIC-linked into main_ui.dylib
+    # via find_package(LogosDesignSystem CONFIG) — the modules register into
+    # the process qrc at load time. Nothing to copy to $out/lib/Logos.
 
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then

@@ -11,13 +11,21 @@ enable_testing()
 
 set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
 
+if(DEFINED LOGOS_PACKAGE_HEADERS)
+    set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
+endif()
+
 add_executable(qml_tests
     main.cpp
     ${BASECAMP_SRC}/AppsModel.cpp
     ${BASECAMP_SRC}/AppsFilterProxy.cpp
     ${BASECAMP_SRC}/InstallEnums.cpp
+    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel depends on InstallRegistry
 )
-target_include_directories(qml_tests PRIVATE ${BASECAMP_SRC})
+target_include_directories(qml_tests PRIVATE
+    ${BASECAMP_SRC}
+    ${LOGOS_PACKAGE_HEADERS_INCLUDE}
+)
 target_link_libraries(qml_tests PRIVATE
     Qt6::Core
     Qt6::Gui

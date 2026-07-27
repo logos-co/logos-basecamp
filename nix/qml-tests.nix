@@ -1,5 +1,5 @@
 # Builds and runs basecamp's QML component tests (Qt Quick Test).
-{ pkgs, src }:
+{ pkgs, src, logosPackageHeaders }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-qml-tests";
@@ -22,7 +22,8 @@ pkgs.stdenv.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
-    cmake -S tests/qml -B build-qml-tests -GNinja -DCMAKE_BUILD_TYPE=Debug
+    cmake -S tests/qml -B build-qml-tests -GNinja -DCMAKE_BUILD_TYPE=Debug \
+      -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include"
     cmake --build build-qml-tests
     runHook postBuild
   '';

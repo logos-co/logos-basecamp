@@ -95,6 +95,13 @@ endif()
 message(STATUS "Using logos-cpp-sdk at: ${LOGOS_CPP_SDK_ROOT}")
 message(STATUS "logos-cpp-sdk layout: ${_cpp_sdk_is_source}")
 
+# Logos.Theme / .Icons / .Controls come from logos-design-system as STATIC
+# qt_add_qml_module targets exposed via the Logos::DesignSystem umbrella
+# INTERFACE library. Nix passes -DLogosDesignSystem_DIR=<store>/lib/cmake/
+# LogosDesignSystem so this find_package succeeds without polluting the
+# global CMAKE_PREFIX_PATH.
+find_package(LogosDesignSystem CONFIG REQUIRED)
+
 # Try to find the component-interfaces package first
 find_package(component-interfaces QUIET)
 
@@ -393,6 +400,7 @@ target_link_libraries(main_ui
         Qt6::QuickControls2
         component-interfaces
         ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
+        Logos::DesignSystem
         basecamp_backend_qml
         basecamp_common_qml
         basecamp_sidebar_qml
