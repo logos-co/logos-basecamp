@@ -222,32 +222,50 @@ if (process.platform === "darwin") {
   }));
 }
 
-// Hide-to-tray: Window.close() must NOT quit when a tray is available.
-// Covers ⌘W / red-button / Alt+F4 / window-X — they all end up in
-// Window::closeEvent, which either hides (tray present) or quits (no tray).
-results.push(await runTest("Window.close() hides to tray, does not quit", async (child) => {
-  const inspector = new Inspector();
-  await inspector.connect();
-  if (!(await trayIsAvailable(inspector))) {
+// Window.close() covers Alt+F4 / window-X (all platforms) and ⌘W / red-button (macOS).
+// Behaviour is platform-dependent:
+//   - Linux: closeEvent explicitly quits (matches GNOME/KDE convention).
+//   - macOS/Windows: closeEvent hides to tray when the tray is available
+//     (Discord/Slack tray-app convention).
+if (process.platform === "linux") {
+  results.push(await runTest("Linux: Window.close() quits (Alt+F4 / X button convention)", async (child) => {
+    const inspector = new Inspector();
+    await inspector.connect();
+    const win = await findByObjectName(inspector, "logosMainWindow");
+    if (!win) {
+      inspector.disconnect();
+      throw new Error("Window objectName=logosMainWindow not found");
+    }
+    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
     inspector.disconnect();
-    return skipTest("no system tray in this environment (offscreen/Xvfb without tray daemon)");
-  }
-  const win = await findByObjectName(inspector, "logosMainWindow");
-  if (!win) {
+    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
+    await assertGracefulExit(child);
+  }));
+} else {
+  results.push(await runTest("macOS/Windows: Window.close() hides to tray, does not quit", async (child) => {
+    const inspector = new Inspector();
+    await inspector.connect();
+    if (!(await trayIsAvailable(inspector))) {
+      inspector.disconnect();
+      return skipTest("no system tray in this environment (offscreen without tray daemon)");
+    }
+    const win = await findByObjectName(inspector, "logosMainWindow");
+    if (!win) {
+      inspector.disconnect();
+      throw new Error("Window objectName=logosMainWindow not found");
+    }
+    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
     inspector.disconnect();
-    throw new Error("Window objectName=logosMainWindow not found");
-  }
-  const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
-  inspector.disconnect();
-  if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-  // Give the event loop time to (not) process a shutdown.
-  await new Promise((r) => setTimeout(r, 3000));
-  if (child.exitCode !== null || child.signalCode !== null) {
-    throw new Error(
-      `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closeEvent should have hidden to tray`
-    );
-  }
-}));
+    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
+    // Give the event loop time to (not) process a shutdown.
+    await new Promise((r) => setTimeout(r, 3000));
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closeEvent should have hidden to tray`
+      );
+    }
+  }));
+}
 
 // Tray "Quit" action: must terminate the process. Same wiring as ⌘Q on mac
 // / Ctrl+Q on Linux, but a distinct connection worth guarding.

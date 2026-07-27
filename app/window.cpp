@@ -302,6 +302,12 @@ void Window::closeEvent(QCloseEvent *event)
     }
 #endif
 
+#ifdef Q_OS_LINUX
+    event->accept();
+    quitApplication();
+    return;
+#endif
+
     if (m_trayIcon && m_trayIcon->isVisible()) {
         // Hide the window instead of closing
         hide();
