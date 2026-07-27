@@ -72,6 +72,15 @@ inline QString logsDirectory()
     return baseDirectory() + "/logs";
 }
 
+// The file this session's output is being captured into, empty when the
+// capture did not start. Carried in the environment, like the base directory,
+// because the UI library is loaded rather than linked and cannot call back into
+// the application that holds the capture.
+inline QString sessionLogFile()
+{
+    return qEnvironmentVariable("LOGOS_SESSION_LOG");
+}
+
 // Embedded directories — read-only, pre-installed at build time alongside the binary.
 inline QString embeddedModulesDirectory()
 {

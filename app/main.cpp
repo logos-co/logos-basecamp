@@ -125,6 +125,11 @@ int main(int argc, char *argv[])
     if (!LogosBasecampLog::LogRedirector::instance().start(logsDir)) {
         qWarning() << "Failed to start log redirection; continuing without file logs."
                    << "Logs directory:" << logsDir;
+    } else {
+        // Published so the UI library, which is loaded rather than linked, can
+        // name the session's file to a view module that wants to read it back.
+        qputenv("LOGOS_SESSION_LOG",
+                LogosBasecampLog::LogRedirector::instance().filePath().toUtf8());
     }
 
     // Print build metadata (version, dev/portable, commit hashes) so the

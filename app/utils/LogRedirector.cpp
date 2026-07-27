@@ -2,6 +2,8 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QRegularExpression>
+#include <QSet>
 
 #include <cerrno>
 #include <cstdio>
@@ -24,16 +26,22 @@ LogRedirector::~LogRedirector()
     stop();
 }
 
+QString LogRedirector::filePath() const
+{
+    return m_filePath;
+}
+
 #if defined(Q_OS_WIN)
 
-bool LogRedirector::start(const QString&, int) { return false; }
+bool LogRedirector::start(const QString&, int, int) { return false; }
 void LogRedirector::stop() {}
 void LogRedirector::readerLoop() {}
 void LogRedirector::openNewFile() {}
+void LogRedirector::pruneOlderSessions() {}
 
 #else
 
-bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
+bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile, int keepSessions)
 {
     if (m_started)
         return true;
@@ -42,6 +50,7 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
 
     m_logsDir = logsDir;
     m_maxLinesPerFile = maxLinesPerFile;
+    m_keepSessions = keepSessions > 0 ? keepSessions : 1;
 
     if (!QDir().mkpath(m_logsDir))
         return false;
@@ -50,6 +59,10 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
     m_rotationIndex = 0;
     m_linesInCurrentFile = 0;
 
+    // Before this session adds its own, so the directory settles at
+    // keepSessions rather than one more.
+    pruneOlderSessions();
+
     auto cleanup = [this]() {
         if (m_originalStdout >= 0) { ::close(m_originalStdout); m_originalStdout = -1; }
         if (m_originalStderr >= 0) { ::close(m_originalStderr); m_originalStderr = -1; }
@@ -57,6 +70,7 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
             m_currentFile->close();
             m_currentFile.reset();
         }
+        m_filePath.clear();
     };
 
     openNewFile();
@@ -157,9 +171,41 @@ void LogRedirector::openNewFile()
         m_currentFile.reset();
         return;
     }
+    if (m_rotationIndex == 0)
+        m_filePath = f->fileName();
     m_currentFile = std::move(f);
     m_linesInCurrentFile = 0;
     ++m_rotationIndex;
+}
+
+void LogRedirector::pruneOlderSessions()
+{
+    // A session is one stamp however many rotations it produced, so the newest
+    // stamps are kept whole and everything older goes with its rotations.
+    static const QRegularExpression sessionFile(
+        QStringLiteral("^basecamp_(\\d{8}_\\d{6})(?:\\.\\d{3})?\\.log$"));
+
+    const QStringList names = QDir(m_logsDir).entryList(QDir::Files, QDir::Name);
+    QSet<QString> stamps;
+    for (const QString& fileName : names) {
+        const QRegularExpressionMatch match = sessionFile.match(fileName);
+        if (match.hasMatch())
+            stamps.insert(match.captured(1));
+    }
+    if (stamps.size() < m_keepSessions)
+        return;
+
+    QStringList ordered(stamps.begin(), stamps.end());
+    ordered.sort();
+    // Leaves room for the session about to start.
+    const QStringList doomed = ordered.mid(0, ordered.size() - (m_keepSessions - 1));
+
+    QDir dir(m_logsDir);
+    for (const QString& fileName : names) {
+        const QRegularExpressionMatch match = sessionFile.match(fileName);
+        if (match.hasMatch() && doomed.contains(match.captured(1)))
+            dir.remove(fileName);
+    }
 }
 
 void LogRedirector::readerLoop()
@@ -210,6 +256,10 @@ void LogRedirector::readerLoop()
         }
         if (start < n && m_currentFile)
             m_currentFile->write(buf + start, n - start);
+        // Per chunk, so anything tailing the file sees a line when it is
+        // written rather than when the buffer fills or the session ends.
+        if (m_currentFile)
+            m_currentFile->flush();
     }
 
     if (m_currentFile)

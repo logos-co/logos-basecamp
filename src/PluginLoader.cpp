@@ -26,6 +26,7 @@
 #include "logos_api.h"
 #include "logos_api_client.h"
 #include "token_manager.h"
+#include "LogosBasecampPaths.h"
 #include "restricted/QmlSandbox.h"
 #include <ViewModuleHost.h>
 
@@ -243,7 +244,8 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
 
     // Has a backend plugin — spawn a ViewModuleHost process.
     auto* viewHost = new ViewModuleHost(this);
-    if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken)) {
+    if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken,
+                         LogosBasecampPaths::sessionLogFile())) {
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
         delete viewHost;
         delete bridge;
