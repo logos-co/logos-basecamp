@@ -1,13 +1,14 @@
 # Smoke-tests the logos-basecamp binary.
-# Launches the app with -platform offscreen and fails if:
-#   - the app emits critical QML errors (engine failure, missing module, etc.)
-#   - the app emits runtime QML errors (TypeError, ReferenceError, etc.)
-#   - the app emits qCritical output
+# A pure boot heartbeat: launches the app with -platform offscreen and fails if:
 #   - the app crashes before the timeout (non-zero exit that isn't timeout's 124)
 #   - the app exits too quickly with code 0 (indicates it didn't start properly)
 #
-# Binding-loop warnings are intentionally not treated as failures — the app
-# still starts; they are layout thrashing, not boot/QML-load breakage.
+# Deliberately does NOT scan the log for error patterns — QML/plugin error
+# assertions belong in integration-test (real UI walk with behavioural
+# assertions) and unit-tests, not in a boot heartbeat. Log-regex was fragile
+# (missed real bugs that never emitted the exact string, and tripped on any
+# stderr line matching the pattern from unrelated code paths like graceful
+# shutdown teardown noise).
 #
 # If the app crashes it exits immediately — the timeout is only ever waited out
 # on the happy path (app stays alive and healthy).
@@ -50,14 +51,6 @@ pkgs.runCommand "logos-basecamp-smoke-test" {
   set -e
 
   cat "$LOG"
-
-  CRIT=$(grep -E "QQmlApplicationEngine failed|module.*is not installed|Cannot assign|failed to load component|Failed to load.*plugin|The shared library was not found|Failed to create plugins directory|qrc:.*error:|file:///.*error:|TypeError:|ReferenceError:|Cannot read property|Unable to assign \[undefined\]|CRITICAL:|qCritical" "$LOG" \
-         | grep -vE "/plugins/[^/]+/" || true)
-  if [ -n "$CRIT" ]; then
-    echo "Critical errors detected:"
-    echo "$CRIT"
-    exit 1
-  fi
 
   # timeout returns 124 when it kills the process (expected — app runs an event loop)
   if [ "$CODE" -ne 0 ] && [ "$CODE" -ne 124 ]; then
