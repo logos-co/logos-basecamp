@@ -980,6 +980,7 @@ void PackageCoordinator::populateAppsModel(
 {
     if (!m_appsModel) return;
     m_appsModel->replaceCatalog(catalog);
+    m_appsModel->mergeLocalOnlyInstalled(m_installedPackagesCache);
     const QHash<QString, QString>& fullInstalled = m_installedVersionByName.isEmpty()
         ? installedByName
         : m_installedVersionByName;
@@ -1058,8 +1059,10 @@ void invokeRepositoryMutation(PackageCoordinator* self,
         [selfPtr, operation, url](QVariant result) {
             if (!selfPtr) return;
             const QVariantMap r = result.toMap();
+            const bool ok = r.value("success").toBool();
             emit selfPtr->repositoryOperationCompleted(operation, url,
-                r.value("success").toBool(), r.value("error").toString());
+                ok, r.value("error").toString());
+            if (ok) selfPtr->refreshRepositories();
         });
 }
 
@@ -1154,6 +1157,7 @@ void PackageCoordinator::refreshDependencyInfo()
         self->m_installedVersionByName = std::move(versionByName);
         self->m_installedHashByName    = std::move(hashByName);
         if (self->m_appsModel) {
+            self->m_appsModel->mergeLocalOnlyInstalled(self->m_installedPackagesCache);
             self->m_appsModel->replaceInstalledSet(
                 self->m_installedVersionByName, self->m_installedHashByName);
         }

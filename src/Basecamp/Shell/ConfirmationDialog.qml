@@ -766,25 +766,9 @@ Dialog {
 
             // Cancel button — hidden in informational mode since there's
             // only one button to press there.
-            Button {
+            LogosButton {
                 text: "Cancel"
                 visible: root.mode !== "missingDeps"
-
-                contentItem: LogosText {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: Theme.palette.text
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 90
-                    implicitHeight: 32
-                    color: parent.pressed ? "#3d3d3d" : "#4b4b4b"
-                    radius: 4
-                }
-
                 onClicked: {
                     root._explicitClose = true;
                     if (root.targets.length > 0)
@@ -795,7 +779,7 @@ Dialog {
                 }
             }
 
-            Button {
+            LogosButton {
                 text: {
                     if (root.mode === "missingDeps") return "OK";
                     if (root.mode === "unloadCascade") return "Unload All";
@@ -816,38 +800,7 @@ Dialog {
                     if (root.mode === "installGate") return "Install";
                     return "OK";
                 }
-
-                contentItem: LogosText {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: Theme.palette.text
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 100
-                    implicitHeight: 32
-                    color: {
-                        // Destructive actions get a red background to match
-                        // the Uninstall button in the modules tabs.
-                        if (root.mode === "uninstallCascade")
-                            return parent.pressed ? "#da190b" : "#f44336";
-                        if (root.mode === "unloadCascade")
-                            return parent.pressed ? "#da190b" : "#f44336";
-                        // Upgrade-family: not destructive (a new version
-                        // lands at the end), but not "fresh install"
-                        // green either. Amber matches the per-row pill's
-                        // Reinstall / installConfirm-upgrade accents.
-                        if (root.mode === "upgradeCascade")
-                            return parent.pressed ? "#e68900" : "#FF9800";
-                        if (root.mode === "installConfirm" && root.metadata.isAlreadyInstalled)
-                            return parent.pressed ? "#e68900" : "#FF9800";
-                        return parent.pressed ? "#45a049" : "#4CAF50";
-                    }
-                    radius: 4
-                }
-
+                variant: LogosButton.Variant.Primary
                 onClicked: {
                     root._explicitClose = true;
                     if (root.targets.length > 0)

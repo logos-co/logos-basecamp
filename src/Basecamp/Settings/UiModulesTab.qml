@@ -46,10 +46,8 @@ Item {
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Reload")
                 enabled: !backend.modulesLoading
-                Component.onCompleted: {
-                    reloadBtn.icon.source = LogosIcons.refresh
-                    reloadBtn.icon.size = 18
-                }
+                leadingIcon.source: LogosIcons.refresh
+                leadingIcon.size: 18
                 onClicked: backend.refreshUiModules()
             }
         }

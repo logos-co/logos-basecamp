@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QDir>
+#include <QStyleHints>
 #include <QTimer>
 #include <QStandardPaths>
 #include <iostream>
@@ -123,6 +124,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
+    app.styleHints()->setTabFocusBehavior(Qt::TabFocusAllControls);
 
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against

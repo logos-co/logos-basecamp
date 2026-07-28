@@ -16,6 +16,9 @@ class AppsFilterProxy : public QSortFilterProxyModel {
     Q_PROPERTY(QString searchText         READ searchText         WRITE setSearchText         NOTIFY searchTextChanged)
     Q_PROPERTY(QString installStateFilter READ installStateFilter WRITE setInstallStateFilter NOTIFY installStateFilterChanged)
     Q_PROPERTY(QString repositoryUrlFilter READ repositoryUrlFilter WRITE setRepositoryUrlFilter NOTIFY repositoryUrlFilterChanged)
+    // When true, accepts only rows with an empty repositoryUrl (local-only
+    // installed packages)
+    Q_PROPERTY(bool    matchLocalOnly    READ matchLocalOnly     WRITE setMatchLocalOnly     NOTIFY matchLocalOnlyChanged)
     Q_PROPERTY(bool    excludeMainUi      READ excludeMainUi      WRITE setExcludeMainUi      NOTIFY excludeMainUiChanged)
     Q_PROPERTY(QStringList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
     Q_PROPERTY(int  installedCount       READ installedCount NOTIFY installedCountChanged)
@@ -37,6 +40,7 @@ public:
     QString searchText()         const { return m_searchText; }
     QString installStateFilter() const { return m_installStateFilter; }
     QString repositoryUrlFilter() const { return m_repositoryUrlFilter; }
+    bool    matchLocalOnly()     const { return m_matchLocalOnly; }
     bool    excludeMainUi()      const { return m_excludeMainUi; }
 
     void setTypeFilter(const QString& t);
@@ -44,6 +48,7 @@ public:
     void setSearchText(const QString& s);
     void setInstallStateFilter(const QString& s);
     void setRepositoryUrlFilter(const QString& url);
+    void setMatchLocalOnly(bool v);
     void setExcludeMainUi(bool e);
     QStringList requiredPackages() const;
     Q_INVOKABLE void setRequiredPackages(const QVariantList& entries);
@@ -68,6 +73,7 @@ signals:
     void searchTextChanged();
     void installStateFilterChanged();
     void repositoryUrlFilterChanged();
+    void matchLocalOnlyChanged();
     void excludeMainUiChanged();
     void requiredPackagesChanged();
     void installedCountChanged();
@@ -89,6 +95,7 @@ private:
     QString m_searchText;
     QString m_installStateFilter = QStringLiteral("all");
     QString m_repositoryUrlFilter;
+    bool    m_matchLocalOnly     = false;
     bool    m_excludeMainUi      = true;
     QHash<QString, QString> m_requiredPackagesByName;
     QHash<QString, int>     m_requiredPackagesOrder;
