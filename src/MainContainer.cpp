@@ -19,7 +19,7 @@
 #include <QQuickItem>
 #include <QColor>
 #include <QPalette>
-#include <QTimer>
+#include <QEvent>
 
 namespace {
 constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
@@ -163,8 +163,6 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
                 m_backend, SLOT(setCurrentActiveSectionIndex(int)));
         connect(sidebarRoot, SIGNAL(tooltipRequested(QString, qreal)),
                 this, SLOT(onSidebarTooltipRequested(QString, qreal)));
-        connect(sidebarRoot, SIGNAL(tooltipCleared()),
-                this, SLOT(onSidebarTooltipCleared()));
     }
 
     qDebug() << "MainContainer created";
@@ -281,6 +279,10 @@ void MainContainer::setupUi()
     }
     m_overlayWidget->setVisible(false);
 
+    // Watch for the mouse leaving the sidebar so we can hide the tooltip
+    // overlay.
+    if (m_sidebarWidget) m_sidebarWidget->installEventFilter(this);
+
     // Set initial state — Apps section (workspace) visible by default.
     m_contentStack->setCurrentIndex(kAppsStackIndex);
 
@@ -324,14 +326,19 @@ void MainContainer::onSidebarTooltipRequested(const QString& text, qreal y)
     }
 }
 
-void MainContainer::onSidebarTooltipCleared()
+bool MainContainer::eventFilter(QObject* watched, QEvent* event)
 {
-    if (!m_overlayWidget) return;
-    QObject* overlayRoot = m_overlayWidget->rootObject();
-    if (!overlayRoot) return;
-    overlayRoot->setProperty("sidebarTooltipText", QString());
-    const bool dialogUp = overlayRoot->property("anyDialogOpen").toBool();
-    if (!dialogUp) m_overlayWidget->setVisible(false);
+    if (watched == m_sidebarWidget && event->type() == QEvent::Leave) {
+        if (m_overlayWidget) {
+            QObject* overlayRoot = m_overlayWidget->rootObject();
+            if (overlayRoot) {
+                overlayRoot->setProperty("sidebarTooltipText", QString());
+                const bool dialogUp = overlayRoot->property("anyDialogOpen").toBool();
+                if (!dialogUp) m_overlayWidget->setVisible(false);
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void MainContainer::onViewIndexChanged()
