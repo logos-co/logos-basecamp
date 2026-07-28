@@ -130,6 +130,7 @@ Item {
         parent: root
         text: root.sidebarTooltipText
         visible: text !== ""
+        delay: 0
         placement: LogosToolTip.Right
         x: 68
         y: root.sidebarTooltipY - height / 2

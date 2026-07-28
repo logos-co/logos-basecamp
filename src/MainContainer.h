@@ -32,6 +32,7 @@ protected:
     // widget floats over both the sidebar and the content stack, so it
     // can't sit in the HBoxLayout.
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onViewIndexChanged();
@@ -46,7 +47,6 @@ private slots:
     // receive clicks), intercepting when one is.
     void onOverlayActiveChanged(bool active);
     void onSidebarTooltipRequested(const QString& text, qreal y);
-    void onSidebarTooltipCleared();
 
 private:
     void setupUi();
