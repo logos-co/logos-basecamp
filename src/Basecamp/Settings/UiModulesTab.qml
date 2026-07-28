@@ -192,6 +192,11 @@ Item {
                             // (backend will refuse), but hiding the button
                             // keeps the row tidy.
                             Button {
+                                // Per-module objectName so UI automation can
+                                // click THIS row's button — by-text clicking
+                                // can't tell it apart from the dialog's own
+                                // "Uninstall" confirm button.
+                                objectName: "uiModules." + modelData.name + ".uninstallButton"
                                 text: "Uninstall"
                                 visible: !modelData.isMainUi
                                          && modelData.installType === "user"

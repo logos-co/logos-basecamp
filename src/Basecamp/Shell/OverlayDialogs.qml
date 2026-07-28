@@ -25,6 +25,19 @@ import Basecamp.Backend 1.0
 Item {
     id: root
 
+    // Stable handle for UI automation (doc-tests drive this layer through the
+    // QML inspector's findByProperty/callMethod).
+    objectName: "overlayDialogs"
+
+    // Automation entry for the local-LGX install flow. The user-facing path
+    // (backend.openInstallPluginDialog) opens a blocking native QFileDialog,
+    // which a headless driver cannot operate — doc-tests invoke this instead
+    // with an explicit path and then interact with the normal install-confirm
+    // dialog below, exactly as a user would after picking the file.
+    function installPluginFromPath(path) {
+        backend.installPluginFromPath(path);
+    }
+
     // True iff any dialog is currently visible. Drives input-blocking
     // (WA_TransparentForMouseEvents flip) on the hosting QQuickWidget
     // — see MainContainer::onOverlayActiveChanged.
