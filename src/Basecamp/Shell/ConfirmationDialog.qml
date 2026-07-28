@@ -564,7 +564,14 @@ Dialog {
 
             // Cancel button — hidden in informational mode since there's
             // only one button to press there.
+            //
+            // Both buttons carry a mode-derived objectName so UI automation
+            // can target them exactly. Text-based clicking is ambiguous here:
+            // labels like "Uninstall" also appear on the module-row buttons,
+            // and the inspector's text search doesn't distinguish open from
+            // closed dialogs.
             LogosButton {
+                objectName: "confirmationDialog." + root.mode + ".cancel"
                 text: "Cancel"
                 visible: root.mode !== "missingDeps"
                 onClicked: {
@@ -578,6 +585,7 @@ Dialog {
             }
 
             LogosButton {
+                objectName: "confirmationDialog." + root.mode + ".confirm"
                 text: {
                     if (root.mode === "missingDeps") return "OK";
                     if (root.mode === "unloadCascade") return "Unload All";
