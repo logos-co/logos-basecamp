@@ -111,7 +111,7 @@ sections:
         text: |
           This is the normal development build — `#app` is the default package,
           so from inside the clone it is simply `nix build`:
-        run: "nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#app\" -o result-app"
         code_block: |
           # From inside the clone this is simply: nix build
           nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app
