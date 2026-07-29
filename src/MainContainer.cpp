@@ -228,19 +228,7 @@ void MainContainer::setupUi()
     // Index 2: placeholder for package_manager_ui — shows a centered
     // "Loading…" label until PMUI's QQuickWidget arrives via the
     // pluginWindowRequested intercept
-    QWidget* pmuiPlaceholder = new QWidget(m_contentStack);
-    pmuiPlaceholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    {
-        QVBoxLayout* phLayout = new QVBoxLayout(pmuiPlaceholder);
-        phLayout->setAlignment(Qt::AlignCenter);
-        QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"),
-                                          pmuiPlaceholder);
-        loadingLabel->setAlignment(Qt::AlignCenter);
-        loadingLabel->setStyleSheet(QStringLiteral(
-            "color: #a0a0a0; font-size: 14px;"));
-        phLayout->addWidget(loadingLabel);
-    }
-    m_contentStack->addWidget(pmuiPlaceholder);
+    m_contentStack->addWidget(createPmuiPlaceholder());
 
     // Content stack fills the content area — the version footer that
     // used to live in a QML bottom toolbar is now inside SidebarPanel.qml.
@@ -288,6 +276,21 @@ void MainContainer::setupUi()
 
     // Set reasonable minimum size
     setMinimumSize(800, 600);
+}
+
+QWidget* MainContainer::createPmuiPlaceholder()
+{
+    QWidget* placeholder = new QWidget(m_contentStack);
+    placeholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    QVBoxLayout* phLayout = new QVBoxLayout(placeholder);
+    phLayout->setAlignment(Qt::AlignCenter);
+    QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"),
+                                      placeholder);
+    loadingLabel->setAlignment(Qt::AlignCenter);
+    loadingLabel->setStyleSheet(QStringLiteral(
+        "color: #a0a0a0; font-size: 14px;"));
+    phLayout->addWidget(loadingLabel);
+    return placeholder;
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
@@ -356,6 +359,15 @@ void MainContainer::onViewIndexChanged()
     case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
     case 2:
         if (!m_pmuiWidget) {
+            // If PMUI was unloaded, its widget's destruction also removed
+            // it from the stack — put a fresh placeholder back at index 2
+            // so setCurrentIndex below has something to show and the
+            // pluginWindowRequested intercept finds a placeholder to swap
+            // out, exactly like the first load.
+            if (m_contentStack->count() <= kModulesStackIndex) {
+                m_contentStack->insertWidget(kModulesStackIndex,
+                                             createPmuiPlaceholder());
+            }
             m_backend->loadUiModule(QStringLiteral("package_manager_ui"));
         }
         m_contentStack->setCurrentIndex(kModulesStackIndex);

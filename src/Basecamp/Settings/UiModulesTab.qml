@@ -146,6 +146,10 @@ Item {
                             // regardless of which of the three states is
                             // showing ("(Main UI)" / "(Loaded)" / "(Not Loaded)").
                             LogosText {
+                                // Per-module objectName so UI automation
+                                // can assert THIS row's load state — the
+                                // status strings repeat across rows.
+                                objectName: "uiModules." + modelData.name + ".status"
                                 text: modelData.isMainUi ? "(Main UI)" :
                                       (modelData.isLoaded ? "(Loaded)" : "(Not Loaded)")
                                 color: modelData.isMainUi ? "#a0a0a0" :

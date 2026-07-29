@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QHBoxLayout>
+#include <QPointer>
 #include <QStackedWidget>
 
 class QQuickWidget;
@@ -50,6 +51,7 @@ private slots:
 
 private:
     void setupUi();
+    QWidget* createPmuiPlaceholder();
 
     // Main layout
     QHBoxLayout* m_mainLayout;
@@ -63,7 +65,12 @@ private:
     // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
     WorkspaceArea* m_workspaceArea;
 
-    QWidget* m_pmuiWidget = nullptr;
+    // QPointer, not a raw pointer: the widget is destroyed when
+    // package_manager_ui is unloaded (UI Modules tab / uninstall cascade),
+    // and a stale non-null value here would keep the reload guard in
+    // onViewIndexChanged from ever loading the plugin again — leaving the
+    // Package Manager view permanently blank.
+    QPointer<QWidget> m_pmuiWidget;
     bool m_suppressNextNavToApps = false;
 
     // Content views (QML for Dashboard, Modules, PackageManager, Settings)

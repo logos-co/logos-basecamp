@@ -118,6 +118,10 @@ Item {
                                 // line up the same whether the row says
                                 // "(Loaded)" or "(Not Loaded)".
                                 LogosText {
+                                    // Per-module objectName so UI automation
+                                    // can assert THIS row's load state — the
+                                    // status strings repeat across rows.
+                                    objectName: "coreModules." + modelData.name + ".status"
                                     text: modelData.isLoaded ? "(Loaded)" : "(Not Loaded)"
                                     color: modelData.isLoaded ? "#4CAF50" : "#F44336"
                                     Layout.preferredWidth: 100
@@ -140,6 +144,11 @@ Item {
 
                                 // Load/Unload button
                                 Button {
+                                    // Per-module objectName so UI automation
+                                    // can click THIS row's button — by-text
+                                    // clicking can't tell the identical
+                                    // "Unload Plugin" labels apart.
+                                    objectName: "coreModules." + modelData.name + ".toggleButton"
                                     text: modelData.isLoaded ? "Unload Plugin" : "Load Plugin"
 
                                     contentItem: LogosText {

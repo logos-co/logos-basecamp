@@ -170,6 +170,10 @@ Control {
             Repeater {
                 model: _d.viewSections
                 delegate: SidebarCircleButton {
+                    // Stable handle for UI automation — section labels like
+                    // "Package Manager" also appear as module-row texts, so
+                    // by-text clicking is ambiguous.
+                    objectName: "sidebar.section." + modelData.name
                     checked: backend.currentActiveSectionIndex -1 === index
                     text: modelData.name
                     icon.source: modelData.icon
