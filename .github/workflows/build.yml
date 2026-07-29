@@ -146,6 +146,26 @@ jobs:
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
+      # Report-only non-blocking for now
+      - name: Coverage report
+        continue-on-error: true
+        run: |
+          nix build .#coverage -L
+          {
+            echo '## Unit-test coverage'
+            echo '```'
+            cat result/coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: result/
+          if-no-files-found: ignore
+
   test-macos:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     runs-on: macos-latest

@@ -277,6 +277,16 @@
           # QML component tests (Qt Quick Test)
           qml-tests = import ./nix/qml-tests.nix { inherit pkgs src logosPackageHeaders; };
 
+          # Coverage report for the unit-test suite: same targets as
+          # .#unit-tests, compiled with --coverage and reported via gcovr.
+          # Report-only for now (failUnderLine = 0) — raise the threshold as
+          # the test plan phases land to make it a gate.
+          # Build: nix build .#coverage -L && open result/coverage.html
+          coverage = import ./nix/coverage.nix {
+            inherit pkgs src logosPackageHeaders;
+            failUnderLine = 0;
+          };
+
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
