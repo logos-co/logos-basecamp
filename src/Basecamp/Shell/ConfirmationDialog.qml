@@ -785,7 +785,7 @@ Dialog {
                     root.close();
                 }
             }
-            
+
             LogosButton {
                 objectName: "confirmationDialog." + root.mode + ".confirm"
                 text: {
