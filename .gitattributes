@@ -1,4 +1,5 @@
 # Enforce LF line endings on checkout so Windows/WSL clones don't introduce CRLF
 # into build inputs. A CRLF `nix/*.nix` breaks the configurePhase shell scripts
 # (logos-co/logos-basecamp#288). `text=auto` leaves binary files untouched.
-* text=auto eol=lf
+*.nix text eol=lf
+*.sh text eol=lf
