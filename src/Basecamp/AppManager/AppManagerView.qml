@@ -61,6 +61,18 @@ Rectangle {
         }
     }
 
+    // Filter proxy for the "Local" section — installed packages with no
+    // catalog row (empty repositoryUrl). Hoisted out of the grid so the
+    // empty-state guard below can gate on its visibleCount. objectName is
+    // the test anchor (tests/ui-tests.mjs looks it up via findByProperty).
+    AppsFilterProxy {
+        id: localAppsProxy
+        objectName: "appManager.localAppsProxy"
+        sourceModel: root.appsProxy
+        matchLocalOnly: true
+        excludeMainUi: false
+    }
+
     color: Theme.palette.background
 
     ColumnLayout {
@@ -249,8 +261,8 @@ Rectangle {
                                 Layout.preferredHeight: 40
                                 radius: Theme.spacing.radiusLarge
                                 text: qsTr("Reload")
-                                icon.source: LogosIcons.refresh
-                                icon.size: 18
+                                leadingIcon.source: LogosIcons.refresh
+                                leadingIcon.size: 18
                                 enabled: !root.loading
                                 onClicked: root.refreshRequested()
                             }
@@ -302,12 +314,15 @@ Rectangle {
                         }
                     }
 
-                    // Empty state — shown when no repositories are configured.
-                    // Replaces the grid so the user gets a direct call-to-action.
+                    // Empty state — shown when no repositories are configured
+                    // AND there are no local-only installed rows to fall back on.
+                    // If either exists, we render the grid instead.
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.repositories.length === 0 && !root.loading
+                        visible: root.repositories.length === 0
+                                 && localAppsProxy.visibleCount === 0
+                                 && !root.loading
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -346,7 +361,9 @@ Rectangle {
                         id: gridScroll
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.repositories.length > 0 || root.loading
+                        visible: root.repositories.length > 0
+                                 || localAppsProxy.visibleCount > 0
+                                 || root.loading
                         clip: true
                         contentWidth: width
                         contentHeight: gridColumn.implicitHeight
@@ -420,6 +437,61 @@ Rectangle {
                                         onAppManageRequested: function(name, repositoryUrl) {
                                             root.manageAppRequested(name, repositoryUrl || "")
                                         }
+                                    }
+                                }
+                            }
+
+                            // Local — synthetic "repo" section for installed
+                            // packages the catalog doesn't claim. Sits after
+                            // the real repos so it always renders last.
+                            ColumnLayout {
+                                AppsFilterProxy {
+                                    id: localFilter
+                                    sourceModel: root.appsProxy
+                                    matchLocalOnly: true
+                                    excludeMainUi: false
+                                }
+
+                                Layout.fillWidth: true
+                                spacing: Theme.spacing.medium
+                                visible: localFilter.visibleCount > 0
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacing.small
+
+                                    LogosText {
+                                        text: qsTr("local")
+                                        font.pixelSize: Theme.typography.subtitleText
+                                        font.weight: Theme.typography.weightMedium
+                                        color: Theme.palette.textSecondary
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                    LogosText {
+                                        text: "(" + localFilter.visibleCount + ")"
+                                        font.pixelSize: Theme.typography.secondaryText
+                                        color: Theme.palette.textTertiary
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Theme.palette.borderSubtle
+                                    opacity: 0.5
+                                }
+
+                                AppGrid {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: implicitHeight
+                                    modulesSource: localFilter
+                                    viewMode: d.viewMode
+                                    onAppClicked: function(name, repositoryUrl) {
+                                        root.appClicked(name, repositoryUrl || "")
+                                    }
+                                    onAppManageRequested: function(name, repositoryUrl) {
+                                        root.manageAppRequested(name, repositoryUrl || "")
                                     }
                                 }
                             }

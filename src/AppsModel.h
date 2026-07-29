@@ -66,6 +66,10 @@ public:
 
     void replaceCatalog(const QVariantList& catalogRows);
 
+    // Append synthetic rows for installed packages that have no catalog row.
+    // Marked by empty repositoryUrl
+    void mergeLocalOnlyInstalled(const QVariantList& installedPackages);
+
     void markInstalled(const QString& name,
                        const QString& installedVersion,
                        const QString& installedHash = {});

@@ -210,16 +210,26 @@ void AppsModel::recomputeVersionDerivedFields(Row& r)
 void AppsModel::replaceCatalog(const QVariantList& catalogRows)
 {
     QSet<QString> incoming;
+    QSet<QString> incomingNames;
     incoming.reserve(catalogRows.size());
+    incomingNames.reserve(catalogRows.size());
     for (const QVariant& v : catalogRows) {
         const QVariantMap row = v.toMap();
         const QString name = row.value("name").toString();
         if (name.isEmpty()) continue;
         incoming.insert(key(row.value("repositoryUrl").toString(), name));
+        incomingNames.insert(name);
     }
 
     QList<int> toRemove;
     for (int i = 0; i < m_rows.size(); ++i) {
+        // Local rows (no repositoryUrl) survive a catalog replace UNLESS the
+        // incoming catalog now provides that name — in which case the catalog
+        // row is the source of truth and the local one is dropped.
+        if (m_rows[i].repositoryUrl.isEmpty()) {
+            if (incomingNames.contains(m_rows[i].name)) toRemove.append(i);
+            continue;
+        }
         const QString k = key(m_rows[i].repositoryUrl, m_rows[i].name);
         if (!incoming.contains(k)) toRemove.append(i);
     }
@@ -285,6 +295,54 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
         }
     }
     emit categoriesChanged();
+}
+
+// ── Mutation: local-only installed rows ────────────────────────────────────
+
+void AppsModel::mergeLocalOnlyInstalled(const QVariantList& installedPackages)
+{
+    bool categoriesTouched = false;
+    for (const QVariant& v : installedPackages) {
+        const QVariantMap pkg = v.toMap();
+        const QString name = pkg.value("name").toString();
+        if (name.isEmpty()) continue;
+
+        // Only surface USER-installed packages (under Application Support)
+        // as Local. Embedded packages ship inside the app bundle and are
+        // already represented via the built-in module list — showing them
+        // here would double-list them and clutter the section.
+        if (pkg.value("installType").toString() != QLatin1String("user")) continue;
+
+        // Skip if any row for this name exists (catalog or previously merged
+        // local). markInstalled/setInstallType/setIconUrl already reach the
+        // existing row via m_indicesByName; nothing to do here.
+        if (m_indicesByName.contains(name)) continue;
+
+        const int idx = m_rows.size();
+        beginInsertRows({}, idx, idx);
+        Row r;
+        r.name             = name;
+        r.repositoryUrl    = QString();
+        r.displayName      = pkg.value("displayName").toString();
+        r.description      = pkg.value("description").toString();
+        r.category         = pkg.value("category").toString();
+        r.type             = pkg.value("type").toString();
+        r.installedVersion = pkg.value("version").toString();
+        r.installedHash    = pkg.value("hashes").toMap().value("root").toString();
+        r.installType      = pkg.value("installType").toString();
+        // versions{} + empty latestVersion → recomputeInstallStatus lands on
+        // InstallStatus::Installed (installedVersion set + no release to
+        // compare against). HasUpdate stays false. Local-only rows expose no
+        // Install/Upgrade action.
+        recomputeVersionDerivedFields(r);
+        m_rows.append(std::move(r));
+        m_indexByKey.insert(key(QString(), name), idx);
+        m_indicesByName.insert(name, idx);
+        endInsertRows();
+
+        if (!m_rows.last().category.isEmpty()) categoriesTouched = true;
+    }
+    if (categoriesTouched) emit categoriesChanged();
 }
 
 // ── Mutation: on-disk state ────────────────────────────────────────────────

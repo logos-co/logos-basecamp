@@ -239,6 +239,14 @@ void AppsFilterProxy::setRepositoryUrlFilter(const QString& url)
     emit repositoryUrlFilterChanged();
 }
 
+void AppsFilterProxy::setMatchLocalOnly(bool v)
+{
+    if (m_matchLocalOnly == v) return;
+    m_matchLocalOnly = v;
+    invalidateFilter();
+    emit matchLocalOnlyChanged();
+}
+
 QStringList AppsFilterProxy::requiredPackages() const
 {
     QStringList out;
@@ -319,8 +327,12 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
     }
 
     // Repository URL — exact match. Used by the App Manager's per-repo
-    // sections.
-    if (!m_repositoryUrlFilter.isEmpty()) {
+    // sections. matchLocalOnly inverts the semantics: accept only rows with
+    // an empty repositoryUrl (the synthetic "Local" bucket).
+    if (m_matchLocalOnly) {
+        const QString repo = src->data(idx, AppsModel::RepositoryUrlRole).toString();
+        if (!repo.isEmpty()) return false;
+    } else if (!m_repositoryUrlFilter.isEmpty()) {
         const QString repo = src->data(idx, AppsModel::RepositoryUrlRole).toString();
         if (repo != m_repositoryUrlFilter) return false;
     }

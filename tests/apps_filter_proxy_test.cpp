@@ -38,6 +38,24 @@ QVariantMap row(const QString& name,
     return r;
 }
 
+// Mirrors makeInstalledPackage from apps_model_test.cpp — kept small since
+// only the local-only-merge test uses it here.
+QVariantMap installed(const QString& name,
+                      const QString& version,
+                      const QString& rootHash,
+                      const QString& category = {})
+{
+    QVariantMap hashes;
+    hashes.insert("root", rootHash);
+    QVariantMap pkg;
+    pkg.insert("name",        name);
+    pkg.insert("version",     version);
+    pkg.insert("hashes",      hashes);
+    pkg.insert("installType", "user");
+    if (!category.isEmpty()) pkg.insert("category", category);
+    return pkg;
+}
+
 } // namespace
 
 class AppsFilterProxyTest : public QObject {
@@ -244,6 +262,53 @@ private slots:
         m_proxy->setSearchText("waku");
         QCOMPARE(m_proxy->rowCount(), 1);
         m_proxy->setSearchText("");
+    }
+
+    // ── matchLocalOnly — the "Local" repo section's filter ───────────
+    // AppManagerView's Local group binds one AppsFilterProxy with
+    // matchLocalOnly=true. Semantics: accepts rows whose repositoryUrl is
+    // empty (the marker for a synthetic Local row) and rejects everything
+    // else — including rows that repositoryUrlFilter would otherwise let
+    // through.
+    void matchLocalOnly_accepts_only_empty_repositoryUrl_rows()
+    {
+        m_model->replaceCatalog({
+            row("wallet_ui", "https://repo1", "1.0", "H1"),
+            row("chat_ui",   "https://repo2", "1.0", "H2"),
+        });
+        m_model->mergeLocalOnlyInstalled({
+            installed("orphan_mod", "0.9", "H_orphan"),
+        });
+        QCOMPARE(m_proxy->rowCount(), 3);   // no filter — all through
+
+        m_proxy->setMatchLocalOnly(true);
+        QCOMPARE(m_proxy->rowCount(), 1);   // only the local row
+        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), AppsModel::NameRole).toString(),
+                 QStringLiteral("orphan_mod"));
+
+        // Turning it back off restores the full set.
+        m_proxy->setMatchLocalOnly(false);
+        QCOMPARE(m_proxy->rowCount(), 3);
+    }
+
+    void matchLocalOnly_overrides_repositoryUrlFilter()
+    {
+        m_model->replaceCatalog({
+            row("wallet_ui", "https://repo1", "1.0", "H1"),
+        });
+        m_model->mergeLocalOnlyInstalled({
+            installed("orphan_mod", "0.9", "H_orphan"),
+        });
+        // Configure the two filters in a way that would conflict if both
+        // applied: repositoryUrlFilter pins to repo1, matchLocalOnly wants
+        // empty repos. matchLocalOnly must win — the guard in the .cpp
+        // branches through the m_matchLocalOnly path before consulting
+        // m_repositoryUrlFilter.
+        m_proxy->setRepositoryUrlFilter("https://repo1");
+        m_proxy->setMatchLocalOnly(true);
+        QCOMPARE(m_proxy->rowCount(), 1);
+        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), AppsModel::NameRole).toString(),
+                 QStringLiteral("orphan_mod"));
     }
 
     // ── visibleCount stays in sync with rowCount ──────────────────────
