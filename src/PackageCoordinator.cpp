@@ -34,8 +34,17 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     , m_appsModel(appsModel)
     , m_installRegistry(new InstallRegistry(this))
 {
-    subscribeToPackageInstallationEvents();
-    subscribeToPackageDownloaderEvents();
+    m_pmEventsWired = subscribeToPackageInstallationEvents();
+    m_pdEventsWired = subscribeToPackageDownloaderEvents();
+
+    // Track package_manager / package_downloader leaving/(re)joining the
+    // loaded set so the IPC wiring above survives a module unload/reload
+    // cycle (and so a wiring that failed here because the module wasn't
+    // connected yet gets retried — the 2s stats tick re-fires the signal).
+    if (m_coreModuleManager) {
+        connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
+                this, &PackageCoordinator::onCoreModuleSetChanged);
+    }
 
     // NB: initial metadata fetch is deferred until MainUIBackend calls
     // refresh() — the uiPluginsFetched signal would otherwise fire before
@@ -46,15 +55,15 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
 
 PackageCoordinator::~PackageCoordinator() = default;
 
-void PackageCoordinator::subscribeToPackageInstallationEvents()
+bool PackageCoordinator::subscribeToPackageInstallationEvents()
 {
     if (!m_logosAPI) {
-        return;
+        return false;
     }
 
     LogosAPIClient* client = m_logosAPI->getClient("package_manager");
     if (!client || !client->isConnected()) {
-        return;
+        return false;
     }
 
     LogosModules logos(m_logosAPI);
@@ -201,20 +210,95 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
         }
         onBeforeMultiUninstall(names, installedDeps);
     });
+
+    return true;
 }
 
-void PackageCoordinator::subscribeToPackageDownloaderEvents()
+void PackageCoordinator::onCoreModuleSetChanged()
 {
-    if (!m_logosAPI) return;
+    if (!m_coreModuleManager) return;
+    const QStringList loaded = m_coreModuleManager->loadedModules();
+    const bool pmLoaded = loaded.contains(QStringLiteral("package_manager"));
+    const bool pdLoaded = loaded.contains(QStringLiteral("package_downloader"));
+
+    // Module gone — the cached replica handle and every event subscription
+    // now point at a dead source. Remember, so the next sighting of the
+    // module re-wires instead of trusting stale state.
+    if (!pmLoaded) m_pmEventsWired = false;
+    if (!pdLoaded) m_pdEventsWired = false;
+
+    const bool needRewire = (pmLoaded && !m_pmEventsWired)
+                         || (pdLoaded && !m_pdEventsWired);
+    if (!needRewire || m_rewireQueued) return;
+
+    // Queue the rewire out of this emission: subscribeToPackageInstallation-
+    // Events does synchronous IPC (directory setters), which we don't want on
+    // a stats-timer or load/unload signal stack.
+    m_rewireQueued = true;
+    QPointer<PackageCoordinator> self(this);
+    QTimer::singleShot(0, this, [self]() {
+        if (!self) return;
+        self->m_rewireQueued = false;
+        self->rewirePackageIpc();
+    });
+}
+
+void PackageCoordinator::rewirePackageIpc()
+{
+    if (!m_logosAPI || !m_coreModuleManager) return;
+    const QStringList loaded = m_coreModuleManager->loadedModules();
+    bool rewired = false;
+
+    // For each package module that came back: drop the client's cached
+    // object handles and re-run the event subscriptions. RemoteLogosObject
+    // never reports itself stale (isValid() is the base-class unconditional
+    // true), so after a module reload every call would otherwise keep using
+    // the pre-unload replica/connection: requests can still execute
+    // module-side, but async replies travel as completion events over the
+    // dead replica's channel and never arrive — and fresh acquires on the
+    // dead connection block the UI in waitForSource timeouts.
+    if (!m_pmEventsWired && loaded.contains(QStringLiteral("package_manager"))) {
+        if (LogosAPIClient* client = m_logosAPI->getClient("package_manager"))
+            client->reconnect();
+        m_pmEventsWired = subscribeToPackageInstallationEvents();
+        if (m_pmEventsWired) {
+            qDebug() << "PackageCoordinator: re-wired package_manager IPC after module (re)load";
+            rewired = true;
+        }
+    }
+
+    if (!m_pdEventsWired && loaded.contains(QStringLiteral("package_downloader"))) {
+        if (LogosAPIClient* client = m_logosAPI->getClient("package_downloader"))
+            client->reconnect();
+        m_pdEventsWired = subscribeToPackageDownloaderEvents();
+        if (m_pdEventsWired) {
+            qDebug() << "PackageCoordinator: re-wired package_downloader IPC after module (re)load";
+            rewired = true;
+        }
+    }
+
+    if (rewired) {
+        // Repopulate everything fetched over the old wiring — UI-plugin
+        // metadata, installType/missing-deps/dependents caches, catalog,
+        // repository list.
+        refresh();
+    }
+}
+
+bool PackageCoordinator::subscribeToPackageDownloaderEvents()
+{
+    if (!m_logosAPI) return false;
 
     LogosAPIClient* client = m_logosAPI->getClient("package_downloader");
-    if (!client || !client->isConnected()) return;
+    if (!client || !client->isConnected()) return false;
 
     LogosModules logos(m_logosAPI);
     logos.package_downloader.on("catalogChanged", [this](const QVariantList&) {
         refreshRepositories();
         refresh();
     });
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -890,6 +974,24 @@ void PackageCoordinator::fetchUiPluginMetadata()
     logos.package_manager.getInstalledUiPluginsAsync([self](QVariantList uiPlugins) {
         if (!self) return;
 
+        if (uiPlugins.isEmpty()) {
+            // A truthful reply always contains at least main_ui — the running
+            // UI is itself an installed UI plugin, and uninstallUiModule
+            // refuses to remove it. Empty means the fetch failed or raced a
+            // package_manager restart: keep the last-known metadata instead
+            // of wiping the UI Modules tab / sidebar to an empty list. The
+            // core-module-set watcher re-fires refresh() once the module is
+            // back and re-wired.
+            qWarning() << "PackageCoordinator: getInstalledUiPlugins returned"
+                          " an empty list — treating as a failed fetch,"
+                          " keeping last-known UI-plugin metadata";
+            if (self->m_appsLoading) {
+                self->m_appsLoading = false;
+                emit self->appsLoadingChanged();
+            }
+            return;
+        }
+
         // Seed installType for the UI-plugin subset. refreshDependencyInfo's
         // full-scan pass will overwrite this with the core-inclusive version;
         // we do this first so QML has a non-empty map to key on during the
@@ -1124,6 +1226,16 @@ void PackageCoordinator::refreshDependencyInfo()
     logos.package_manager.getInstalledPackagesAsync(
         [self](QVariantList packages) {
         if (!self) return;
+        if (packages.isEmpty()) {
+            // Same invariant as fetchUiPluginMetadata: main_ui at minimum is
+            // always installed, so an empty list is a failed/racing fetch,
+            // not truth. Keep the previous installType / missing-deps /
+            // dependents caches — stale-but-present beats an empty UI.
+            qWarning() << "PackageCoordinator: getInstalledPackages returned"
+                          " an empty list — treating as a failed fetch,"
+                          " keeping dependency caches";
+            return;
+        }
         self->m_installedPackagesCache = packages;
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;

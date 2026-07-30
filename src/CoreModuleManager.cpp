@@ -110,17 +110,32 @@ QStringList CoreModuleManager::loadedModules() const
 
 bool CoreModuleManager::loadModule(const QString& name)
 {
-    return logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    const bool ok = logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    if (ok) notifyModuleSetChanged();
+    return ok;
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    const bool ok = logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    if (ok) notifyModuleSetChanged();
+    return ok;
 }
 
 bool CoreModuleManager::unloadModuleWithDependents(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    const bool ok = logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    // A failed cascade may still have unloaded some dependents (see the
+    // header contract: "the cascade may have made progress"), so notify
+    // regardless of the return value.
+    notifyModuleSetChanged();
+    return ok;
+}
+
+void CoreModuleManager::notifyModuleSetChanged()
+{
+    QMetaObject::invokeMethod(this, [this]{ emit coreModulesChanged(); },
+                              Qt::QueuedConnection);
 }
 
 QVariantMap CoreModuleManager::moduleStats(const QString& name) const

@@ -286,11 +286,35 @@ private:
     // corePluginUninstalled/uiPluginUninstalled + beforeUninstall/beforeUpgrade.
     // Also configures install directories on the module and issues
     // resetPendingActionAsync to clear any slot left over from a crashed prior
-    // session.
-    void subscribeToPackageInstallationEvents();
+    // session. Returns false when the package_manager client isn't available/
+    // connected yet — the caller records that in m_pmEventsWired so the
+    // core-module-set watcher retries until the wiring lands.
+    bool subscribeToPackageInstallationEvents();
 
-    // Subscribe to package_downloader's catalogChanged event
-    void subscribeToPackageDownloaderEvents();
+    // Package-module availability watcher — connected to
+    // CoreModuleManager::coreModulesChanged (fires on refresh, every 2s stats
+    // tick, and after every load/unload). Tracks package_manager and
+    // package_downloader leaving / (re)joining the loaded set: on leave it
+    // marks that module's IPC wiring dead, on (re)join it queues
+    // rewirePackageIpc(). Without this, everything wired at construction
+    // keeps using the pre-unload replica/connection after a module reload —
+    // requests can still execute module-side but async replies (delivered as
+    // completion events on the dead replica's channel) never arrive, the
+    // gated-dialog event subscriptions stay dead until app restart, and
+    // fresh acquires on the dead connection block the UI in waitForSource
+    // timeouts (seen with package_downloader after a leaf unload/reload).
+    void onCoreModuleSetChanged();
+    // Flush the affected client's cached replica handles
+    // (LogosAPIClient::reconnect), re-run its event subscriptions, and
+    // refresh() to repopulate whatever was lost/wiped while the module was
+    // down. Queued out of the signal emission because the subscription setup
+    // does synchronous IPC.
+    void rewirePackageIpc();
+
+    // Subscribe to package_downloader's catalogChanged event. Returns false
+    // when the downloader client isn't available/connected yet — recorded in
+    // m_pdEventsWired so the core-module-set watcher retries.
+    bool subscribeToPackageDownloaderEvents();
 
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
     // seeds the installType cache for the UI-plugin subset; the full-scan pass
@@ -395,4 +419,11 @@ private:
     QVariantList m_repositories;
     int          m_repositoriesLoadingCount = 0;
     bool         m_appsLoading              = true;
+
+    // Whether the package_manager / package_downloader event subscriptions
+    // are wired to a live replica. Cleared by onCoreModuleSetChanged when the
+    // module leaves the loaded set; set again when rewirePackageIpc succeeds.
+    bool m_pmEventsWired = false;
+    bool m_pdEventsWired = false;
+    bool m_rewireQueued  = false;
 };

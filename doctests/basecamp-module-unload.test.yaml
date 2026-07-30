@@ -370,14 +370,51 @@ sections:
               texts: ["UI Modules", "Available UI plugins in the system"]
               timeout: 30000
 
-            # We deliberately assert the CORE module here, not the UI Modules
-            # row: that list is fed by an IPC refresh against the
-            # package_manager module, and after the module restarts the
-            # refresh replies are currently lost (known gap — the list can
-            # render stale/empty until the app restarts). The core-module
-            # status comes straight from the runtime's C API, and it only
-            # flips back to (Loaded) if the sidebar click really re-ran the
-            # plugin load — which is exactly the regression this story guards.
+            # Opening the Modules view triggers a visibility refresh
+            # ("Refreshing UI modules"), and the post-reload re-wire runs its
+            # own refresh — each reply rebuilds the UI Modules list model, so
+            # a one-shot assertion (or a fixed sleep) races the delegate
+            # re-creation. "Main UI" only renders once the list has rows
+            # (the empty list shows "No UI plugins found…"), so retry on it.
+            - name: "The UI Modules list has repopulated"
+              action: wait_for
+              texts: ["Main UI"]
+              timeout: 60000
+
+            # The Modules view remembers its last tab (Core Modules, from the
+            # cascade story), so switch back to UI Modules explicitly — the
+            # status assertion below would pass either way (StackLayout keeps
+            # both tabs instantiated), but the screenshot should show the tab
+            # the narrative talks about. Clicked by objectName (a by-text
+            # click on "UI Modules" is ambiguous with the tab's own heading),
+            # and only AFTER the list settled — a click synthesized while the
+            # refresh storm is still rebuilding delegates can be dropped.
+            - name: "Switch back to the UI Modules tab"
+              action: click_object
+              find_by: "objectName"
+              find_value: "modules.tab.uiModules"
+
+            - name: "Let the tab switch land"
+              action: sleep
+              ms: 1000
+
+            # The UI Modules row is fed by an IPC refresh against the
+            # RESTARTED package_manager module — this assertion is the
+            # regression guard for the IPC re-wire fix: without it, the
+            # refresh replies after a module reload were lost on a stale
+            # replica and this list rendered empty until app restart.
+            - name: "The package_manager_ui row is loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "uiModules.package_manager_ui.status"
+              property: "text"
+              value: "(Loaded)"
+              text: "The **UI Modules** tab recovered too: its list is fed by an IPC refresh against the *restarted* `package_manager` module, and `package_manager_ui` reports **(Loaded)** — Basecamp re-wired its module IPC after the reload."
+              screenshot: "unload-pmui-reloaded.png"
+
+            # The core-module status comes straight from the runtime's C API
+            # — it only flips back to (Loaded) if the sidebar click really
+            # re-ran the plugin load, which is what this closing story guards.
             - name: "Switch to Core Modules for the closing check"
               action: click
               target: "Core Modules"

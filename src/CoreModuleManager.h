@@ -69,15 +69,25 @@ public:
                                    const QString& argsJson);
 
 signals:
-    // Emitted by refresh() and after every stats-timer tick. MainUIBackend
-    // forwards this into its own signal of the same name via a signal-to-
-    // signal connect — QML binds to that forwarder.
+    // Emitted by refresh(), after every stats-timer tick, and (queued, via
+    // notifyModuleSetChanged) after every load/unload that touched the
+    // loaded set. MainUIBackend forwards this into its own signal of the
+    // same name via a signal-to-signal connect — QML binds to that
+    // forwarder. PackageCoordinator also watches it to detect
+    // package_manager going away / coming back so it can re-wire its IPC.
     void coreModulesChanged();
 
 private slots:
     void updateModuleStats();
 
 private:
+    // Queued coreModulesChanged emission for the load/unload wrappers. The
+    // C API entry points can be reached with a QML signal handler still on
+    // the stack (and logos_core_load_module spins a nested event loop
+    // internally); deferring the emit keeps receivers — QML bindings, the
+    // PackageCoordinator re-wire path — off that stack.
+    void notifyModuleSetChanged();
+
     LogosAPI* m_logosAPI;   // not owned
     QTimer*   m_statsTimer; // owned (parent=this)
     QMap<QString, QVariantMap> m_moduleStats;

@@ -49,6 +49,11 @@ Item {
 
             TabButton {
                 text: "UI Modules"
+                // Stable objectName for UI automation — a by-text click on
+                // "UI Modules" is ambiguous (the tab label and the tab's own
+                // heading share the text, and the hidden StackLayout child can
+                // win the tree walk).
+                objectName: "modules.tab.uiModules"
                 width: implicitWidth + 32
                 
                 contentItem: LogosText {
@@ -73,6 +78,7 @@ Item {
 
             TabButton {
                 text: "Core Modules"
+                objectName: "modules.tab.coreModules"
                 width: implicitWidth + 32
                 
                 contentItem: LogosText {
