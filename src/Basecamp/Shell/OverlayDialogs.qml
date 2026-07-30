@@ -32,7 +32,6 @@ Item {
                                   || unloadCascadeDialog.visible
                                   || uninstallCascadeDialog.visible
                                   || upgradeCascadeDialog.visible
-                                  || installConfirmDialog.visible
                                   || installGateDialog.visible
                                   || addApplicationDialog.visible
     property string sidebarTooltipText: ""
@@ -87,19 +86,11 @@ Item {
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
-    ConfirmationDialog {
-        id: installConfirmDialog
-        mode: "installConfirm"
-        displayNameLookup: _dialogDeps.displayNameLookup
-        onContinueClicked: backend.confirmInstall()
-        onCancelClicked: backend.cancelInstall()
-    }
-
-    // Fresh catalog-install gate initiated by package_manager_ui (via the
-    // module's requestInstall). Distinct from installConfirmDialog (local-LGX
-    // inspect flow): confirm/cancel forward the decision back through the
-    // module gate so PMU downloads+installs (or aborts). Lists the resolved
-    // transitive dep changes so this is the single install confirmation.
+    // Install gate initiated by package_manager_ui (via the module's
+    // requestInstall) — the only install confirmation in the app, covering
+    // both catalog downloads and local .lgx picks. Confirm/cancel forward the
+    // decision back through the module gate so PMU installs (or aborts).
+    // Lists the resolved transitive dep changes.
     ConfirmationDialog {
         id: installGateDialog
         mode: "installGate"
@@ -178,12 +169,8 @@ Item {
                                                  depChanges);
         }
 
-        function onInstallConfirmationRequested(metadata) {
-            installConfirmDialog.openWithMetadata(metadata);
-        }
-
-        // Fresh catalog-install gate (package_manager_ui-initiated). releaseTag
-        // is the target version; depChanges is the resolved transitive set.
+        // Install gate (package_manager_ui-initiated). releaseTag is the
+        // target version; depChanges is the resolved transitive set.
         function onInstallGateConfirmationRequested(name, releaseTag, depChanges) {
             installGateDialog.openWithInstallGate(name, releaseTag, depChanges);
         }

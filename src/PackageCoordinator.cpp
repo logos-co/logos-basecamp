@@ -9,7 +9,6 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
-#include <QFileDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -250,114 +249,6 @@ QString PackageCoordinator::colorFor(const QString& name) const
 }
 
 // ---------------------------------------------------------------------------
-// Install flow
-// ---------------------------------------------------------------------------
-
-void PackageCoordinator::openInstallPluginDialog()
-{
-    QString filter = "LGX Package (*.lgx);;All Files (*)";
-    QString filePath = QFileDialog::getOpenFileName(nullptr, tr("Select Plugin to Install"), QString(), filter);
-    if (!filePath.isEmpty()) {
-        installPluginFromPath(filePath);
-    }
-}
-
-void PackageCoordinator::installPluginFromPath(const QString& filePath)
-{
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-
-    // Inspect the LGX first — no files are modified. The result tells us
-    // whether the package is already installed and what depends on it, so
-    // we can show the right confirmation dialog before doing anything
-    // destructive.
-    logos.package_manager.inspectPackageAsync(filePath,
-        [self, filePath](QVariantMap info) {
-            if (!self) return;
-            if (!info.value("error").toString().isEmpty()) {
-                qWarning() << "Failed to inspect LGX:" << info.value("error").toString();
-                return;
-            }
-
-            self->m_pendingInstallPath = filePath;
-            const bool isAlreadyInstalled = info.value("isAlreadyInstalled").toBool();
-
-            if (isAlreadyInstalled) {
-                const QString name = info.value("name").toString();
-                const QStringList deps = info.value("installedDependents").toStringList();
-                const QStringList loaded = self->m_uiPluginManager
-                    ? self->m_uiPluginManager->intersectWithLoaded(deps)
-                    : QStringList{};
-
-                if (!loaded.isEmpty() || !deps.isEmpty()) {
-                    // Upgrade with dependents — set cascade pending state so
-                    // confirmInstall routes through the cascade-unload path.
-                    self->m_pendingAction = {PendingOp::InstallUpgradeCascade,
-                                             name, {}, 0};
-                    // Augment the metadata with loaded-deps so the install-
-                    // confirm dialog can render both package details AND the
-                    // dependents lists in one unified view.
-                    info["loadedDependents"] = QVariant::fromValue(loaded);
-                }
-            }
-
-            // Always show the install-confirm dialog — it adapts its layout
-            // based on isAlreadyInstalled, installedDependents, and
-            // loadedDependents fields in the metadata.
-            emit self->installConfirmationRequested(info);
-        });
-}
-
-void PackageCoordinator::confirmInstall()
-{
-    if (m_pendingInstallPath.isEmpty()) return;
-
-    // Upgrade with dependents — the install-confirm dialog showed both
-    // package metadata AND the cascade lists. Route to the cascade path
-    // which handles unloading dependents → uninstall old → install new.
-    if (m_pendingAction.op == PendingOp::InstallUpgradeCascade) {
-        const QString name = m_pendingAction.name;
-        confirmUninstallCascade(name);
-        return;
-    }
-
-    // Simple install (fresh or upgrade without dependents).
-    const QString path = m_pendingInstallPath;
-    m_pendingInstallPath.clear();
-
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.installPluginAsync(path, false,
-        [self](QVariant result) {
-            if (!self) return;
-            // installPlugin returns {path:"", error:"..."} on failure. Check it
-            // (non-empty path AND no error) and surface the reason via the signal.
-            const QVariantMap m = result.toMap();
-            const QString err = m.value("error").toString();
-            const bool ok = !m.value("path").toString().isEmpty() && err.isEmpty();
-            if (!ok) {
-                const QString name = m.value("name").toString();
-                qWarning() << "installPlugin failed:" << name << err;
-                emit self->catalogInstallFailed(name, err);
-                // Still refresh so any partial state is reflected accurately.
-            }
-            if (self->m_coreModuleManager) self->m_coreModuleManager->refresh();
-            self->fetchUiPluginMetadata();
-        });
-}
-
-void PackageCoordinator::cancelInstall()
-{
-    // Upgrade with dependents — clear the cascade pending state too.
-    if (m_pendingAction.op == PendingOp::InstallUpgradeCascade) {
-        m_pendingAction = {};
-    }
-    m_pendingInstallPath.clear();
-}
-
-// ---------------------------------------------------------------------------
 // Gated uninstall — entry points
 // ---------------------------------------------------------------------------
 
@@ -421,8 +312,7 @@ void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
 void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
 {
     if ((m_pendingAction.op != PendingOp::UninstallCascade &&
-         m_pendingAction.op != PendingOp::UpgradeCascade &&
-         m_pendingAction.op != PendingOp::InstallUpgradeCascade)
+         m_pendingAction.op != PendingOp::UpgradeCascade)
         || m_pendingAction.name != moduleName) {
         qWarning() << "confirmUninstallCascade for" << moduleName
                    << "but pending action is" << m_pendingAction.name;
@@ -431,11 +321,8 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
 
     // Snapshot before clearing — the callbacks below capture by value.
     const bool    isUpgrade         = (m_pendingAction.op == PendingOp::UpgradeCascade);
-    const bool    isInstallUpgrade  = (m_pendingAction.op == PendingOp::InstallUpgradeCascade);
     const QString releaseTag        = m_pendingAction.releaseTag;
-    const QString installPath       = m_pendingInstallPath;
     m_pendingAction = {};
-    m_pendingInstallPath.clear();
 
     // Defer the cascade body off the QML click stack: unloadModuleWithDependents
     // spins a nested event loop, and running that under the dialog's onClicked
@@ -443,7 +330,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     // queue the rest so the click handler unwinds first.
     QPointer<PackageCoordinator> selfDefer(this);
     QMetaObject::invokeMethod(this,
-        [this, selfDefer, moduleName, isUpgrade, isInstallUpgrade, releaseTag, installPath]() {
+        [this, selfDefer, moduleName, isUpgrade, releaseTag]() {
         if (!selfDefer) return;
 
     // Snapshot the loaded-dependents list BEFORE the cascade — once
@@ -492,31 +379,10 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     // Hand the actual package-lifecycle work back to the module.
     if (!m_logosAPI) return;
     LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(selfDefer);
-    if (isInstallUpgrade) {
-        // Local LGX file upgrade — uninstall old, then install new from file.
-        // Two chained async calls: uninstallPackage removes the old files,
-        // then installPlugin extracts the new LGX in its place.
-        logos.package_manager.uninstallPackageAsync(moduleName,
-            [self, moduleName, installPath](QVariantMap r) {
-                if (!self) return;
-                if (!r.value("success", false).toBool()) {
-                    qWarning() << "Uninstall before local upgrade failed for"
-                               << moduleName << ":" << r.value("error").toString();
-                    return;
-                }
-                LogosModules logos2(self->m_logosAPI);
-                logos2.package_manager.installPluginAsync(installPath, false,
-                    [self](QVariant result) {
-                        if (!self) return;
-                        Q_UNUSED(result);
-                        if (self->m_coreModuleManager) self->m_coreModuleManager->refresh();
-                        self->fetchUiPluginMetadata();
-                    });
-            });
-    } else if (isUpgrade) {
-        // Catalog-based upgrade — the module does uninstall + emits
-        // upgradeUninstallDone for PMU to drive download+install.
+    if (isUpgrade) {
+        // Upgrade — the module does the uninstall step + emits
+        // upgradeUninstallDone for PMU to drive the install of the new
+        // version (a catalog download, or the local .lgx it stashed).
         logos.package_manager.confirmUpgradeAsync(moduleName, releaseTag,
             [moduleName](QVariantMap r) {
                 if (!r.value("success", false).toBool()) {
@@ -585,17 +451,10 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
     const PendingOp op = m_pendingAction.op;
     const QString   releaseTag = m_pendingAction.releaseTag;
     m_pendingAction = {};
-    m_pendingInstallPath.clear();   // safe no-op when no install is pending
 
-    // InstallUpgradeCascade is local — just drop the pending slot and
-    // we're done. It's driven entirely by inspectPackage + the ungated
-    // uninstallPackage/installPlugin calls, so the module has no pending
-    // action to cancel.
-    //
     // Uninstall / Upgrade are gated by the module — tell it we bailed;
     // otherwise its pending slot stays set and the next request is
     // rejected with "another <op> is in progress".
-    if (op == PendingOp::InstallUpgradeCascade) return;
     if (!m_logosAPI) return;
     LogosModules logos(m_logosAPI);
     if (op == PendingOp::UpgradeCascade) {

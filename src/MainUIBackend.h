@@ -142,10 +142,6 @@ public slots:
     // Friendly module label, resolved from the catalog with fallback to `name`.
     Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
 
-    // Install flow — delegated to PackageCoordinator.
-    Q_INVOKABLE void installPluginFromPath(const QString& filePath);
-    Q_INVOKABLE void openInstallPluginDialog();
-
     // Uninstall flow — delegated to PackageCoordinator.
     Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
     Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
@@ -159,14 +155,10 @@ public slots:
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
 
-    // Install confirmation flow — delegated to PackageCoordinator.
-    Q_INVOKABLE void confirmInstall();
-    Q_INVOKABLE void cancelInstall();
-
-    // Fresh catalog-install gate (package_manager_ui-initiated) — delegated to
+    // Install gate (package_manager_ui-initiated) — delegated to
     // PackageCoordinator, which forwards the decision to the module's
-    // confirmInstall / cancelInstall gate. Distinct from confirmInstall()
-    // above (the local-LGX inspect flow).
+    // confirmInstall / cancelInstall gate. The app's only install
+    // confirmation; basecamp initiates no installs of its own.
     Q_INVOKABLE void confirmInstallGate(const QString& name);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
@@ -225,7 +217,7 @@ signals:
     void navigateToRepositoriesRequested();
 
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
-    // UIPluginManager; installConfirm + uninstallCascade come from
+    // UIPluginManager; installGate + uninstallCascade come from
     // PackageCoordinator.
     void missingDepsPopupRequested(const QString& name, const QStringList& missing);
     void unloadCascadeConfirmationRequested(const QString& name, const QStringList& loadedDependents);
@@ -246,11 +238,7 @@ signals:
                                                     const QStringList& installedDependents,
                                                     const QStringList& loadedDependents);
 
-    // Install confirmation — emitted when the user picks an LGX file and we've
-    // inspected it. metadata contains name, version, type, signatureStatus, etc.
-    void installConfirmationRequested(const QVariantMap& metadata);
-
-    // Fresh catalog-install gate (package_manager_ui-initiated) — pure re-emit
+    // Install gate (package_manager_ui-initiated) — pure re-emit
     // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
     // target version; depChanges is the resolved transitive set the single
     // basecamp dialog lists.

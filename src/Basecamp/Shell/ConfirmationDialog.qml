@@ -7,7 +7,7 @@ import Logos.Theme
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
-// Six display variants, selected via `mode`:
+// Five display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
 //                       dependencies aren't installed. Primary action is a
 //                       "Continue" that closes the dialog (the primary
@@ -35,30 +35,34 @@ import Logos.Theme
 //                       / `cancelClicked`; the receiver disambiguates from
 //                       its own pending state (UpgradeCascade vs
 //                       UninstallCascade).
-//  - "installConfirm" — confirmation before installing / upgrading an LGX
-//                       file. Renders package metadata (name, version, type,
-//                       signature status). For upgrades, shows the installed
-//                       version alongside the new version.
-//  - "installGate"    — confirmation before a fresh catalog install initiated
-//                       by another UI (package_manager_ui), routed through the
-//                       module's requestInstall gate. Leads with the package +
-//                       target version and lists the resolved transitive
-//                       `depChanges`. No dependent-impact lists (a fresh
-//                       install unloads nothing). Confirm/Cancel flow through
-//                       continueClicked / cancelClicked → confirmInstallGate /
-//                       cancelInstallGate.
+//  - "installGate"    — confirmation before a fresh install routed through the
+//                       package_manager requestInstall gate. Every install the
+//                       app performs comes through here: package_manager_ui
+//                       initiates them all, whether the source is a catalog
+//                       download or a local .lgx the user picked. Leads with the
+//                       package + target version and lists the resolved
+//                       transitive `depChanges`. No dependent-impact lists (a
+//                       fresh install unloads nothing). Confirm/Cancel flow
+//                       through continueClicked / cancelClicked →
+//                       confirmInstallGate / cancelInstallGate.
+//
+//                       Note: for a local .lgx the initiator has no catalog to
+//                       resolve against, so `depChanges` arrives empty and the
+//                       dialog is name + version only. Surfacing the inspected
+//                       manifest here needs the metadata carried through the
+//                       gate payload — see requestInstall's depChanges, which
+//                       establishes the "opaque display data" precedent.
 //
 // The dialog is controlled by calling `openWith(mode, name, items)` for the
 // one-list modes, `openWithTwoLists(mode, name, items, loadedItems)` for
 // uninstallCascade, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
-// for upgradeCascade, `openWithInstallGate(name, version, depChanges)` for the
-// catalog install gate, or `openWithMetadata(metadata)` for installConfirm.
-// Backend wiring listens for continueClicked/cancelClicked and calls the
-// appropriate slot with `name`.
+// for upgradeCascade, or `openWithInstallGate(name, version, depChanges)` for
+// the install gate. Backend wiring listens for continueClicked/cancelClicked
+// and calls the appropriate slot with `name`.
 Dialog {
     id: root
 
-    // "missingDeps" | "unloadCascade" | "uninstallCascade" | "upgradeCascade" | "installConfirm"
+    // "missingDeps" | "unloadCascade" | "uninstallCascade" | "upgradeCascade" | "installGate"
     property string mode: "missingDeps"
     property string moduleName: ""
     property var items: []
@@ -66,8 +70,6 @@ Dialog {
     // that is currently loaded and will be torn down as part of the
     // cascade.
     property var loadedItems: []
-    // Only used in installConfirm mode — full QVariantMap from inspectPackage.
-    property var metadata: ({})
     // Only used in uninstallCascade for the multi-package variant
     property var targets: []
     // Only used in upgradeCascade mode. `upgradeTargetVersion` is the
@@ -175,19 +177,6 @@ Dialog {
         open();
     }
 
-    // Metadata variant for installConfirm — metadata is the QVariantMap from
-    // inspectPackage containing name, version, type, signatureStatus, etc.
-    function openWithMetadata(metadata_) {
-        root.mode = "installConfirm";
-        root.moduleName = (metadata_ && metadata_.name) ? metadata_.name : "";
-        root.metadata = metadata_ || {};
-        root.items = [];
-        root.loadedItems = [];
-        root.targets = [];
-        root._explicitClose = false;
-        open();
-    }
-
     background: Rectangle {
         color: Theme.palette.surfaceRaised
         border.color: Theme.palette.border
@@ -227,11 +216,6 @@ Dialog {
                         if (root.upgradeModeKind === 1) return "Downgrade Package?";
                         if (root.upgradeModeKind === 2) return "Reinstall Package?";
                         return "Upgrade Package?";
-                    }
-                    if (root.mode === "installConfirm") {
-                        if (root.metadata.isAlreadyInstalled)
-                            return "Upgrade Package?";
-                        return "Install Package?";
                     }
                     if (root.mode === "installGate")
                         return "Install Package?";
@@ -300,12 +284,6 @@ Dialog {
                                 + "will be unloaded for the swap — they keep working "
                                 + "with the new version once it lands.";
                 }
-                if (root.mode === "installConfirm") {
-                    if (root.metadata.isAlreadyInstalled)
-                        return "An existing version is installed. Review the details "
-                             + "below and confirm the upgrade:";
-                    return "Review the package details below before installing:";
-                }
                 if (root.mode === "installGate") {
                     var ivPhrase = root.upgradeTargetVersion.length > 0
                                    ? " v" + root.upgradeTargetVersion : "";
@@ -332,7 +310,6 @@ Dialog {
             border.width: 1
             visible: root.mode !== "uninstallCascade"
                      && root.mode !== "upgradeCascade"
-                     && root.mode !== "installConfirm"
                      && root.items.length > 0
 
             LogosListView {
@@ -578,185 +555,6 @@ Dialog {
             }
         }
 
-        // Metadata block for installConfirm — renders package details as a
-        // key-value grid inside a tinted box. Shows version comparison when
-        // upgrading an already-installed package.
-        Rectangle {
-            Layout.fillWidth: true
-            color: "#1e1e1e"
-            radius: 4
-            border.color: "#3d3d3d"
-            border.width: 1
-            visible: root.mode === "installConfirm"
-            implicitHeight: metadataCol.implicitHeight + 16
-
-            ColumnLayout {
-                id: metadataCol
-                anchors.fill: parent
-                anchors.margins: 8
-                spacing: 4
-
-                // Shortens a long hex hash ("abcd1234...abcd1234") for display.
-                // Matches the PMU details-panel format so users see the same
-                // fingerprint on both surfaces.
-                function shortHash(h) {
-                    if (!h) return "";
-                    if (h.length <= 16) return h;
-                    return h.substring(0, 8) + "…" + h.substring(h.length - 8);
-                }
-
-                // Helper component for key-value rows
-                component MetadataRow: RowLayout {
-                    property string label
-                    property string value
-                    Layout.fillWidth: true
-                    spacing: 8
-                    visible: value !== ""
-                    LogosText {
-                        text: label
-                        color: "#909090"
-                        font.pixelSize: 13
-                        Layout.preferredWidth: 120
-                    }
-                    LogosText {
-                        text: parent.value
-                        color: "#e0e0e0"
-                        font.pixelSize: 13
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                    }
-                }
-
-                MetadataRow {
-                    label: "Name:"
-                    value: root.metadata.name || ""
-                }
-                MetadataRow {
-                    label: "Version:"
-                    value: root.metadata.version || ""
-                    visible: !root.metadata.isAlreadyInstalled && (root.metadata.version || "") !== ""
-                }
-                MetadataRow {
-                    label: "Hash:"
-                    value: metadataCol.shortHash(root.metadata.rootHash || "")
-                    visible: !root.metadata.isAlreadyInstalled && (root.metadata.rootHash || "") !== ""
-                }
-                MetadataRow {
-                    label: "Installed:"
-                    value: {
-                        var v = root.metadata.installedVersion || "";
-                        var h = metadataCol.shortHash(root.metadata.installedHash || "");
-                        if (v && h) return v + " (" + h + ")";
-                        return v;
-                    }
-                    visible: root.metadata.isAlreadyInstalled === true
-                }
-                MetadataRow {
-                    label: "New version:"
-                    value: {
-                        var v = root.metadata.version || "";
-                        var h = metadataCol.shortHash(root.metadata.rootHash || "");
-                        if (v && h) return v + " (" + h + ")";
-                        return v;
-                    }
-                    visible: root.metadata.isAlreadyInstalled === true
-                }
-                MetadataRow {
-                    label: "Type:"
-                    value: root.metadata.type || ""
-                }
-                MetadataRow {
-                    label: "Category:"
-                    value: root.metadata.category || ""
-                }
-                MetadataRow {
-                    label: "Description:"
-                    value: root.metadata.description || ""
-                }
-
-                // Signature row — icon + colored text for status
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    visible: (root.metadata.signatureStatus || "") !== ""
-                    LogosText {
-                        text: "Signature:"
-                        color: "#909090"
-                        font.pixelSize: 13
-                        Layout.preferredWidth: 120
-                    }
-                    LogosText {
-                        font.pixelSize: 13
-                        Layout.fillWidth: true
-                        text: {
-                            var s = root.metadata.signatureStatus || "";
-                            if (s === "signed") {
-                                var name = root.metadata.signerName || root.metadata.signerDid || "";
-                                return name ? "\u2713 Signed by " + name : "\u2713 Signed";
-                            }
-                            if (s === "unsigned") return "\u26A0 Unsigned";
-                            if (s === "invalid")  return "\u2717 Invalid signature";
-                            if (s === "error")    return "\u2717 Signature error";
-                            return s;
-                        }
-                        color: {
-                            var s = root.metadata.signatureStatus || "";
-                            if (s === "signed")   return "#4CAF50";
-                            if (s === "unsigned")  return "#FFC107";
-                            if (s === "invalid" || s === "error") return "#f44336";
-                            return "#e0e0e0";
-                        }
-                    }
-                }
-            }
-        }
-
-        // Dependents block for installConfirm upgrades — shown when the
-        // package being upgraded has currently-loaded dependents. Unlike
-        // uninstall, an upgrade preserves installed-but-not-running
-        // dependents (they'll pick up the new module on their next load),
-        // so we only surface the loaded ones here — those need an explicit
-        // unload before the new module is swapped in.
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            visible: root.mode === "installConfirm"
-                     && root.metadata.isAlreadyInstalled === true
-                     && _installLoadedDeps && _installLoadedDeps.length > 0
-
-            readonly property var _installLoadedDeps: root.metadata.loadedDependents || []
-
-            LogosText {
-                Layout.fillWidth: true
-                text: "Will be unloaded for the upgrade:"
-                color: "#c0c0c0"
-                font.pixelSize: 13
-                font.weight: Theme.typography.weightBold
-                wrapMode: Text.Wrap
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(100, Math.max(30, parent._installLoadedDeps.length * 24))
-                color: "#1e1e1e"
-                radius: 4
-                border.color: "#3d3d3d"
-                border.width: 1
-
-                LogosListView {
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    model: parent.parent._installLoadedDeps
-                    clip: true
-                    delegate: LogosText {
-                        text: "\u2022 " + (root.displayNameLookup(modelData) || modelData)
-                        color: "#e0e0e0"
-                        font.pixelSize: 13
-                    }
-                }
-            }
-        }
-
         RowLayout {
             Layout.fillWidth: true
             Layout.topMargin: 8
@@ -793,10 +591,6 @@ Dialog {
                         if (root.upgradeModeKind === 2) return "Reinstall";
                         return "Upgrade";
                     }
-                    if (root.mode === "installConfirm") {
-                        if (root.metadata.isAlreadyInstalled) return "Upgrade";
-                        return "Install";
-                    }
                     if (root.mode === "installGate") return "Install";
                     return "OK";
                 }
@@ -827,8 +621,7 @@ Dialog {
             return;
         }
         if (root.mode === "unloadCascade" || root.mode === "uninstallCascade"
-            || root.mode === "upgradeCascade" || root.mode === "installConfirm"
-            || root.mode === "installGate") {
+            || root.mode === "upgradeCascade" || root.mode === "installGate") {
             if (root.targets.length > 0)
                 root.cancelClickedMulti(root.targets);
             else

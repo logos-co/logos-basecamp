@@ -100,9 +100,9 @@ Owns UI plugin widget lifecycle in-process: PluginLoader wiring, widget teardown
 - **App launcher**: `activateApp`, `onAppLauncherClicked`, `setCurrentVisibleApp`
 
 ### PackageCoordinator (`src/PackageCoordinator.h/.cpp`)
-Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install-confirmation dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.
+Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install gate dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.
 
-- **Install from LGX**: `installPluginFromPath` → `inspectPackageAsync` → shows install-confirm dialog (fresh install or upgrade) → `confirmInstall()`/`cancelInstall()`
+- **Install gate**: basecamp initiates no installs of its own — `package_manager_ui` does, for both catalog downloads and local `.lgx` picks. We subscribe to the module's `beforeInstall`, show the `installGate` dialog, and forward the decision via `confirmInstallGate()`/`cancelInstallGate()`; PMU then performs the install
 - **Gated uninstall/upgrade**: Subscribes to `package_manager` module's `beforeUninstall`/`beforeUpgrade` events, acks within 3s, shows cascade dialog, then confirms/cancels back to the module
 - **Cascade confirmation**: `confirmUninstallCascade`, `cancelPendingAction` — drives cascade unload via CoreModuleManager + UIPluginManager, then hands back to the module
 - **Metadata refresh**: `refresh()` triggers the full `getInstalledUiPlugins` + `getInstalledPackages` + per-package `resolveFlatDependencies/Dependents` chain; pushes UI metadata to UIPluginManager via `uiPluginsFetched` signal
@@ -114,8 +114,8 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 
 | File | Purpose |
 |------|---------|
-| `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install confirm) — hosted in a transparent top-level QQuickWidget |
-| `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `installConfirm` |
+| `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate) — hosted in a transparent top-level QQuickWidget |
+| `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `upgradeCascade`, `installGate` |
 | `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
 | `src/Basecamp/Settings/UiModulesTab.qml` | UI Modules tab in the Modules view |
 | `src/Basecamp/Settings/CoreModulesView.qml` | Core Modules tab with load/unload/uninstall/stats |

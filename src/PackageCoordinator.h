@@ -22,14 +22,16 @@ class UIPluginManager;
 // Scope:
 //   * Package scanning (getInstalledPackagesAsync, getInstalledUiPluginsAsync)
 //     and the derived installType / missing-deps / dependents caches.
-//   * Install orchestration — inspectPackage → install-confirm dialog →
-//     installPluginAsync (with the "upgrade with dependents" cascade branch).
+//   * Install confirmation — the requestInstall gate raised by
+//     package_manager_ui (beforeInstall → dialog → confirm/cancelInstallGate).
+//     Basecamp never initiates an install itself; PMU owns that, including
+//     local .lgx picks.
 //   * Gated uninstall/upgrade flow — requestUninstall / ackPendingAction /
 //     confirmUninstall / cancelUninstall (and the upgrade siblings), plus the
 //     cascade-unload + confirm handshake driven by beforeUninstall /
 //     beforeUpgrade events.
 //   * Pending-action state for the package-lifecycle cascade (one slot for
-//     UninstallCascade / UpgradeCascade / InstallUpgradeCascade).
+//     UninstallCascade / UpgradeCascade / MultiUninstallCascade).
 //
 // What it does NOT do:
 //   * Mount or unmount UI plugin widgets. UI lifecycle lives in
@@ -76,20 +78,12 @@ public:
     bool appsLoading() const { return m_appsLoading; }
 
 public slots:
-    // Install confirmation flow. installPluginFromPath inspects the LGX,
-    // branches between fresh-install and upgrade-with-dependents, and
-    // emits installConfirmationRequested. QML drives the dialog, then
-    // calls confirmInstall / cancelInstall.
-    Q_INVOKABLE void installPluginFromPath(const QString& filePath);
-    Q_INVOKABLE void openInstallPluginDialog();
-    Q_INVOKABLE void confirmInstall();
-    Q_INVOKABLE void cancelInstall();
-
-    // Catalog-install gate (package_manager_ui-initiated). The module holds the
-    // pending install; these just forward the user's decision back so it either
-    // emits installApproved (PMU then downloads+installs) or installCancelled.
-    // Distinct from confirmInstall()/cancelInstall() above, which drive the
-    // local-LGX inspect-then-install flow.
+    // Install gate (package_manager_ui-initiated). The module holds the pending
+    // install; these just forward the user's decision back so it either emits
+    // installApproved (PMU then installs — downloading first for a catalog
+    // package, or using the local .lgx path it stashed) or installCancelled.
+    // Basecamp owns no install flow of its own: every install in the app is
+    // initiated by package_manager_ui and confirmed through this gate.
     Q_INVOKABLE void confirmInstallGate(const QString& name);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
@@ -180,15 +174,8 @@ signals:
     void catalogInstallFailed(const QString& name, const QString& error);
     void launchAppRequested(const QString& name);
 
-    // Install-confirmation dialog trigger — QML hosts the dialog; metadata
-    // shape matches the inspectPackage result plus an optional
-    // loadedDependents list for the "upgrade with dependents" branch.
-    void installConfirmationRequested(const QVariantMap& metadata);
-
-    // Uninstall cascade dialog trigger — the "destructive" variant. Used
-    // for beforeUninstall (a real removal) and InstallUpgradeCascade (LGX
-    // upgrade that uninstalls first; the new version is local, not from
-    // the catalog, so we don't know its version string to surface here).
+    // Uninstall cascade dialog trigger — the "destructive" variant, driven by
+    // the module's beforeUninstall gate (a real removal).
     void uninstallCascadeConfirmationRequested(const QString& name,
                                                const QStringList& installedDependents,
                                                const QStringList& loadedDependents);
@@ -209,12 +196,11 @@ signals:
 
     // Fresh-install confirmation dialog trigger — the sibling of the upgrade
     // cascade for a not-yet-installed package coming through the module's
-    // requestInstall gate. Unlike a fresh local-LGX install (which uses
-    // installConfirmationRequested with inspected metadata), this is a catalog
-    // install initiated by another UI (package_manager_ui): it carries the
-    // target version and the resolved transitive `depChanges` so the single
-    // basecamp dialog lists exactly what else will be installed. No dependents
-    // list — a fresh install removes/unloads nothing.
+    // requestInstall gate, initiated by package_manager_ui. Carries the target
+    // version and the resolved transitive `depChanges` so the single basecamp
+    // dialog lists exactly what else will be installed. No dependents list —
+    // a fresh install removes/unloads nothing. `depChanges` is empty when the
+    // initiator had no catalog to resolve against (a local .lgx).
     void installGateConfirmationRequested(const QString& name,
                                           const QString& releaseTag,
                                           const QVariantList& depChanges);
@@ -270,10 +256,8 @@ private slots:
 private:
     // The gated-cascade pending slot. UnloadCascade (local, no IPC) lives on
     // UIPluginManager. Here we only track the ops that the package_manager
-    // module itself gates (uninstall / upgrade) plus the local LGX-upgrade
-    // variant that shares the cascade dialog but runs without module-side
-    // gating (it's just uninstallPackage + installPlugin chained).
-    enum class PendingOp { None, UninstallCascade, UpgradeCascade, InstallUpgradeCascade, MultiUninstallCascade };
+    // module itself gates (uninstall / upgrade / multi-uninstall).
+    enum class PendingOp { None, UninstallCascade, UpgradeCascade, MultiUninstallCascade };
     struct PendingAction {
         PendingOp op = PendingOp::None;
         QString   name;
@@ -369,7 +353,6 @@ private:
     QMap<QString, QStringList> m_dependentsByModule;
 
     PendingAction m_pendingAction;
-    QString m_pendingInstallPath;
     QHash<QString, QVariantList> m_versionsByRepoAndName;
     static QString catalogKey(const QString& repositoryUrl, const QString& name)
         { return repositoryUrl + QLatin1Char('\n') + name; }

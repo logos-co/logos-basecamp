@@ -215,7 +215,7 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 | `updateModuleStats()` | Call `logos_core_get_module_stats()`, parse JSON, update `m_moduleStats` map for Logos Modules |
 | `subscribeToPackageInstallationEvents()` | Register event listeners on `package_manager` Logos Module for `corePluginFileInstalled` and `uiPluginFileInstalled` events |
 | `fetchUiPluginMetadata()` | Async call to `package_manager.getInstalledUiPluginsAsync()` to populate UI App metadata cache |
-| `installPluginFromPath(path)` | Async call to `package_manager.installPluginAsync()` to install an LGX package |
+| `confirmInstallGate(name)` / `cancelInstallGate(name)` | Forward the user's install-gate decision back to `package_manager` so the initiator (`package_manager_ui`) proceeds or aborts |
 
 ### MainContainer
 
@@ -399,20 +399,28 @@ User clicks "Unload" in Logos Modules tab
 
 ### Package Installation
 
+Installs are initiated by `package_manager_ui` — from the catalog, or from a
+local `.lgx` the user picks in PMU's file dialog. Basecamp's only role is the
+confirmation gate.
+
 ```
-User clicks "Install LGX Package" → selects .lgx file
- └─ MainUIBackend::installPluginFromPath(filePath)
-     └─ logos.package_manager.installPluginAsync(filePath, false, callback)
-         ├─ Package manager extracts platform variant from LGX archive
-         ├─ Files copied to user modules/plugins directory
-         ├─ Event emitted: "corePluginFileInstalled" or "uiPluginFileInstalled"
-         │   └─ MainUIBackend event handler:
-         │       ├─ refreshCoreModules()
-         │       │   └─ logos_core_refresh_modules()  # Re-scan directories
-         │       └─ fetchUiPluginMetadata()           # Refresh UI plugin list
-         └─ Async callback:
-             ├─ refreshCoreModules()
-             └─ fetchUiPluginMetadata()
+package_manager_ui → package_manager.requestInstall(name, version, repoUrl, depChanges)
+ └─ Event emitted: "beforeInstall" { name, releaseTag, repositoryUrl, depChanges }
+     └─ PackageCoordinator::onBeforeInstall → ack within 3s
+         └─ emit installGateConfirmationRequested → ConfirmationDialog "installGate"
+             ├─ Cancel → cancelInstallGate(name) → module emits "installCancelled"
+             └─ Install → confirmInstallGate(name) → module emits "installApproved"
+                 └─ PMU performs the install (download first for a catalog
+                    package; a local .lgx is already on disk)
+                     └─ package_manager.installPluginAsync(path, false)
+                         ├─ Extracts the platform variant from the LGX archive
+                         ├─ Files copied to user modules/plugins directory
+                         └─ Event emitted: "corePluginFileInstalled" or
+                            "uiPluginFileInstalled"
+                             └─ PackageCoordinator event handler:
+                                 ├─ refreshCoreModules()
+                                 │   └─ logos_core_refresh_modules()
+                                 └─ fetchUiPluginMetadata()
 ```
 
 ### Stats Polling (Logos Modules only)
