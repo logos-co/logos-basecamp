@@ -84,6 +84,7 @@ sections:
     steps:
       - title: "Build and stage the modules"
         run: |
+          set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           rm -rf testdata/fullapi
           mkdir -p testdata/fullapi/modules testdata/fullapi/plugins
@@ -199,7 +200,11 @@ sections:
     text: |
       The same `full_api` chain, but with its components built from **different
       module-builder toolchains**: the UI plugin and the C++ provider from the
-      latest release (`0.2.3`), the proxy from master. Everything is still
+      latest release (`0.2.3`), the proxy from master. The release-toolchain
+      modules are built from a release-era `logos-test-modules` revision (source
+      and toolchain travel together — master source tracks master's codegen), so
+      the mix models the real scenario: modules built at release time
+      interoperating with a master-built one. Everything is still
       assembled the hermetic way — plain copy of `install-portable` outputs into
       a fresh `--user-dir`, no catalog, no network. Driving it through the
       UI → proxy → provider boundary proves a module built one way still
@@ -209,18 +214,24 @@ sections:
     steps:
       - title: "Build the version-mixed modules (UI@release, proxy@master, provider@release)"
         run: |
+          set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           MB_RELEASE="github:logos-co/logos-module-builder/0.2.3"
+          # Release-toolchain modules must be built from release-era SOURCE too:
+          # test-modules master tracks module-builder master's codegen (e.g. the
+          # void-method signature change in logos-test-modules#30) and no longer
+          # compiles with the 0.2.3 generator. Bump this together with MB_RELEASE.
+          TM_RELEASE="github:logos-co/logos-test-modules/d4c0d04644ca93ba7eaaa2f231d4d428a87cec9d"
           rm -rf testdata/fullapi-xva
           mkdir -p testdata/fullapi-xva/modules testdata/fullapi-xva/plugins
           # C++ provider (the one the proxy forwards to) — release toolchain
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_cpp.install-portable" \
+          nix build "$TM_RELEASE#modules.$SYSTEM.test_fullapi_cpp.install-portable" \
             --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-cpp
           cp -RL result-xva-cpp/modules/. testdata/fullapi-xva/modules/
           # Rust provider — release toolchain. The proxy declares BOTH providers
           # as dependencies, so it needs this present to load even though it
           # forwards to the C++ one by default.
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_rust.install-portable" \
+          nix build "$TM_RELEASE#modules.$SYSTEM.test_fullapi_rust.install-portable" \
             --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-rust
           cp -RL result-xva-rust/modules/. testdata/fullapi-xva/modules/
           # proxy — master toolchain
@@ -228,7 +239,7 @@ sections:
             --out-link result-xva-proxy
           cp -RL result-xva-proxy/modules/. testdata/fullapi-xva/modules/
           # UI plugin — release toolchain
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" \
+          nix build "$TM_RELEASE#modules.$SYSTEM.test_fullapi_ui.install-portable" \
             --override-input logos-module-builder "$MB_RELEASE" --out-link result-xva-ui
           cp -RL result-xva-ui/plugins/. testdata/fullapi-xva/plugins/
           chmod -R u+w testdata/fullapi-xva
@@ -296,8 +307,12 @@ sections:
     steps:
       - title: "Build the version-mixed modules (UI@master, proxy@release, provider@master)"
         run: |
+          set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           MB_RELEASE="github:logos-co/logos-module-builder/0.2.3"
+          # Release-era source for the release-toolchain build (see cross-version
+          # A for why). Bump together with MB_RELEASE.
+          TM_RELEASE="github:logos-co/logos-test-modules/d4c0d04644ca93ba7eaaa2f231d4d428a87cec9d"
           rm -rf testdata/fullapi-xvb
           mkdir -p testdata/fullapi-xvb/modules testdata/fullapi-xvb/plugins
           # C++ provider (the one the proxy forwards to) — master toolchain
@@ -311,7 +326,7 @@ sections:
             --out-link result-xvb-rust
           cp -RL result-xvb-rust/modules/. testdata/fullapi-xvb/modules/
           # proxy — release toolchain
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_proxy.install-portable" \
+          nix build "$TM_RELEASE#modules.$SYSTEM.test_fullapi_proxy.install-portable" \
             --override-input logos-module-builder "$MB_RELEASE" --out-link result-xvb-proxy
           cp -RL result-xvb-proxy/modules/. testdata/fullapi-xvb/modules/
           # UI plugin — master toolchain

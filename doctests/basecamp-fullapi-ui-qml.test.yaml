@@ -78,6 +78,7 @@ sections:
     steps:
       - title: "Build and stage the modules"
         run: |
+          set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
           rm -rf testdata/fullapi-qml
           mkdir -p testdata/fullapi-qml/modules testdata/fullapi-qml/plugins
