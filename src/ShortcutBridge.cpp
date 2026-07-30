@@ -130,7 +130,11 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
         // just re-introduce the offscreen-window problem.
         auto* mirror = new QShortcut(seq, m_host);
         mirror->setContext(Qt::ApplicationShortcut);
+        mirror->setEnabled(obj->property("enabled").toBool());
+        connect(obj, SIGNAL(enabledChanged()),
+                this, SLOT(onQmlShortcutEnabledChanged()));
         m_mirrorToQml.insert(mirror, obj);
+        m_qmlToMirrors.insert(obj, QPointer<QShortcut>(mirror));
 
         // Three-way wiring covers Qt's ambiguity cycling: on platforms
         // where the QML shortcut also matches, Qt alternates
@@ -147,6 +151,17 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
     }
 }
 
+void ShortcutBridge::onQmlShortcutEnabledChanged()
+{
+    QObject* qml = sender();
+    if (!qml) return;
+    const bool enabled = qml->property("enabled").toBool();
+    for (auto it = m_qmlToMirrors.constFind(qml);
+         it != m_qmlToMirrors.constEnd() && it.key() == qml; ++it) {
+        if (QShortcut* m = it.value()) m->setEnabled(enabled);
+    }
+}
+
 void ShortcutBridge::clearMirrors()
 {
     for (QPointer<QShortcut> sc : m_mirrors) {
@@ -154,6 +169,7 @@ void ShortcutBridge::clearMirrors()
     }
     m_mirrors.clear();
     m_mirrorToQml.clear();
+    m_qmlToMirrors.clear();
 
     // Drop pending statusChanged hooks so the old pane's late-Ready
     // signal doesn't retrigger a rebind after we've moved on.

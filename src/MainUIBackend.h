@@ -2,6 +2,7 @@
 
 #include "InstallEnums.h"
 #include "AppsFilterProxy.h"
+#include "ModuleInstanceModel.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -39,19 +40,26 @@ class UIPluginManager;
 // API handle goes away).
 //
 // Everything the QML layer calls (`backend.loadUiModule(...)`, etc.) is a
-// one-line delegation into one of the three managers. Every signal the QML
-// layer listens to (`uiModulesChanged`, `coreModulesChanged`, …) is
-// re-emitted here from whichever manager is driving that change via
-// signal-to-signal connect. Navigation is the only behavior that lives on
-// this class itself.
+// one-line delegation into one of the three managers. Signals from the
+// managers that QML cares about (`launcherAppsChanged`,
+// `catalogInstallStageChanged`, …) are re-emitted here via signal-to-signal
+// connects; the two module inspectors instead consume `uiModulesModel` /
+// `coreModulesModel` and read change notifications off those model
+// pointers directly. Navigation is the only behavior that lives on this
+// class itself.
 class MainUIBackend : public QObject {
     Q_OBJECT
 
     // Navigation
     Q_PROPERTY(int currentActiveSectionIndex READ currentActiveSectionIndex WRITE setCurrentActiveSectionIndex NOTIFY currentActiveSectionIndexChanged)
 
-    // UI Modules (Apps)
-    Q_PROPERTY(QVariantList uiModules READ uiModules NOTIFY uiModulesChanged)
+    // UI plugins + core modules — exposed to QML exclusively as real Qt
+    // models so the Settings inspectors can bind directly through a
+    // ModulesFilterProxy. The QVariantList uiModules()/coreModules() shape
+    // used to be a Q_PROPERTY too; it now lives on this class only as a
+    // private helper feeding the models on each *Changed tick.
+    Q_PROPERTY(ModuleInstanceModel* uiModulesModel   READ uiModulesModel   CONSTANT)
+    Q_PROPERTY(ModuleInstanceModel* coreModulesModel READ coreModulesModel CONSTANT)
     // AppsModel — the single source of truth for catalog rows + installed
     // state + live install pipeline. QML views bind directly. Lifetime is
     // tied to MainUIBackend; the pointer is stable across the app's life.
@@ -64,10 +72,6 @@ class MainUIBackend : public QObject {
     // requiredPackages per resolver call so the ListView shows only the
     // resolver's tree in install order.
     Q_PROPERTY(AppsFilterProxy* requiredPackagesModel READ requiredPackagesModel CONSTANT)
-
-    // Core Modules — composed here from all three managers (known list +
-    // stats from CoreModuleManager, installType from PackageCoordinator).
-    Q_PROPERTY(QVariantList coreModules READ coreModules NOTIFY coreModulesChanged)
 
     // App Launcher
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
@@ -102,13 +106,9 @@ public:
     int currentActiveSectionIndex() const;
 
     // Delegations to UIPluginManager.
-    QVariantList uiModules() const;
     QVariantList launcherApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
-
-    // Composed from multiple managers.
-    QVariantList coreModules() const;
 
     // Build info accessors (see Q_PROPERTY declarations above).
     QString buildVersion() const;
@@ -129,6 +129,8 @@ public:
     AppsModel*         appsModel()         const { return m_appsModel; }
     AppsFilterProxy*   uiAppsProxy()           const { return m_uiAppsProxy; }
     AppsFilterProxy*   requiredPackagesModel() const { return m_requiredPackagesModel; }
+    ModuleInstanceModel* uiModulesModel()   const { return m_uiModulesModel; }
+    ModuleInstanceModel* coreModulesModel() const { return m_coreModulesModel; }
 
 public slots:
     // Navigation
@@ -199,8 +201,6 @@ public slots:
 
 signals:
     void currentActiveSectionIndexChanged();
-    void uiModulesChanged();
-    void coreModulesChanged();
 
     // App-Manager dialog + install lifecycle. See PackageCoordinator for
     // the contract — these are pure re-emits.
@@ -260,9 +260,24 @@ signals:
                                       bool success,
                                       const QString& error);
 
+private slots:
+    // Rebuild the inspectors' models from the current manager state. Each
+    // is wired to the corresponding *Changed signal on the underlying
+    // managers (see ctor) — so a load/unload/stats-tick on
+    // CoreModuleManager fans out to refreshCoreModulesModel(), which
+    // repopulates m_coreModulesModel in one shot.
+    void refreshUiModulesModel();
+    void refreshCoreModulesModel();
+
 private:
     void beginModulesLoading();
     void endModulesLoading();
+
+    // Snapshot builders — QVariantList so the composition code (which
+    // pulls from three managers) doesn't have to know the model's row
+    // layout. Consumed only by the refresh slots above.
+    QVariantList buildUiModulesSnapshot() const;
+    QVariantList buildCoreModulesSnapshot() const;
 
     // Navigation state — the only state this facade class holds.
     int m_currentActiveSectionIndex;
@@ -280,6 +295,8 @@ private:
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;
+    ModuleInstanceModel* m_uiModulesModel;
+    ModuleInstanceModel* m_coreModulesModel;
 
     // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
     int  m_modulesLoadingCount = 0;

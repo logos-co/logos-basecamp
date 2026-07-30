@@ -127,6 +127,7 @@ set(SOURCES
     PackageCoordinator.cpp
     InstallRegistry.cpp
     AppsModel.cpp
+    ModuleInstanceModel.cpp
     PluginLoader.cpp
     WorkspaceArea.cpp
     ShortcutBridge.cpp
@@ -225,6 +226,8 @@ qt_add_qml_module(basecamp_backend_qml
         InstallEnums.cpp
         AppsFilterProxy.h
         AppsFilterProxy.cpp
+        ModulesFilterProxy.h
+        ModulesFilterProxy.cpp
 )
 
 qt_add_qml_module(basecamp_common_qml
@@ -279,11 +282,12 @@ qt_add_qml_module(basecamp_settings_qml
     QML_FILES
         Basecamp/Settings/SettingsView.qml
         Basecamp/Settings/DashboardView.qml
-        Basecamp/Settings/ModulesView.qml
-        Basecamp/Settings/UiModulesTab.qml
-        Basecamp/Settings/CoreModulesView.qml
+        Basecamp/Settings/AppsInspectorView.qml
+        Basecamp/Settings/ModuleInspectorView.qml
+        Basecamp/Settings/InspectorPanelHeader.qml
+        Basecamp/Settings/ModuleStatusBadge.qml
+        Basecamp/Settings/ModuleRowActions.qml
         Basecamp/Settings/PluginInterfaceView.qml
-        Basecamp/Settings/ModuleRow.qml
         Basecamp/Settings/RepositoriesView.qml
 )
 

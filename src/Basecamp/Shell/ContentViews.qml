@@ -68,12 +68,27 @@ Item {
 
             repositories:        backend.repositories
             repositoriesLoading: backend.repositoriesLoading
+            uiModulesModel:      backend.uiModulesModel
+            coreModulesModel:    backend.coreModulesModel
+            modulesLoading:      backend.modulesLoading
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)
             onRepositoryRemoveRequested:  url => backend.removeRepository(url)
             onRepositoryEnabledRequested: (url, e) => backend.setRepositoryEnabled(url, e)
             onRepositoriesBecameVisible: Qt.callLater(backend.refreshRepositories)
+
+            // Apps Inspector (UI plugins). View-only — uninstall lives in PMUI.
+            onAppsRefreshRequested:       backend.refreshUiModules()
+            onAppLoadRequested:           name => backend.loadUiModule(name)
+            onAppUnloadRequested:         name => backend.unloadUiModule(name)
+            onAppsInspectorBecameVisible: Qt.callLater(backend.refreshUiModules)
+
+            // Module Inspector (core modules). View-only — uninstall lives in PMUI.
+            onModulesRefreshRequested:      backend.refreshCoreModules()
+            onModuleLoadRequested:          name => backend.loadCoreModule(name)
+            onModuleUnloadRequested:        name => backend.unloadCoreModule(name)
+            onModuleInspectorBecameVisible: Qt.callLater(backend.refreshCoreModules)
         }
     }
 }

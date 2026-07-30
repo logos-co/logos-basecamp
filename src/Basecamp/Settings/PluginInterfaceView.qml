@@ -105,11 +105,13 @@ Item {
                     clip: true
 
                     ColumnLayout {
-                        // See CoreModulesView/UiModulesTab — bind to the
-                        // ScrollView's `availableWidth`, not `parent.width`,
-                        // which inside a Qt 6 ScrollView resolves against the
-                        // internal Flickable contentItem and can transiently
-                        // collapse to 0 during Repeater reflow.
+                        // Bind to the ScrollView's `availableWidth`, not
+                        // `parent.width`: inside a Qt 6 ScrollView the latter
+                        // resolves against the internal Flickable's contentItem,
+                        // which can transiently collapse to 0 while a Repeater
+                        // recreates delegates — snapping every `fillWidth` child
+                        // to width 0 without always recovering. `availableWidth`
+                        // is the stable public property (scrollbars included).
                         width: interfaceScroll.availableWidth
                         spacing: 8
 

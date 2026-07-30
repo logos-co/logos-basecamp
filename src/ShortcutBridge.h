@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QList>
 #include <QMetaObject>
+#include <QMultiHash>
 #include <QObject>
 #include <QPointer>
 
@@ -34,6 +35,7 @@ public:
 
 private slots:
     void onWiredShortcut();
+    void onQmlShortcutEnabledChanged();
 
 private:
     void rebind();
@@ -49,5 +51,6 @@ private:
 
     QList<QPointer<QShortcut>>           m_mirrors;
     QHash<QObject*, QPointer<QObject>>   m_mirrorToQml;
+    QMultiHash<QObject*, QPointer<QShortcut>> m_qmlToMirrors;
     QList<QMetaObject::Connection>       m_transientConns;
 };

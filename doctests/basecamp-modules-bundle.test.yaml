@@ -52,11 +52,11 @@ intro: |
   [`logos-basecamp`](https://github.com/logos-co/logos-basecamp) is the Logos
   desktop application shell — a Qt/QML app with a sidebar of section buttons
   (Workspace, Applications, Package Manager, Settings), an in-app **Applications**
-  catalog, and a **Settings** view whose **Modules** sub-tab lists the UI plugins
-  installed in the app and the core modules loaded into its runtime. This
-  doc-test builds **this** basecamp commit as its real, shippable **portable
-  bundle**, launches that bundle headless, and drives its UI to inspect what is
-  installed and loaded out of the box.
+  catalog, and a **Settings** view whose **Apps Inspector** and **Module
+  Inspector** sub-sections list the UI plugins installed in the app and the core
+  modules loaded into its runtime. This doc-test builds **this** basecamp commit
+  as its real, shippable **portable bundle**, launches that bundle headless, and
+  drives its UI to inspect what is installed and loaded out of the box.
 
   This is the bundle twin of the dev-app doc-test
   ([`basecamp-modules`](./basecamp-modules.md)): the exact same sidebar walk,
@@ -82,27 +82,27 @@ intro: |
   3. Open the **Package Manager** from the sidebar — clicking the sidebar entry
      opens the bundled `package_manager_ui` plugin directly into the main
      content area.
-  4. Open **Settings → Modules → UI Modules** — the apps (UI plugins) installed
-     in basecamp, e.g. the main UI and the package manager UI.
-  5. Switch to **Settings → Modules → Core Modules** — the background modules
-     loaded into the runtime (package manager, package downloader, capability
-     module) shown as **(Loaded)** with live CPU/memory stats.
+  4. Open **Settings → Apps Inspector** — the apps (UI plugins) installed in
+     basecamp, e.g. the main UI and the package manager UI.
+  5. Switch to **Settings → Module Inspector** — the background modules loaded
+     into the runtime (package manager, package downloader, capability module)
+     shown as **Loaded** with live CPU/memory stats.
 
   The bundle is launched headless (`QT_QPA_PLATFORM=offscreen`) and driven through
-  its QML inspector: we wait for elements, click sidebar items and tabs, assert
-  on the rendered text, and capture a screenshot at each step. Because the bundle
-  is built from the commit under test, a green run is real evidence that this
-  change still produces a launchable, self-contained app whose Settings →
-  Modules view reports the installed plugins and loaded modules.
+  its QML inspector: we wait for elements, click sidebar items and sections,
+  assert on the rendered text, and capture a screenshot at each step. Because the
+  bundle is built from the commit under test, a green run is real evidence that
+  this change still produces a launchable, self-contained app whose Settings
+  inspectors report the installed plugins and loaded modules.
 
-what_you_build: "This `logos-basecamp` commit, built as the real portable bundle (inspector-enabled `#bin-bundle-dir-inspector`) and driven through its sidebar (Applications, Package Manager, Settings → Modules) to inspect the installed UI plugins and the loaded core modules."
+what_you_build: "This `logos-basecamp` commit, built as the real portable bundle (inspector-enabled `#bin-bundle-dir-inspector`) and driven through its sidebar (Applications, Package Manager, Settings → Apps Inspector / Module Inspector) to inspect the installed UI plugins and the loaded core modules."
 
 what_you_learn:
   - How basecamp's portable `#bin-bundle-dir` packages the app, its Qt runtime, and a starter set of modules into one self-contained directory
   - How the inspector-enabled bundle variant lets logos-qt-mcp drive the real shippable app
   - How the sidebar navigates between the **Workspace** (MDI), **Applications** catalog, **Package Manager**, and **Settings**
-  - How **Settings → Modules → UI Modules** lists the apps (UI plugins) installed in basecamp
-  - How **Settings → Modules → Core Modules** shows which runtime modules are loaded, with live CPU/memory stats
+  - How **Settings → Apps Inspector** lists the apps (UI plugins) installed in basecamp
+  - How **Settings → Module Inspector** shows which runtime modules are loaded, with live CPU/memory stats
   - How the **Package Manager** sidebar entry opens the bundled `package_manager_ui` plugin directly into the main content area
   - How to drive a headless Qt/QML app with logos-qt-mcp (wait, click, assert) and capture screenshots
 
@@ -137,11 +137,11 @@ sections:
       ships. Its starter modules and UI plugins are carried inside the bundle
       under `modules/` (core modules) and `plugins/` (UI plugins), and the app
       discovers them relative to its own binary on launch. The
-      **Settings → Modules** sub-view is the in-app window into both lists; the
-      **Package Manager** sidebar entry surfaces the bundled
-      `package_manager_ui` plugin directly. (The companion
-      [`basecamp-modules`](./basecamp-modules.md) doc-test runs the identical
-      walk against the `#app` dev build.)
+      **Settings → Apps Inspector** and **Settings → Module Inspector**
+      sub-views are the in-app windows into those two lists; the **Package
+      Manager** sidebar entry surfaces the bundled `package_manager_ui` plugin
+      directly. (The companion [`basecamp-modules`](./basecamp-modules.md)
+      doc-test runs the identical walk against the `#app` dev build.)
 
   - title: "Build the qt-mcp test driver"
     step: true
@@ -205,9 +205,9 @@ sections:
 
       - title: "Confirm the bundled UI plugins"
         text: |
-          The UI plugins **Settings → Modules → UI Modules** will list are
-          carried under `plugins/` — confirm the main UI and the package manager
-          UI shipped in the bundle:
+          The UI plugins **Settings → Apps Inspector** will list are carried
+          under `plugins/` — confirm the main UI and the package manager UI
+          shipped in the bundle:
         run: "ls result-bundle/plugins"
         expect_contains:
           - "main_ui"
@@ -229,9 +229,9 @@ sections:
     text: |
       Launch the bundle binary headless and drive its UI: confirm the sidebar
       renders, open **Applications**, open the **Package Manager**, then go into
-      **Settings → Modules** to see both the installed UI plugins and the loaded
-      core modules — each interaction a real round-trip through this basecamp
-      bundle.
+      **Settings** and walk both **Apps Inspector** (installed UI plugins) and
+      **Module Inspector** (loaded core modules) — each interaction a real
+      round-trip through this basecamp bundle.
     steps:
       - title: "Launch and drive the bundle"
         ui_test:
@@ -280,7 +280,7 @@ sections:
               text: "Clicking **Package Manager** opens the bundled `package_manager_ui` plugin in-place."
               screenshot: "bundle-package-manager.png"
 
-            # Now into Settings → Modules to inspect plugins + core modules.
+            # Now into Settings to inspect plugins + core modules.
             - name: "Open Settings"
               action: click
               target: "Settings"
@@ -292,19 +292,18 @@ sections:
               text: "The **Settings** view loads with its left rail (Sections) and Dashboard selected by default."
               screenshot: "bundle-settings.png"
 
-            # Click the Modules sub-tab in the Settings left rail. The sidebar
-            # entry is "Package Manager", so "Modules" is unique to the
-            # Settings sub-tab — find_and_click lands on it.
-            - name: "Open Settings → Modules"
+            # Click the Apps Inspector entry in the Settings left rail.
+            # find_and_click lands on it; the section title is unique.
+            - name: "Open Settings → Apps Inspector"
               action: click
-              target: "Modules"
+              target: "Apps Inspector"
 
-            - name: "UI Modules tab loads"
+            - name: "Apps Inspector loads"
               action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
+              texts: ["Apps Inspector", "UI plugins available in this installation."]
               timeout: 30000
-              text: "The **Settings → Modules → UI Modules** tab lists the UI plugins installed in the app."
-              screenshot: "bundle-ui-modules.png"
+              text: "The **Settings → Apps Inspector** section lists the UI plugins installed in the app, with the same page-level search + Reload controls as the App Manager panel."
+              screenshot: "bundle-apps-inspector.png"
 
             # Module rows render `displayName || name`. main_ui's display_name
             # is "Main UI"; package_manager_ui's is "Package Manager".
@@ -313,20 +312,20 @@ sections:
               texts: ["Main UI", "Package Manager"]
               timeout: 30000
               text: "The installed apps appear as rows — the main UI and the package manager UI."
-              screenshot: "bundle-ui-modules-list.png"
+              screenshot: "bundle-apps-inspector-list.png"
 
-            # Switch to the Core Modules tab — the background modules loaded
-            # into the runtime. Switching tabs triggers backend.refreshCoreModules().
-            - name: "Open the Core Modules tab"
+            # Switch to Module Inspector — the background modules loaded into
+            # the runtime. Selecting this section triggers backend.refreshCoreModules().
+            - name: "Open Settings → Module Inspector"
               action: click
-              target: "Core Modules"
+              target: "Module Inspector"
 
-            - name: "Core Modules tab loads"
+            - name: "Module Inspector loads"
               action: wait_for
-              texts: ["Core Modules", "All available plugins in the system"]
+              texts: ["Module Inspector", "Core modules known to the runtime"]
               timeout: 30000
-              text: "The **Core Modules** tab shows the background modules loaded into the runtime."
-              screenshot: "bundle-core-modules.png"
+              text: "The **Settings → Module Inspector** section shows the background modules loaded into the runtime, with live resource usage."
+              screenshot: "bundle-module-inspector.png"
 
             # Core modules render `displayName || name`; package_manager and
             # capability_module both set display_name in their metadata.
@@ -337,9 +336,9 @@ sections:
 
             - name: "Core modules report as loaded"
               action: wait_for
-              texts: ["(Loaded)", "Unload Plugin"]
+              texts: ["Loaded", "Unload"]
               timeout: 30000
-              text: "The bundled core modules report as **(Loaded)** with an Unload Plugin action."
+              text: "The bundled core modules report a **Loaded** status badge with an Unload action."
               screenshot: "bundle-core-loaded.png"
 
             # Give the stats timer (polls logos_core_get_module_stats every ~2s)
@@ -356,11 +355,11 @@ sections:
           catalog; clicking **Package Manager** opens the bundled
           `package_manager_ui` plugin in-place (captured as a screenshot, since
           its sandboxed QML can't be safely walked by the inspector);
-          **Settings → Modules → UI Modules** lists the installed apps
-          (`main_ui`, `package_manager_ui`), and **Core Modules** reports the
-          bundled runtime modules (`package_manager`, `package_downloader`,
-          `capability_module`) as **(Loaded)** with live CPU/memory stats. A
+          **Settings → Apps Inspector** lists the installed apps (`main_ui`,
+          `package_manager_ui`), and **Settings → Module Inspector** reports
+          the bundled runtime modules (`package_manager`, `package_downloader`,
+          `capability_module`) as **Loaded** with live CPU/memory stats. A
           green run is end-to-end proof that this commit builds a launchable,
-          self-contained bundle whose Settings → Modules view faithfully reports
-          what is installed and loaded. The captured screenshots are embedded
-          above and in the CI report.
+          self-contained bundle whose Settings inspectors faithfully report what
+          is installed and loaded. The captured screenshots are embedded above
+          and in the CI report.

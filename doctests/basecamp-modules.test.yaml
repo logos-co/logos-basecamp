@@ -6,11 +6,12 @@ intro: |
   [`logos-basecamp`](https://github.com/logos-co/logos-basecamp) is the Logos
   desktop application shell — a Qt/QML app with a sidebar of section buttons
   (Workspace, Applications, Package Manager, Settings), an in-app **Applications**
-  catalog, and a **Settings** view whose **Modules** sub-tab lists the UI plugins
-  installed in the app and the core modules loaded into its runtime. This
-  doc-test builds **this** basecamp commit as its normal **development app**
-  (`#app`) — the binary you get from a plain `nix build` — launches it headless,
-  and drives its UI to inspect what is installed and loaded out of the box.
+  catalog, and a **Settings** view whose **Apps Inspector** and **Module Inspector**
+  sub-sections list the UI plugins installed in the app and the core modules loaded
+  into its runtime. This doc-test builds **this** basecamp commit as its normal
+  **development app** (`#app`) — the binary you get from a plain `nix build` —
+  launches it headless, and drives its UI to inspect what is installed and loaded
+  out of the box.
 
   Unlike the portable bundle (`#bin-bundle-dir`), the development app is what you
   build and run while working on basecamp itself: `nix build` produces
@@ -28,26 +29,26 @@ intro: |
   3. Open the **Package Manager** from the sidebar — clicking the sidebar entry
      opens the bundled `package_manager_ui` plugin directly into the main
      content area.
-  4. Open **Settings → Modules → UI Modules** — the apps (UI plugins) installed
-     in basecamp, e.g. the main UI and the package manager UI.
-  5. Switch to **Settings → Modules → Core Modules** — the background modules
-     loaded into the runtime (package manager, package downloader, capability
-     module) shown as **(Loaded)** with live CPU/memory stats.
+  4. Open **Settings → Apps Inspector** — the apps (UI plugins) installed in
+     basecamp, e.g. the main UI and the package manager UI.
+  5. Switch to **Settings → Module Inspector** — the background modules loaded
+     into the runtime (package manager, package downloader, capability module)
+     shown as **Loaded** with live CPU/memory stats.
 
   The app is launched headless (`QT_QPA_PLATFORM=offscreen`) and driven through
-  its QML inspector: we wait for elements, click sidebar items and tabs, assert
-  on the rendered text, and capture a screenshot at each step. Because the app is
-  built from the commit under test, a green run is real evidence that this change
-  still produces a launchable dev app whose Settings → Modules view correctly
-  reports the installed plugins and loaded modules.
+  its QML inspector: we wait for elements, click sidebar items and sections,
+  assert on the rendered text, and capture a screenshot at each step. Because
+  the app is built from the commit under test, a green run is real evidence that
+  this change still produces a launchable dev app whose Settings inspectors
+  correctly report the installed plugins and loaded modules.
 
-what_you_build: "This `logos-basecamp` commit, built as the normal development app (`#app`, inspector-enabled by default) and driven through its sidebar (Applications, Package Manager, Settings → Modules) to inspect the installed UI plugins and the loaded core modules."
+what_you_build: "This `logos-basecamp` commit, built as the normal development app (`#app`, inspector-enabled by default) and driven through its sidebar (Applications, Package Manager, Settings → Apps Inspector / Module Inspector) to inspect the installed UI plugins and the loaded core modules."
 
 what_you_learn:
   - How a plain `nix build` of basecamp produces the dev app with its modules and UI plugins baked in alongside the binary
   - How the sidebar navigates between the **Workspace** (MDI), **Applications** catalog, **Package Manager**, and **Settings**
-  - How **Settings → Modules → UI Modules** lists the apps (UI plugins) installed in basecamp
-  - How **Settings → Modules → Core Modules** shows which runtime modules are loaded, with live CPU/memory stats
+  - How **Settings → Apps Inspector** lists the apps (UI plugins) installed in basecamp
+  - How **Settings → Module Inspector** shows which runtime modules are loaded, with live CPU/memory stats
   - How the **Package Manager** sidebar entry opens the bundled `package_manager_ui` plugin directly into the main content area
   - How to drive a headless Qt/QML app with logos-qt-mcp (wait, click, assert) and capture screenshots
 
@@ -81,8 +82,9 @@ sections:
       developing basecamp. Its starter modules and UI plugins are installed at
       build time into `result/modules/` (core modules) and `result/plugins/`
       (UI plugins), and the app discovers them relative to its own binary on
-      launch. The **Settings → Modules** sub-view is the in-app window into both
-      lists; the **Package Manager** sidebar entry surfaces the bundled
+      launch. The **Settings → Apps Inspector** and **Settings → Module
+      Inspector** sub-views are the in-app windows into those two lists; the
+      **Package Manager** sidebar entry surfaces the bundled
       `package_manager_ui` plugin directly.
 
   - title: "Build the qt-mcp test driver"
@@ -131,7 +133,7 @@ sections:
 
       - title: "Confirm the baked-in UI plugins"
         text: |
-          The UI plugins **Settings → Modules → UI Modules** will list are
+          The UI plugins **Settings → Apps Inspector** will list are
           installed under `plugins/` — confirm the main UI and the package
           manager UI shipped in the build:
         run: "ls result-app/plugins"
@@ -155,9 +157,9 @@ sections:
     text: |
       Launch the dev app binary headless and drive its UI: confirm the sidebar
       renders, open **Applications**, open the **Package Manager**, then go into
-      **Settings → Modules** to see both the installed UI plugins and the loaded
-      core modules — each interaction a real round-trip through this basecamp
-      build.
+      **Settings** and walk both **Apps Inspector** (installed UI plugins) and
+      **Module Inspector** (loaded core modules) — each interaction a real
+      round-trip through this basecamp build.
     steps:
       - title: "Launch and drive the dev app"
         ui_test:
@@ -224,50 +226,47 @@ sections:
               text: "The **Settings** view loads with its left rail (Sections) and Dashboard selected by default."
               screenshot: "basecamp-settings.png"
 
-            # Click the Modules sub-tab in the Settings left rail. With the
-            # sidebar entry renamed to "Package Manager", "Modules" is now
-            # unique to the Settings sub-tab — find_and_click lands on it.
-            - name: "Open Settings → Modules"
+            # Click the Apps Inspector entry in the Settings left rail.
+            # find_and_click lands on it; the section title is unique.
+            - name: "Open Settings → Apps Inspector"
               action: click
-              target: "Modules"
+              target: "Apps Inspector"
 
-            - name: "UI Modules tab loads"
+            - name: "Apps Inspector loads"
               action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
+              texts: ["Apps Inspector", "UI plugins available in this installation."]
               timeout: 30000
-              text: "The **Settings → Modules → UI Modules** tab lists the UI plugins installed in the app."
-              screenshot: "basecamp-ui-modules.png"
+              text: "The **Settings → Apps Inspector** section lists the UI plugins installed in the app, with the same page-level search + Reload controls as the App Manager panel."
+              screenshot: "basecamp-apps-inspector.png"
 
-            # The baked-in UI plugins appear as rows. The main UI is tagged
-            # "(Main UI)"; package_manager_ui is a normal loaded plugin.
-            # Asserting both names proves the installed-apps list rendered.
-            # Module rows render `displayName || name`. main_ui's display_name
-            # is "Main UI"; package_manager_ui's is "Package Manager".
+            # The baked-in UI plugins appear as rows. main_ui renders under its
+            # displayName "Main UI"; package_manager_ui renders as "Package
+            # Manager". Asserting both names proves the installed-apps list
+            # rendered end-to-end.
             - name: "Installed apps are listed"
               action: wait_for
               texts: ["Main UI", "Package Manager"]
               timeout: 30000
               text: "The installed apps appear as rows — the main UI and the package manager UI."
-              screenshot: "basecamp-ui-modules-list.png"
+              screenshot: "basecamp-apps-inspector-list.png"
 
-            # Switch to the Core Modules tab — the background modules loaded
-            # into the runtime. Switching tabs triggers backend.refreshCoreModules().
-            - name: "Open the Core Modules tab"
+            # Switch to Module Inspector — the background modules loaded into
+            # the runtime. Selecting this section triggers backend.refreshCoreModules().
+            - name: "Open Settings → Module Inspector"
               action: click
-              target: "Core Modules"
+              target: "Module Inspector"
 
-            - name: "Core Modules tab loads"
+            - name: "Module Inspector loads"
               action: wait_for
-              texts: ["Core Modules", "All available plugins in the system"]
+              texts: ["Module Inspector", "Core modules known to the runtime"]
               timeout: 30000
-              text: "The **Core Modules** tab shows the background modules loaded into the runtime."
-              screenshot: "basecamp-core-modules.png"
+              text: "The **Settings → Module Inspector** section shows the background modules loaded into the runtime, with live resource usage."
+              screenshot: "basecamp-module-inspector.png"
 
-            # The auto-loaded core modules must show as "(Loaded)" with an
-            # "Unload Plugin" button (not "(Not Loaded)" / "Load Plugin"). This
-            # is the exact regression the ui-tests.mjs suite guards: a stale
-            # refresh once wiped the loaded flag and rendered everything as Not
-            # Loaded.
+            # The auto-loaded core modules must show a "Loaded" status badge
+            # with an "Unload" button (not "Not loaded" / "Load"). This is the
+            # exact regression the ui-tests.mjs suite guards: a stale refresh
+            # once wiped the loaded flag and rendered everything as Not loaded.
             # Core modules render `displayName || name`; package_manager and
             # capability_module both set display_name in their metadata.
             - name: "Core modules are present"
@@ -277,9 +276,9 @@ sections:
 
             - name: "Core modules report as loaded"
               action: wait_for
-              texts: ["(Loaded)", "Unload Plugin"]
+              texts: ["Loaded", "Unload"]
               timeout: 30000
-              text: "The baked-in core modules report as **(Loaded)** with an Unload Plugin action."
+              text: "The baked-in core modules report a **Loaded** status badge with an Unload action."
               screenshot: "basecamp-core-loaded.png"
 
             # Give the stats timer (polls logos_core_get_module_stats every ~2s)
@@ -296,11 +295,11 @@ sections:
           catalog; clicking **Package Manager** opens the bundled
           `package_manager_ui` plugin in-place (captured as a screenshot, since
           its sandboxed QML can't be safely walked by the inspector);
-          **Settings → Modules → UI Modules** lists the installed apps
-          (`main_ui`, `package_manager_ui`), and **Core Modules** reports the
-          baked-in runtime modules (`package_manager`, `package_downloader`,
-          `capability_module`) as **(Loaded)** with live CPU/memory stats. A
+          **Settings → Apps Inspector** lists the installed apps (`main_ui`,
+          `package_manager_ui`), and **Settings → Module Inspector** reports
+          the baked-in runtime modules (`package_manager`, `package_downloader`,
+          `capability_module`) as **Loaded** with live CPU/memory stats. A
           green run is end-to-end proof that this commit builds a launchable
-          dev app whose Settings → Modules view faithfully reports what is
-          installed and loaded. The captured screenshots are embedded above and
-          in the CI report.
+          dev app whose Settings inspectors faithfully report what is installed
+          and loaded. The captured screenshots are embedded above and in the
+          CI report.
