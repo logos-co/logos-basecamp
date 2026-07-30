@@ -17,5 +17,7 @@ qml-mcp
 
 # doctest run artifacts (generated reports/screenshots and build symlinks)
 doctests/outputs/
-doctests/result-bundle
-doctests/result-mcp
+doctests/result*
+
+# user-dirs staged by doctest run: blocks when executed from the repo root
+testdata/
