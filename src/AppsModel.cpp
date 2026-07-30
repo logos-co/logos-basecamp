@@ -301,7 +301,39 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
 
 void AppsModel::mergeLocalOnlyInstalled(const QVariantList& installedPackages)
 {
+    // Names still present on disk. Used to drop stale Local rows below.
+    QSet<QString> freshNames;
+    freshNames.reserve(installedPackages.size());
+    for (const QVariant& v : installedPackages) {
+        const QString name = v.toMap().value("name").toString();
+        if (!name.isEmpty()) freshNames.insert(name);
+    }
+
+    // Prune Local rows whose module got uninstalled. Catalog rows (non-
+    // empty repositoryUrl) are replaceCatalog's job — untouched here.
+    QList<int> toRemove;
     bool categoriesTouched = false;
+    for (int i = 0; i < m_rows.size(); ++i) {
+        if (!m_rows[i].repositoryUrl.isEmpty()) continue;
+        if (freshNames.contains(m_rows[i].name)) continue;
+        toRemove.append(i);
+        if (!m_rows[i].category.isEmpty()) categoriesTouched = true;
+    }
+    for (int i = toRemove.size() - 1; i >= 0; --i) {
+        const int idx = toRemove[i];
+        beginRemoveRows({}, idx, idx);
+        m_rows.removeAt(idx);
+        endRemoveRows();
+    }
+    if (!toRemove.isEmpty()) {
+        m_indexByKey.clear();
+        m_indicesByName.clear();
+        for (int i = 0; i < m_rows.size(); ++i) {
+            m_indexByKey.insert(key(m_rows[i].repositoryUrl, m_rows[i].name), i);
+            m_indicesByName.insert(m_rows[i].name, i);
+        }
+    }
+
     for (const QVariant& v : installedPackages) {
         const QVariantMap pkg = v.toMap();
         const QString name = pkg.value("name").toString();
