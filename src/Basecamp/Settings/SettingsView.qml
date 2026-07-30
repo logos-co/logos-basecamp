@@ -71,65 +71,40 @@ Rectangle {
             Layout.fillHeight: true
             spacing: Theme.spacing.medium
 
-            // ─── Sections sidebar (mirrors AppManagerView's categories pane) ───
-            Item {
+            // ─── Sections sidebar ───
+            LogosListView {
+                id: sectionsList
+
                 Layout.preferredWidth: 200
                 Layout.minimumWidth: 160
                 Layout.maximumWidth: 200
                 Layout.fillHeight: true
 
-                Flickable {
-                    id: sectionsScroll
-                    anchors.fill: parent
-                    clip: true
-                    contentWidth: width
-                    contentHeight: sectionsCol.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: LogosScrollBar {
-                        policy: ScrollBar.AsNeeded
-                        visible: sectionsScroll.contentHeight > sectionsScroll.height
-                    }
+                model: d.sections
+                currentIndex: d.selectedIndex
 
-                    ColumnLayout {
-                        id: sectionsCol
-                        width: sectionsScroll.width
-                        spacing: Theme.spacing.tiny
-
-                        LogosText {
-                            Layout.topMargin: Theme.spacing.tiny
-                            Layout.bottomMargin: Theme.spacing.tiny
-                            text: qsTr("Sections")
-                            font.pixelSize: Theme.typography.subtitleText
-                            font.weight: Theme.typography.weightRegular
-                            color: Theme.palette.text
-                        }
-
-                        ListView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: contentHeight
-                            interactive: false
-                            spacing: Theme.spacing.tiny
-                            model: d.sections
-                            currentIndex: d.selectedIndex
-
-                            delegate: SidebarNavItem {
-                                width: ListView.view.width
-                                text: modelData.label
-                                highlighted: ListView.isCurrentItem
-                                onClicked: d.selectedIndex = index
-                            }
-                        }
-                    }
+                header: LogosText {
+                    width: sectionsList.width
+                    topPadding: Theme.spacing.tiny
+                    bottomPadding: Theme.spacing.tiny
+                    text: qsTr("Sections")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightRegular
+                    color: Theme.palette.text
                 }
 
-                component SidebarNavItem: LogosItemDelegate {
+                delegate: LogosItemDelegate {
                     id: cell
+                    width: ListView.view.width
+                    text: modelData.label
+                    highlighted: ListView.isCurrentItem
                     radius: Theme.spacing.radiusLarge
                     highlightColor: Theme.palette.backgroundButton
                     hoverColor: "transparent"
                     textColor: (cell.highlighted || cell.hovered)
                                    ? Theme.palette.text
                                    : Theme.palette.textTertiary
+                    onClicked: d.selectedIndex = index
                 }
             }
 

@@ -235,6 +235,7 @@ qt_add_qml_module(basecamp_common_qml
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Common
     QML_FILES
         Basecamp/Common/LoadingOverlay.qml
+        Basecamp/Common/EmptyView.qml
 )
 
 qt_add_qml_module(basecamp_sidebar_qml
@@ -258,6 +259,8 @@ qt_add_qml_module(basecamp_appmanager_qml
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/AppManager
     QML_FILES
         Basecamp/AppManager/AppManagerView.qml
+        Basecamp/AppManager/AppManagerPanelHeader.qml
+        Basecamp/AppManager/AppRepoSection.qml
         Basecamp/AppManager/AppGrid.qml
         Basecamp/AppManager/AppGridDelegate.qml
         Basecamp/AppManager/AppListDelegate.qml

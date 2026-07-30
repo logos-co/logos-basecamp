@@ -25,7 +25,7 @@ Rectangle {
         id: d
 
         readonly property string installStateFilter: {
-            switch (stateTabBar.currentIndex) {
+            switch (panelHeader.installStateIndex) {
             case 1:  return "installed"
             case 2:  return "notInstalled"
             default: return "all"
@@ -136,64 +136,39 @@ Rectangle {
             spacing: Theme.spacing.medium
 
             // ─── Categories sidebar ───
-            Item {
+            LogosListView {
+                id: categoriesList
+
                 Layout.preferredWidth: 200
                 Layout.minimumWidth: 160
                 Layout.maximumWidth: 200
                 Layout.fillHeight: true
 
-                Flickable {
-                    id: categoriesScroll
-                    anchors.fill: parent
-                    clip: true
-                    contentWidth: width
-                    contentHeight: categoriesCol.implicitHeight
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: LogosScrollBar {
-                        policy: ScrollBar.AsNeeded
-                        visible: categoriesScroll.contentHeight > categoriesScroll.height
-                    }
+                model: d.categories
+                currentIndex: d.selectedCategoryIndex
 
-                    ColumnLayout {
-                        id: categoriesCol
-                        width: categoriesScroll.width
-                        spacing: Theme.spacing.tiny
-
-                        LogosText {
-                            Layout.topMargin: Theme.spacing.tiny
-                            Layout.bottomMargin: Theme.spacing.tiny
-                            text: qsTr("Categories")
-                            font.pixelSize: Theme.typography.subtitleText
-                            font.weight: Theme.typography.weightRegular
-                            color: Theme.palette.text
-                        }
-
-                        ListView {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: contentHeight
-                            interactive: false
-                            spacing: Theme.spacing.tiny
-                            model: d.categories
-                            currentIndex: d.selectedCategoryIndex
-
-                            delegate: SidebarNavItem {
-                                width: ListView.view.width
-                                text: modelData
-                                highlighted: ListView.isCurrentItem
-                                onClicked: d.selectedCategoryIndex = index
-                            }
-                        }
-                    }
+                header: LogosText {
+                    width: categoriesList.width
+                    topPadding: Theme.spacing.tiny
+                    bottomPadding: Theme.spacing.tiny
+                    text: qsTr("Categories")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightRegular
+                    color: Theme.palette.text
                 }
 
-                component SidebarNavItem: LogosItemDelegate {
+                delegate: LogosItemDelegate {
                     id: cell
+                    width: ListView.view.width
+                    text: modelData
+                    highlighted: ListView.isCurrentItem
                     radius: Theme.spacing.radiusLarge
                     highlightColor: Theme.palette.backgroundButton
                     hoverColor: "transparent"
                     textColor: (cell.highlighted || cell.hovered)
                                    ? Theme.palette.text
                                    : Theme.palette.textTertiary
+                    onClicked: d.selectedCategoryIndex = index
                 }
             }
 
@@ -207,154 +182,37 @@ Rectangle {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacing.medium
+                    anchors.topMargin: Theme.spacing.medium
+                    anchors.bottomMargin: Theme.spacing.medium
                     spacing: Theme.spacing.medium
 
-                    // ─── Panel header: mirrors Package Manager TableHeader ───
-                    // Left: title + install-state tabs. Right: actions + view toggle.
-                    GridLayout {
+                    AppManagerPanelHeader {
                         id: panelHeader
                         Layout.fillWidth: true
-                        columnSpacing: Theme.spacing.large
-                        rowSpacing: Theme.spacing.medium
-                        columns: (leftHalf.implicitWidth + rightHalf.implicitWidth + columnSpacing) <= width
-                                 ? 2 : 1
+                        Layout.leftMargin: Theme.spacing.medium
+                        Layout.rightMargin: Theme.spacing.medium
 
-                        RowLayout {
-                            id: leftHalf
-                            Layout.fillWidth: true
-                            spacing: Theme.spacing.large
-
-                            LogosText {
-                                text: qsTr("Apps")
-                                font.pixelSize: Theme.typography.panelTitleText
-                                font.weight: Theme.typography.weightMedium
-                                color: Theme.palette.text
-                            }
-
-                            LogosTabBar {
-                                id: stateTabBar
-                                spacing: Theme.spacing.large
-
-                                LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
-                                LogosTabButton { text: qsTr("Installed") }
-                                LogosTabButton { text: qsTr("Not Installed") }
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        RowLayout {
-                            id: rightHalf
-                            Layout.fillWidth: true
-                            spacing: Theme.spacing.medium
-
-                            Item { Layout.fillWidth: panelHeader.columns === 2 }
-
-                            LogosButton {
-                                id: reloadBtn
-                                objectName: "appManager.reloadButton"
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 80
-                                Layout.preferredWidth: 100
-                                Layout.maximumWidth: 100
-                                Layout.preferredHeight: 40
-                                radius: Theme.spacing.radiusLarge
-                                text: qsTr("Reload")
-                                leadingIcon.source: LogosIcons.refresh
-                                leadingIcon.size: 18
-                                enabled: !root.loading
-                                onClicked: root.refreshRequested()
-                            }
-
-                            LogosButton {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 100
-                                Layout.preferredWidth: 130
-                                Layout.maximumWidth: 130
-                                Layout.preferredHeight: 40
-                                radius: Theme.spacing.radiusLarge
-                                text: qsTr("Repositories")
-                                onClicked: root.navigateToRepositories()
-                            }
-
-                            RowLayout {
-                                spacing: 24
-                                Layout.preferredHeight: 36
-
-                                LogosText {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: qsTr("View:")
-                                    color: Theme.palette.textTertiary
-                                }
-
-                                LogosIconButton {
-                                    iconSource: LogosIcons.grid
-                                    size: 20
-                                    iconSize: 20
-                                    iconColor: d.viewMode === "grid"
-                                               ? Theme.palette.text
-                                               : Theme.palette.textTertiary
-                                    onClicked: d.viewMode = "grid"
-                                    background: Item {}
-                                }
-
-                                LogosIconButton {
-                                    iconSource: LogosIcons.list
-                                    size: 20
-                                    iconSize: 20
-                                    iconColor: d.viewMode === "list"
-                                               ? Theme.palette.text
-                                               : Theme.palette.textTertiary
-                                    onClicked: d.viewMode = "list"
-                                    background: Item {}
-                                }
-                            }
-                        }
+                        loading: root.loading
+                        viewMode: d.viewMode
+                        onReloadClicked: root.refreshRequested()
+                        onRepositoriesClicked: root.navigateToRepositories()
+                        onViewModeChangeRequested: (mode) => d.viewMode = mode
                     }
 
                     // Empty state — shown when no repositories are configured
                     // AND there are no local-only installed rows to fall back on.
                     // If either exists, we render the grid instead.
-                    Item {
+                    EmptyView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         visible: root.repositories.length === 0
                                  && localAppsProxy.visibleCount === 0
                                  && !root.loading
 
-                        ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: Theme.spacing.medium
-                            width: Math.min(parent.width * 0.6, 420)
-
-                            LogosText {
-                                Layout.alignment: Qt.AlignHCenter
-                                text: qsTr("No repositories configured")
-                                font.pixelSize: Theme.typography.subtitleText
-                                font.weight: Theme.typography.weightMedium
-                                color: Theme.palette.text
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-
-                            LogosText {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.fillWidth: true
-                                text: qsTr("Add a package repository to browse and install apps.")
-                                font.pixelSize: Theme.typography.primaryText
-                                color: Theme.palette.textSecondary
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.WordWrap
-                            }
-
-                            LogosButton {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.topMargin: Theme.spacing.small
-                                text: qsTr("Manage Repositories")
-                                onClicked: root.navigateToRepositories()
-                            }
-                        }
+                        title: qsTr("No repositories configured")
+                        subtitle: qsTr("Add a package repository to browse and install apps.")
+                        actionText: qsTr("Manage Repositories")
+                        onActionClicked: root.navigateToRepositories()
                     }
 
                     Flickable {
@@ -369,18 +227,20 @@ Rectangle {
                         contentHeight: gridColumn.implicitHeight
                         boundsBehavior: Flickable.StopAtBounds
 
-                        ScrollBar.vertical: ScrollBar {
+                        ScrollBar.vertical: LogosScrollBar {
                             policy: ScrollBar.AsNeeded
+                            rightPadding: 4
                         }
 
                         ColumnLayout {
                             id: gridColumn
-                            width: gridScroll.width
+                            x: Theme.spacing.medium
+                            width: gridScroll.width - 2 * Theme.spacing.medium
                             spacing: Theme.spacing.large
 
                             Repeater {
                                 model: root.repositories
-                                delegate: ColumnLayout {
+                                delegate: AppRepoSection {
                                     required property var modelData
 
                                     AppsFilterProxy {
@@ -390,61 +250,27 @@ Rectangle {
                                         excludeMainUi: false
                                     }
 
-                                    Layout.fillWidth: true
-                                    spacing: Theme.spacing.medium
+                                    title: modelData.isDefault === true
+                                        ? qsTr("Starter Apps")
+                                        : (modelData.displayName
+                                           || modelData.name
+                                           || modelData.url
+                                           || qsTr("Repository"))
+                                    count: repoFilter.visibleCount
+                                    modulesSource: repoFilter
+                                    viewMode: d.viewMode
                                     visible: modelData.enabled !== false
                                              && repoFilter.visibleCount > 0
 
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacing.small
-
-                                        LogosText {
-                                            text: modelData.isDefault === true
-                                                ? qsTr("Starter Apps")
-                                                : (modelData.displayName
-                                                   || modelData.name
-                                                   || modelData.url
-                                                   || qsTr("Repository"))
-                                            font.pixelSize: Theme.typography.subtitleText
-                                            font.weight: Theme.typography.weightMedium
-                                            color: Theme.palette.textSecondary
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-                                        LogosText {
-                                            text: "(" + repoFilter.visibleCount + ")"
-                                            font.pixelSize: Theme.typography.secondaryText
-                                            color: Theme.palette.textTertiary
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 1
-                                        color: Theme.palette.borderSubtle
-                                        opacity: 0.5
-                                    }
-
-                                    AppGrid {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: implicitHeight
-                                        modulesSource: repoFilter
-                                        viewMode: d.viewMode
-                                        onAppClicked: function(name, repositoryUrl) {
-                                            root.appClicked(name, repositoryUrl || "")
-                                        }
-                                        onAppManageRequested: function(name, repositoryUrl) {
-                                            root.manageAppRequested(name, repositoryUrl || "")
-                                        }
-                                    }
+                                    onAppClicked: (name, url) => root.appClicked(name, url)
+                                    onAppManageRequested: (name, url) => root.manageAppRequested(name, url)
                                 }
                             }
 
                             // Local — synthetic "repo" section for installed
                             // packages the catalog doesn't claim. Sits after
                             // the real repos so it always renders last.
-                            ColumnLayout {
+                            AppRepoSection {
                                 AppsFilterProxy {
                                     id: localFilter
                                     sourceModel: root.appsProxy
@@ -452,48 +278,14 @@ Rectangle {
                                     excludeMainUi: false
                                 }
 
-                                Layout.fillWidth: true
-                                spacing: Theme.spacing.medium
+                                title: qsTr("local")
+                                count: localFilter.visibleCount
+                                modulesSource: localFilter
+                                viewMode: d.viewMode
                                 visible: localFilter.visibleCount > 0
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: Theme.spacing.small
-
-                                    LogosText {
-                                        text: qsTr("local")
-                                        font.pixelSize: Theme.typography.subtitleText
-                                        font.weight: Theme.typography.weightMedium
-                                        color: Theme.palette.textSecondary
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                    }
-                                    LogosText {
-                                        text: "(" + localFilter.visibleCount + ")"
-                                        font.pixelSize: Theme.typography.secondaryText
-                                        color: Theme.palette.textTertiary
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 1
-                                    color: Theme.palette.borderSubtle
-                                    opacity: 0.5
-                                }
-
-                                AppGrid {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: implicitHeight
-                                    modulesSource: localFilter
-                                    viewMode: d.viewMode
-                                    onAppClicked: function(name, repositoryUrl) {
-                                        root.appClicked(name, repositoryUrl || "")
-                                    }
-                                    onAppManageRequested: function(name, repositoryUrl) {
-                                        root.manageAppRequested(name, repositoryUrl || "")
-                                    }
-                                }
+                                onAppClicked: (name, url) => root.appClicked(name, url)
+                                onAppManageRequested: (name, url) => root.manageAppRequested(name, url)
                             }
                         }
                     }

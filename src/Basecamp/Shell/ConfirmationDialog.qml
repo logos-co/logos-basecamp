@@ -335,7 +335,7 @@ Dialog {
                      && root.mode !== "installConfirm"
                      && root.items.length > 0
 
-            ListView {
+            LogosListView {
                 id: itemList
                 anchors.fill: parent
                 anchors.margins: 8
@@ -375,7 +375,7 @@ Dialog {
                 border.color: "#3d3d3d"
                 border.width: 1
 
-                ListView {
+                LogosListView {
                     anchors.fill: parent
                     anchors.margins: 8
                     model: root.targets
@@ -428,7 +428,7 @@ Dialog {
                 border.width: 1
                 visible: root.mode === "uninstallCascade" && root.items.length > 0
 
-                ListView {
+                LogosListView {
                     anchors.fill: parent
                     anchors.margins: 8
                     model: root.items
@@ -467,7 +467,7 @@ Dialog {
                 border.width: 1
                 visible: root.loadedItems.length > 0
 
-                ListView {
+                LogosListView {
                     anchors.fill: parent
                     anchors.margins: 8
                     model: root.loadedItems
@@ -510,7 +510,7 @@ Dialog {
                 border.width: 1
                 implicitHeight: depChangeList.implicitHeight + 16
 
-                ListView {
+                LogosListView {
                     id: depChangeList
                     anchors.fill: parent
                     anchors.margins: 8
@@ -743,7 +743,7 @@ Dialog {
                 border.color: "#3d3d3d"
                 border.width: 1
 
-                ListView {
+                LogosListView {
                     anchors.fill: parent
                     anchors.margins: 8
                     model: parent.parent._installLoadedDeps

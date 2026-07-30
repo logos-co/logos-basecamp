@@ -132,8 +132,8 @@ Item {
         visible: text !== ""
         delay: 0
         placement: LogosToolTip.Right
-        x: 68
-        y: root.sidebarTooltipY - height / 2
+        manualX: 68
+        manualY: root.sidebarTooltipY - height / 2
     }
 
 

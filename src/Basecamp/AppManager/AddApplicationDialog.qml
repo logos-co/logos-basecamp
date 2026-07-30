@@ -430,13 +430,12 @@ Dialog {
             }
         }
 
-        ListView {
+        LogosListView {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.preferredHeight: contentHeight
             interactive: false
-            clip: true
             spacing: 0
             model: root.requiredPackagesModel
 
