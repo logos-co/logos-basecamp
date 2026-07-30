@@ -10,7 +10,9 @@ import Basecamp.Backend
 import Basecamp.Common
 
 // Settings → Apps Inspector. Lists the UI plugins discovered in the plugins
-// directory with their load state, and load / unload / uninstall actions.
+// directory with their load state and a Load/Unload toggle per row. Uninstall
+// is deliberately absent — module management lives in the Package Manager;
+// this view is read-only apart from the load toggle.
 //
 // Formerly the "UI Modules" tab of ModulesView. Split out into its own Settings
 // section so it stands alongside Module Inspector instead of hiding behind a

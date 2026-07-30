@@ -10,8 +10,10 @@ import Basecamp.Backend
 import Basecamp.Common
 
 // Settings → Module Inspector. Lists every core module liblogos knows about
-// with its load state and live CPU / memory stats, plus load / unload /
-// uninstall actions and the per-module Interface drill-down.
+// with its load state and live CPU / memory stats, a Load/Unload toggle per
+// row, and the per-module Interface drill-down. Uninstall is deliberately
+// absent — module management lives in the Package Manager; this view is
+// read-only apart from the load toggle.
 //
 // Formerly the "Core Modules" tab of ModulesView. Split out into its own
 // Settings section alongside Apps Inspector, restyled onto LogosTable +

@@ -131,8 +131,18 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
         auto* mirror = new QShortcut(seq, m_host);
         mirror->setContext(Qt::ApplicationShortcut);
         mirror->setEnabled(obj->property("enabled").toBool());
+        // UniqueConnection makes this loop safe on two axes:
+        //   * a QML Shortcut can declare multiple sequences (each mirrored)
+        //     — the enabledChanged→slot wire should still be one connection
+        //     per QML shortcut, not one per sequence.
+        //   * rebind() clears the C++ mirrors but leaves the QML shortcuts
+        //     alive (they belong to the pane's QML tree). The next scan
+        //     would re-connect the same signal, and without this flag
+        //     onQmlShortcutEnabledChanged() would fire N times per change
+        //     after N pane switches.
         connect(obj, SIGNAL(enabledChanged()),
-                this, SLOT(onQmlShortcutEnabledChanged()));
+                this, SLOT(onQmlShortcutEnabledChanged()),
+                Qt::UniqueConnection);
         m_mirrorToQml.insert(mirror, obj);
         m_qmlToMirrors.insert(obj, QPointer<QShortcut>(mirror));
 

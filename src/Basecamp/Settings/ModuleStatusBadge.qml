@@ -3,9 +3,11 @@ import QtQuick
 import Logos.Controls
 import Logos.Theme
 
-// Load-state badge for the inspector tables. `row` is a ModuleTableModel row —
-// the normalised flags on it (isMainUi / hasMissingDeps / isLoaded) pick the
-// colour, `statusText` supplies the label so the wording lives in one place.
+// Load-state badge for the inspector tables. `row` is a LogosTable rowItem
+// backed by ModuleInstanceModel (via ModulesFilterProxy) — the normalised
+// flags on it (isMainUi / hasMissingDeps / isLoaded) pick the colour, and
+// the `statusText` role supplies the label so the wording lives in one
+// place (see ModuleInstanceModel::Row::statusText()).
 LogosBadge {
     id: root
 
