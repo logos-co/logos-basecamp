@@ -83,6 +83,11 @@ void ModulesFilterProxy::setSortRoleName(const QString& name)
     emit sortRoleNameChanged();
 }
 
+void ModulesFilterProxy::applySortOrder(int order)
+{
+    sort(0, static_cast<Qt::SortOrder>(order));
+}
+
 int ModulesFilterProxy::roleFromName(const QByteArray& name) const
 {
     QAbstractItemModel* src = sourceModel();

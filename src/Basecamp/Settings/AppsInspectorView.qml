@@ -40,9 +40,6 @@ Item {
         sourceModel:  root.sourceModel
         searchText:   root.searchText
         sortRoleName: appsTable.sortRole
-        // LogosTable emits sortRequested with Qt.AscendingOrder /
-        // Qt.DescendingOrder — the proxy honours sort() calls directly.
-        Component.onCompleted: sort(0, appsTable.sortOrder)
     }
 
     ColumnLayout {
@@ -87,7 +84,7 @@ Item {
             onSortRequested: function(role, order) {
                 appsTable.sortRole = role
                 appsTable.sortOrder = order
-                tableModel.sort(0, order)
+                tableModel.applySortOrder(order)
             }
 
             // Keep every row instantiated. The list is short (tens of rows at

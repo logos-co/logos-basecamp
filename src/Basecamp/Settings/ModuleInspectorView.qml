@@ -54,7 +54,6 @@ Item {
         sourceModel:  root.sourceModel
         searchText:   root.searchText
         sortRoleName: modulesTable.sortRole
-        Component.onCompleted: sort(0, modulesTable.sortOrder)
     }
 
     StackLayout {
@@ -106,7 +105,7 @@ Item {
                 onSortRequested: function(role, order) {
                     modulesTable.sortRole = role
                     modulesTable.sortOrder = order
-                    tableModel.sort(0, order)
+                    tableModel.applySortOrder(order)
                 }
 
                 // Keep every row instantiated — see AppsInspectorView for why.

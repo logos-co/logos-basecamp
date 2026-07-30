@@ -43,6 +43,9 @@ public:
 
     void setSourceModel(QAbstractItemModel* sourceModel) override;
 
+    // Q_INVOKABLE re-sort trigger for QML. `QSortFilterProxyModel::sort()`
+    Q_INVOKABLE void applySortOrder(int order);
+
 signals:
     void searchTextChanged();
     void stateFilterChanged();

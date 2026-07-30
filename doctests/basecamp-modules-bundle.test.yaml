@@ -322,7 +322,7 @@ sections:
 
             - name: "Module Inspector loads"
               action: wait_for
-              texts: ["Module Inspector", "Core modules known to the runtime"]
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
               timeout: 30000
               text: "The **Settings → Module Inspector** section shows the background modules loaded into the runtime, with live resource usage."
               screenshot: "bundle-module-inspector.png"
