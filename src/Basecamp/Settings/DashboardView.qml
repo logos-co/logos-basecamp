@@ -6,7 +6,7 @@ import Logos.Controls
 Item {
     id: root
 
-    ScrollView {
+    LogosScrollView {
         id: scroll
         anchors.fill: parent
         anchors.margins: 40
