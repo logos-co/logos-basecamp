@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
+import Logos.Controls
 import Logos.Theme
 
 import Basecamp.Icons
@@ -180,18 +181,19 @@ Control {
         }
 
         // Version footer — falls back to the build-type label
-        // ("Dev build" / "Portable build")
-        Text {
+        // ("Dev build" / "Portable build"). Selectable so the release tag can
+        // be copied out of the sidebar.
+        LogosSelectableText {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: TextEdit.AlignHCenter
             text: backend.buildVersion.length > 0
                 ? backend.buildVersion
                 : (backend.isPortableBuild ? qsTr("Portable build")
                                            : qsTr("Dev build"))
             color: Theme.palette.textSecondary
             font.pixelSize: Theme.typography.badgeText
-            elide: Text.ElideRight
+            wrapMode: TextEdit.WrapAnywhere
         }
     }
 
