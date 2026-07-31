@@ -95,9 +95,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     connect(m_uiPluginManager, &UIPluginManager::pluginWindowActivateRequested,
             this,              &MainUIBackend::pluginWindowActivateRequested);
 
-    // PackageCoordinator emits its own dialog-request signals; forward both.
-    connect(m_packageCoordinator, &PackageCoordinator::installConfirmationRequested,
-            this,             &MainUIBackend::installConfirmationRequested);
+    // PackageCoordinator emits its own dialog-request signals; forward them.
     connect(m_packageCoordinator, &PackageCoordinator::uninstallCascadeConfirmationRequested,
             this,             &MainUIBackend::uninstallCascadeConfirmationRequested);
     // Distinct upgrade/downgrade/reinstall cascade signal — the dialog
@@ -249,15 +247,11 @@ void MainUIBackend::setCurrentVisibleApp(const QString& n)    { m_uiPluginManage
 QString MainUIBackend::displayNameFor(const QString& n) const {
     return m_packageCoordinator ? m_packageCoordinator->displayNameFor(n) : n;
 }
-void MainUIBackend::installPluginFromPath(const QString& p)   { m_packageCoordinator->installPluginFromPath(p); }
-void MainUIBackend::openInstallPluginDialog()                 { m_packageCoordinator->openInstallPluginDialog(); }
 void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }
 void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
 void MainUIBackend::confirmUninstallCascade(const QString& n) { m_packageCoordinator->confirmUninstallCascade(n); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
-void MainUIBackend::confirmInstall()                          { m_packageCoordinator->confirmInstall(); }
-void MainUIBackend::cancelInstall()                           { m_packageCoordinator->cancelInstall(); }
 void MainUIBackend::confirmInstallGate(const QString& n)      { m_packageCoordinator->confirmInstallGate(n); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)

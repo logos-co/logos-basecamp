@@ -98,7 +98,7 @@ Item {
                 anchors.margins: 20
                 spacing: 16
 
-                ScrollView {
+                LogosScrollView {
                     id: interfaceScroll
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -284,7 +284,7 @@ Item {
                             color: "#a0a0a0"
                         }
 
-                        ScrollView {
+                        LogosScrollView {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true

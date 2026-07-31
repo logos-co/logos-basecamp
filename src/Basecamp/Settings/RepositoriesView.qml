@@ -33,7 +33,7 @@ Item {
         property string pendingRemoveUrl: ""
     }
 
-    ScrollView {
+    LogosScrollView {
         id: scroll
         anchors.fill: parent
         anchors.margins: Theme.spacing.large

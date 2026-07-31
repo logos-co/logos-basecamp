@@ -56,8 +56,7 @@ test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
     async () => { await app.expectTexts(["Dashboard", "Modules"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
-  // Inline SidebarNavItem component — className is SidebarNavItem_*, not LogosItemDelegate.
-  await app.click("Dashboard", { type: "SidebarNavItem" });
+  await app.click("Dashboard", { type: "LogosItemDelegate" });
   await app.waitFor(
     async () => { await app.expectTexts(["Commits"]); },
     { timeout: 10000, interval: 500, description: "Dashboard view to render" }
@@ -83,7 +82,7 @@ async function openModules(app) {
     async () => { await app.expectTexts(["Dashboard", "Modules"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
-  await app.click("Modules", { type: "SidebarNavItem" });
+  await app.click("Modules", { type: "LogosItemDelegate" });
   await app.waitFor(
     async () => { await app.expectTexts(["UI Modules", "Core Modules"]); },
     { timeout: 10000, interval: 500, description: "Modules tabs to render" }

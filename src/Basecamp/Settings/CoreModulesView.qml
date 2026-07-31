@@ -77,7 +77,7 @@ Item {
                 border.color: "#3d3d3d"
                 border.width: 1
 
-                ScrollView {
+                LogosScrollView {
                     id: scroll
                     anchors.fill: parent
                     anchors.margins: 20
