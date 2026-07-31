@@ -16,25 +16,17 @@ import Logos.Theme
 //  - "unloadCascade"  — confirmation; unloading this module would leave
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
-//  - "uninstallCascade" — confirmation; uninstalling this module will
-//                       break installed dependents and unload currently
-//                       loaded dependents. Renders TWO labelled lists:
-//                         * items        — installed dependents (full impact)
-//                         * loadedItems  — subset to be torn down now
-//                       When only `items` is populated and `loadedItems` is
-//                       empty, we still show the installed list so the user
-//                       sees what will break next time those are loaded.
 //  - "upgradeCascade" — confirmation; upgrading/downgrading/reinstalling
-//                       this module. Same two-list shape as uninstallCascade
-//                       (the package_manager performs an uninstall step
-//                       first, with the same dependent-impact set), but
-//                       title and body lead with the new version + the
-//                       UpgradeMode (Upgrade / Downgrade / Reinstall) so
-//                       the user knows the operation isn't a bare uninstall.
-//                       Confirm/Cancel still flow through `continueClicked`
-//                       / `cancelClicked`; the receiver disambiguates from
-//                       its own pending state (UpgradeCascade vs
-//                       UninstallCascade).
+//                       this module. The package_manager performs an
+//                       uninstall step first, so currently-running dependents
+//                       are unloaded for the swap; `loadedItems` names them.
+//                       Installed-but-not-running dependents are NOT listed:
+//                       they pick up the new version on their next load and
+//                       aren't user-visibly affected. Title and body lead
+//                       with the new version + the UpgradeMode (Upgrade /
+//                       Downgrade / Reinstall) so the user knows the
+//                       operation isn't a bare uninstall. Confirm/Cancel flow
+//                       through `continueClicked` / `cancelClicked`.
 //  - "installGate"    — confirmation before a fresh install routed through the
 //                       package_manager requestInstall gate. Every install the
 //                       app performs comes through here: package_manager_ui
@@ -48,30 +40,27 @@ import Logos.Theme
 //
 //                       Note: for a local .lgx the initiator has no catalog to
 //                       resolve against, so `depChanges` arrives empty and the
-//                       dialog is name + version only. Surfacing the inspected
-//                       manifest here needs the metadata carried through the
-//                       gate payload — see requestInstall's depChanges, which
-//                       establishes the "opaque display data" precedent.
+//                       dialog is name + version only.
+//
+// Uninstall confirmation is NOT here — it lives in UninstallDialog.qml, which
+// renders a resolved plan (what goes, what stays and why, what breaks) rather
+// than a pair of dependent lists.
 //
 // The dialog is controlled by calling `openWith(mode, name, items)` for the
-// one-list modes, `openWithTwoLists(mode, name, items, loadedItems)` for
-// uninstallCascade, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
+// one-list modes, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
 // for upgradeCascade, or `openWithInstallGate(name, version, depChanges)` for
 // the install gate. Backend wiring listens for continueClicked/cancelClicked
 // and calls the appropriate slot with `name`.
 Dialog {
     id: root
 
-    // "missingDeps" | "unloadCascade" | "uninstallCascade" | "upgradeCascade" | "installGate"
+    // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate"
     property string mode: "missingDeps"
     property string moduleName: ""
     property var items: []
-    // Only used in uninstall/upgrade cascade modes — the subset of `items`
-    // that is currently loaded and will be torn down as part of the
-    // cascade.
+    // Only used in upgradeCascade mode — the dependents currently loaded,
+    // which get torn down for the version swap.
     property var loadedItems: []
-    // Only used in uninstallCascade for the multi-package variant
-    property var targets: []
     // Only used in upgradeCascade mode. `upgradeTargetVersion` is the
     // pinned target (e.g. "1.0.0") supplied by the caller's requestUpgrade
     // call; `upgradeModeKind` mirrors PackageTypes/UpgradeMode —
@@ -97,8 +86,6 @@ Dialog {
 
     signal continueClicked(string name)
     signal cancelClicked(string name)
-    signal continueClickedMulti(var names)
-    signal cancelClickedMulti(var names)
 
     modal: true
     anchors.centerIn: parent
@@ -112,41 +99,15 @@ Dialog {
         root.moduleName = name_ || "";
         root.items = items_ || [];
         root.loadedItems = [];
-        root.targets = [];
         root._explicitClose = false;
         open();
     }
 
-    // Two-list variant for uninstallCascade — installedDeps is the full set
-    // that depends on this module (renders as "Will stop working"), loadedDeps
-    // is the subset currently running (renders as "Will be unloaded now").
-    function openWithTwoLists(mode_, name_, installedDeps_, loadedDeps_) {
-        root.mode = mode_;
-        root.moduleName = name_ || "";
-        root.items = installedDeps_ || [];
-        root.loadedItems = loadedDeps_ || [];
-        root.targets = [];
-        root._explicitClose = false;
-        open();
-    }
-
-    // Multi-target variant for uninstallCascade. Continue / Cancel emit the
-    // *Multi signals so callers route to confirmMultiUninstall / cancelMultiUninstall.
-    function openWithMultiTargets(targets_, installedDeps_, loadedDeps_) {
-        root.mode = "uninstallCascade";
-        root.moduleName = "";
-        root.items = installedDeps_ || [];
-        root.loadedItems = loadedDeps_ || [];
-        root.targets = targets_ || [];
-        root._explicitClose = false;
-        open();
-    }
-
-    // Upgrade/Downgrade/Reinstall variant. Reuses the two-list dependent
-    // impact shape (the upgrade flow does an uninstall step first, with
-    // the same cascade semantics) but the title + body line lead with
-    // the target version and the UpgradeMode so the user sees the full
-    // operation, not just "Uninstall and Unload Dependents?".
+    // Upgrade/Downgrade/Reinstall variant. The upgrade flow does an uninstall
+    // step first, so it carries the same loaded-dependent set as an uninstall
+    // would — but the title + body lead with the target version and the
+    // UpgradeMode so the user sees the full operation, not just
+    // "Uninstall and Unload Dependents?".
     function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_) {
         root.mode = "upgradeCascade";
         root.moduleName = name_ || "";
@@ -155,7 +116,6 @@ Dialog {
         root.items = installedDeps_ || [];
         root.loadedItems = loadedDeps_ || [];
         root.depChanges = depChanges_ || [];
-        root.targets = [];
         root._explicitClose = false;
         open();
     }
@@ -172,7 +132,6 @@ Dialog {
         root.items = [];
         root.loadedItems = [];
         root.depChanges = depChanges_ || [];
-        root.targets = [];
         root._explicitClose = false;
         open();
     }
@@ -207,11 +166,6 @@ Dialog {
                         return "Missing Dependencies";
                     if (root.mode === "unloadCascade")
                         return "Unload Dependent Modules?";
-                    if (root.mode === "uninstallCascade") {
-                        if (root.targets.length > 1)
-                            return "Uninstall " + root.targets.length + " packages?";
-                        return "Uninstall and Unload Dependents?";
-                    }
                     if (root.mode === "upgradeCascade") {
                         if (root.upgradeModeKind === 1) return "Downgrade Package?";
                         if (root.upgradeModeKind === 2) return "Reinstall Package?";
@@ -240,21 +194,6 @@ Dialog {
                 if (root.mode === "unloadCascade")
                     return "The following modules are currently loaded and depend on '"
                          + _label + "'. Unloading will terminate them:";
-                if (root.mode === "uninstallCascade") {
-                    if (root.targets.length > 1) {
-                        if (root.items.length === 0 && root.loadedItems.length === 0)
-                            return "The following packages will be removed from disk:";
-                        return "The following packages will be removed from disk "
-                             + "and affect the listed dependents:";
-                    }
-                    // Collapse to a simple destructive-action confirmation
-                    // when neither list is populated.
-                    if (root.items.length === 0 && root.loadedItems.length === 0)
-                        return "Uninstall '" + _label + "'? This will "
-                             + "remove the package files from disk.";
-                    return "Uninstalling '" + _label + "' will remove the "
-                         + "package files from disk and affect the following:";
-                }
                 if (root.mode === "upgradeCascade") {
                     // Lead with the operation in plain English so the
                     // user sees this isn't a bare uninstall — the
@@ -308,8 +247,8 @@ Dialog {
             radius: 4
             border.color: "#3d3d3d"
             border.width: 1
-            visible: root.mode !== "uninstallCascade"
-                     && root.mode !== "upgradeCascade"
+            visible: root.mode !== "upgradeCascade"
+                     && root.mode !== "installGate"
                      && root.items.length > 0
 
             LogosListView {
@@ -326,113 +265,24 @@ Dialog {
             }
         }
 
-        // Targets list — only rendered for the multi-package variant of
-        // uninstallCascade. Lists the packages the user explicitly selected
-        // for uninstallation. The two-list block below renders the *dependents*
-        // affected by removing them.
+        // Loaded-dependent block for upgradeCascade. Installed-but-not-running
+        // dependents pick up the new version on their next load and aren't
+        // user-visibly affected, so listing them under "will stop working"
+        // would be a lie — only the running ones are named. The body sentence
+        // above already tells the "brief unload, then back on the new version"
+        // story; this just names them.
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 8
-            visible: root.mode === "uninstallCascade" && root.targets.length > 1
+            visible: root.mode === "upgradeCascade" && root.loadedItems.length > 0
 
             LogosText {
                 Layout.fillWidth: true
-                text: "Packages to uninstall:"
+                text: "Currently running (will be temporarily unloaded):"
                 color: "#c0c0c0"
                 font.pixelSize: 13
                 font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(150, Math.max(30, root.targets.length * 24))
-                color: "#1e1e1e"
-                radius: 4
-                border.color: "#3d3d3d"
-                border.width: 1
-
-                LogosListView {
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    model: root.targets
-                    clip: true
-                    delegate: LogosText {
-                        text: "• " + (root.displayNameLookup(modelData) || modelData)
-                        color: "#e0e0e0"
-                        font.pixelSize: 13
-                    }
-                }
-            }
-        }
-
-        // Two-list block for uninstallCascade. Rendered as a single Column so
-        // the section headers and lists share the dialog's vertical spacing.
-        // Each sub-list is only shown when it has entries — a pure loaded-only
-        // or installed-only case still renders cleanly as one labelled list.
-        //
-        // upgradeCascade reuses the loaded-list half only: installed-not-
-        // running dependents pick up the new version on their next load and
-        // aren't user-visibly affected, so listing them under "Will stop
-        // working" would be a lie. The body sentence above already covers
-        // the "running dependents get a brief unload" story, the list below
-        // just names them.
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            visible: (root.mode === "uninstallCascade" && (root.items.length > 0 || root.loadedItems.length > 0))
-                  || (root.mode === "upgradeCascade"   && root.loadedItems.length > 0)
-
-            // Installed dependents (full impact — will break on next load).
-            // Hidden for upgradeCascade: the new version replaces the old
-            // before they next load, so they're not breaking.
-            LogosText {
-                Layout.fillWidth: true
-                text: "Will stop working (installed but not running):"
-                color: "#c0c0c0"
-                font.pixelSize: 13
-                font.weight: Theme.typography.weightBold
-                wrapMode: Text.Wrap
-                visible: root.mode === "uninstallCascade" && root.items.length > 0
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(120, Math.max(30, root.items.length * 24))
-                color: "#1e1e1e"
-                radius: 4
-                border.color: "#3d3d3d"
-                border.width: 1
-                visible: root.mode === "uninstallCascade" && root.items.length > 0
-
-                LogosListView {
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    model: root.items
-                    clip: true
-                    delegate: LogosText {
-                        text: "• " + (root.displayNameLookup(modelData) || modelData)
-                        color: "#e0e0e0"
-                        font.pixelSize: 13
-                    }
-                }
-            }
-
-            // Loaded dependents — wording differs by mode. uninstallCascade
-            // unloads them permanently (the module they hang off is going
-            // away); upgradeCascade unloads them only for the swap (they
-            // resume against the new version once it's installed).
-            LogosText {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                text: root.mode === "upgradeCascade"
-                      ? "Currently running (will be temporarily unloaded):"
-                      : "Will be unloaded now:"
-                color: "#c0c0c0"
-                font.pixelSize: 13
-                font.weight: Theme.typography.weightBold
-                wrapMode: Text.Wrap
-                visible: root.loadedItems.length > 0
             }
 
             Rectangle {
@@ -442,7 +292,6 @@ Dialog {
                 radius: 4
                 border.color: "#3d3d3d"
                 border.width: 1
-                visible: root.loadedItems.length > 0
 
                 LogosListView {
                     anchors.fill: parent
@@ -576,10 +425,7 @@ Dialog {
                 visible: root.mode !== "missingDeps"
                 onClicked: {
                     root._explicitClose = true;
-                    if (root.targets.length > 0)
-                        root.cancelClickedMulti(root.targets);
-                    else
-                        root.cancelClicked(root.moduleName);
+                    root.cancelClicked(root.moduleName);
                     root.close();
                 }
             }
@@ -589,11 +435,6 @@ Dialog {
                 text: {
                     if (root.mode === "missingDeps") return "OK";
                     if (root.mode === "unloadCascade") return "Unload All";
-                    if (root.mode === "uninstallCascade") {
-                        if (root.targets.length > 1)
-                            return "Uninstall " + root.targets.length;
-                        return "Uninstall";
-                    }
                     if (root.mode === "upgradeCascade") {
                         if (root.upgradeModeKind === 1) return "Downgrade";
                         if (root.upgradeModeKind === 2) return "Reinstall";
@@ -605,10 +446,7 @@ Dialog {
                 variant: LogosButton.Variant.Primary
                 onClicked: {
                     root._explicitClose = true;
-                    if (root.targets.length > 0)
-                        root.continueClickedMulti(root.targets);
-                    else
-                        root.continueClicked(root.moduleName);
+                    root.continueClicked(root.moduleName);
                     root.close();
                 }
             }
@@ -628,12 +466,9 @@ Dialog {
             root._explicitClose = false;
             return;
         }
-        if (root.mode === "unloadCascade" || root.mode === "uninstallCascade"
-            || root.mode === "upgradeCascade" || root.mode === "installGate") {
-            if (root.targets.length > 0)
-                root.cancelClickedMulti(root.targets);
-            else
-                root.cancelClicked(root.moduleName);
+        if (root.mode === "unloadCascade" || root.mode === "upgradeCascade"
+            || root.mode === "installGate") {
+            root.cancelClicked(root.moduleName);
         }
     }
 }
