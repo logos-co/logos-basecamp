@@ -28,11 +28,26 @@ Item {
                 Layout.fillWidth: true
                 spacing: 6
 
-                LogosText {
+                // "Version" stays a plain label so a drag-select copies the
+                // bare version string, not the prefix.
+                RowLayout {
+                    Layout.fillWidth: true
                     visible: backend.buildVersion.length > 0
-                    text: "Version " + backend.buildVersion
-                    font.pixelSize: 18
-                    color: "#ffffff"
+                    spacing: 6
+
+                    LogosText {
+                        text: "Version"
+                        font.pixelSize: 18
+                        color: "#ffffff"
+                    }
+
+                    LogosSelectableText {
+                        Layout.fillWidth: true
+                        text: backend.buildVersion
+                        font.pixelSize: 18
+                        color: "#ffffff"
+                        wrapMode: TextEdit.WrapAnywhere
+                    }
                 }
 
                 LogosText {
@@ -61,20 +76,25 @@ Item {
                         Layout.fillWidth: true
                         spacing: 12
 
-                        LogosText {
+                        // Module name and commit hash are both copy targets, so
+                        // they wrap instead of eliding — an elided hash cannot
+                        // be selected in full.
+                        LogosSelectableText {
                             text: modelData.name
                             color: "#a0a0a0"
                             font.pixelSize: 13
                             Layout.preferredWidth: 260
-                            elide: Text.ElideRight
+                            Layout.alignment: Qt.AlignTop
+                            wrapMode: TextEdit.WrapAnywhere
                         }
-                        LogosText {
+                        LogosSelectableText {
                             text: modelData.commit
                             color: "#d0d0d0"
                             font.family: "monospace"
                             font.pixelSize: 13
                             Layout.fillWidth: true
-                            elide: Text.ElideRight
+                            Layout.alignment: Qt.AlignTop
+                            wrapMode: TextEdit.WrapAnywhere
                         }
                     }
                 }
