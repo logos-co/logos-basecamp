@@ -12,7 +12,9 @@ ItemDelegate {
     // ─── Public API ───
     property var appData: ({})
     signal appClicked(string name, string repositoryUrl)
-    signal manageRequested(string name, string repositoryUrl)
+    signal detailsRequested(string name, string repositoryUrl)
+    signal installRequested(string name, string repositoryUrl)
+    signal uninstallRequested(string name, string repositoryUrl)
 
     QtObject {
         id: d
@@ -37,10 +39,26 @@ ItemDelegate {
         readonly property string iconUrl:      root.appData ? (root.appData.iconUrl || "") : ""
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
         readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
+        readonly property string installType:   root.appData ? (root.appData.installType || "") : ""
         readonly property real tileOpacity:
             (d.isInstalled || root.hovered) ? 1.0 : 0.55
 
         readonly property int tileSize: 80
+
+        // Plain-object copy of the row for the context menu. `model` itself is
+        // owned by the delegate and would dangle if the row recycled while the
+        // menu is up, so snapshot the fields the menu reads.
+        function snapshot() {
+            return {
+                name:          d.nameText,
+                displayName:   d.displayName,
+                repositoryUrl: d.repositoryUrl,
+                isInstalled:   d.isInstalled,
+                installStage:  d.installStage,
+                installStatus: d.installStatus,
+                installType:   d.installType,
+            };
+        }
     }
 
     background: Item {}
@@ -51,7 +69,15 @@ ItemDelegate {
 
     TapHandler {
         acceptedButtons: Qt.RightButton
-        onTapped: root.manageRequested(d.nameText, d.repositoryUrl)
+        onTapped: contextMenu.openFor(d.snapshot())
+    }
+
+    AppContextMenu {
+        id: contextMenu
+        onOpenRequested:      (name, repo) => root.appClicked(name, repo)
+        onDetailsRequested:   (name, repo) => root.detailsRequested(name, repo)
+        onInstallRequested:   (name, repo) => root.installRequested(name, repo)
+        onUninstallRequested: (name, repo) => root.uninstallRequested(name, repo)
     }
 
     contentItem: Item {

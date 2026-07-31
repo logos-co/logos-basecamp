@@ -12,7 +12,9 @@ Item {
     property string viewMode: "grid"
     property string emptyText: qsTr("No applications.")
     signal appClicked(string name, string repositoryUrl)
-    signal appManageRequested(string name, string repositoryUrl)
+    signal appDetailsRequested(string name, string repositoryUrl)
+    signal appInstallRequested(string name, string repositoryUrl)
+    signal appUninstallRequested(string name, string repositoryUrl)
 
     QtObject {
         id: d
@@ -58,8 +60,14 @@ Item {
             onAppClicked: function(name, repoUrl) {
                 root.appClicked(name, repoUrl)
             }
-            onManageRequested: function(name, repoUrl) {
-                root.appManageRequested(name, repoUrl)
+            onDetailsRequested: function(name, repoUrl) {
+                root.appDetailsRequested(name, repoUrl)
+            }
+            onInstallRequested: function(name, repoUrl) {
+                root.appInstallRequested(name, repoUrl)
+            }
+            onUninstallRequested: function(name, repoUrl) {
+                root.appUninstallRequested(name, repoUrl)
             }
         }
     }
@@ -73,8 +81,14 @@ Item {
             onAppClicked: function(name, repoUrl) {
                 root.appClicked(name, repoUrl)
             }
-            onManageRequested: function(name, repoUrl) {
-                root.appManageRequested(name, repoUrl)
+            onDetailsRequested: function(name, repoUrl) {
+                root.appDetailsRequested(name, repoUrl)
+            }
+            onInstallRequested: function(name, repoUrl) {
+                root.appInstallRequested(name, repoUrl)
+            }
+            onUninstallRequested: function(name, repoUrl) {
+                root.appUninstallRequested(name, repoUrl)
             }
         }
     }

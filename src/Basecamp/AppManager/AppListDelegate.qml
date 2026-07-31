@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
+import Logos.Icons
 import Logos.Theme
 import Basecamp.Backend 1.0
 
@@ -11,7 +12,9 @@ ItemDelegate {
     // ─── Public API ───
     property var appData: ({})
     signal appClicked(string name, string repositoryUrl)
-    signal manageRequested(string name, string repositoryUrl)
+    signal detailsRequested(string name, string repositoryUrl)
+    signal installRequested(string name, string repositoryUrl)
+    signal uninstallRequested(string name, string repositoryUrl)
 
     QtObject {
         id: d
@@ -37,10 +40,32 @@ ItemDelegate {
         readonly property string description:   root.appData ? (root.appData.description || "") : ""
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
         readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
+        readonly property string installType:   root.appData ? (root.appData.installType || "") : ""
         readonly property real tileOpacity:
             (d.isInstalled || root.hovered) ? 1.0 : 0.55
 
         readonly property int tileSize: 40
+
+        // Mirrors AppContextMenu.canUninstall so the trash icon and the menu
+        // agree on when Uninstall is offered. Kept here rather than in the
+        // menu snapshot because the icon is shown before any right-click.
+        readonly property bool isEmbedded:  d.installType === "embedded"
+        readonly property bool isProtected: d.nameText === "main_ui"
+        readonly property bool canUninstall:
+            d.isInstalled && !d.isEmbedded && !d.isProtected && !d.isInstalling
+
+        // See AppGridDelegate — snapshot rather than hand `model` to the menu.
+        function snapshot() {
+            return {
+                name:          d.nameText,
+                displayName:   d.displayName,
+                repositoryUrl: d.repositoryUrl,
+                isInstalled:   d.isInstalled,
+                installStage:  d.installStage,
+                installStatus: d.installStatus,
+                installType:   d.installType,
+            };
+        }
     }
 
     padding: 0
@@ -50,7 +75,15 @@ ItemDelegate {
 
     TapHandler {
         acceptedButtons: Qt.RightButton
-        onTapped: root.manageRequested(d.nameText, d.repositoryUrl)
+        onTapped: contextMenu.openFor(d.snapshot())
+    }
+
+    AppContextMenu {
+        id: contextMenu
+        onOpenRequested:      (name, repo) => root.appClicked(name, repo)
+        onDetailsRequested:   (name, repo) => root.detailsRequested(name, repo)
+        onInstallRequested:   (name, repo) => root.installRequested(name, repo)
+        onUninstallRequested: (name, repo) => root.uninstallRequested(name, repo)
     }
 
     background: Rectangle {
@@ -122,6 +155,25 @@ ItemDelegate {
                  : d.installStatus === InstallStatus.DifferentHash         ? Theme.palette.info
                                                                        : Theme.palette.accentOrange
             backgroundColor: Theme.palette.surfaceRaised
+        }
+
+        // Per-row Uninstall — trash icon in the trailing cell.
+        LogosIconButton {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 32
+            Layout.preferredHeight: 32
+            visible: d.canUninstall
+            size: 32
+            iconSize: 18
+            iconSource: LogosIcons.trash
+            background: Item {}
+            objectName: "appListDelegate.uninstall"
+            onClicked: root.uninstallRequested(d.nameText, d.repositoryUrl)
+            LogosToolTip {
+                text: qsTr("Uninstall")
+                placement: LogosToolTip.Top
+                visible: parent.hovered
+            }
         }
     }
 }
