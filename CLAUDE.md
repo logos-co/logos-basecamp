@@ -117,10 +117,9 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 | `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate) — hosted in a transparent top-level QQuickWidget |
 | `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `upgradeCascade`, `installGate` |
 | `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
-| `src/Basecamp/Settings/UiModulesTab.qml` | UI Modules tab in the Modules view |
-| `src/Basecamp/Settings/CoreModulesView.qml` | Core Modules tab with load/unload/uninstall/stats |
-| `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Modules, Settings |
-| `src/Basecamp/Settings/ModuleRow.qml` | Reusable row component for module lists |
+| `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
+| `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
+| `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
 
 ## QML Inspector (MCP)
 
