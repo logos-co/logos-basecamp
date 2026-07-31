@@ -25,3 +25,39 @@ void applyMacWindowRoundedCorners(QMainWindow* w, bool rounded)
     }
 #endif
 }
+
+void macActivateApp()
+{
+#ifdef Q_OS_MAC
+    if (QGuiApplication::platformName() == "offscreen") return;
+    if (@available(macOS 14.0, *))
+        [NSApp activate];
+    else
+        [NSApp activateIgnoringOtherApps:YES];
+#endif
+}
+
+bool macAppIsHidden()
+{
+#ifdef Q_OS_MAC
+    if (QGuiApplication::platformName() == "offscreen") return false;
+    return [NSApp isHidden];
+#else
+    return false;
+#endif
+}
+
+void macDeminiaturize(QMainWindow* w)
+{
+#ifdef Q_OS_MAC
+    if (QGuiApplication::platformName() == "offscreen") return;
+    if (!w) return;
+    NSView* nsView = (NSView*)w->winId();
+    NSWindow* nsWindow = nsView ? nsView.window : nil;
+    // Qt's window-state handling can miss this after an ordered-out hide.
+    if (nsWindow && nsWindow.isMiniaturized)
+        [nsWindow deminiaturize:nil];
+#else
+    Q_UNUSED(w);
+#endif
+}

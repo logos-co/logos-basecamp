@@ -589,6 +589,78 @@ test("app manager: 'local' header renders iff local rows exist", async (app) => 
   // on localFilter.visibleCount > 0 and correctly hides.
 });
 
+// --- Tray Show/Hide (issue #268) ---
+//
+// Drives the real Window through the inspector: showHideWindow is a private
+// slot, so QMetaObject::invokeMethod reaches it without needing a system tray
+// (headless CI has no tray daemon). The unit tests cover Qt's window-state
+// semantics; these cover our state machine on top of them.
+
+async function windowObject(app) {
+  const res = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "logosMainWindow",
+  });
+  const win = (res.matches ?? [])[0];
+  if (!win) throw new Error("objectName=logosMainWindow not found");
+  return win.id;
+}
+
+async function windowProps(app, objectId) {
+  const res = await app.inspector.send("getProperties", { objectId });
+  const read = (name) => {
+    const value = res.properties?.find(p => p.name === name)?.value;
+    if (typeof value !== "boolean") {
+      throw new Error(
+        `property "${name}" missing or not a boolean (got ${JSON.stringify(value)}) ` +
+        `— the inspector contract changed and these assertions no longer guard anything`);
+    }
+    return value;
+  };
+  return { visible: read("visible"), minimized: read("minimized") };
+}
+
+async function invoke(app, objectId, method) {
+  const res = await app.inspector.send("callMethod", { objectId, method });
+  if (res.error) throw new Error(`callMethod(${method}) failed: ${res.error}`);
+}
+
+test("window: tray toggle restores a minimized window on the first click", async (app) => {
+  const win = await windowObject(app);
+  try {
+    await invoke(app, win, "showMinimized");
+    await invoke(app, win, "showHideWindow");
+
+    const { visible, minimized } = await windowProps(app, win);
+    // Regression guard for #268: a minimized window is still visible() to Qt,
+    // so a visibility-only toggle hid it again and the click did nothing.
+    if (visible !== true || minimized === true) {
+      throw new Error(
+        `after one toggle: visible=${visible} minimized=${minimized} ` +
+        `(expected visible=true minimized=false)`);
+    }
+  } finally {
+    await invoke(app, win, "show");
+  }
+});
+
+test("window: tray toggle hides a shown window", async (app) => {
+  const win = await windowObject(app);
+  try {
+    await invoke(app, win, "show");
+    await invoke(app, win, "showHideWindow");
+
+    // Offscreen CI reports the window as active, so this can't cover the
+    // background-window case: gating Hide on activation makes it unreachable
+    // from the tray menu, and that stays a manual check.
+    const { visible } = await windowProps(app, win);
+    if (visible !== false) {
+      throw new Error(`toggle left visible=${visible} (expected false)`);
+    }
+  } finally {
+    await invoke(app, win, "show");
+  }
+});
+
 // --- Run ---
 
 run();
