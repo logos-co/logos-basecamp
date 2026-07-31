@@ -19,6 +19,7 @@
 #include <IComponent.h>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QWindow>
 #include "LogosBasecampPaths.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
@@ -215,11 +216,8 @@ void Window::showEvent(QShowEvent* event)
 void Window::setupMacOSDockReopen()
 {
     connect(qApp, &QApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (state == Qt::ApplicationActive && !isVisible()) {
-            show();
-            raise();
-            activateWindow();
-        }
+        if (state == Qt::ApplicationActive && !isWindowShown())
+            restoreWindow();
     });
 }
 
@@ -233,6 +231,15 @@ void Window::createMenuBar()
     quit->setShortcut(QKeySequence::Quit);
     quit->setMenuRole(QAction::QuitRole);
     connect(quit, &QAction::triggered, this, &Window::quitApplication);
+
+    // Frameless on macOS means no native title bar and no Window menu, so
+    // nothing is bound to Cmd+M — route it to the traffic light's action.
+    // Qt maps Ctrl to Command here (see Qt::AA_MacDontSwapCtrlAndMeta).
+    QAction* minimize = menuBar()->addMenu(tr("Window"))->addAction(tr("Minimize"));
+    minimize->setObjectName(QStringLiteral("logosMinimizeAction"));
+    minimize->setShortcut(QKeySequence(QStringLiteral("Ctrl+M"))); // Cmd+M on macOS
+    minimize->setMenuRole(QAction::NoRole);
+    connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
 }
 #endif
 
@@ -252,6 +259,7 @@ void Window::createTrayIcon()
     m_trayIconMenu = new QMenu(this);
 
     m_showHideAction = m_trayIconMenu->addAction(tr("Show/Hide"));
+    m_showHideAction->setObjectName(QStringLiteral("logosTrayShowHideAction"));
     m_showHideAction->setCheckable(false);
     connect(m_showHideAction, &QAction::triggered, this, &Window::showHideWindow);
 
@@ -323,14 +331,51 @@ void Window::closeEvent(QCloseEvent *event)
     }
 }
 
+bool Window::isWindowShown() const
+{
+    // isVisible() alone is not enough: it stays true when minimized (#268), and
+    // on Wayland only exposure reveals that. Exposure can also drop for an
+    // occluded window, which then raises instead of hiding — the harmless miss.
+    const QWindow* handle = windowHandle();
+    if (!isVisible() || isMinimized() || (handle && !handle->isExposed()))
+        return false;
+#ifdef Q_OS_MAC
+    return !macAppIsHidden();
+#else
+    return true;
+#endif
+}
+
+void Window::restoreWindow()
+{
+    // macOS: order back in first, or show() re-applies WindowMinimized.
+    if (!isVisible())
+        show();
+    // Clear only the minimized bit, so maximized/fullscreen survives.
+    if (isMinimized())
+        setWindowState(windowState() & ~Qt::WindowMinimized);
+
+#ifdef Q_OS_MAC
+    macDeminiaturize(this);
+    macActivateApp();
+#else
+    // The state bit is advisory on X11 and a no-op on Wayland (no unminimize
+    // request exists), so force a fresh map — that every display server honours.
+    if (windowHandle() && !windowHandle()->isExposed()) {
+        hide();
+        show();
+    }
+#endif
+    raise();
+    activateWindow();
+}
+
 void Window::showHideWindow()
 {
-    if (isVisible()) {
+    if (isWindowShown()) {
         hide();
     } else {
-        show();
-        raise();
-        activateWindow();
+        restoreWindow();
     }
 }
 
