@@ -123,6 +123,7 @@ Rectangle {
             Shortcut {
                 sequence: "Ctrl+K"
                 context: Qt.WindowShortcut
+                enabled: root.visible
                 onActivated: {
                     searchBar.textInput.forceActiveFocus()
                     searchBar.textInput.selectAll()

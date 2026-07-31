@@ -63,7 +63,7 @@ nix build .#integration-test -L
 
 ## App Structure
 
-- **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Dashboard, Modules, Settings)
+- **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Applications, Package Manager, Settings)
 - **Plugins** appear as sidebar icons: `package_manager_ui`
 - Plugins are loaded from `~/Library/Application Support/Logos/LogosBasecampDev/plugins/`
 - Main UI is in `src/Basecamp/`, organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
@@ -117,10 +117,12 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 | `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate) — hosted in a transparent top-level QQuickWidget |
 | `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `upgradeCascade`, `installGate` |
 | `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
-| `src/Basecamp/Settings/UiModulesTab.qml` | UI Modules tab in the Modules view |
-| `src/Basecamp/Settings/CoreModulesView.qml` | Core Modules tab with load/unload/uninstall/stats |
+| `src/Basecamp/Settings/SettingsView.qml` | Settings page: sections rail (Dashboard, Apps Inspector, Module Inspector, Package Repositories) + shared search bar |
+| `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector — installed UI plugins with load/unload toggle |
+| `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector — core modules with load/unload, live stats, Interface drill-down |
 | `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Modules, Settings |
-| `src/Basecamp/Settings/ModuleRow.qml` | Reusable row component for module lists |
+| `src/Basecamp/Settings/ModuleRowActions.qml` | Load/Unload + Interface action cluster for inspector table rows |
+| `src/Basecamp/Settings/ModuleStatusBadge.qml` | Load-state badge (Main UI / Missing deps / Loaded / Not loaded) for inspector rows |
 
 ## QML Inspector (MCP)
 

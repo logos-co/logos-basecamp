@@ -289,8 +289,8 @@ void UIPluginManager::unloadUiModule(const QString& moduleName)
 
     // Normal path: defer the whole body — same rationale as loadCoreModule /
     // unloadCoreModule. This slot is invoked from a QML Button.onClicked handler
-    // inside a Repeater delegate (e.g. UiModulesTab "Unload Plugin" button).
-    // Emitting uiModulesChanged() synchronously causes Repeater.setModel to fire,
+    // inside a view delegate (e.g. the Apps Inspector table's "Unload" button).
+    // Emitting uiModulesChanged() synchronously causes the model reset to fire,
     // which calls clear() → setParentItem(nullptr) on every delegate, including
     // the button that was just clicked. QQuickItemPrivate::derefWindow then
     // crashes trying to walk that button's child tree while the window pointer
@@ -524,7 +524,7 @@ QVariantList UIPluginManager::launcherApps() const
         // this field directly; we don't ship the full missingDeps list
         // here because the sidebar only draws an indicator — the detailed
         // list lives behind the click-triggered popup which reads from
-        // backend.uiModules.
+        // backend.uiModulesModel.
         const QStringList missing = m_packageCoordinator
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};

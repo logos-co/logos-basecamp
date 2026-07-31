@@ -40,7 +40,7 @@ what_you_learn:
   - What an `.lgx` package for a QML-only (`ui_qml`) app contains, and how to build one by hand
   - How Basecamp's install-confirmation dialog presents a package (name, version, type, signature status) before anything touches disk
   - How the same dialog switches to upgrade mode ("Installed" vs. "New version") when the package is already installed
-  - How an installed app appears in the sidebar and in Settings → Modules → UI Modules
+  - How an installed app appears in the sidebar and in Settings → Apps Inspector
   - How the gated uninstall works — the package manager emits `beforeUninstall`, Basecamp acks within 3s and shows the confirmation, and only a user confirm destroys files
   - How to drive install/upgrade/uninstall headlessly with logos-qt-mcp (stable objectNames + `call_method`, not text clicks)
 
@@ -386,21 +386,27 @@ sections:
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
 
-            - name: "Open Settings → Modules"
-              action: click
-              target: "Modules"
-
-            - name: "UI Modules tab loads"
-              action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
-              timeout: 30000
-              text: "The UI Modules tab lists the installed apps. The Lifecycle Demo row is a user-installed package, so it carries an **Uninstall** button (embedded apps don't)."
-              screenshot: "pkglife-ui-modules.png"
-
-            - name: "Click Uninstall on the Lifecycle Demo row"
+            # Settings sections are clicked by objectName: the rail labels
+            # ("Apps Inspector", "Module Inspector") repeat as the right-pane
+            # headings, so by-text clicks would be ambiguous.
+            - name: "Open Settings → Apps Inspector"
               action: click_object
               find_by: "objectName"
-              find_value: "uiModules.test_qml_only.uninstallButton"
+              find_value: "settings.section.appsInspector"
+
+            - name: "Apps Inspector loads"
+              action: wait_for
+              texts: ["Apps Inspector", "UI plugins available in this installation."]
+              timeout: 30000
+              text: "The Apps Inspector lists the installed apps, Lifecycle Demo among them. The inspectors are view-only — uninstall lives in the Package Manager — so the doc-test requests the uninstall through the same gated backend entry point PMUI drives."
+              screenshot: "pkglife-apps-inspector.png"
+
+            - name: "Request the uninstall of the Lifecycle Demo package"
+              action: call_method
+              find_by: "objectName"
+              find_value: "overlayDialogs"
+              method: "uninstallUiPlugin"
+              args: ["test_qml_only"]
               text: "This starts the **gated** uninstall: Basecamp asks the package manager, which emits `beforeUninstall` and starts a 3-second ack timer. Basecamp acks immediately and only then shows the confirmation — no files have been touched."
 
             - name: "The gated uninstall confirmation appears"

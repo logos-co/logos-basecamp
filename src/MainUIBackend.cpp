@@ -2,6 +2,7 @@
 #include "AppsFilterProxy.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
+#include "ModuleInstanceModel.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
 #include "BuildInfo.h"
@@ -17,6 +18,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     , m_coreModuleManager(nullptr)
     , m_uiPluginManager(nullptr)
     , m_packageCoordinator(nullptr)
+    , m_uiModulesModel(new ModuleInstanceModel(this))
+    , m_coreModulesModel(new ModuleInstanceModel(this))
 {
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
@@ -63,9 +66,11 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // UIPluginManager drives uiModulesChanged/launcherAppsChanged on load/
     // unload events; PackageCoordinator's own uiModulesChanged/launcherAppsChanged
     // already flow through UIPluginManager (wired in setPackageCoordinator) so
-    // we only need to listen to UIPluginManager here.
+    // we only need to listen to UIPluginManager here. The refresh slot
+    // repopulates m_uiModulesModel in one shot; QML consumers listen to the
+    // model's own dataChanged/modelReset signals rather than any signal here.
     connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged,
-            this,              &MainUIBackend::uiModulesChanged);
+            this,              &MainUIBackend::refreshUiModulesModel);
     // Clear the Modules Reload overlay once the user-initiated UI refresh
     // lands its first uiModulesChanged (list is already updated by then).
     connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged,
@@ -137,12 +142,13 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     //   * CoreModuleManager on stats-tick / refresh
     //   * UIPluginManager on cascade-induced state changes (re-emits
     //     PackageCoordinator's coreModulesChanged as part of that wiring)
-    // Qt coalesces redundant property-change notifies within a frame so the
-    // multi-connect doesn't cause visible flicker.
-    connect(m_uiPluginManager,    &UIPluginManager::coreModulesChanged,
-            this,                 &MainUIBackend::coreModulesChanged);
-    connect(m_coreModuleManager,  &CoreModuleManager::coreModulesChanged,
-            this,                 &MainUIBackend::coreModulesChanged);
+    // Both fan into the same refresh slot. Qt coalesces redundant dataChanged
+    // notifies within a frame, so the two-connect layout doesn't cause
+    // visible flicker.
+    connect(m_uiPluginManager,   &UIPluginManager::coreModulesChanged,
+            this, &MainUIBackend::refreshCoreModulesModel);
+    connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
+            this, &MainUIBackend::refreshCoreModulesModel);
 
     // Kick the first catalog scan now that all wiring is in place. We do
     // this AFTER setPackageCoordinator (and its signal connections) so the
@@ -180,7 +186,7 @@ void MainUIBackend::setCurrentActiveSectionIndex(int index)
 // installType comes from PackageCoordinator (populated during its dep-info
 // refresh). We compose here so neither manager has to know about the other's
 // schema.
-QVariantList MainUIBackend::coreModules() const
+QVariantList MainUIBackend::buildCoreModulesSnapshot() const
 {
     QVariantList modules;
     if (!m_coreModuleManager) return modules;
@@ -220,7 +226,21 @@ QVariantList MainUIBackend::coreModules() const
 // MainUIBackend so the QML `backend.foo(...)` contract is untouched by the
 // refactor (QML still sees one receiver).
 
-QVariantList MainUIBackend::uiModules() const        { return m_uiPluginManager->uiModules(); }
+QVariantList MainUIBackend::buildUiModulesSnapshot() const { return m_uiPluginManager->uiModules(); }
+
+// Refresh slots — fold "compute snapshot + push into model" into one call
+// so the ctor can wire signal→slot directly rather than routing through a
+// lambda for each source of change.
+void MainUIBackend::refreshUiModulesModel()
+{
+    m_uiModulesModel->replaceRows(buildUiModulesSnapshot());
+}
+
+void MainUIBackend::refreshCoreModulesModel()
+{
+    m_coreModulesModel->replaceRows(buildCoreModulesSnapshot());
+}
+
 QVariantList MainUIBackend::launcherApps() const     { return m_uiPluginManager->launcherApps(); }
 QString      MainUIBackend::currentVisibleApp() const{ return m_uiPluginManager->currentVisibleApp(); }
 QStringList  MainUIBackend::loadingModules() const   { return m_uiPluginManager->loadingModules(); }

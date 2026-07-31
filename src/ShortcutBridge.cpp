@@ -130,7 +130,21 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
         // just re-introduce the offscreen-window problem.
         auto* mirror = new QShortcut(seq, m_host);
         mirror->setContext(Qt::ApplicationShortcut);
+        mirror->setEnabled(obj->property("enabled").toBool());
+        // UniqueConnection makes this loop safe on two axes:
+        //   * a QML Shortcut can declare multiple sequences (each mirrored)
+        //     — the enabledChanged→slot wire should still be one connection
+        //     per QML shortcut, not one per sequence.
+        //   * rebind() clears the C++ mirrors but leaves the QML shortcuts
+        //     alive (they belong to the pane's QML tree). The next scan
+        //     would re-connect the same signal, and without this flag
+        //     onQmlShortcutEnabledChanged() would fire N times per change
+        //     after N pane switches.
+        connect(obj, SIGNAL(enabledChanged()),
+                this, SLOT(onQmlShortcutEnabledChanged()),
+                Qt::UniqueConnection);
         m_mirrorToQml.insert(mirror, obj);
+        m_qmlToMirrors.insert(obj, QPointer<QShortcut>(mirror));
 
         // Three-way wiring covers Qt's ambiguity cycling: on platforms
         // where the QML shortcut also matches, Qt alternates
@@ -147,6 +161,17 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
     }
 }
 
+void ShortcutBridge::onQmlShortcutEnabledChanged()
+{
+    QObject* qml = sender();
+    if (!qml) return;
+    const bool enabled = qml->property("enabled").toBool();
+    for (auto it = m_qmlToMirrors.constFind(qml);
+         it != m_qmlToMirrors.constEnd() && it.key() == qml; ++it) {
+        if (QShortcut* m = it.value()) m->setEnabled(enabled);
+    }
+}
+
 void ShortcutBridge::clearMirrors()
 {
     for (QPointer<QShortcut> sc : m_mirrors) {
@@ -154,6 +179,7 @@ void ShortcutBridge::clearMirrors()
     }
     m_mirrors.clear();
     m_mirrorToQml.clear();
+    m_qmlToMirrors.clear();
 
     // Drop pending statusChanged hooks so the old pane's late-Ready
     // signal doesn't retrigger a rebind after we've moved on.

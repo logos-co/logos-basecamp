@@ -38,6 +38,15 @@ Item {
         backend.installPluginFromPath(path);
     }
 
+    // Uninstall counterpart, same doc-test rationale: the Settings inspectors
+    // deliberately carry no per-row Uninstall button (module management lives
+    // in the Package Manager UI), so headless drivers request the gated
+    // uninstall here and then interact with the uninstall-cascade dialog
+    // below, exactly as a user would after asking PMUI to uninstall.
+    function uninstallUiPlugin(name) {
+        backend.uninstallUiModule(name);
+    }
+
     // True iff any dialog is currently visible. Drives input-blocking
     // (WA_TransparentForMouseEvents flip) on the hosting QQuickWidget
     // — see MainContainer::onOverlayActiveChanged.

@@ -3,9 +3,9 @@ output: basecamp-module-unload.md
 release: ""
 
 intro: |
-  Basecamp's **Settings → Modules → Core Modules** tab is where you manage the
+  Basecamp's **Settings → Module Inspector** is where you manage the
   background modules loaded into the runtime — each row carries a
-  **Load / Unload Plugin** toggle. But modules depend on each other, and
+  **Load / Unload** toggle. But modules depend on each other, and
   Basecamp refuses to silently strand a running module's dependents: unloading
   a module that others are running on top of raises a **cascade confirmation**
   listing exactly what would be terminated with it.
@@ -15,11 +15,11 @@ intro: |
   end:
 
   1. **Leaf unload** — unload the `package_downloader` module while nothing is
-     running on top of it: the row flips to **(Not Loaded)** with no dialog,
+     running on top of it: the row flips to **Not loaded** with no dialog,
      and one more click loads it right back.
   2. **Cascade unload** — open the **Package Manager** (which loads the
      `package_manager_ui` plugin on top of the `package_manager` module), then
-     unload `package_manager` from the Core Modules tab: the cascade dialog
+     unload `package_manager` from the Module Inspector: the cascade dialog
      appears, lists the dependent, and confirming it unloads **both**.
   3. **Reload after cascade** — click the **Package Manager** sidebar entry
      again: the plugin (and the core module underneath it) load back and the
@@ -42,7 +42,7 @@ what_you_build: |
   the cascade tore it down.
 
 what_you_learn:
-  - How **Settings → Modules → Core Modules** loads and unloads runtime modules, and how the row state ((Loaded)/(Not Loaded), live stats) tracks it
+  - How **Settings → Module Inspector** loads and unloads runtime modules, and how the row state (Loaded/Not loaded status badge, live stats) tracks it
   - Why unloading a *leaf* module (no loaded dependents) needs no confirmation
   - How Basecamp detects loaded dependents and raises the **Unload Dependent Modules?** cascade dialog instead of stranding them
   - What confirming the cascade does — the core module and every loaded dependent (including UI plugins) are torn down together
@@ -119,7 +119,7 @@ sections:
 
       - title: "Confirm the baked-in core modules"
         text: |
-          The modules the Core Modules tab will manage are installed under
+          The modules the Module Inspector will manage are installed under
           `modules/` next to the binary:
         run: "ls result-app/modules"
         expect_contains:
@@ -133,9 +133,9 @@ sections:
       Launch the dev app headless and drive all three stories in one session.
       Per-row buttons are clicked by their stable `objectName`s
       (`coreModules.<name>.toggleButton`) rather than by visible text — every
-      loaded row carries an identical "Unload Plugin" label, so text clicks
-      would be ambiguous. Row state is asserted the same way, via each row's
-      `coreModules.<name>.status` / `uiModules.<name>.status` text element.
+      loaded row carries an identical "Unload" label, so text clicks would be
+      ambiguous. Row state is asserted the same way, via each row's
+      `coreModules.<name>.status` / `uiModules.<name>.status` status badge.
     steps:
       - title: "Drive the unload flows"
         ui_test:
@@ -165,24 +165,19 @@ sections:
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
 
-            - name: "Open Settings → Modules"
-              action: click
-              target: "Modules"
-
-            - name: "UI Modules tab loads"
-              action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
-              timeout: 30000
-
-            - name: "Open the Core Modules tab"
-              action: click
-              target: "Core Modules"
+            # Settings sections are clicked by objectName as well: the rail
+            # labels ("Apps Inspector", "Module Inspector") repeat as the
+            # right-pane headings, so by-text clicks would be ambiguous.
+            - name: "Open Settings → Module Inspector"
+              action: click_object
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
 
             - name: "Core modules report as loaded"
               action: wait_for
-              texts: ["Core Modules", "Package Downloader", "(Loaded)"]
+              texts: ["Module Inspector", "Package Downloader", "Loaded"]
               timeout: 30000
-              text: "The Core Modules tab lists the three baked-in modules, all **(Loaded)** from startup."
+              text: "The Module Inspector lists the three baked-in modules, all **Loaded** from startup."
               screenshot: "unload-core-modules.png"
 
             - name: "The Package Downloader row is loaded"
@@ -190,7 +185,7 @@ sections:
               find_by: "objectName"
               find_value: "coreModules.package_downloader.status"
               property: "text"
-              value: "(Loaded)"
+              value: "Loaded"
 
             # The Package Manager UI (the only module that depends on
             # package_downloader) has not been opened yet, so this is a leaf
@@ -199,13 +194,13 @@ sections:
               action: click_object
               find_by: "objectName"
               find_value: "coreModules.package_downloader.toggleButton"
-              text: "Clicking **Unload Plugin** on the `package_downloader` row unloads it directly — Basecamp checks for *loaded* dependents, finds none (the Package Manager UI isn't running), and skips the confirmation."
+              text: "Clicking **Unload** on the `package_downloader` row unloads it directly — Basecamp checks for *loaded* dependents, finds none (the Package Manager UI isn't running), and skips the confirmation."
 
-            - name: "The row flips to (Not Loaded)"
+            - name: "The row flips to Not loaded"
               action: wait_for
-              texts: ["(Not Loaded)", "Load Plugin"]
+              texts: ["Not loaded"]
               timeout: 30000
-              text: "The row flips to **(Not Loaded)**, its stats columns blank out, and the button becomes **Load Plugin**."
+              text: "The row flips to **Not loaded**, its stats columns blank out, and the button becomes **Load**."
               screenshot: "unload-leaf-unloaded.png"
 
             - name: "…and it is the Package Downloader row"
@@ -213,13 +208,13 @@ sections:
               find_by: "objectName"
               find_value: "coreModules.package_downloader.status"
               property: "text"
-              value: "(Not Loaded)"
+              value: "Not loaded"
 
             - name: "Load it back"
               action: click_object
               find_by: "objectName"
               find_value: "coreModules.package_downloader.toggleButton"
-              text: "The same button now reads **Load Plugin** — one click loads the module straight back into the runtime."
+              text: "The same button now reads **Load** — one click loads the module straight back into the runtime."
 
             - name: "Give the module load a moment"
               action: sleep
@@ -230,7 +225,7 @@ sections:
               find_by: "objectName"
               find_value: "coreModules.package_downloader.status"
               property: "text"
-              value: "(Loaded)"
+              value: "Loaded"
               screenshot: "unload-leaf-reloaded.png"
 
             # ── Story 2: cascade unload ────────────────────────────────────
@@ -252,7 +247,7 @@ sections:
               text: "Clicking **Package Manager** loads the `package_manager_ui` plugin into the main content area. From here on, `package_manager` has a running dependent."
               screenshot: "unload-pm-open.png"
 
-            - name: "Back to Settings → Modules"
+            - name: "Back to Settings"
               action: click_object
               find_by: "objectName"
               find_value: "sidebar.section.Settings"
@@ -262,13 +257,14 @@ sections:
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
 
-            - name: "Open Settings → Modules again"
-              action: click
-              target: "Modules"
+            - name: "Open Settings → Apps Inspector"
+              action: click_object
+              find_by: "objectName"
+              find_value: "settings.section.appsInspector"
 
-            - name: "UI Modules tab shows the Package Manager UI as loaded"
+            - name: "Apps Inspector shows the installed UI plugins"
               action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
+              texts: ["Apps Inspector", "UI plugins available in this installation."]
               timeout: 30000
 
             - name: "The package_manager_ui row is loaded"
@@ -276,17 +272,18 @@ sections:
               find_by: "objectName"
               find_value: "uiModules.package_manager_ui.status"
               property: "text"
-              value: "(Loaded)"
-              text: "The **UI Modules** tab confirms it: `package_manager_ui` is now **(Loaded)**."
+              value: "Loaded"
+              text: "The **Apps Inspector** confirms it: `package_manager_ui` is now **Loaded**."
               screenshot: "unload-pmui-loaded.png"
 
-            - name: "Switch to the Core Modules tab"
-              action: click
-              target: "Core Modules"
+            - name: "Switch to the Module Inspector"
+              action: click_object
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
 
-            - name: "Core Modules tab is up"
+            - name: "Module Inspector is up"
               action: wait_for
-              texts: ["Core Modules", "All available plugins in the system"]
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
               timeout: 30000
 
             - name: "Try to unload the Package Manager module"
@@ -323,15 +320,15 @@ sections:
               find_by: "objectName"
               find_value: "coreModules.package_manager.status"
               property: "text"
-              value: "(Not Loaded)"
+              value: "Not loaded"
 
             - name: "…and the Package Manager UI plugin is gone too"
               action: expect_property
               find_by: "objectName"
               find_value: "uiModules.package_manager_ui.status"
               property: "text"
-              value: "(Not Loaded)"
-              text: "Both sides of the cascade landed: the core module reports **(Not Loaded)** in Core Modules, and the UI plugin that depended on it reports **(Not Loaded)** in UI Modules."
+              value: "Not loaded"
+              text: "Both sides of the cascade landed: the core module reports **Not loaded** in the Module Inspector, and the UI plugin that depended on it reports **Not loaded** in the Apps Inspector."
               screenshot: "unload-cascade-done.png"
 
             # ── Story 3: reload after the cascade ──────────────────────────
@@ -351,7 +348,7 @@ sections:
               text: "The sidebar entry works again immediately: Basecamp notices the plugin is gone, shows the loading placeholder, and loads `package_manager_ui` — pulling `package_manager` back into the runtime as its dependency."
               screenshot: "unload-pm-reloaded.png"
 
-            - name: "Back to Settings → Modules one last time"
+            - name: "Back to Settings one last time"
               action: click_object
               find_by: "objectName"
               find_value: "sidebar.section.Settings"
@@ -361,44 +358,37 @@ sections:
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
 
-            - name: "Open Settings → Modules once more"
-              action: click
-              target: "Modules"
-
-            - name: "Modules view is up again"
-              action: wait_for
-              texts: ["UI Modules", "Available UI plugins in the system"]
-              timeout: 30000
-
-            # Opening the Modules view triggers a visibility refresh
-            # ("Refreshing UI modules"), and the post-reload re-wire runs its
-            # own refresh — each reply rebuilds the UI Modules list model, so
-            # a one-shot assertion (or a fixed sleep) races the delegate
-            # re-creation. "Main UI" only renders once the list has rows
-            # (the empty list shows "No UI plugins found…"), so retry on it.
-            - name: "The UI Modules list has repopulated"
+            # Returning to Settings triggers a visibility refresh, and the
+            # post-reload re-wire runs its own refresh — each reply rebuilds
+            # the apps list model, so a one-shot assertion (or a fixed sleep)
+            # races the delegate re-creation. "Main UI" only renders once the
+            # list has rows (the empty list shows "No UI plugins found…"), so
+            # retry on it. The Apps Inspector need not be the visible section
+            # for this: the Settings StackLayout keeps every section
+            # instantiated.
+            - name: "The Apps Inspector list has repopulated"
               action: wait_for
               texts: ["Main UI"]
               timeout: 60000
 
-            # The Modules view remembers its last tab (Core Modules, from the
-            # cascade story), so switch back to UI Modules explicitly — the
-            # status assertion below would pass either way (StackLayout keeps
-            # both tabs instantiated), but the screenshot should show the tab
-            # the narrative talks about. Clicked by objectName (a by-text
-            # click on "UI Modules" is ambiguous with the tab's own heading),
-            # and only AFTER the list settled — a click synthesized while the
-            # refresh storm is still rebuilding delegates can be dropped.
-            - name: "Switch back to the UI Modules tab"
+            # The Settings rail remembers its last section (Module Inspector,
+            # from the cascade story), so switch back to Apps Inspector
+            # explicitly — the status assertion below would pass either way,
+            # but the screenshot should show the section the narrative talks
+            # about. Clicked by objectName (a by-text click on "Apps
+            # Inspector" is ambiguous with the pane's own heading), and only
+            # AFTER the list settled — a click synthesized while the refresh
+            # storm is still rebuilding delegates can be dropped.
+            - name: "Switch back to the Apps Inspector"
               action: click_object
               find_by: "objectName"
-              find_value: "modules.tab.uiModules"
+              find_value: "settings.section.appsInspector"
 
-            - name: "Let the tab switch land"
+            - name: "Let the section switch land"
               action: sleep
               ms: 1000
 
-            # The UI Modules row is fed by an IPC refresh against the
+            # The Apps Inspector row is fed by an IPC refresh against the
             # RESTARTED package_manager module — this assertion is the
             # regression guard for the IPC re-wire fix: without it, the
             # refresh replies after a module reload were lost on a stale
@@ -408,20 +398,21 @@ sections:
               find_by: "objectName"
               find_value: "uiModules.package_manager_ui.status"
               property: "text"
-              value: "(Loaded)"
-              text: "The **UI Modules** tab recovered too: its list is fed by an IPC refresh against the *restarted* `package_manager` module, and `package_manager_ui` reports **(Loaded)** — Basecamp re-wired its module IPC after the reload."
+              value: "Loaded"
+              text: "The **Apps Inspector** recovered too: its list is fed by an IPC refresh against the *restarted* `package_manager` module, and `package_manager_ui` reports **Loaded** — Basecamp re-wired its module IPC after the reload."
               screenshot: "unload-pmui-reloaded.png"
 
             # The core-module status comes straight from the runtime's C API
-            # — it only flips back to (Loaded) if the sidebar click really
+            # — it only flips back to Loaded if the sidebar click really
             # re-ran the plugin load, which is what this closing story guards.
-            - name: "Switch to Core Modules for the closing check"
-              action: click
-              target: "Core Modules"
+            - name: "Switch to the Module Inspector for the closing check"
+              action: click_object
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
 
-            - name: "Core Modules tab is up for the closing check"
+            - name: "Module Inspector is up for the closing check"
               action: wait_for
-              texts: ["Core Modules", "All available plugins in the system"]
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
               timeout: 30000
 
             - name: "The Package Manager core module is loaded again"
@@ -429,15 +420,15 @@ sections:
               find_by: "objectName"
               find_value: "coreModules.package_manager.status"
               property: "text"
-              value: "(Loaded)"
-              text: "The closing proof: `package_manager` is **(Loaded)** again — pulled back into the runtime as a dependency of the reloaded `package_manager_ui`. The Package Manager view survives a full cascade-unload/reload cycle."
+              value: "Loaded"
+              text: "The closing proof: `package_manager` is **Loaded** again — pulled back into the runtime as a dependency of the reloaded `package_manager_ui`. The Package Manager view survives a full cascade-unload/reload cycle."
               screenshot: "unload-final-state.png"
         post_text: |
           One green run covered the full unload story: a **leaf module**
-          unloaded and reloaded from the Core Modules tab with no ceremony; a
+          unloaded and reloaded from the Module Inspector with no ceremony; a
           module with a running dependent raised the **Unload Dependent
           Modules?** cascade dialog naming exactly what would be terminated,
           and confirming it tore down both the core module and the
           `package_manager_ui` plugin riding on it; and the **Package Manager**
           sidebar entry loaded everything back afterwards — the view renders
-          and both modules report **(Loaded)** again.
+          and both modules report **Loaded** again.

@@ -42,10 +42,10 @@ test("package_manager_ui: open and verify categories", async (app) => {
   await openPlugin(app, "Package Manager", ["Reload"]);
 });
 
-test("settings: shows Dashboard and Modules entries", async (app) => {
+test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {
   await app.click("Settings");
   await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
 });
@@ -53,7 +53,7 @@ test("settings: shows Dashboard and Modules entries", async (app) => {
 test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
   await app.click("Settings");
   await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
   await app.click("Dashboard", { type: "LogosItemDelegate" });
@@ -63,104 +63,115 @@ test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
   );
 });
 
-// --- Modules section ---
+// --- Inspectors (Apps + Module) ---
 //
-// Regression test: navigating to the Core Modules tab must show
-// auto-loaded core modules (package_manager, capability_module) as
-// "(Loaded)", not "(Not Loaded)". The bug we hit was that
+// Regression test: navigating to Module Inspector must show auto-loaded core
+// modules (package_manager, capability_module) with a "Loaded" status badge,
+// not "Not loaded". The bug we hit was that
 // MainUIBackend::refreshCoreModules() called logos_core_refresh_modules(),
 // which re-ran ModuleRegistry::discoverInstalledModules() and wiped the
 // `loaded` flag of every module via `m_modules.insert(qName, freshInfo)`.
-// The whole list then rendered as Not Loaded with no CPU/Mem stats.
+// The whole list then rendered as Not loaded with no CPU/Mem stats.
 //
-// The old top-level "Modules" sidebar entry was renamed; the embedded
-// ModulesView (UI Modules + Core Modules tabs) now lives under
-// Settings → Modules sub-tab.
-async function openModules(app) {
+// The old "Settings → Modules" sub-tab (with UI Modules + Core Modules
+// nested tabs) was split into two top-level Settings sections:
+// "Apps Inspector" (UI plugins) and "Module Inspector" (core modules,
+// with live CPU/memory + Interface drilldown).
+async function openAppsInspector(app) {
   await app.click("Settings");
   await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Modules"]); },
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
-  await app.click("Modules", { type: "LogosItemDelegate" });
+  await app.click("Apps Inspector", { type: "LogosItemDelegate" });
   await app.waitFor(
-    async () => { await app.expectTexts(["UI Modules", "Core Modules"]); },
-    { timeout: 10000, interval: 500, description: "Modules tabs to render" }
+    async () => { await app.expectTexts(["UI plugins available in this installation."]); },
+    { timeout: 10000, interval: 500, description: "Apps Inspector to become active" }
   );
 }
 
-async function openCoreModules(app) {
-  await openModules(app);
-  await app.click("Core Modules");
+async function openModuleInspector(app) {
+  await app.click("Settings");
   await app.waitFor(
-    async () => { await app.expectTexts(["All available plugins in the system"]); },
-    { timeout: 10000, interval: 500, description: "Core Modules tab to become active" }
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+  await app.click("Module Inspector", { type: "LogosItemDelegate" });
+  await app.waitFor(
+    async () => { await app.expectTexts(["Core modules known to the runtime, with live resource usage."]); },
+    { timeout: 10000, interval: 500, description: "Module Inspector to become active" }
   );
 }
 
-test("modules: ui tab shows installed UI plugins", async (app) => {
-  await openModules(app);
+test("apps inspector: shows installed UI plugins", async (app) => {
+  await openAppsInspector(app);
   await app.waitFor(
     async () => { await app.expectTexts(["Main UI", "Package Manager"]); },
-    { timeout: 10000, interval: 500, description: "UI Modules list to populate" }
+    { timeout: 10000, interval: 500, description: "Apps Inspector list to populate" }
   );
 });
 
-test("modules: core tab shows auto-loaded modules as Loaded", async (app) => {
-  await openCoreModules(app);
+test("module inspector: auto-loaded modules show as Loaded with Unload action", async (app) => {
+  await openModuleInspector(app);
 
-  // Wait for the core modules list to populate.
+  // Wait for the module list to populate.
   await app.waitFor(
     async () => { await app.expectTexts(["Package Manager"]); },
-    { timeout: 10000, interval: 500, description: "Core Modules list to populate" }
+    { timeout: 10000, interval: 500, description: "Module Inspector list to populate" }
   );
 
-  // CoreModulesView renders "(Loaded)" + "Unload Plugin" for loaded
-  // modules and "(Not Loaded)" + "Load Plugin" for unloaded ones. With
-  // the refreshCoreModules bug, every module showed "(Not Loaded)" and
-  // the only buttons were "Load Plugin", so neither "(Loaded)" nor
-  // "Unload Plugin" appeared anywhere in the UI.
+  // ModuleStatusBadge renders "Loaded" for loaded modules and "Not loaded"
+  // for unloaded ones (no parens). ModuleRowActions renders "Unload" (or
+  // "Load"). With the refreshCoreModules bug, every module showed
+  // "Not loaded" and only "Load" buttons appeared, so neither "Loaded" nor
+  // "Unload" appeared anywhere in the Module Inspector table.
   await app.waitFor(
-    async () => { await app.expectTexts(["(Loaded)", "Unload Plugin"]); },
+    async () => { await app.expectTexts(["Loaded", "Unload"]); },
     { timeout: 10000, interval: 500, description: "loaded status and Unload button to appear" }
   );
 });
 
-test("modules: loaded plugins render CPU and memory stats", async (app) => {
-  await openCoreModules(app);
+test("module inspector: loaded modules render CPU and memory stats", async (app) => {
+  await openModuleInspector(app);
 
   // Wait for at least one loaded plugin to appear.
   await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "(Loaded)"]); },
+    async () => { await app.expectTexts(["Package Manager", "Loaded"]); },
     { timeout: 10000, interval: 500, description: "loaded plugins to appear" }
   );
 
-  // CPU and memory stats update every 2s and values are dynamic
-  // (e.g. "CPU: 0.0%", "Mem: 24.4 MB"). Use getTree with enough
-  // depth to reach the deeply-nested LogosText elements and verify
-  // the "CPU: " and "Mem: " prefixes appear in the rendered text.
+  // Live stats update every 2s. The current Module Inspector cell format
+  // is "<num>%" for CPU and "<num> MB" for memory (the "CPU:" / "Mem:"
+  // prefixes moved to the column headers). Verify the two column headers
+  // are present AND that at least one numeric-with-unit value has rendered
+  // — proof that the stats poll is actually populating rows.
+  await app.waitFor(
+    async () => { await app.expectTexts(["CPU", "Memory"]); },
+    { timeout: 15000, interval: 500, description: "CPU and Memory column headers to render" }
+  );
   await app.waitFor(
     async () => {
       const tree = await app.getTree({ depth: 40 });
       const treeStr = JSON.stringify(tree);
-      if (!treeStr.includes("CPU: ")) {
-        throw new Error("No CPU stats rendered for loaded plugins");
+      // Match the actual delegate output: <digit>% and <digit> MB.
+      if (!/\d\.\d%/.test(treeStr)) {
+        throw new Error("No CPU percentage rendered for loaded modules");
       }
-      if (!treeStr.includes("Mem: ")) {
-        throw new Error("No Mem stats rendered for loaded plugins");
+      if (!/\d\.\d MB/.test(treeStr)) {
+        throw new Error("No memory-in-MB rendered for loaded modules");
       }
     },
-    { timeout: 15000, interval: 2000, description: "CPU and memory stats to appear" }
+    { timeout: 15000, interval: 2000, description: "CPU % and Memory MB values to appear" }
   );
 });
 
-test("modules: leaving and returning to Core Modules preserves loaded state", async (app) => {
-  // Navigate to Settings → Modules → Core Modules and wait for loaded plugins.
-  await openCoreModules(app);
+test("module inspector: leaving and returning preserves loaded state", async (app) => {
+  // Navigate to Settings → Module Inspector and wait for loaded modules.
+  await openModuleInspector(app);
 
   await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "(Loaded)"]); },
-    { timeout: 10000, interval: 500, description: "Core Modules to show loaded plugins" }
+    async () => { await app.expectTexts(["Package Manager", "Loaded"]); },
+    { timeout: 10000, interval: 500, description: "Module Inspector to show loaded modules" }
   );
 
   // Navigate away to a different top-level section (Applications).
@@ -170,12 +181,12 @@ test("modules: leaving and returning to Core Modules preserves loaded state", as
     { timeout: 10000, interval: 500, description: "Applications view to render" }
   );
 
-  // Navigate back to Settings → Modules → Core Modules.
-  await openCoreModules(app);
+  // Navigate back to Settings → Module Inspector.
+  await openModuleInspector(app);
 
-  // The previously-loaded modules must still show as "(Loaded)" with stats.
+  // The previously-loaded modules must still show as "Loaded" with the Unload action.
   await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "(Loaded)", "Unload Plugin"]); },
+    async () => { await app.expectTexts(["Package Manager", "Loaded", "Unload"]); },
     { timeout: 10000, interval: 500, description: "loaded state to be preserved after returning" }
   );
 });
