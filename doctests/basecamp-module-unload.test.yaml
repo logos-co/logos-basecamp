@@ -394,8 +394,6 @@ sections:
                 - "The following modules are currently loaded and depend on 'Package Manager'. Unloading will terminate them:"
                 - "• Package Manager"
               timeout: 30000
-              text: "The **Unload Dependent Modules?** dialog spells out the blast radius before anything happens: the Package Manager UI is currently loaded, depends on this module, and will be terminated by the unload."
-              screenshot: "unload-cascade-dialog.png"
 
             - name: "…and it is the unload-cascade dialog that is open"
               action: expect_property
@@ -403,6 +401,22 @@ sections:
               find_value: "confirmationDialog.unloadCascade"
               property: "visible"
               value: true
+
+            # A dialog screenshot must never hang off the text poll above.
+            # The poll matches on a CLOSED dialog — the ConfirmationDialog
+            # instances stay in the object tree keeping their constant title
+            # and whatever body they last rendered — so the capture is
+            # unsynchronised with the dialog being on screen and lands a frame
+            # that shows the view underneath with no dialog in it. (That is
+            # what this screenshot used to be: the Module Inspector, undimmed,
+            # all three modules still Loaded.) Anchor it to the `visible`
+            # assertion above instead, plus a beat for the open transition to
+            # paint.
+            - name: "Let the dialog finish opening, then capture it"
+              action: sleep
+              ms: 1000
+              text: "The **Unload Dependent Modules?** dialog spells out the blast radius before anything happens: the Package Manager UI is currently loaded, depends on this module, and will be terminated by the unload."
+              screenshot: "unload-cascade-dialog.png"
 
             - name: "Confirm — Unload All"
               action: click_object
@@ -507,16 +521,33 @@ sections:
               find_by: "objectName"
               find_value: "settings.section.appsInspector"
 
-            - name: "Let the section switch land"
-              action: sleep
-              ms: 1000
-
             - name: "The Apps Inspector is the selected section again"
               action: expect_property
               find_by: "objectName"
               find_value: "settings.section.appsInspector"
               property: "highlighted"
               value: true
+
+            # Drain the rest of the refresh storm before the one-shot read
+            # below. Two refreshes are in flight by this point (the Settings
+            # visibility refresh and the post-reload re-wire's own), and each
+            # reply resets the apps list model — a reply landing between the
+            # settle and the read re-creates the delegate, so expect_property
+            # either misses the element outright or reads it mid-rebuild.
+            - name: "Let the refresh storm drain"
+              action: sleep
+              ms: 5000
+
+            # Re-settle immediately before the read, with nothing in between.
+            # The runner's expect_property is one-shot (findByProperty →
+            # getProperties, no retry), so the only way to shrink the window is
+            # to put a polling step directly in front of it — this narrows the
+            # race to the gap between two adjacent inspector round-trips
+            # instead of spanning a click and a fixed sleep.
+            - name: "The apps list is still populated"
+              action: wait_for
+              texts: ["Main UI"]
+              timeout: 60000
 
             # The Apps Inspector row is fed by an IPC refresh against the
             # RESTARTED package_manager module — this assertion is the

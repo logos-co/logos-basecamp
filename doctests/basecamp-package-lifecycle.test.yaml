@@ -360,6 +360,24 @@ sections:
                 - "Install Package?"
                 - "Install 'test_qml_only' v0.1.1. No other packages need to change."
               timeout: 30000
+
+            # The text poll above is only a settle: OverlayDialogs keeps all
+            # five ConfirmationDialog instances in the object tree while they
+            # are closed, so their titles (and whatever body they last
+            # rendered) match whether or not anything is on screen. `visible`
+            # is the proof that THIS dialog is up — and it is also the only
+            # safe anchor for the screenshot, which otherwise captures a frame
+            # taken before the dialog painted and shows the view underneath.
+            - name: "…and it is the install gate that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: true
+
+            - name: "Let the gate finish opening, then capture it"
+              action: sleep
+              ms: 1000
               text: "The gate presents exactly what would be installed: `test_qml_only` v0.1.1, with no transitive dependency changes. Until this dialog is confirmed, no files have been written."
               screenshot: "pkglife-install-dialog.png"
 
@@ -425,6 +443,21 @@ sections:
                 - "Upgrade Package?"
                 - "Upgrade 'Lifecycle Demo' to v0.2.1. The current version will be removed first, then the new one downloaded and installed."
               timeout: 30000
+
+            # Settle vs. proof, and the screenshot's anchor — see the install
+            # gate above. Doubly worth asserting here: upgradeCascade is a
+            # DISTINCT dialog instance from uninstallCascade, and only
+            # `visible` can tell the two apart.
+            - name: "…and it is the upgrade gate that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.upgradeCascade"
+              property: "visible"
+              value: true
+
+            - name: "Let the gate finish opening, then capture it"
+              action: sleep
+              ms: 1000
               text: "The dialog now greets the package by its installed `display_name` and spells out the swap: the old version is removed first, then the new one installed. Nothing is running on top of it, so no unload list appears."
               screenshot: "pkglife-upgrade-dialog.png"
 
@@ -503,6 +536,21 @@ sections:
                 - "Uninstall and Unload Dependents?"
                 - "Uninstall 'Lifecycle Demo'? This will remove the package files from disk."
               timeout: 30000
+
+            # Settle vs. proof, and the screenshot's anchor — see the install
+            # gate above. The upgrade story ran uninstallCascade's twin
+            # (upgradeCascade) a few steps ago, so a text match here proves
+            # even less than usual.
+            - name: "…and it is the uninstall-cascade dialog that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.uninstallCascade"
+              property: "visible"
+              value: true
+
+            - name: "Let the dialog finish opening, then capture it"
+              action: sleep
+              ms: 1000
               text: "Nothing depends on this app, so the dialog collapses to the simple destructive-action confirmation. (With dependents installed it would list what breaks and what gets unloaded.)"
               screenshot: "pkglife-uninstall-dialog.png"
 
