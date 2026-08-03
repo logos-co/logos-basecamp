@@ -151,7 +151,7 @@ jobs:
           #     onModuleEvent), covering the QML-expressible surface.
           #   basecamp-package-lifecycle — installs, upgrades (0.1.1 → 0.2.1),
           #     and uninstalls a hand-crafted local .lgx through the bundle's
-          #     real confirmation dialogs (hermetic — no catalog download).
+          #     real confirmation dialogs (hermetic — no catalog packages are downloaded or installed).
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \

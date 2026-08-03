@@ -29,24 +29,6 @@ Item {
     // QML inspector's findByProperty/callMethod).
     objectName: "overlayDialogs"
 
-    // Automation entry for the local-LGX install flow. The user-facing path
-    // (backend.openInstallPluginDialog) opens a blocking native QFileDialog,
-    // which a headless driver cannot operate — doc-tests invoke this instead
-    // with an explicit path and then interact with the normal install-confirm
-    // dialog below, exactly as a user would after picking the file.
-    function installPluginFromPath(path) {
-        backend.installPluginFromPath(path);
-    }
-
-    // Uninstall counterpart, same doc-test rationale: the Settings inspectors
-    // deliberately carry no per-row Uninstall button (module management lives
-    // in the Package Manager UI), so headless drivers request the gated
-    // uninstall here and then interact with the uninstall-cascade dialog
-    // below, exactly as a user would after asking PMUI to uninstall.
-    function uninstallUiPlugin(name) {
-        backend.uninstallUiModule(name);
-    }
-
     // True iff any dialog is currently visible. Drives input-blocking
     // (WA_TransparentForMouseEvents flip) on the hosting QQuickWidget
     // — see MainContainer::onOverlayActiveChanged.
@@ -68,14 +50,22 @@ Item {
         property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
     }
 
+    // Each dialog instance carries a mode-derived objectName (matching the
+    // button convention inside ConfirmationDialog) so UI automation can
+    // assert WHICH dialog is open via its `visible` property. Text-based
+    // assertions alone can't: the per-mode instances keep their constant
+    // titles — and whatever body text they last rendered — in the object
+    // tree even while closed.
     ConfirmationDialog {
         id: missingDepsDialog
+        objectName: "confirmationDialog.missingDeps"
         mode: "missingDeps"
         displayNameLookup: _dialogDeps.displayNameLookup
     }
 
     ConfirmationDialog {
         id: unloadCascadeDialog
+        objectName: "confirmationDialog.unloadCascade"
         mode: "unloadCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUnloadCascade(name)
@@ -84,6 +74,7 @@ Item {
 
     ConfirmationDialog {
         id: uninstallCascadeDialog
+        objectName: "confirmationDialog.uninstallCascade"
         mode: "uninstallCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name)
@@ -102,6 +93,7 @@ Item {
     // (UpgradeCascade vs UninstallCascade).
     ConfirmationDialog {
         id: upgradeCascadeDialog
+        objectName: "confirmationDialog.upgradeCascade"
         mode: "upgradeCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name)
@@ -115,6 +107,7 @@ Item {
     // Lists the resolved transitive dep changes.
     ConfirmationDialog {
         id: installGateDialog
+        objectName: "confirmationDialog.installGate"
         mode: "installGate"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmInstallGate(name)
