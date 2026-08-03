@@ -68,6 +68,39 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
 
     LogosModules logos(m_logosAPI);
 
+    // Every subscription and directory setter below is recorded in `ok`, rather
+    // than returning a bare `true`: a half-wired coordinator that claims success
+    // latches m_pmEventsWired and the watcher never retries it, which is exactly
+    // how the gated install/uninstall/upgrade dialogs could end up dead until an
+    // app restart.
+    bool ok = true;
+
+    // Subscribe once per event, per live wiring. There is no unsubscribe
+    // anywhere in the stack (on() → LogosAPIConsumer::onEvent →
+    // LogosObject::onEvent all just register), so a retry after a partial
+    // failure re-running the whole body would leave a second copy of every
+    // handler that did land — duplicate refresh storms and duplicate acks on
+    // the beforeUninstall/beforeUpgrade gates. m_pmSubscribedEvents remembers
+    // what is already live and is cleared wherever the wiring dies: the module
+    // dropping out of the loaded set (onCoreModuleSetChanged) and the client
+    // reconnect in rewirePackageIpc.
+    //
+    // `ok` also gates further attempts. Each miss costs a blocking acquire at
+    // the SDK's 20s default, so one failure must not be followed by seventeen
+    // more — see the probe note below.
+    auto subscribe = [this, &logos, &ok](const char* event,
+                                         std::function<void(const QVariantList&)> handler) {
+        const QString name = QString::fromLatin1(event);
+        if (!ok || m_pmSubscribedEvents.contains(name)) return;
+        if (logos.package_manager.on(name, std::move(handler))) {
+            m_pmSubscribedEvents.insert(name);
+            return;
+        }
+        qWarning() << "PackageCoordinator: failed to subscribe to package_manager"
+                      " event" << event;
+        ok = false;
+    };
+
     // First subscription doubles as the reachability probe, and runs BEFORE
     // the directory setters below.
     //
@@ -80,8 +113,7 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
     // block the UI thread, so pressing on through an unreachable module costs
     // ~18 × 20s instead of one. Bail on the first miss and let the
     // core-module-set watcher retry once the module has settled.
-    if (!logos.package_manager.on("corePluginFileInstalled",
-                                  [this](const QVariantList& data) {
+    subscribe("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module file installed:" << data[0].toString();
         QTimer::singleShot(100, this, [this]() {
@@ -91,35 +123,47 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
             // marked with missing deps, so the sidebar red-cross needs to clear.
             fetchUiPluginMetadata();
         });
-    })) {
+    });
+    if (!ok) {
         qWarning() << "PackageCoordinator: package_manager is loaded but its event"
                       " replica is not acquirable yet — leaving IPC unwired,"
                       " the core-module-set watcher will retry";
         return false;
     }
 
-    // Every remaining on() reuses the replica the probe just cached, so none of
-    // them can fail for reachability. Record failures anyway rather than
-    // returning a bare `true`: a half-wired coordinator that claims success
-    // latches m_pmEventsWired and the watcher never retries it, which is
-    // exactly how the gated install/uninstall/upgrade dialogs could end up
-    // dead until an app restart.
-    bool ok = true;
-    auto subscribe = [&logos, &ok](const char* event,
-                                   std::function<void(const QVariantList&)> handler) {
-        if (logos.package_manager.on(QLatin1String(event), std::move(handler)))
-            return;
-        qWarning() << "PackageCoordinator: failed to subscribe to package_manager"
-                      " event" << event;
+    // Configure the package_manager module's directories so it knows where to
+    // install. These land through invokeRemoteMethod, not the event replica, so
+    // they can fail on their own — and a package_manager left pointing at the
+    // wrong (or no) install directory is half-wired in exactly the way the
+    // m_pmEventsWired latch must not paper over. Pass a CallError so the outcome
+    // is observable instead of a bare qWarning inside the generated wrapper.
+    auto configureDirectory = [&ok](const char* what,
+                                    const std::function<void(logos::CallError*)>& call) {
+        if (!ok) return;
+        logos::CallError err;
+        call(&err);
+        if (err.ok()) return;
+        qWarning() << "PackageCoordinator: failed to configure package_manager"
+                   << what << "—" << QString::fromStdString(err.message);
         ok = false;
     };
 
-    // Configure the package_manager module's directories so it knows where
-    // to install.
-    logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
-    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
-    logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
-    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    configureDirectory("embedded modules directory", [&](logos::CallError* err) {
+        logos.package_manager.setEmbeddedModulesDirectory(
+            LogosBasecampPaths::embeddedModulesDirectory(), err);
+    });
+    configureDirectory("user modules directory", [&](logos::CallError* err) {
+        logos.package_manager.setUserModulesDirectory(
+            LogosBasecampPaths::modulesDirectory(), err);
+    });
+    configureDirectory("embedded UI plugins directory", [&](logos::CallError* err) {
+        logos.package_manager.setEmbeddedUiPluginsDirectory(
+            LogosBasecampPaths::embeddedPluginsDirectory(), err);
+    });
+    configureDirectory("user UI plugins directory", [&](logos::CallError* err) {
+        logos.package_manager.setUserUiPluginsDirectory(
+            LogosBasecampPaths::pluginsDirectory(), err);
+    });
 
     subscribe("uiPluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
@@ -257,8 +301,13 @@ void PackageCoordinator::onCoreModuleSetChanged()
 
     // Module gone — the cached replica handle and every event subscription
     // now point at a dead source. Remember, so the next sighting of the
-    // module re-wires instead of trusting stale state.
-    if (!pmLoaded) m_pmEventsWired = false;
+    // module re-wires instead of trusting stale state. The subscribed-event
+    // set goes with it: those handlers died with the replica, so the re-wire
+    // must issue them again rather than skip them as already-live.
+    if (!pmLoaded) {
+        m_pmEventsWired = false;
+        m_pmSubscribedEvents.clear();
+    }
     if (!pdLoaded) m_pdEventsWired = false;
 
     const bool needRewire = (pmLoaded && !m_pmEventsWired)
@@ -271,6 +320,18 @@ void PackageCoordinator::onCoreModuleSetChanged()
     m_rewireQueued = true;
     QPointer<PackageCoordinator> self(this);
     QTimer::singleShot(0, this, [self]() {
+        if (!self) return;
+        self->m_rewireQueued = false;
+        self->rewirePackageIpc();
+    });
+}
+
+void PackageCoordinator::armRewireRetry()
+{
+    if (m_rewireQueued) return;
+    m_rewireQueued = true;
+    QPointer<PackageCoordinator> self(this);
+    QTimer::singleShot(kRewireRetryMs, this, [self]() {
         if (!self) return;
         self->m_rewireQueued = false;
         self->rewirePackageIpc();
@@ -318,21 +379,20 @@ void PackageCoordinator::rewirePackageIpc()
         qDebug() << "PackageCoordinator: deferring IPC re-wire —"
                  << (uiLoadBusy ? "a UI-plugin load" : "a core module load/unload")
                  << "is in flight";
-        if (!m_rewireQueued) {
-            m_rewireQueued = true;
-            QPointer<PackageCoordinator> self(this);
-            QTimer::singleShot(kRewireRetryMs, this, [self]() {
-                if (!self) return;
-                self->m_rewireQueued = false;
-                self->rewirePackageIpc();
-            });
-        }
+        armRewireRetry();
         return;
     }
 
     // Our own acquires below spin nested loops too, which can dispatch the
-    // retry timer armed above — don't let the rewire re-enter itself.
-    if (m_rewireRunning) return;
+    // retry timer armed above — don't let the rewire re-enter itself. Re-arm
+    // rather than dropping the wakeup: the pass already running may fail (an
+    // unreachable module leaves m_pmEventsWired false), and nothing else would
+    // retry until the next 2s stats tick. If it succeeds instead, the re-armed
+    // pass finds everything wired and no-ops.
+    if (m_rewireRunning) {
+        armRewireRetry();
+        return;
+    }
     m_rewireRunning = true;
     // RAII rather than a manual reset at the end: the generated SDK wrappers
     // can throw logos::LogosCallError, and a leaked flag would disable the
@@ -351,8 +411,13 @@ void PackageCoordinator::rewirePackageIpc()
     // dead replica's channel and never arrive — and fresh acquires on the
     // dead connection block the UI in waitForSource timeouts.
     if (!m_pmEventsWired && loaded.contains(QStringLiteral("package_manager"))) {
-        if (LogosAPIClient* client = m_logosAPI->getClient("package_manager"))
+        if (LogosAPIClient* client = m_logosAPI->getClient("package_manager")) {
+            // The reconnect drops the node the handlers were registered
+            // against, so nothing recorded here is live any more — forget it
+            // all and let the subscribe pass below re-issue every event.
+            m_pmSubscribedEvents.clear();
             client->reconnect();
+        }
         m_pmEventsWired = subscribeToPackageInstallationEvents();
         if (m_pmEventsWired) {
             qDebug() << "PackageCoordinator: re-wired package_manager IPC after module (re)load";

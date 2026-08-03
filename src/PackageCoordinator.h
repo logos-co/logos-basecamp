@@ -284,7 +284,13 @@ private:
     // The first subscription is issued before the directory setters and bails
     // on failure: every acquire in this function blocks the UI thread for the
     // SDK's 20s default, so an unreachable module must cost one of them, not
-    // one per call site.
+    // one per call site. The directory setters report through a CallError for
+    // the same reason the subscriptions do — a module left pointing at no
+    // install directory is half-wired too.
+    //
+    // Re-runnable: each event is issued at most once per live wiring
+    // (m_pmSubscribedEvents), so a retry after a partial failure completes what
+    // is missing instead of stacking a second copy of the handlers that landed.
     bool subscribeToPackageInstallationEvents();
 
     // Package-module availability watcher — connected to
@@ -310,8 +316,13 @@ private:
     // re-enter itself. Both guards exist because the blocking acquires in here
     // spin nested event loops, and a nested event loop will happily dispatch
     // the queued callback that re-enters this function — see the comment on
-    // the implementation for the starvation this caused.
+    // the implementation for the starvation this caused. Both bail-outs re-arm
+    // via armRewireRetry() so no wakeup is lost.
     void rewirePackageIpc();
+
+    // Arm the deferred re-wire retry, unless one is already pending. Used by
+    // both rewirePackageIpc() bail-outs.
+    void armRewireRetry();
 
     // Subscribe to package_downloader's catalogChanged event. Returns false
     // when the downloader client isn't available/connected yet OR the
@@ -429,6 +440,14 @@ private:
     bool m_pmEventsWired = false;
     bool m_pdEventsWired = false;
     bool m_rewireQueued  = false;
+
+    // package_manager events already subscribed against the CURRENT wiring.
+    // Nothing in the stack can unsubscribe (on() → LogosAPIConsumer::onEvent →
+    // LogosObject::onEvent only ever register), so re-running the subscribe
+    // pass would add a second copy of every handler that already landed.
+    // Cleared wherever the wiring dies — the module leaving the loaded set, and
+    // the client reconnect in rewirePackageIpc.
+    QSet<QString> m_pmSubscribedEvents;
 
     // Set while rewirePackageIpc() is inside its blocking IPC. Those calls spin
     // nested event loops, which dispatch the very timers that schedule a
