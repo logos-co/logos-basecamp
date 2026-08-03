@@ -309,10 +309,11 @@ void MainContainer::retirePmuiWidget()
         m_contentStack->removeWidget(widget);
     }
 
-    // Deliberately NOT restoring the placeholder here. This leaves the stack in
-    // exactly the state the old code reached once deleteLater() ran — the slot
-    // empty — so onViewIndexChanged's existing lazy re-insert stays the only
-    // path that builds it, at the same point in the event loop it always did.
+    // Deliberately NOT restoring the placeholder here — the slot is left empty
+    // and onViewIndexChanged's lazy re-insert is the only thing that refills
+    // it. That leaves the stack in exactly the state the old code reached once
+    // deleteLater() ran, and keeps the rebuild at the same point in the event
+    // loop it always happened at.
     //
     // That matters more than it looks: creating a widget and re-laying-out the
     // stack here runs inside the cascade teardown, and PackageCoordinator's
@@ -391,11 +392,15 @@ void MainContainer::onViewIndexChanged()
     case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
     case 2:
         if (!m_pmuiWidget) {
-            // Backstop. retirePmuiWidget() normally restores the placeholder
-            // the moment PMUI is unloaded, so the slot is already correct by
-            // the time we get here. This covers a widget that died without the
-            // pluginWindowRemoveRequested announcement (its destruction would
-            // have pulled it out of the stack, leaving the slot empty).
+            // The ONLY path that rebuilds the placeholder. retirePmuiWidget()
+            // empties the slot and deliberately does not refill it (see its
+            // implementation comment — doing that work inside the cascade
+            // teardown reschedules PackageCoordinator's rewire into the next
+            // plugin load's blocking handshake and starves it), so the
+            // re-insert has to happen here, lazily, at the same point in the
+            // event loop it always did. Also covers a widget that died without
+            // the pluginWindowRemoveRequested announcement — its destruction
+            // pulls it out of the stack and leaves the slot empty just the same.
             if (m_contentStack->count() <= kModulesStackIndex) {
                 m_contentStack->insertWidget(kModulesStackIndex,
                                              createPmuiPlaceholder());

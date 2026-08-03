@@ -53,11 +53,15 @@ private:
     void setupUi();
     QWidget* createPmuiPlaceholder();
 
-    // Drop the package_manager_ui widget out of the content stack and put a
-    // fresh placeholder back in its slot, synchronously. Called the moment
+    // Drop the package_manager_ui widget out of the content stack and clear
+    // m_pmuiWidget, synchronously, leaving the slot EMPTY. Called the moment
     // UIPluginManager announces the widget is going away — see
     // onPluginWindowRemoveRequested for why we can't wait for the QPointer to
     // null itself.
+    //
+    // Rebuilding the placeholder is deliberately left to onViewIndexChanged's
+    // lazy re-insert; the implementation comment explains why doing it here
+    // starves the next plugin load.
     void retirePmuiWidget();
 
     // Main layout
