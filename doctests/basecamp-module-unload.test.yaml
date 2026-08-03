@@ -136,6 +136,16 @@ sections:
       loaded row carries an identical "Unload" label, so text clicks would be
       ambiguous. Row state is asserted the same way, via each row's
       `coreModules.<name>.status` / `uiModules.<name>.status` status badge.
+
+      The same rule governs the *assertions*, not just the clicks. Basecamp
+      instantiates every Settings section and both content views up front, and
+      keeps all five confirmation dialogs in the object tree while they are
+      closed — so a text search finds headings, module rows and dialog titles
+      regardless of what is actually on screen. Text polls here are therefore
+      only ever a **settle** (wait for a model to populate); the load-bearing
+      checks are `expect_property` against a property that genuinely tracks
+      state: `checked` on the sidebar buttons, `highlighted` on the Settings
+      rail, `visible` on the dialog, `text` on the per-row status badge.
     steps:
       - title: "Drive the unload flows"
         ui_test:
@@ -160,10 +170,24 @@ sections:
               find_by: "objectName"
               find_value: "sidebar.section.Settings"
 
+            # ContentViews' StackLayout instantiates AppManagerView AND
+            # SettingsView eagerly, so Settings' heading text is in the object
+            # tree from launch — a text poll proves the app started, not that
+            # we navigated. The sidebar button's `checked` (bound to
+            # backend.currentActiveSectionIndex) is the actual witness; the
+            # text wait stays as the settle in front of it because
+            # expect_property is one-shot.
             - name: "Settings view loads"
               action: wait_for
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
+
+            - name: "…and Settings is the active section"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Settings"
+              property: "checked"
+              value: true
 
             # Settings sections are clicked by objectName as well: the rail
             # labels ("Apps Inspector", "Module Inspector") repeat as the
@@ -173,12 +197,25 @@ sections:
               find_by: "objectName"
               find_value: "settings.section.moduleInspector"
 
+            # Same caveat as the sidebar: every Settings section is
+            # instantiated at once, so "Module Inspector" (rail label AND pane
+            # heading) and the module rows are findable whichever section is
+            # current. The rail delegate's `highlighted` (bound to
+            # ListView.isCurrentItem) is what proves the switch happened; the
+            # text wait settles on the core-module rows being populated.
             - name: "Core modules report as loaded"
               action: wait_for
               texts: ["Module Inspector", "Package Downloader", "Loaded"]
               timeout: 30000
               text: "The Module Inspector lists the three baked-in modules, all **Loaded** from startup."
               screenshot: "unload-core-modules.png"
+
+            - name: "…and the Module Inspector is the selected section"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
+              property: "highlighted"
+              value: true
 
             - name: "The Package Downloader row is loaded"
               action: expect_property
@@ -196,14 +233,23 @@ sections:
               find_value: "coreModules.package_downloader.toggleButton"
               text: "Clicking **Unload** on the `package_downloader` row unloads it directly — Basecamp checks for *loaded* dependents, finds none (the Package Manager UI isn't running), and skips the confirmation."
 
-            - name: "The row flips to Not loaded"
-              action: wait_for
-              texts: ["Not loaded"]
-              timeout: 30000
+            # Deliberately a sleep, not a `wait_for ["Not loaded"]`: that text
+            # is no witness for this transition. Every Settings section is
+            # instantiated from launch, so the hidden Apps Inspector has been
+            # rendering a "Not loaded" badge for package_manager_ui the whole
+            # time — the poll would return on its first tick and settle
+            # nothing, leaving the one-shot expect_property below to race the
+            # unload. The unload is doubly deferred (a QueuedConnection hop in
+            # UIPluginManager::unloadCoreModule, then a nested event loop
+            # inside logos_core_unload_module), so it gets the same explicit
+            # settle as the reload and cascade steps.
+            - name: "Give the unload a moment"
+              action: sleep
+              ms: 5000
               text: "The row flips to **Not loaded**, its stats columns blank out, and the button becomes **Load**."
               screenshot: "unload-leaf-unloaded.png"
 
-            - name: "…and it is the Package Downloader row"
+            - name: "The Package Downloader row reports Not loaded"
               action: expect_property
               find_by: "objectName"
               find_value: "coreModules.package_downloader.status"
@@ -247,6 +293,13 @@ sections:
               text: "Clicking **Package Manager** loads the `package_manager_ui` plugin into the main content area. From here on, `package_manager` has a running dependent."
               screenshot: "unload-pm-open.png"
 
+            - name: "The Package Manager is the active section"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
+              property: "checked"
+              value: true
+
             - name: "Back to Settings"
               action: click_object
               find_by: "objectName"
@@ -257,6 +310,13 @@ sections:
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
 
+            - name: "…and Settings is active again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Settings"
+              property: "checked"
+              value: true
+
             - name: "Open Settings → Apps Inspector"
               action: click_object
               find_by: "objectName"
@@ -266,6 +326,13 @@ sections:
               action: wait_for
               texts: ["Apps Inspector", "UI plugins available in this installation."]
               timeout: 30000
+
+            - name: "…and the Apps Inspector is the selected section"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.appsInspector"
+              property: "highlighted"
+              value: true
 
             - name: "The package_manager_ui row is loaded"
               action: expect_property
@@ -286,6 +353,24 @@ sections:
               texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
               timeout: 30000
 
+            - name: "…and the Module Inspector is selected"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
+              property: "highlighted"
+              value: true
+
+            # The unload-cascade dialog must be CLOSED going in — otherwise the
+            # `visible: true` assertion after the click below would pass on a
+            # dialog that was already up, and the confirm click would be
+            # dismissing something we never raised.
+            - name: "No cascade dialog is open yet"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
             - name: "Try to unload the Package Manager module"
               action: click_object
               find_by: "objectName"
@@ -295,6 +380,13 @@ sections:
             # The dialog body names the target; the list renders each loaded
             # dependent as "• <display name>" — package_manager_ui's display
             # name is "Package Manager".
+            #
+            # Text alone can't prove WHICH dialog is up: OverlayDialogs holds
+            # five ConfirmationDialog instances that stay in the object tree
+            # while closed, keeping their constant titles and whatever body
+            # they last rendered. So the text poll is the settle, and the
+            # `visible` assertion below — against the per-mode objectName
+            # OverlayDialogs carries for exactly this purpose — is the proof.
             - name: "The cascade dialog lists the loaded dependent"
               action: wait_for
               texts:
@@ -305,6 +397,13 @@ sections:
               text: "The **Unload Dependent Modules?** dialog spells out the blast radius before anything happens: the Package Manager UI is currently loaded, depends on this module, and will be terminated by the unload."
               screenshot: "unload-cascade-dialog.png"
 
+            - name: "…and it is the unload-cascade dialog that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: true
+
             - name: "Confirm — Unload All"
               action: click_object
               find_by: "objectName"
@@ -314,6 +413,16 @@ sections:
             - name: "Give the cascade a moment to complete"
               action: sleep
               ms: 5000
+
+            # Confirming must dismiss it. Without this the confirm click could
+            # have missed (or hit a still-closed dialog) and the status checks
+            # below would still pass on their own.
+            - name: "The cascade dialog closed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
 
             - name: "The Package Manager core module is unloaded"
               action: expect_property
@@ -348,6 +457,13 @@ sections:
               text: "The sidebar entry works again immediately: Basecamp notices the plugin is gone, shows the loading placeholder, and loads `package_manager_ui` — pulling `package_manager` back into the runtime as its dependency."
               screenshot: "unload-pm-reloaded.png"
 
+            - name: "The Package Manager is the active section again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
+              property: "checked"
+              value: true
+
             - name: "Back to Settings one last time"
               action: click_object
               find_by: "objectName"
@@ -357,6 +473,13 @@ sections:
               action: wait_for
               texts: ["Manage modules, apps and dashboards.", "Sections"]
               timeout: 30000
+
+            - name: "…and Settings is active once more"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Settings"
+              property: "checked"
+              value: true
 
             # Returning to Settings triggers a visibility refresh, and the
             # post-reload re-wire runs its own refresh — each reply rebuilds
@@ -388,6 +511,13 @@ sections:
               action: sleep
               ms: 1000
 
+            - name: "The Apps Inspector is the selected section again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.appsInspector"
+              property: "highlighted"
+              value: true
+
             # The Apps Inspector row is fed by an IPC refresh against the
             # RESTARTED package_manager module — this assertion is the
             # regression guard for the IPC re-wire fix: without it, the
@@ -414,6 +544,13 @@ sections:
               action: wait_for
               texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
               timeout: 30000
+
+            - name: "…and the Module Inspector is selected for the closing check"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
+              property: "highlighted"
+              value: true
 
             - name: "The Package Manager core module is loaded again"
               action: expect_property

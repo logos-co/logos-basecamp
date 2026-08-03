@@ -39,7 +39,7 @@ on:
   pull_request:
     branches: [master, main]
   push:
-    branches: [master, main]
+    branches: [master, main, test/add-doc-tests-2]
 
 concurrency:
   group: doctests-${{ github.ref }}
@@ -152,6 +152,12 @@ jobs:
           #   basecamp-package-lifecycle — installs, upgrades (0.1.1 → 0.2.1),
           #     and uninstalls a hand-crafted local .lgx through the bundle's
           #     real confirmation dialogs (hermetic — no catalog packages are downloaded or installed).
+          #   basecamp-module-unload — Settings → Module Inspector unload flows:
+          #     leaf unload/reload of package_downloader, the unload-cascade
+          #     dialog for package_manager with package_manager_ui running on
+          #     top of it, and the Package Manager view reloading afterwards
+          #     (regression guard for the dangling m_pmuiWidget and the
+          #     post-reload package_manager IPC re-wire).
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
@@ -159,6 +165,7 @@ jobs:
             doctests/basecamp-fullapi-ui-qml.test.yaml \
             doctests/basecamp-shortcut-bridge.test.yaml \
             doctests/basecamp-package-lifecycle.test.yaml \
+            doctests/basecamp-module-unload.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -186,7 +193,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-module-unload; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
