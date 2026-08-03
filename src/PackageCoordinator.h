@@ -270,9 +270,21 @@ private:
     // corePluginUninstalled/uiPluginUninstalled + beforeUninstall/beforeUpgrade.
     // Also configures install directories on the module and issues
     // resetPendingActionAsync to clear any slot left over from a crashed prior
-    // session. Returns false when the package_manager client isn't available/
-    // connected yet — the caller records that in m_pmEventsWired so the
-    // core-module-set watcher retries until the wiring lands.
+    // session.
+    //
+    // Returns false when the wiring did not land — either the client is
+    // absent/disconnected, or (the case isConnected() cannot see) the module's
+    // event replica isn't acquirable yet, which is normal for a beat after a
+    // (re)load since the C API reports "loaded" before the object is
+    // published. The caller records that in m_pmEventsWired so the
+    // core-module-set watcher retries until the wiring lands; a bare `true`
+    // here would latch a half-wired coordinator and leave the gated
+    // install/uninstall/upgrade dialogs dead until an app restart.
+    //
+    // The first subscription is issued before the directory setters and bails
+    // on failure: every acquire in this function blocks the UI thread for the
+    // SDK's 20s default, so an unreachable module must cost one of them, not
+    // one per call site.
     bool subscribeToPackageInstallationEvents();
 
     // Package-module availability watcher — connected to
@@ -293,11 +305,19 @@ private:
     // refresh() to repopulate whatever was lost/wiped while the module was
     // down. Queued out of the signal emission because the subscription setup
     // does synchronous IPC.
+    //
+    // Refuses to run while a UI-plugin load is in flight, and refuses to
+    // re-enter itself. Both guards exist because the blocking acquires in here
+    // spin nested event loops, and a nested event loop will happily dispatch
+    // the queued callback that re-enters this function — see the comment on
+    // the implementation for the starvation this caused.
     void rewirePackageIpc();
 
     // Subscribe to package_downloader's catalogChanged event. Returns false
-    // when the downloader client isn't available/connected yet — recorded in
-    // m_pdEventsWired so the core-module-set watcher retries.
+    // when the downloader client isn't available/connected yet OR the
+    // subscription itself didn't land (same replica-not-yet-acquirable case as
+    // the package_manager twin above) — recorded in m_pdEventsWired so the
+    // core-module-set watcher retries.
     bool subscribeToPackageDownloaderEvents();
 
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
@@ -409,4 +429,14 @@ private:
     bool m_pmEventsWired = false;
     bool m_pdEventsWired = false;
     bool m_rewireQueued  = false;
+
+    // Set while rewirePackageIpc() is inside its blocking IPC. Those calls spin
+    // nested event loops, which dispatch the very timers that schedule a
+    // re-wire, so without this the function can re-enter itself.
+    bool m_rewireRunning = false;
+
+    // Re-arm delay used when a re-wire is deferred because a UI-plugin load is
+    // in flight. Only shortens the wait — the 2s stats tick would re-fire
+    // coreModulesChanged anyway.
+    static constexpr int kRewireRetryMs = 250;
 };

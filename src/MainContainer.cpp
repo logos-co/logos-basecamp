@@ -293,6 +293,38 @@ QWidget* MainContainer::createPmuiPlaceholder()
     return placeholder;
 }
 
+void MainContainer::retirePmuiWidget()
+{
+    QWidget* widget = m_pmuiWidget;
+    // Clear first and unconditionally: from here on the PMUI slot is "empty"
+    // as far as onViewIndexChanged is concerned, even if the stack surgery
+    // below finds nothing to do.
+    m_pmuiWidget = nullptr;
+
+    if (widget && m_contentStack->indexOf(widget) >= 0) {
+        // removeWidget() unparents and hides — it does NOT delete. The owner
+        // (UIPluginManager::teardownUiPluginWidget / unloadUiModuleImpl) calls
+        // deleteLater() on this widget immediately after emitting the signal
+        // that got us here, so freeing stays where it was.
+        m_contentStack->removeWidget(widget);
+    }
+
+    // Deliberately NOT restoring the placeholder here. This leaves the stack in
+    // exactly the state the old code reached once deleteLater() ran — the slot
+    // empty — so onViewIndexChanged's existing lazy re-insert stays the only
+    // path that builds it, at the same point in the event loop it always did.
+    //
+    // That matters more than it looks: creating a widget and re-laying-out the
+    // stack here runs inside the cascade teardown, and PackageCoordinator's
+    // rewire is queued with singleShot(0) so it executes inside whatever nested
+    // event loop is spinning at the time. Doing extra work here reschedules the
+    // rewire into PluginLoader's blocking replica acquisition during the
+    // reload, where its own blocking acquire stacks underneath and starves the
+    // outer handshake until it times out — package_manager_ui then never
+    // finishes loading. All this function may safely do is retire what is
+    // already there.
+}
+
 void MainContainer::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
@@ -359,11 +391,11 @@ void MainContainer::onViewIndexChanged()
     case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
     case 2:
         if (!m_pmuiWidget) {
-            // If PMUI was unloaded, its widget's destruction also removed
-            // it from the stack — put a fresh placeholder back at index 2
-            // so setCurrentIndex below has something to show and the
-            // pluginWindowRequested intercept finds a placeholder to swap
-            // out, exactly like the first load.
+            // Backstop. retirePmuiWidget() normally restores the placeholder
+            // the moment PMUI is unloaded, so the slot is already correct by
+            // the time we get here. This covers a widget that died without the
+            // pluginWindowRemoveRequested announcement (its destruction would
+            // have pulled it out of the stack, leaving the slot empty).
             if (m_contentStack->count() <= kModulesStackIndex) {
                 m_contentStack->insertWidget(kModulesStackIndex,
                                              createPmuiPlaceholder());
@@ -397,7 +429,23 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
-    if (widget && widget == m_pmuiWidget) return;
+    if (widget && widget == m_pmuiWidget) {
+        // PMUI is not a workspace dock — it occupies kModulesStackIndex in the
+        // content stack, so there's no dock to remove. Retire it here instead,
+        // synchronously.
+        //
+        // Waiting for m_pmuiWidget to null itself is not enough: this signal is
+        // emitted just before the owner's deleteLater(), so for one event-loop
+        // turn the QPointer is still valid while the widget is already doomed.
+        // A sidebar click landing in that gap takes the "already loaded" branch
+        // in onViewIndexChanged, skips loadUiModule, and raises a widget that is
+        // about to be destroyed — and once it is, the stack silently falls back
+        // to another index while the sidebar still highlights Package Manager.
+        // Re-clicking doesn't recover: setCurrentActiveSectionIndex drops
+        // same-index writes, so onViewIndexChanged never fires again.
+        retirePmuiWidget();
+        return;
+    }
     if (m_workspaceArea && widget)
         m_workspaceArea->removePluginDock(widget);
 }

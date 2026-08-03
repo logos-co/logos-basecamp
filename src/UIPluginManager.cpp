@@ -801,6 +801,14 @@ QString UIPluginManager::pluginIconUrl(const QString& pluginName, bool forWidget
          + QStringLiteral("?v=") + QString::number(mtimeMs);
 }
 
+bool UIPluginManager::uiPluginLoadInFlight() const
+{
+    // PluginLoader marks a name loading on entry to load() and clears it on
+    // every exit path, so this spans the whole synchronous stretch — including
+    // the capability_module token handshake that must not be starved.
+    return m_pluginLoader && !m_pluginLoader->loadingPlugins().isEmpty();
+}
+
 QStringList UIPluginManager::intersectWithLoaded(const QStringList& moduleNames) const
 {
     if (moduleNames.isEmpty()) return {};

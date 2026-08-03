@@ -49,6 +49,21 @@ public:
     // progress — callers should still refresh their UI state).
     bool unloadModuleWithDependents(const QString& name);
 
+    // True while one of the three load/unload wrappers above is inside its
+    // logos_core_* call.
+    //
+    // Those C entry points spin nested Qt event loops internally (the
+    // QRemoteObjects load/teardown handshakes), and a nested event loop
+    // dispatches queued calls and zero-delay timers. Anything that would issue
+    // blocking IPC from a queued callback must consult this first, or it will
+    // execute in the middle of a module operation and stack its own blocking
+    // wait underneath — see PackageCoordinator::rewirePackageIpc, where doing
+    // exactly that starved a plugin load until it timed out.
+    //
+    // A depth counter, not a bool: the nested loop can dispatch UI actions that
+    // re-enter load/unload.
+    bool moduleOperationInFlight() const { return m_moduleOpDepth > 0; }
+
     // Cached stats as of the last timer tick (may be up to ~2s stale). Empty
     // entries for modules the poller hasn't seen yet. QML renders "0.0" via
     // the caller's compose layer when absent — we return the raw map here.
@@ -87,6 +102,10 @@ private:
     // internally); deferring the emit keeps receivers — QML bindings, the
     // PackageCoordinator re-wire path — off that stack.
     void notifyModuleSetChanged();
+
+    // Nesting depth of the logos_core_* load/unload calls — see
+    // moduleOperationInFlight().
+    int m_moduleOpDepth = 0;
 
     LogosAPI* m_logosAPI;   // not owned
     QTimer*   m_statsTimer; // owned (parent=this)

@@ -108,23 +108,37 @@ QStringList CoreModuleManager::loadedModules() const
     return drainCStringArray(logos_core_get_loaded_modules());
 }
 
+// The three wrappers below bracket their C call with m_moduleOpDepth so
+// moduleOperationInFlight() is true for its whole duration — including the
+// nested event loop the call spins internally. The counter is raised BEFORE
+// the call and dropped AFTER it, but before notifyModuleSetChanged(), whose
+// emit is queued and therefore always lands outside the operation.
+//
+// Plain ++/-- rather than a scope guard: these are extern "C" entry points and
+// cannot throw past us.
 bool CoreModuleManager::loadModule(const QString& name)
 {
+    ++m_moduleOpDepth;
     const bool ok = logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    --m_moduleOpDepth;
     if (ok) notifyModuleSetChanged();
     return ok;
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)
 {
+    ++m_moduleOpDepth;
     const bool ok = logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    --m_moduleOpDepth;
     if (ok) notifyModuleSetChanged();
     return ok;
 }
 
 bool CoreModuleManager::unloadModuleWithDependents(const QString& name)
 {
+    ++m_moduleOpDepth;
     const bool ok = logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    --m_moduleOpDepth;
     // A failed cascade may still have unloaded some dependents (see the
     // header contract: "the cascade may have made progress"), so notify
     // regardless of the return value.
