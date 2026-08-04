@@ -119,6 +119,10 @@ Control {
                         id: loadedAppsRepeater
                         model: _d.loadedApps
                         delegate: SidebarAppDelegate {
+                            // Stable handle for UI automation — app tiles render
+                            // icon-only (the name is a tooltip), so there is no
+                            // on-screen text to click or assert on.
+                            objectName: "sidebar.app." + modelData.name
                             Layout.fillWidth: true
                             loaded: true
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
@@ -144,6 +148,7 @@ Control {
                     Repeater {
                         model: _d.unloadedApps
                         delegate: SidebarAppDelegate {
+                            objectName: "sidebar.app." + modelData.name
                             Layout.fillWidth: true
                             loaded: false
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
