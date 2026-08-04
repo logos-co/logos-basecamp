@@ -48,6 +48,23 @@ inline QString baseDirectory()
     return isPortableBuild() ? portableBaseDirectory() : nonPortableBaseDirectory();
 }
 
+// Resolve Basecamp's owning profile once, then make that exact root explicit
+// for every child process. Out-of-process UI backends run in `ui-host`, whose
+// QStandardPaths::AppDataLocation would otherwise be based on the child
+// application name and collapse ordinary Basecamp launches into a shared
+// `.../Logos/ui-host` tree.
+//
+// QProcess inherits the current process environment by default. Calling this
+// before any ViewModuleHost can spawn therefore gives default-profile and
+// --user-dir launches the same explicit, application-name-independent
+// contract. Existing LOGOS_USER_DIR overrides are preserved verbatim.
+inline QString resolveAndExportBaseDirectory()
+{
+    const QString resolved = baseDirectory();
+    qputenv("LOGOS_USER_DIR", resolved.toUtf8());
+    return resolved;
+}
+
 // Plugin and module install directories
 inline QString pluginsDirectory()
 {
