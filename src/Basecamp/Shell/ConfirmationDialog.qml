@@ -9,10 +9,9 @@ import Logos.Theme
 //
 // Five display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
-//                       dependencies aren't installed. Primary action is a
-//                       "Continue" that closes the dialog (the primary
-//                       button is relabelled to "Open Package Manager" when
-//                       packageManagerNavigation is wired).
+//                       dependencies aren't installed. The only action is an
+//                       "OK" that closes the dialog — Cancel is hidden, since
+//                       nothing was started and there is nothing to abort.
 //  - "unloadCascade"  — confirmation; unloading this module would leave
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
@@ -570,6 +569,11 @@ Dialog {
             // labels like "Uninstall" also appear on the module-row buttons,
             // and the inspector's text search doesn't distinguish open from
             // closed dialogs.
+            //
+            // These names are only stable because OverlayDialogs instantiates
+            // one dialog per mode and pins `mode` declaratively. Reusing a
+            // single instance across modes would silently move the handle out
+            // from under the specs that click it.
             LogosButton {
                 objectName: "confirmationDialog." + root.mode + ".cancel"
                 text: "Cancel"

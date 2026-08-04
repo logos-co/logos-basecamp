@@ -1024,8 +1024,8 @@ void PackageCoordinator::refreshDependencyInfo()
         // Second pass — per-module missing/dependents queries. Dispatched
         // for every entry in the full installed-packages list (both UI and
         // core) so that QML lookups work uniformly regardless of which tab
-        // is surfacing the button. Read from the member — typeMap was
-        // moved-from above and is empty here.
+        // is surfacing the button. Read from the member, not typeMap —
+        // typeMap was moved-from above, so its contents are gone.
         QStringList names = self->m_installTypeByModule.keys();
         if (names.isEmpty()) {
             self->m_missingDepsByModule.clear();

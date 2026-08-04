@@ -239,9 +239,18 @@ sections:
               text: "The package scan found `missing_deps_demo` in the user dir's `plugins/` and the sidebar lists it under its `display_name`. Installed-but-broken apps are not hidden — the user can see what they have, and the marker (next step) tells them what's wrong."
               screenshot: "missing-deps-launch.png"
 
+            # Generous margin on purpose. The next step is `expect_property`,
+            # which the runner emits as a one-shot assertion — unlike
+            # `wait_for` there is no polling, so this sleep is the entire
+            # safety margin. And it can't be traded for "click first, retry
+            # the dialog": a click that lands before the missing-set is
+            # published passes the gate and really does attempt the load,
+            # which the spec can't recover from. The work being waited on is
+            # two IPC round-trips per installed package on a cold headless
+            # launch.
             - name: "Give the dependency resolution a moment to complete"
               action: sleep
-              ms: 5000
+              ms: 20000
               text: "The missing-set is computed asynchronously after the package list arrives: one `resolveFlatDependencies` round-trip per installed package."
 
             - name: "The sidebar tile carries the missing-deps marker"
