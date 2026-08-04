@@ -1,0 +1,588 @@
+name: "The package lifecycle in Basecamp: install, upgrade, uninstall"
+output: basecamp-package-lifecycle.md
+release: ""
+
+intro: |
+  Every app in [`logos-basecamp`](https://github.com/logos-co/logos-basecamp)
+  arrives as an **`.lgx` package**. This doc-test drives one package through its
+  **entire lifecycle** inside the real, shippable Basecamp bundle:
+
+  1. **Install** a local `.lgx` (v0.1.1) — the Package Manager app inspects the
+     file and asks the `package_manager` module to gate the install; Basecamp
+     acks the module's `beforeInstall` event and shows the **install gate**
+     dialog (name, version, dependency changes). Confirming lets the Package
+     Manager install the file, and after a reload the app appears in the
+     sidebar. (The reload is a workaround for a current stack bug: the
+     module's `uiPluginFileInstalled` event isn't emitted for QML-only
+     packages, so nothing auto-refreshes after a fresh local install — the
+     spec marks the affected steps inline.)
+  2. **Upgrade** it with a second `.lgx` (v0.2.1) — the same entry point detects
+     the package is already installed and routes through the **upgrade gate**
+     (`beforeUpgrade`) instead: the dialog leads with "Upgrade … to v0.2.1".
+     Confirming removes the old version, installs the new one, and opening the
+     app renders the **new** version's view.
+  3. **Uninstall** it through the Package Manager — the gated uninstall
+     confirmation appears (Basecamp acks the module's `beforeUninstall`
+     event, then asks the user), and confirming removes the package: the
+     package manager no longer knows it.
+
+  Basecamp initiates no installs of its own — the `package_manager_ui` plugin
+  does, for both catalog downloads and local `.lgx` picks. The exercised
+  machinery is the ack-gated handshake between the two: PMU's
+  `installLocalPackage` → `inspectPackage` → `requestInstall` /
+  `requestUpgrade`, the module's `beforeInstall` / `beforeUpgrade` /
+  `beforeUninstall` events, `PackageCoordinator` acking each within 3s and
+  raising the matching dialog (`installGate`, `upgradeCascade`,
+  `uninstallCascade`), and the confirm/cancel decision flowing back through
+  the module gate so PMU performs (or aborts) the actual file operation.
+
+  The **lifecycle itself is hermetic**: the two fixture packages are
+  hand-crafted in the spec itself (an `.lgx` is just a gzipped tar with a
+  `manifest.json` and a `variants/<platform>/` payload — for a QML-only app the
+  payload is three tiny text files), the run installs into a throwaway
+  `--user-dir`, and a gate-approved local install is satisfied straight from
+  the file already on disk. The bundle does fetch its default repository's
+  catalog in the background, but nothing from it is downloaded or installed
+  here.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle and the logos-qt-mcp UI driver, two
+  hand-crafted `.lgx` packages of the same QML-only app at v0.1.1 and v0.2.1,
+  and a headless UI run that installs, upgrades, opens, and uninstalls the app
+  through Basecamp's real gate-confirmation dialogs.
+
+what_you_learn:
+  - What an `.lgx` package for a QML-only (`ui_qml`) app contains, and how to build one by hand
+  - Why every install is routed through the `package_manager_ui` plugin, and how Basecamp's install gate confirms it (`beforeInstall` → ack → dialog → `confirmInstallGate`)
+  - How the same local-file entry point becomes an upgrade gate when the package is already installed, and how the dialog leads with the target version
+  - How an installed app appears in the sidebar and as a "local" row in the Package Manager
+  - How the gated uninstall works — the package manager emits `beforeUninstall`, Basecamp acks within 3s and shows the confirmation, and only a user confirm destroys files
+  - How to drive install/upgrade/uninstall headlessly with logos-qt-mcp (stable objectNames + `call_method`, not text clicks)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
+  - |
+    **If upgrading from Basecamp 0.1.1 or lower:**
+
+    > ⚠️ **Please clear your user dir before running** ⚠️
+    >
+    > - macOS: `~/Library/Application Support/Logos/LogosBasecamp`
+    > - Linux: `~/.config/Logos/LogosBasecamp` or `~/.local/share/Logos/LogosBasecamp`
+
+    Package state written by Basecamp 0.1.1 or older is not compatible with the
+    lifecycle flows driven here. This doc-test itself is unaffected — it isolates
+    everything under a throwaway `--user-dir` — but if you follow along against
+    your real Basecamp install (i.e. run the bundle *without* `--user-dir`), a
+    stale user dir from an old version can make installs and uninstalls
+    misbehave.
+
+sections:
+  - title: "What an .lgx package is"
+    text: |
+      An `.lgx` file is a **gzipped tar archive**: a `manifest.json` at the root
+      (name, version, type, dependencies, display name) and the payload under
+      `variants/<platform>/` — one directory per platform the package ships for.
+      The package manager reads the manifest to decide what the package is and
+      picks the variant matching the host.
+
+      For a **QML-only app** (`type: ui_qml`) the variant payload is just three
+      text files — no compiled code at all:
+
+      ```
+      manifest.json                      package identity + version + content hashes
+      variants/<platform>/metadata.json  module metadata (view entry point)
+      variants/<platform>/Main.qml       the app's QML view
+      variants/<platform>/qmldir         QML module declaration
+      ```
+
+      That makes it the perfect lifecycle fixture: we can hand-craft two complete,
+      installable versions of the same app right here in the spec, with no
+      compile step and no network. The app's view prints its own version, so
+      after the upgrade the UI itself proves which payload is running.
+
+      Two details keep a hand-built package valid:
+
+      - The manifest must carry **content hashes** (a Merkle root over the
+        payload) — packages without them fail validation. The
+        [`lgx`](https://github.com/logos-co/logos-package) CLI computes them
+        whenever it modifies a package, so we hand-write the *manifest* and let
+        `lgx add` inject the payload and stamp the hashes.
+      - The tar layer must be plain **ustar** — the LGX reader doesn't speak the
+        pax extended headers that macOS's `tar` emits by default (`--format
+        ustar` fixes that; `lgx` itself always writes canonical ustar).
+
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+      - title: "Build the lgx packaging CLI"
+        text: |
+          [`lgx`](https://github.com/logos-co/logos-package) is the packaging
+          tool — used below to add the payload to each fixture package and stamp
+          its content hashes.
+        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
+        check_file: "result-lgx/bin/lgx"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle — the same
+      self-contained directory you ship, with the QML inspector compiled in so
+      the driver can attach (`#bin-bundle-dir-inspector`, the inspector-enabled
+      twin of `#bin-bundle-dir`). The bundle carries the `package_manager`
+      module that performs the actual installs, so this spec exercises the real
+      shipping path.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Craft the two LGX fixture packages"
+    step: true
+    text: |
+      Write the package files once as templates, then stamp each of the two
+      versions (**0.1.1** and **0.2.1**) into a manifest, a metadata file, and
+      the QML view, and tar each version up as an `.lgx`.
+
+      The manifest's `display_name` ("Lifecycle Demo") is what Basecamp shows in
+      the sidebar and dialogs; its `name` (`test_qml_only`) must match the QML
+      module URI declared in `qmldir`. The packages are unsigned — the install
+      dialog will flag that, which is itself worth seeing.
+    steps:
+      - title: "Write the manifest template"
+        text: |
+          The root `manifest.json`, with the version left as a placeholder. A
+          `ui_qml` package has no binary entry points, so `main` stays empty and
+          `view` names the QML file to load:
+        file:
+          path: build/pkglife/manifest.json.in
+          language: json
+          content: |
+            {
+              "author": "",
+              "category": "testing",
+              "dependencies": [],
+              "description": "Package-lifecycle doc-test fixture (QML-only app)",
+              "display_name": "Lifecycle Demo",
+              "icon": "",
+              "main": {},
+              "manifestVersion": "0.3.0",
+              "name": "test_qml_only",
+              "type": "ui_qml",
+              "version": "PLACEHOLDER_VERSION",
+              "view": "Main.qml"
+            }
+
+      - title: "Write the module metadata template"
+        text: |
+          The variant payload carries the module's own `metadata.json` — the
+          same identity the runtime reads when loading the plugin:
+        file:
+          path: build/pkglife/metadata.json.in
+          language: json
+          content: |
+            {
+              "name": "test_qml_only",
+              "display_name": "Lifecycle Demo",
+              "version": "PLACEHOLDER_VERSION",
+              "type": "ui_qml",
+              "category": "testing",
+              "description": "Package-lifecycle doc-test fixture (QML-only app)",
+              "view": "Main.qml",
+              "dependencies": []
+            }
+
+      - title: "Write the QML view template"
+        text: |
+          The app's whole UI. It renders its own version, so after the upgrade
+          the running view itself is the proof of which payload is installed.
+          (The view brings its own background — plugin views render on whatever
+          the host workspace provides.)
+        file:
+          path: build/pkglife/Main.qml.in
+          language: qml
+          content: |
+            import QtQuick
+
+            Rectangle {
+                id: root
+                color: "#1e1e1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "Lifecycle demo view vPLACEHOLDER_VERSION"
+                    color: "#ffffff"
+                    font.pixelSize: 24
+                }
+            }
+
+      - title: "Write the qmldir"
+        text: |
+          The QML module declaration — its URI is derived from the package name:
+        file:
+          path: build/pkglife/qmldir
+          language: text
+          content: |
+            module com.logos.module.test_qml_only
+
+      - title: "Stamp both versions and pack the .lgx files"
+        text: |
+          Detect the host's platform variant (the portable bundle installs plain
+          variant names — no `-dev` suffix), then build each version in two
+          moves: seed a package that contains only the stamped manifest (a plain
+          **ustar** tar — see above), then `lgx add` the payload directory into
+          the platform variant, which also computes and stamps the manifest's
+          content hashes. `lgx verify` confirms each result is a valid (unsigned)
+          package.
+
+          The archives land at a **fixed absolute path**
+          (`/tmp/basecamp-pkglife/`) because the UI run later passes that path
+          into the app over the inspector, where a relative path would be
+          ambiguous. A fresh, empty `--user-dir` for the run is created
+          alongside.
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   VARIANT=linux-x86_64 ;;
+            "Linux aarch64")  VARIANT=linux-arm64 ;;
+            "Darwin arm64")   VARIANT=darwin-arm64 ;;
+            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          rm -rf /tmp/basecamp-pkglife
+          mkdir -p /tmp/basecamp-pkglife
+          for v in 0.1.1 0.2.1; do
+            seed="build/pkglife/seed-$v"
+            payload="build/pkglife/payload-$v"
+            rm -rf "$seed" "$payload"
+            mkdir -p "$seed/variants" "$payload"
+            sed "s/PLACEHOLDER_VERSION/$v/g" build/pkglife/manifest.json.in > "$seed/manifest.json"
+            sed "s/PLACEHOLDER_VERSION/$v/g" build/pkglife/metadata.json.in > "$payload/metadata.json"
+            sed "s/PLACEHOLDER_VERSION/$v/g" build/pkglife/Main.qml.in      > "$payload/Main.qml"
+            cp build/pkglife/qmldir "$payload/qmldir"
+            tar --format ustar -C "$seed" -czf "/tmp/basecamp-pkglife/test_qml_only-$v.lgx" manifest.json variants
+            ./result-lgx/bin/lgx add "/tmp/basecamp-pkglife/test_qml_only-$v.lgx" \
+              --variant "$VARIANT" --files "$payload" -y
+            ./result-lgx/bin/lgx verify "/tmp/basecamp-pkglife/test_qml_only-$v.lgx"
+          done
+          chmod -R u+w testdata/pkglife-user 2>/dev/null || true
+          rm -rf testdata/pkglife-user
+          mkdir -p testdata/pkglife-user/modules testdata/pkglife-user/plugins
+          ls /tmp/basecamp-pkglife
+        expect_contains:
+          - "Package structure is valid"
+          - "test_qml_only-0.1.1.lgx"
+          - "test_qml_only-0.2.1.lgx"
+
+  - title: "Install, upgrade, and uninstall — one narrative"
+    step: true
+    text: |
+      Launch the bundle headless against the empty user-dir and drive the whole
+      lifecycle. Installs are initiated by the bundled **Package Manager** app
+      (`package_manager_ui`) — Basecamp only confirms them. The local-file
+      install is triggered through PMU's own code path (`installLocalPackage` —
+      the same slot its "Select LGX Package" file picker reaches, which a
+      headless driver can't operate), invoked via the inspector on PMU's
+      `pmui.BackendStore` hook with an explicit `file://` URL. The uninstall
+      goes through the same store (`uninstallPackage` — the slot behind the
+      row's Uninstall action). Dialog buttons are clicked by their stable
+      `objectName`s rather than by visible text — labels like "Uninstall" also
+      appear elsewhere, so text clicks would be ambiguous.
+    steps:
+      - title: "Drive the package lifecycle"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/pkglife-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the empty user-dir. Only the baked-in apps are present — the sidebar has no Lifecycle Demo yet."
+              screenshot: "pkglife-launch.png"
+
+            # Open the bundled package_manager_ui plugin. Installs are ITS
+            # job — basecamp only confirms them — so the lifecycle starts
+            # here. The plugin's view (and with it the pmui.BackendStore
+            # automation hook the next step calls) is created lazily on
+            # first activation, and on a cold first boot that can take a
+            # while — so wait for PMU's own header text, which only exists
+            # once the view is up, instead of sleeping a fixed amount.
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "The Package Manager view loads"
+              action: wait_for
+              texts: ["Manage your plugins and packages."]
+              timeout: 60000
+              text: "The Package Manager app opens, listing the bundled default repository's catalog. Nothing from it gets installed in this run — everything installed here comes from the local fixture files."
+
+            - name: "Let its backend connections settle"
+              action: sleep
+              ms: 3000
+              screenshot: "pkglife-package-manager.png"
+
+            # ── Install v0.1.1 ─────────────────────────────────────────────
+            - name: "Hand the v0.1.1 package to the Package Manager"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-pkglife/test_qml_only-0.1.1.lgx"]
+              text: "PMU inspects the LGX first — nothing touches disk yet. The manifest tells it the package isn't installed, so it calls the `package_manager` module's `requestInstall` gate. The module emits `beforeInstall`; Basecamp acks it within the 3-second window and opens the install gate dialog."
+
+            # The dialog title + body are exact texts. The name renders as
+            # the raw module name (not the display name) because the
+            # display-name cache is built from installed packages — and this
+            # one isn't installed yet.
+            - name: "Basecamp's install gate asks for confirmation"
+              action: wait_for
+              texts:
+                - "Install Package?"
+                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+              timeout: 30000
+              text: "The gate presents exactly what would be installed: `test_qml_only` v0.1.1, with no transitive dependency changes. Until this dialog is confirmed, no files have been written."
+              screenshot: "pkglife-install-dialog.png"
+
+            - name: "Confirm the install"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              text: "The decision flows back through the module gate (`confirmInstallGate`), the module approves the pending install, and PMU — seeing its stashed local path for this name — installs the file straight from disk, no download."
+
+            # WORKAROUND — remove once the stack bug is fixed: for a QML-only
+            # package (`main` empty in the manifest), logos-package-manager's
+            # installPluginFile leaves its installedPluginPath out-param empty,
+            # so PackageManagerImpl::installPlugin never emits
+            # `uiPluginFileInstalled`. Neither Basecamp's sidebar nor PMU's own
+            # list auto-refreshes after a fresh local install (upgrades and
+            # uninstalls DO auto-refresh — their `uiPluginUninstalled` event
+            # fires normally). Until that's fixed, do what a user would: hit
+            # Reload on the Applications panel, which runs the same
+            # fetchUiPluginMetadata + installed-packages scan the event would
+            # have triggered.
+            - name: "Open the Applications panel"
+              action: click
+              target: "Applications"
+
+            - name: "Applications view loads"
+              action: wait_for
+              texts: ["Install and manage applications."]
+              timeout: 30000
+
+            - name: "Reload the app list"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.reloadButton"
+
+            - name: "The app appears in the sidebar"
+              action: wait_for
+              texts: ["Lifecycle Demo"]
+              timeout: 60000
+              text: "After the refresh, Basecamp picks up the new plugin metadata and the app shows up in the sidebar under its `display_name`."
+              screenshot: "pkglife-installed.png"
+
+            # The sidebar entry comes from the UI-plugin metadata fetch; the
+            # dialog's display-name cache comes from the parallel
+            # installed-packages fetch in the same refresh. Give the tail of
+            # that refresh a moment so the upgrade dialog below greets the
+            # package by its display name.
+            - name: "Let the metadata refresh settle"
+              action: sleep
+              ms: 3000
+
+            # ── Upgrade to v0.2.1 ──────────────────────────────────────────
+            - name: "Hand the v0.2.1 package of the same app to the Package Manager"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-pkglife/test_qml_only-0.2.1.lgx"]
+              text: "Same entry point, different route: `inspectPackage` reports the package as already installed at 0.1.1, so PMU calls `requestUpgrade` instead — the module emits `beforeUpgrade` and Basecamp raises the upgrade gate."
+
+            - name: "The upgrade gate leads with the target version"
+              action: wait_for
+              texts:
+                - "Upgrade Package?"
+                - "Upgrade 'Lifecycle Demo' to v0.2.1. The current version will be removed first, then the new one downloaded and installed."
+              timeout: 30000
+              text: "The dialog now greets the package by its installed `display_name` and spells out the swap: the old version is removed first, then the new one installed. Nothing is running on top of it, so no unload list appears."
+              screenshot: "pkglife-upgrade-dialog.png"
+
+            - name: "Confirm the upgrade"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.upgradeCascade.confirm"
+              text: "Basecamp confirms back through the gate; the module uninstalls v0.1.1 and signals `upgradeUninstallDone`, at which point PMU installs the v0.2.1 file from its stashed local path — the whole swap without a single download."
+
+            - name: "Give the file swap a moment to complete"
+              action: sleep
+              ms: 5000
+
+            - name: "Open the app from the sidebar"
+              action: click
+              target: "Lifecycle Demo"
+
+            - name: "The running view renders the NEW version"
+              action: wait_for
+              texts: ["Lifecycle demo view v0.2.1"]
+              timeout: 30000
+              text: "The load-bearing upgrade assertion: opening the app loads the freshly-installed payload, and the view prints **v0.2.1** — the version swap really landed on disk and is what actually runs."
+              screenshot: "pkglife-upgraded-app.png"
+
+            # ── Uninstall ──────────────────────────────────────────────────
+            # Back to the Package Manager: uninstall lives there too (the
+            # basecamp-side inspectors are view-only).
+            - name: "Return to the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            # Same missing-`uiPluginFileInstalled` workaround as above, PMU
+            # side: its own post-install refresh raced the local install, so
+            # the synthetic "local" row may be absent until the next refresh.
+            # refreshCatalog is the slot behind PMU's Reload button.
+            - name: "Reload the package list"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "refreshCatalog"
+              args: []
+
+            - name: "The installed app is listed under the local source"
+              action: sleep
+              ms: 5000
+              text: "The Package Manager now lists the installed app as a **local** row — a user-installed package the catalog doesn't publish."
+              screenshot: "pkglife-pm-local-row.png"
+
+            # The list also carries the bundled default repository's catalog,
+            # so a bare row index would be ambiguous. Filtering by the package
+            # name (the search covers the name + description roles; the
+            # catalog publishes no `test_qml_only`) collapses the proxy to
+            # exactly the one local row, making row 0 deterministic for the
+            # index-based uninstall call below (the same slot the row's
+            # Uninstall action pill invokes). Both calls travel the same
+            # ordered replica channel, so the filter is applied before the
+            # uninstall resolves its row.
+            - name: "Filter the list down to the fixture package"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "setSearchText"
+              args: ["test_qml_only"]
+
+            - name: "Ask the Package Manager to uninstall it"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "uninstallPackage"
+              args: [0]
+              text: "This starts the **gated** uninstall: PMU asks the `package_manager` module, which emits `beforeUninstall` and starts a 3-second ack timer. Basecamp acks immediately and only then shows the confirmation — no files have been touched."
+
+            - name: "The gated uninstall confirmation appears"
+              action: wait_for
+              texts:
+                - "Uninstall and Unload Dependents?"
+                - "Uninstall 'Lifecycle Demo'? This will remove the package files from disk."
+              timeout: 30000
+              text: "Nothing depends on this app, so the dialog collapses to the simple destructive-action confirmation. (With dependents installed it would list what breaks and what gets unloaded.)"
+              screenshot: "pkglife-uninstall-dialog.png"
+
+            - name: "Confirm the uninstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.uninstallCascade.confirm"
+              text: "Basecamp tears down the app's running view, then hands control back to the package manager, which deletes the package files."
+
+            - name: "Give the uninstall a moment to complete"
+              action: sleep
+              ms: 5000
+              screenshot: "pkglife-after-uninstall.png"
+
+            # ── Closing proof: the package manager forgot the app ──────────
+            # Hand the v0.1.1 LGX over again. If the uninstall really removed
+            # the package, inspectPackage reports it as NOT installed and the
+            # flow routes through requestInstall → the FRESH install gate.
+            # Stale state would route through requestUpgrade instead and open
+            # the upgradeCascade dialog ("Downgrade Package?").
+            #
+            # The proof asserts the installGate dialog's `visible` property,
+            # not just its texts: the per-mode dialog instances keep their
+            # constant titles — and the body text they last rendered (here:
+            # the identical string from the first install) — in the object
+            # tree while closed, so a text match alone could pass on stale
+            # state. Only a genuine fresh-install gate makes THIS dialog
+            # visible again.
+            - name: "Hand the v0.1.1 package over again to prove the uninstall"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-pkglife/test_qml_only-0.1.1.lgx"]
+
+            - name: "Give the inspect → gate round-trip a moment"
+              action: sleep
+              ms: 5000
+
+            - name: "The fresh-install gate — and no other dialog — is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: true
+
+            - name: "It presents the package as a fresh install"
+              action: wait_for
+              texts:
+                - "Install Package?"
+                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+              timeout: 30000
+              text: "The package manager no longer knows `test_qml_only` — the same LGX that would have been a *reinstall* a minute ago gates as a *fresh install* again, greeted by its raw name because the display-name cache forgot it too. That's positive proof the uninstall removed both the files and the package record."
+              screenshot: "pkglife-reinspect.png"
+
+            - name: "Dismiss the gate without installing"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.cancel"
+              text: "Cancel flows back through `cancelInstallGate`; the module aborts the pending install and PMU drops its stashed path — the lifecycle ends with the app fully removed."
+
+            - name: "Let the dialog close"
+              action: sleep
+              ms: 1000
+
+            - name: "The gate is closed again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: false
+        post_text: |
+          One green run walked a package through its whole life inside the real
+          shippable bundle, along the only install path the app has — the
+          Package Manager plugin gated by Basecamp's confirmations: **inspect →
+          `beforeInstall` ack → install gate → install from disk → sidebar**,
+          **inspect → `beforeUpgrade` ack → upgrade gate → payload swap → the
+          running view prints the new version**, and **request →
+          `beforeUninstall` ack → gated confirm → files gone → the package
+          manager gates the same LGX as a fresh install again**. Every
+          confirmation dialog on that path (`installGate` in fresh and
+          post-uninstall runs, `upgradeCascade`, and the gated
+          `uninstallCascade`) rendered and was driven exactly as a user would.

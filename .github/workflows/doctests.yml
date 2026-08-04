@@ -149,6 +149,9 @@ jobs:
           #     ui_qml plugin with NO C++ backend consumes test_fullapi_cpp
           #     directly from QML via the `logos` bridge (logos.callModule /
           #     onModuleEvent), covering the QML-expressible surface.
+          #   basecamp-package-lifecycle — installs, upgrades (0.1.1 → 0.2.1),
+          #     and uninstalls a hand-crafted local .lgx through the bundle's
+          #     real confirmation dialogs (hermetic — no catalog packages are downloaded or installed).
           #   basecamp-missing-deps — seeds an installed ui_qml app whose
           #     core-module dependency exists nowhere, then asserts the sidebar
           #     red-cross marker and the Missing Dependencies dialog raised by
@@ -159,6 +162,7 @@ jobs:
             doctests/basecamp-fullapi-ui.test.yaml \
             doctests/basecamp-fullapi-ui-qml.test.yaml \
             doctests/basecamp-shortcut-bridge.test.yaml \
+            doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
             --verbose \
             --continue-on-fail \
@@ -187,7 +191,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-missing-deps; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
