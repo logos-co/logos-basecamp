@@ -243,6 +243,10 @@ void CoreModuleManager::updateModuleStats()
 {
     char* stats_json = logos_core_get_module_stats();
     if (!stats_json) {
+        // Still notify: module-set observers (PackageCoordinator's rewire
+        // watcher, the QML module lists) must not be starved by a stats
+        // failure.
+        emit coreModulesChanged();
         return;
     }
 
@@ -252,6 +256,7 @@ void CoreModuleManager::updateModuleStats()
 
     if (doc.isNull()) {
         qWarning() << "Failed to parse module stats JSON";
+        emit coreModulesChanged();
         return;
     }
 

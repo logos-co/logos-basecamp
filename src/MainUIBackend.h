@@ -99,6 +99,12 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool dependencyDataReady READ dependencyDataReady
                NOTIFY dependencyDataReadyChanged)
 
+    // True when PackageCoordinator gave up re-wiring package IPC after
+    // repeated failures — gated install/uninstall/upgrade dialogs are dead
+    // until the module is reloaded. See PackageCoordinator::packageIpcDegraded.
+    Q_PROPERTY(bool packageIpcDegraded READ packageIpcDegraded
+               NOTIFY packageIpcDegradedChanged)
+
     // Settings → Modules Reload overlay. Ref-counted so UI + Core refreshes
     // kicked together (e.g. on tab show) share one spinner.
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
@@ -124,6 +130,7 @@ public:
     bool repositoriesLoading() const;
     bool appsLoading() const;
     bool dependencyDataReady() const;
+    bool packageIpcDegraded() const;
     bool modulesLoading() const;
 
     // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
@@ -241,6 +248,7 @@ signals:
     void uninstallPlanRequested(const QVariantMap& plan);
 
     void dependencyDataReadyChanged();
+    void packageIpcDegradedChanged();
     // Distinct signal for upgrade/downgrade/reinstall — see
     // PackageCoordinator::upgradeCascadeConfirmationRequested for why we
     // can't reuse the uninstall variant (the dialog needs the target

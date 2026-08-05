@@ -83,6 +83,12 @@ public:
     // no other caller gates on it.
     bool dependencyDataReady() const { return m_dependencyDataReady; }
 
+    // True once the re-wire retry loop has exhausted kMaxRewireAttempts while
+    // a package module stayed loaded but unacquirable — the gated
+    // install/uninstall/upgrade dialogs are dead until the module is
+    // unloaded/reloaded. Exposed so QML can surface the degraded state.
+    bool packageIpcDegraded() const { return m_rewireGaveUp; }
+
 public slots:
     // Install gate (package_manager_ui-initiated). The module holds the pending
     // install; these just forward the user's decision back so it either emits
@@ -187,6 +193,7 @@ signals:
     void launchAppRequested(const QString& name);
     void uninstallPlanRequested(const QVariantMap& plan);
     void dependencyDataReadyChanged();
+    void packageIpcDegradedChanged();
 
     // Upgrade/Downgrade/Reinstall cascade dialog trigger. Same dependent-
     // impact lists as the uninstall variant (the package_manager performs
@@ -286,8 +293,14 @@ private:
     // re-enters itself — its blocking acquires spin nested event loops.
     void rewirePackageIpc();
 
-    // Arm the deferred re-wire retry, unless one is already pending.
+    // Arm the deferred re-wire retry, unless one is already pending. The
+    // delay backs off exponentially with m_rewireAttempts.
     void armRewireRetry();
+
+    // Drop the backoff / gave-up state: on a pass that leaves nothing
+    // unwired, and on a loaded → not-loaded transition of either package
+    // module (its successor replica deserves fresh attempts).
+    void resetRewireBackoff();
 
     // Subscribe to package_downloader's catalogChanged event. Returns false
     // when the subscription didn't land — same contract as the twin above.
@@ -467,6 +480,19 @@ private:
     // Guards rewirePackageIpc() against re-entry via nested event loops.
     bool m_rewireRunning = false;
 
-    // Retry delay when a re-wire is deferred.
-    static constexpr int kRewireRetryMs = 250;
+    // Consecutive failed re-wire passes. Drives the retry backoff; at
+    // kMaxRewireAttempts we stop retrying and flip m_rewireGaveUp.
+    int  m_rewireAttempts = 0;
+    bool m_rewireGaveUp   = false;
+
+    // Previous loaded-state of the two package modules — detects the
+    // loaded → not-loaded transition that resets the backoff.
+    bool m_pmWasLoaded = false;
+    bool m_pdWasLoaded = false;
+
+    // Base retry delay; doubles per failed attempt up to the shift cap
+    // (250ms << 5 = 8s), then stops for good after kMaxRewireAttempts.
+    static constexpr int kRewireRetryMs         = 250;
+    static constexpr int kRewireBackoffMaxShift = 5;
+    static constexpr int kMaxRewireAttempts     = 6;
 };

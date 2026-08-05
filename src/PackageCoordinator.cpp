@@ -295,9 +295,19 @@ void PackageCoordinator::onCoreModuleSetChanged()
     }
     if (!pdLoaded) m_pdEventsWired = false;
 
+    // Loaded → not-loaded: the replica we may have given up on is gone —
+    // whatever loads next deserves a fresh set of attempts.
+    if ((m_pmWasLoaded && !pmLoaded) || (m_pdWasLoaded && !pdLoaded))
+        resetRewireBackoff();
+    m_pmWasLoaded = pmLoaded;
+    m_pdWasLoaded = pdLoaded;
+
     const bool needRewire = (pmLoaded && !m_pmEventsWired)
                          || (pdLoaded && !m_pdEventsWired);
-    if (!needRewire || m_rewireQueued) return;
+    // m_rewireGaveUp gate: retries are capped in rewirePackageIpc — without
+    // it every coreModulesChanged (2s stats tick) would re-queue a fresh
+    // blocking pass and the cap would never hold.
+    if (!needRewire || m_rewireQueued || m_rewireGaveUp) return;
 
     // Queued: the rewire does synchronous IPC, keep it off this signal stack.
     m_rewireQueued = true;
@@ -313,23 +323,38 @@ void PackageCoordinator::armRewireRetry()
 {
     if (m_rewireQueued) return;
     m_rewireQueued = true;
+    const int delayMs =
+        kRewireRetryMs << qMin(m_rewireAttempts, kRewireBackoffMaxShift);
     QPointer<PackageCoordinator> self(this);
-    QTimer::singleShot(kRewireRetryMs, this, [self]() {
+    QTimer::singleShot(delayMs, this, [self]() {
         if (!self) return;
         self->m_rewireQueued = false;
         self->rewirePackageIpc();
     });
 }
 
+void PackageCoordinator::resetRewireBackoff()
+{
+    m_rewireAttempts = 0;
+    if (m_rewireGaveUp) {
+        m_rewireGaveUp = false;
+        emit packageIpcDegradedChanged();
+    }
+}
+
 void PackageCoordinator::rewirePackageIpc()
 {
     if (!m_logosAPI || !m_coreModuleManager) return;
 
+    // Capped out. A retry armed from a nested re-entry can still fire after
+    // the cap tripped — don't let it start another blocking pass.
+    if (m_rewireGaveUp) return;
+
     // Everything below blocks on IPC and spins nested event loops, which
     // dispatch the very timers that scheduled us. Never run inside a plugin
     // load or core module op — our blocking acquire would starve the outer
-    // handshake until it times out. Deferring is safe: the 2s stats tick
-    // re-fires coreModulesChanged anyway.
+    // handshake until it times out. Deferring is safe: armRewireRetry
+    // re-arms us.
     const bool uiLoadBusy = m_uiPluginManager
                          && m_uiPluginManager->uiPluginLoadInFlight();
     const bool coreOpBusy = m_coreModuleManager
@@ -383,6 +408,29 @@ void PackageCoordinator::rewirePackageIpc()
         // Repopulate everything fetched over the old wiring.
         refresh();
     }
+
+    // Own the retry instead of free-riding the stats tick: back off per
+    // failed pass, and stop for good at the cap so a loaded-but-unacquirable
+    // module degrades visibly instead of blocking the UI every few seconds.
+    const bool stillUnwired =
+        (!m_pmEventsWired && loaded.contains(QStringLiteral("package_manager")))
+     || (!m_pdEventsWired && loaded.contains(QStringLiteral("package_downloader")));
+    if (!stillUnwired) {
+        resetRewireBackoff();
+        return;
+    }
+    if (++m_rewireAttempts >= kMaxRewireAttempts) {
+        qWarning() << "PackageCoordinator: giving up on package IPC re-wire after"
+                   << m_rewireAttempts << "failed attempts — gated"
+                      " install/uninstall/upgrade dialogs stay dead until the"
+                      " module is reloaded";
+        if (!m_rewireGaveUp) {
+            m_rewireGaveUp = true;
+            emit packageIpcDegradedChanged();
+        }
+        return;
+    }
+    armRewireRetry();
 }
 
 bool PackageCoordinator::subscribeToPackageDownloaderEvents()

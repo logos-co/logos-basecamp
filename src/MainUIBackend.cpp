@@ -106,6 +106,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::uninstallPlanRequested);
     connect(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
             this,             &MainUIBackend::dependencyDataReadyChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::packageIpcDegradedChanged,
+            this,             &MainUIBackend::packageIpcDegradedChanged);
     // Distinct upgrade/downgrade/reinstall cascade signal — the dialog
     // shape is the same as the uninstall variant, but the title + body
     // need the target releaseTag + UpgradeMode (so a downgrade doesn't
@@ -303,6 +305,9 @@ bool MainUIBackend::appsLoading() const
 
 bool MainUIBackend::dependencyDataReady() const
 { return m_packageCoordinator && m_packageCoordinator->dependencyDataReady(); }
+
+bool MainUIBackend::packageIpcDegraded() const
+{ return m_packageCoordinator && m_packageCoordinator->packageIpcDegraded(); }
 
 bool MainUIBackend::modulesLoading() const
 { return m_modulesLoadingCount > 0; }
