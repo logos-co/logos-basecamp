@@ -1,0 +1,327 @@
+name: "Missing dependencies in Basecamp: the sidebar marker and the load gate"
+output: basecamp-missing-deps.md
+release: ""
+
+intro: |
+  Every app in [`logos-basecamp`](https://github.com/logos-co/logos-basecamp)
+  declares the core modules it runs on top of, and Basecamp checks that they
+  are all installed **before** it ever tries to load the app. When one is
+  missing, two things happen:
+
+  1. The app's sidebar tile gets a **red-cross marker** — the app is
+     installed, but Basecamp already knows it cannot run.
+  2. Clicking the tile does **not** attempt the load. Instead the
+     **Missing Dependencies** dialog opens and names exactly which modules
+     are absent — no cryptic "plugin load failed" after the fact.
+
+  This doc-test drives that flow end to end inside the real, shippable
+  Basecamp bundle. The broken state is manufactured hermetically: a QML-only
+  app is seeded into a throwaway `--user-dir` with a manifest that depends on
+  a core module which is installed nowhere. That is exactly the on-disk shape
+  Basecamp has to survive in the wild — a dependency uninstalled out from
+  under an app, a hand-copied plugin directory, or the leftovers of a failed
+  install.
+
+  The machinery under test is the dependency-information pipeline:
+  `PackageCoordinator` asks the `package_manager` module to resolve each
+  installed package's flat dependency tree, derives the missing set (every
+  node the resolver reports as `not_installed`), and hands it to
+  `UIPluginManager`, whose load gate turns it into the sidebar marker
+  (`hasMissingDeps`) and the `missingDeps` dialog.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle and the logos-qt-mcp UI driver, a
+  hand-crafted "installed" QML-only app whose manifest depends on a core
+  module that does not exist, and a headless UI run that proves the sidebar
+  flags the app, the click raises the Missing Dependencies dialog naming the
+  absent module, and the load is never attempted.
+
+what_you_learn:
+  - How an installed package declares its core-module dependencies (`dependencies` in `manifest.json`) and what an installed plugin looks like on disk
+  - How Basecamp resolves dependency status for every installed package at startup, and where "missing" comes from (`resolveFlatDependencies` nodes reported `not_installed`)
+  - What the sidebar's red-cross marker means and when it appears
+  - Why clicking a broken app is safe — the load gate shows the **Missing Dependencies** dialog instead of attempting a load that the runtime would refuse
+  - How to assert non-textual UI state headlessly with logos-qt-mcp (`expect_property` on stable objectNames, not screenshots alone)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+
+sections:
+  - title: "How a dependency goes missing"
+    text: |
+      An installed package is just a directory under the user dir's
+      `plugins/` (or `modules/` for core modules) with a `manifest.json` at
+      its root. The manifest's `dependencies` array names the core modules
+      the package needs, each entry referencing the target's canonical
+      `name`:
+
+      ```
+      missing_deps_demo    (UI plugin, "Missing Deps Demo")
+          └─► demo_core_module    (core module — installed NOWHERE)
+      ```
+
+      Nothing ties those directories together transactionally — a dependency
+      can be uninstalled while its dependents stay behind, a plugin directory
+      can be copied in by hand, a failed install can leave a partial set.
+      Basecamp therefore never trusts that an installed app is loadable: at
+      startup (and after every package operation) it resolves each installed
+      package's full dependency tree and records every node the resolver
+      cannot find as *missing*.
+
+      For this doc-test we simply create the broken end state directly: the
+      demo app is written into a fresh `--user-dir` as an already-installed
+      package, with a dependency on `demo_core_module` — a name that no
+      module anywhere provides. The package scanner only reads
+      `manifest.json`, so a hand-written directory is indistinguishable from
+      the leftovers of a real install gone wrong.
+
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle — the same
+      self-contained directory you ship, with the QML inspector compiled in so
+      the driver can attach (`#bin-bundle-dir-inspector`, the inspector-enabled
+      twin of `#bin-bundle-dir`). The bundle carries the `package_manager`
+      module that performs the dependency resolution under test.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Seed the broken app"
+    step: true
+    text: |
+      Write the four files of an installed QML-only app. The manifest's
+      `display_name` ("Missing Deps Demo") is what the sidebar shows; its
+      `dependencies` names the phantom `demo_core_module`. The QML view
+      renders a give-away message — if it ever appears on screen, the load
+      gate failed.
+    steps:
+      - title: "Write the package manifest"
+        text: |
+          The root `manifest.json` — the one file the package scanner
+          requires. A real install also stamps content hashes and a `variant`
+          file into the directory; neither is read when enumerating installed
+          packages, so the fixture stays minimal:
+        file:
+          path: build/missing-deps/manifest.json
+          language: json
+          content: |
+            {
+              "author": "",
+              "category": "testing",
+              "dependencies": ["demo_core_module"],
+              "description": "Missing-dependencies doc-test fixture (QML-only app)",
+              "display_name": "Missing Deps Demo",
+              "icon": "",
+              "main": {},
+              "manifestVersion": "0.3.0",
+              "name": "missing_deps_demo",
+              "type": "ui_qml",
+              "version": "0.1.0",
+              "view": "Main.qml"
+            }
+
+      - title: "Write the module metadata"
+        text: |
+          The module's own `metadata.json` — the identity the runtime would
+          read if the plugin were ever loaded (it won't be — that's the
+          point):
+        file:
+          path: build/missing-deps/metadata.json
+          language: json
+          content: |
+            {
+              "name": "missing_deps_demo",
+              "display_name": "Missing Deps Demo",
+              "version": "0.1.0",
+              "type": "ui_qml",
+              "category": "testing",
+              "description": "Missing-dependencies doc-test fixture (QML-only app)",
+              "view": "Main.qml",
+              "dependencies": ["demo_core_module"]
+            }
+
+      - title: "Write the QML view"
+        file:
+          path: build/missing-deps/Main.qml
+          language: qml
+          content: |
+            import QtQuick
+
+            Rectangle {
+                color: "#1e1e1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "Missing Deps Demo — if you can read this, the dependency gate failed"
+                    color: "#ffffff"
+                    font.pixelSize: 18
+                }
+            }
+
+      - title: "Write the qmldir"
+        file:
+          path: build/missing-deps/qmldir
+          language: text
+          content: |
+            module com.logos.module.missing_deps_demo
+
+      - title: "Assemble the user dir"
+        text: |
+          Create a fresh, empty `--user-dir` for the run and place the app
+          into its `plugins/` as the directory an install would have left
+          behind. `demo_core_module` is deliberately installed nowhere — not
+          in the user dir, not in the bundle.
+        run: |
+          chmod -R u+w testdata/missing-deps-user 2>/dev/null || true
+          rm -rf testdata/missing-deps-user
+          mkdir -p testdata/missing-deps-user/modules \
+                   testdata/missing-deps-user/plugins/missing_deps_demo
+          cp build/missing-deps/manifest.json build/missing-deps/metadata.json \
+             build/missing-deps/Main.qml build/missing-deps/qmldir \
+             testdata/missing-deps-user/plugins/missing_deps_demo/
+          ls testdata/missing-deps-user/plugins/missing_deps_demo
+        expect_contains:
+          - "manifest.json"
+          - "metadata.json"
+          - "Main.qml"
+          - "qmldir"
+
+  - title: "The marker, the gate, and the dialog"
+    step: true
+    text: |
+      Launch the bundle headless against the seeded user-dir and drive the
+      flow. The sidebar app tile renders icon-only (its name is a tooltip),
+      so it is addressed by its stable `objectName`
+      (`sidebar.app.<name>`) and its state asserted via `expect_property` —
+      the red-cross marker is graphics, not text. Dialog buttons are likewise
+      clicked by `objectName` (`confirmationDialog.<mode>.<button>`).
+    steps:
+      - title: "Drive the missing-deps flow"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/missing-deps-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the seeded user-dir."
+
+            - name: "The broken app is listed in the sidebar"
+              action: wait_for
+              texts: ["Missing Deps Demo"]
+              timeout: 60000
+              text: "The package scan found `missing_deps_demo` in the user dir's `plugins/` and the sidebar lists it under its `display_name`. Installed-but-broken apps are not hidden — the user can see what they have, and the marker (next step) tells them what's wrong."
+              screenshot: "missing-deps-launch.png"
+
+            # Generous margin on purpose. The next step is `expect_property`,
+            # which the runner emits as a one-shot assertion — unlike
+            # `wait_for` there is no polling, so this sleep is the entire
+            # safety margin. And it can't be traded for "click first, retry
+            # the dialog": a click that lands before the missing-set is
+            # published passes the gate and really does attempt the load,
+            # which the spec can't recover from. The work being waited on is
+            # two IPC round-trips per installed package on a cold headless
+            # launch.
+            - name: "Give the dependency resolution a moment to complete"
+              action: sleep
+              ms: 20000
+              text: "The missing-set is computed asynchronously after the package list arrives: one `resolveFlatDependencies` round-trip per installed package."
+
+            - name: "The sidebar tile carries the missing-deps marker"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.missing_deps_demo"
+              property: "hasMissingDeps"
+              value: true
+              text: "The tile's `hasMissingDeps` state is set — this is what draws the red cross in its top-right corner. The screenshot shows the marker; the property assertion pins the state itself."
+              screenshot: "missing-deps-marker.png"
+
+            - name: "…and the app is not loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.missing_deps_demo"
+              property: "loaded"
+              value: false
+
+            - name: "Click the broken app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.missing_deps_demo"
+              text: "The click reaches the load gate, which consults the missing-set **before** attempting anything. `demo_core_module` is missing, so instead of a load the gate raises the Missing Dependencies dialog."
+
+            - name: "The Missing Dependencies dialog names the absent module"
+              action: wait_for
+              texts:
+                - "Missing Dependencies"
+                - "'Missing Deps Demo' cannot be loaded because the following modules are not installed:"
+                - "• demo_core_module"
+              timeout: 30000
+              text: "The dialog is informational — it names exactly what is missing, so the user knows what to install (or reinstall) to make the app runnable. There is no Cancel: nothing was started, so there is nothing to abort."
+
+            # The texts above are found in the QML scene the moment the dialog
+            # opens — often a frame before the overlay layer has rendered.
+            # Give it a beat so the framebuffer grab shows the dialog.
+            - name: "Let the dialog render"
+              action: sleep
+              ms: 2000
+              screenshot: "missing-deps-dialog.png"
+
+            - name: "Dismiss the dialog"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps.confirm"
+              text: "OK closes the dialog. No load was attempted, no error state was entered."
+
+            - name: "Give the dialog a moment to close"
+              action: sleep
+              ms: 2000
+
+            - name: "The app is still not loaded — the gate held"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.missing_deps_demo"
+              property: "loaded"
+              value: false
+              text: "The closing proof: the tile still reports not-loaded (and still carries the marker). The demo view's give-away text never rendered — the gate refused the load rather than letting it fail."
+              screenshot: "missing-deps-after.png"
+
+            - name: "…and still flags the missing dependency"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.missing_deps_demo"
+              property: "hasMissingDeps"
+              value: true
+        post_text: |
+          One green run proved the whole missing-dependencies story: an
+          installed app whose core-module dependency is absent is **listed
+          but flagged** (red-cross marker driven by the resolved missing-set),
+          clicking it **raises the Missing Dependencies dialog naming the
+          absent module** instead of attempting the load, and dismissing the
+          dialog leaves the app exactly as it was — installed, flagged, and
+          safely unloadable until its dependency is installed.
