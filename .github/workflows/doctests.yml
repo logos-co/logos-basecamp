@@ -158,6 +158,10 @@ jobs:
           #     top of it, and the Package Manager view reloading afterwards
           #     (regression guard for the dangling m_pmuiWidget and the
           #     post-reload package_manager IPC re-wire).
+          #   basecamp-missing-deps — seeds an installed ui_qml app whose
+          #     core-module dependency exists nowhere, then asserts the sidebar
+          #     red-cross marker and the Missing Dependencies dialog raised by
+          #     the load gate (hermetic: hand-written user-dir fixture).
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
@@ -166,6 +170,7 @@ jobs:
             doctests/basecamp-shortcut-bridge.test.yaml \
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
+            doctests/basecamp-missing-deps.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -193,7 +198,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-module-unload; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-module-unload basecamp-missing-deps; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
