@@ -18,7 +18,9 @@
 #include <QScopeGuard>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
+#include <utility>
 
 #include "logos_sdk.h"
 
