@@ -20,6 +20,7 @@
 #include <QColor>
 #include <QPalette>
 #include <QEvent>
+#include <QTimer>
 
 namespace {
 constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
@@ -299,6 +300,9 @@ void MainContainer::retirePmuiWidget()
     // Clear first: from here on the PMUI slot counts as empty.
     m_pmuiWidget = nullptr;
 
+    const bool wasCurrent =
+        (m_contentStack->currentIndex() == kModulesStackIndex);
+
     if (widget && m_contentStack->indexOf(widget) >= 0) {
         // removeWidget() does not delete — the owner calls deleteLater().
         m_contentStack->removeWidget(widget);
@@ -308,6 +312,10 @@ void MainContainer::retirePmuiWidget()
     // teardown reschedules PackageCoordinator's queued rewire into the next
     // load's blocking handshake and starves it. onViewIndexChanged re-inserts
     // the placeholder lazily.
+
+    // Queued: re-sync a stranded current view without touching the teardown.
+    if (wasCurrent)
+        QTimer::singleShot(0, this, [this] { onViewIndexChanged(); });
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
