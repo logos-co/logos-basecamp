@@ -563,13 +563,8 @@ Dialog {
             Item { Layout.fillWidth: true }
 
             // Cancel button — hidden in informational mode since there's
-            // only one button to press there.
-            //
-            // Both buttons carry a mode-derived objectName so UI automation
-            // can target them exactly. Text-based clicking is ambiguous here:
-            // labels like "Uninstall" also appear on the module-row buttons,
-            // and the inspector's text search doesn't distinguish open from
-            // closed dialogs.
+            // only one button to press there. Mode-derived objectNames on
+            // both buttons let UI automation target them unambiguously.
             LogosButton {
                 objectName: "confirmationDialog." + root.mode + ".cancel"
                 text: "Cancel"

@@ -86,14 +86,8 @@ public:
     // module just died don't outlive it as orphaned widgets.
     void teardownUiPluginWidget(const QString& moduleName);
 
-    // True while PluginLoader has at least one UI-plugin load in flight.
-    //
-    // A load blocks on synchronous IPC (the capability_module token handshake
-    // acquires a replica with the SDK's 20s default timeout), and a blocking
-    // acquire spins a nested event loop. Anything that would issue its own
-    // blocking IPC from a queued callback must consult this first, or it will
-    // run inside that nested loop and starve the load — see
-    // PackageCoordinator::rewirePackageIpc.
+    // True while a UI-plugin load is in flight (blocking IPC in a nested
+    // event loop — see PackageCoordinator::rewirePackageIpc).
     bool uiPluginLoadInFlight() const;
 
     // Resolve an installed UI plugin's icon from its manifest entry

@@ -232,9 +232,7 @@ void Window::createMenuBar()
     quit->setMenuRole(QAction::QuitRole);
     connect(quit, &QAction::triggered, this, &Window::quitApplication);
 
-    // Frameless on macOS means no native title bar and no Window menu, so
-    // nothing is bound to Cmd+M — route it to the traffic light's action.
-    // Qt maps Ctrl to Command here (see Qt::AA_MacDontSwapCtrlAndMeta).
+    // Frameless window has no native Window menu, so bind Cmd+M ourselves.
     QAction* minimize = menuBar()->addMenu(tr("Window"))->addAction(tr("Minimize"));
     minimize->setObjectName(QStringLiteral("logosMinimizeAction"));
     minimize->setShortcut(QKeySequence(QStringLiteral("Ctrl+M"))); // Cmd+M on macOS
@@ -333,9 +331,7 @@ void Window::closeEvent(QCloseEvent *event)
 
 bool Window::isWindowShown() const
 {
-    // isVisible() alone is not enough: it stays true when minimized (#268), and
-    // on Wayland only exposure reveals that. Exposure can also drop for an
-    // occluded window, which then raises instead of hiding — the harmless miss.
+    // isVisible() stays true when minimized (#268); on Wayland only exposure tells.
     const QWindow* handle = windowHandle();
     if (!isVisible() || isMinimized() || (handle && !handle->isExposed()))
         return false;
@@ -348,7 +344,6 @@ bool Window::isWindowShown() const
 
 void Window::restoreWindow()
 {
-    // macOS: order back in first, or show() re-applies WindowMinimized.
     if (!isVisible())
         show();
     // Clear only the minimized bit, so maximized/fullscreen survives.
@@ -359,8 +354,7 @@ void Window::restoreWindow()
     macDeminiaturize(this);
     macActivateApp();
 #else
-    // The state bit is advisory on X11 and a no-op on Wayland (no unminimize
-    // request exists), so force a fresh map — that every display server honours.
+    // The state bit alone may not unminimize on X11/Wayland — force a fresh map.
     if (windowHandle() && !windowHandle()->isExposed()) {
         hide();
         show();

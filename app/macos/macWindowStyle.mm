@@ -54,7 +54,6 @@ void macDeminiaturize(QMainWindow* w)
     if (!w) return;
     NSView* nsView = (NSView*)w->winId();
     NSWindow* nsWindow = nsView ? nsView.window : nil;
-    // Qt's window-state handling can miss this after an ordered-out hide.
     if (nsWindow && nsWindow.isMiniaturized)
         [nsWindow deminiaturize:nil];
 #else

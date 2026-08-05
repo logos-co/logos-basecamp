@@ -53,15 +53,8 @@ private:
     void setupUi();
     QWidget* createPmuiPlaceholder();
 
-    // Drop the package_manager_ui widget out of the content stack and clear
-    // m_pmuiWidget, synchronously, leaving the slot EMPTY. Called the moment
-    // UIPluginManager announces the widget is going away — see
-    // onPluginWindowRemoveRequested for why we can't wait for the QPointer to
-    // null itself.
-    //
-    // Rebuilding the placeholder is deliberately left to onViewIndexChanged's
-    // lazy re-insert; the implementation comment explains why doing it here
-    // starves the next plugin load.
+    // Drop the PMUI widget from the stack and clear m_pmuiWidget, leaving the
+    // slot empty; onViewIndexChanged rebuilds the placeholder lazily.
     void retirePmuiWidget();
 
     // Main layout
@@ -76,16 +69,8 @@ private:
     // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
     WorkspaceArea* m_workspaceArea;
 
-    // QPointer, not a raw pointer: the widget is destroyed when
-    // package_manager_ui is unloaded (UI Modules tab / uninstall cascade),
-    // and a stale non-null value here would keep the reload guard in
-    // onViewIndexChanged from ever loading the plugin again — leaving the
-    // Package Manager view permanently blank.
-    //
-    // The QPointer is the backstop, not the primary mechanism: it only clears
-    // once the widget is actually deleted, which is one event-loop turn after
-    // the unload. retirePmuiWidget() clears it up front so nothing observes
-    // the gap. See onPluginWindowRemoveRequested.
+    // QPointer as a backstop against untracked destruction on unload;
+    // retirePmuiWidget() clears it eagerly (see onPluginWindowRemoveRequested).
     QPointer<QWidget> m_pmuiWidget;
     bool m_suppressNextNavToApps = false;
 

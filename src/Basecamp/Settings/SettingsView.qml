@@ -47,10 +47,7 @@ Rectangle {
         readonly property int sectionModuleInspector: 2
         readonly property int sectionRepositories:    3
 
-        // `key` feeds the delegates' stable objectNames
-        // (settings.section.<key>) — UI automation navigates by objectName
-        // because the labels also appear as page headings in the right pane,
-        // making by-text clicks ambiguous.
+        // `key` feeds the delegates' objectNames (settings.section.<key>).
         readonly property var sections: [
             { key: "dashboard",       label: qsTr("Dashboard") },
             { key: "appsInspector",   label: qsTr("Apps Inspector") },

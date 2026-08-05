@@ -20,9 +20,7 @@ RowLayout {
     property bool interfaceEnabled: false
     property bool busy: false
 
-    // Stable objectName for the load/unload toggle, set per-row by the host
-    // view — UI automation clicks by objectName because every loaded row
-    // carries the same "Unload" label.
+    // Set per-row by the host view; UI automation clicks by objectName.
     property alias toggleObjectName: toggleButton.objectName
 
     signal loadToggleRequested()

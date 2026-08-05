@@ -1,8 +1,5 @@
-// The Qt window-state semantics Window::isWindowShown()/restoreWindow() rely
-// on (issue #268). The toggle itself is covered by tests/ui-tests.mjs, which
-// drives the real Window; only Qt's own behaviour is pinned here.
-//
-//   nix build .#unit-tests -L
+// Pins the Qt window-state semantics behind Window::isWindowShown()/
+// restoreWindow() (#268). Run: nix build .#unit-tests -L
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QMainWindow>

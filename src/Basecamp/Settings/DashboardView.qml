@@ -28,8 +28,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 6
 
-                // "Version" stays a plain label so a drag-select copies the
-                // bare version string, not the prefix.
+                // "Version" prefix stays a plain label so it isn't drag-selected.
                 RowLayout {
                     Layout.fillWidth: true
                     visible: backend.buildVersion.length > 0
@@ -76,9 +75,7 @@ Item {
                         Layout.fillWidth: true
                         spacing: 12
 
-                        // Module name and commit hash are both copy targets, so
-                        // they wrap instead of eliding — an elided hash cannot
-                        // be selected in full.
+                        // Wrap, don't elide — an elided hash can't be copied in full.
                         LogosSelectableText {
                             text: modelData.name
                             color: "#a0a0a0"

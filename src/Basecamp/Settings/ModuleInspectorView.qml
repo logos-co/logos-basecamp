@@ -188,9 +188,7 @@ Item {
 
                     Item {
                         ModuleStatusBadge {
-                            // Per-module objectName so UI automation can
-                            // assert THIS row's load state — the status
-                            // strings repeat across rows.
+                            // Per-row handle for UI automation
                             objectName: rowItem
                                         ? "coreModules." + rowItem.name + ".status" : ""
                             anchors.left: parent.left

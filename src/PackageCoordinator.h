@@ -272,63 +272,26 @@ private:
     // resetPendingActionAsync to clear any slot left over from a crashed prior
     // session.
     //
-    // Returns false when the wiring did not land — either the client is
-    // absent/disconnected, or (the case isConnected() cannot see) the module's
-    // event replica isn't acquirable yet, which is normal for a beat after a
-    // (re)load since the C API reports "loaded" before the object is
-    // published. The caller records that in m_pmEventsWired so the
-    // core-module-set watcher retries until the wiring lands; a bare `true`
-    // here would latch a half-wired coordinator and leave the gated
-    // install/uninstall/upgrade dialogs dead until an app restart.
-    //
-    // The first subscription is issued before the directory setters and bails
-    // on failure: every acquire in this function blocks the UI thread for the
-    // SDK's 20s default, so an unreachable module must cost one of them, not
-    // one per call site. The directory setters report through a CallError for
-    // the same reason the subscriptions do — a module left pointing at no
-    // install directory is half-wired too.
-    //
-    // Re-runnable: each event is issued at most once per live wiring
-    // (m_pmSubscribedEvents), so a retry after a partial failure completes what
-    // is missing instead of stacking a second copy of the handlers that landed.
+    // Returns false when the wiring did not land (client missing, or the
+    // module's replica not yet acquirable — normal for a beat after a
+    // (re)load). Recorded in m_pmEventsWired so the watcher retries.
+    // Re-runnable: each event subscribes at most once per live wiring, and
+    // the first miss aborts the pass (every acquire blocks ~20s).
     bool subscribeToPackageInstallationEvents();
 
-    // Package-module availability watcher — connected to
-    // CoreModuleManager::coreModulesChanged (fires on refresh, every 2s stats
-    // tick, and after every load/unload). Tracks package_manager and
-    // package_downloader leaving / (re)joining the loaded set: on leave it
-    // marks that module's IPC wiring dead, on (re)join it queues
-    // rewirePackageIpc(). Without this, everything wired at construction
-    // keeps using the pre-unload replica/connection after a module reload —
-    // requests can still execute module-side but async replies (delivered as
-    // completion events on the dead replica's channel) never arrive, the
-    // gated-dialog event subscriptions stay dead until app restart, and
-    // fresh acquires on the dead connection block the UI in waitForSource
-    // timeouts (seen with package_downloader after a leaf unload/reload).
+    // Watches coreModulesChanged: marks a departed package module's IPC
+    // wiring dead, queues rewirePackageIpc() when it (re)joins.
     void onCoreModuleSetChanged();
-    // Flush the affected client's cached replica handles
-    // (LogosAPIClient::reconnect), re-run its event subscriptions, and
-    // refresh() to repopulate whatever was lost/wiped while the module was
-    // down. Queued out of the signal emission because the subscription setup
-    // does synchronous IPC.
-    //
-    // Refuses to run while a UI-plugin load is in flight, and refuses to
-    // re-enter itself. Both guards exist because the blocking acquires in here
-    // spin nested event loops, and a nested event loop will happily dispatch
-    // the queued callback that re-enters this function — see the comment on
-    // the implementation for the starvation this caused. Both bail-outs re-arm
-    // via armRewireRetry() so no wakeup is lost.
+    // Reconnect the affected client, re-subscribe, refresh(). Defers (and
+    // re-arms) while a plugin load or core module op is in flight, and never
+    // re-enters itself — its blocking acquires spin nested event loops.
     void rewirePackageIpc();
 
-    // Arm the deferred re-wire retry, unless one is already pending. Used by
-    // both rewirePackageIpc() bail-outs.
+    // Arm the deferred re-wire retry, unless one is already pending.
     void armRewireRetry();
 
     // Subscribe to package_downloader's catalogChanged event. Returns false
-    // when the downloader client isn't available/connected yet OR the
-    // subscription itself didn't land (same replica-not-yet-acquirable case as
-    // the package_manager twin above) — recorded in m_pdEventsWired so the
-    // core-module-set watcher retries.
+    // when the subscription didn't land — same contract as the twin above.
     bool subscribeToPackageDownloaderEvents();
 
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
@@ -434,28 +397,18 @@ private:
     int          m_repositoriesLoadingCount = 0;
     bool         m_appsLoading              = true;
 
-    // Whether the package_manager / package_downloader event subscriptions
-    // are wired to a live replica. Cleared by onCoreModuleSetChanged when the
-    // module leaves the loaded set; set again when rewirePackageIpc succeeds.
+    // Whether the event subscriptions are wired to a live replica.
     bool m_pmEventsWired = false;
     bool m_pdEventsWired = false;
     bool m_rewireQueued  = false;
 
-    // package_manager events already subscribed against the CURRENT wiring.
-    // Nothing in the stack can unsubscribe (on() → LogosAPIConsumer::onEvent →
-    // LogosObject::onEvent only ever register), so re-running the subscribe
-    // pass would add a second copy of every handler that already landed.
-    // Cleared wherever the wiring dies — the module leaving the loaded set, and
-    // the client reconnect in rewirePackageIpc.
+    // Events subscribed against the current wiring — nothing can unsubscribe,
+    // so a retry must never re-issue these.
     QSet<QString> m_pmSubscribedEvents;
 
-    // Set while rewirePackageIpc() is inside its blocking IPC. Those calls spin
-    // nested event loops, which dispatch the very timers that schedule a
-    // re-wire, so without this the function can re-enter itself.
+    // Guards rewirePackageIpc() against re-entry via nested event loops.
     bool m_rewireRunning = false;
 
-    // Re-arm delay used when a re-wire is deferred because a UI-plugin load is
-    // in flight. Only shortens the wait — the 2s stats tick would re-fire
-    // coreModulesChanged anyway.
+    // Retry delay when a re-wire is deferred.
     static constexpr int kRewireRetryMs = 250;
 };

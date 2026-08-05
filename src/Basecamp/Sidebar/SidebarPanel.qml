@@ -171,9 +171,7 @@ Control {
             Repeater {
                 model: _d.viewSections
                 delegate: SidebarCircleButton {
-                    // Stable handle for UI automation — section labels like
-                    // "Package Manager" also appear as module-row texts, so
-                    // by-text clicking is ambiguous.
+                    // Stable handle for UI automation
                     objectName: "sidebar.section." + modelData.name
                     checked: backend.currentActiveSectionIndex -1 === index
                     text: modelData.name
@@ -185,8 +183,7 @@ Control {
         }
 
         // Version footer — falls back to the build-type label
-        // ("Dev build" / "Portable build"). Selectable so the release tag can
-        // be copied out of the sidebar.
+        // ("Dev build" / "Portable build")
         LogosSelectableText {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter

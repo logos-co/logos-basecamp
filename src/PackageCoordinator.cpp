@@ -37,10 +37,8 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     m_pmEventsWired = subscribeToPackageInstallationEvents();
     m_pdEventsWired = subscribeToPackageDownloaderEvents();
 
-    // Track package_manager / package_downloader leaving/(re)joining the
-    // loaded set so the IPC wiring above survives a module unload/reload
-    // cycle (and so a wiring that failed here because the module wasn't
-    // connected yet gets retried — the 2s stats tick re-fires the signal).
+    // Re-wire (or retry) the IPC wiring when package modules leave/rejoin
+    // the loaded set.
     if (m_coreModuleManager) {
         connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
                 this, &PackageCoordinator::onCoreModuleSetChanged);
@@ -68,26 +66,11 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
 
     LogosModules logos(m_logosAPI);
 
-    // Every subscription and directory setter below is recorded in `ok`, rather
-    // than returning a bare `true`: a half-wired coordinator that claims success
-    // latches m_pmEventsWired and the watcher never retries it, which is exactly
-    // how the gated install/uninstall/upgrade dialogs could end up dead until an
-    // app restart.
     bool ok = true;
 
-    // Subscribe once per event, per live wiring. There is no unsubscribe
-    // anywhere in the stack (on() → LogosAPIConsumer::onEvent →
-    // LogosObject::onEvent all just register), so a retry after a partial
-    // failure re-running the whole body would leave a second copy of every
-    // handler that did land — duplicate refresh storms and duplicate acks on
-    // the beforeUninstall/beforeUpgrade gates. m_pmSubscribedEvents remembers
-    // what is already live and is cleared wherever the wiring dies: the module
-    // dropping out of the loaded set (onCoreModuleSetChanged) and the client
-    // reconnect in rewirePackageIpc.
-    //
-    // `ok` also gates further attempts. Each miss costs a blocking acquire at
-    // the SDK's 20s default, so one failure must not be followed by seventeen
-    // more — see the probe note below.
+    // Subscribe once per event per live wiring (nothing can unsubscribe, so a
+    // retry must not re-issue handlers that already landed); the first miss
+    // clears `ok` and skips the rest — each one blocks ~20s.
     auto subscribe = [this, &logos, &ok](const char* event,
                                          std::function<void(const QVariantList&)> handler) {
         const QString name = QString::fromLatin1(event);
@@ -101,18 +84,9 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
         ok = false;
     };
 
-    // First subscription doubles as the reachability probe, and runs BEFORE
-    // the directory setters below.
-    //
-    // isConnected() above only says our transport reached the registry — not
-    // that package_manager is published and acquirable. Right after a module
-    // (re)load the C API reports it loaded a beat before its object can be
-    // acquired, and every entry point here pays for that separately: `on()`
-    // re-enters ensureReplica until one succeeds, and each directory setter
-    // does its own acquire. All of them use the SDK's 20s default timeout and
-    // block the UI thread, so pressing on through an unreachable module costs
-    // ~18 × 20s instead of one. Bail on the first miss and let the
-    // core-module-set watcher retry once the module has settled.
+    // First subscription doubles as the reachability probe — isConnected()
+    // can't see a not-yet-acquirable replica (normal for a beat after a
+    // (re)load), so bail on the first miss instead of blocking per call.
     subscribe("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module file installed:" << data[0].toString();
@@ -131,12 +105,8 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
         return false;
     }
 
-    // Configure the package_manager module's directories so it knows where to
-    // install. These land through invokeRemoteMethod, not the event replica, so
-    // they can fail on their own — and a package_manager left pointing at the
-    // wrong (or no) install directory is half-wired in exactly the way the
-    // m_pmEventsWired latch must not paper over. Pass a CallError so the outcome
-    // is observable instead of a bare qWarning inside the generated wrapper.
+    // Configure the package_manager module's install directories. These can
+    // fail independently of the event replica, so report through CallError.
     auto configureDirectory = [&ok](const char* what,
                                     const std::function<void(logos::CallError*)>& call) {
         if (!ok) return;
@@ -299,11 +269,7 @@ void PackageCoordinator::onCoreModuleSetChanged()
     const bool pmLoaded = loaded.contains(QStringLiteral("package_manager"));
     const bool pdLoaded = loaded.contains(QStringLiteral("package_downloader"));
 
-    // Module gone — the cached replica handle and every event subscription
-    // now point at a dead source. Remember, so the next sighting of the
-    // module re-wires instead of trusting stale state. The subscribed-event
-    // set goes with it: those handlers died with the replica, so the re-wire
-    // must issue them again rather than skip them as already-live.
+    // Module gone: replica and subscriptions are dead — re-wire on next sighting.
     if (!pmLoaded) {
         m_pmEventsWired = false;
         m_pmSubscribedEvents.clear();
@@ -314,9 +280,7 @@ void PackageCoordinator::onCoreModuleSetChanged()
                          || (pdLoaded && !m_pdEventsWired);
     if (!needRewire || m_rewireQueued) return;
 
-    // Queue the rewire out of this emission: subscribeToPackageInstallation-
-    // Events does synchronous IPC (directory setters), which we don't want on
-    // a stats-timer or load/unload signal stack.
+    // Queued: the rewire does synchronous IPC, keep it off this signal stack.
     m_rewireQueued = true;
     QPointer<PackageCoordinator> self(this);
     QTimer::singleShot(0, this, [self]() {
@@ -342,35 +306,11 @@ void PackageCoordinator::rewirePackageIpc()
 {
     if (!m_logosAPI || !m_coreModuleManager) return;
 
-    // ── Re-entrancy guards ──────────────────────────────────────────────────
-    //
-    // Everything below does blocking IPC: LogosAPIClient::reconnect() rebuilds
-    // the QRemoteObjects node, and the first subscription acquires a replica
-    // with the SDK's 20s default timeout. A blocking acquire spins a NESTED
-    // event loop, and a nested event loop dispatches queued calls and timers —
-    // including the zero-delay timer that got us here.
-    //
-    // That is how this function ends up running inside somebody else's
-    // blocking call. The concrete failure: loadUiModule("package_manager_ui")
-    // loads package_manager as a core dependency, which now emits
-    // coreModulesChanged and queues a rewire; PluginLoader then blocks in its
-    // own requestObject("capability_module") for the token handshake; the
-    // queued rewire fires inside that wait and starts its own 20s acquire
-    // underneath it; the outer handshake times out, the load aborts, and the
-    // Package Manager silently never comes back after a cascade + reload.
-    //
-    // Deferring is always safe — the wiring is already flagged dead and the
-    // 2s stats tick re-fires coreModulesChanged — so the re-arm below only
-    // shortens the wait.
-    // Two sources of nested loops, and they do not overlap:
-    //   • uiPluginLoadInFlight() — PluginLoader's own blocking replica
-    //     acquisitions (the capability_module token handshake). Not a C API
-    //     call, so the core guard below would miss it.
-    //   • moduleOperationInFlight() — logos_core_load_module /
-    //     logos_core_unload_module, which spin nested loops inside the
-    //     QRemoteObjects handshakes. Covers the Module Inspector's direct
-    //     load/unload and the cascade in confirmUnloadCascade, where no UI
-    //     plugin is loading and PluginLoader's flag is clear.
+    // Everything below blocks on IPC and spins nested event loops, which
+    // dispatch the very timers that scheduled us. Never run inside a plugin
+    // load or core module op — our blocking acquire would starve the outer
+    // handshake until it times out. Deferring is safe: the 2s stats tick
+    // re-fires coreModulesChanged anyway.
     const bool uiLoadBusy = m_uiPluginManager
                          && m_uiPluginManager->uiPluginLoadInFlight();
     const bool coreOpBusy = m_coreModuleManager
@@ -383,38 +323,23 @@ void PackageCoordinator::rewirePackageIpc()
         return;
     }
 
-    // Our own acquires below spin nested loops too, which can dispatch the
-    // retry timer armed above — don't let the rewire re-enter itself. Re-arm
-    // rather than dropping the wakeup: the pass already running may fail (an
-    // unreachable module leaves m_pmEventsWired false), and nothing else would
-    // retry until the next 2s stats tick. If it succeeds instead, the re-armed
-    // pass finds everything wired and no-ops.
+    // Don't re-enter ourselves; re-arm so a failing pass still gets retried.
     if (m_rewireRunning) {
         armRewireRetry();
         return;
     }
     m_rewireRunning = true;
-    // RAII rather than a manual reset at the end: the generated SDK wrappers
-    // can throw logos::LogosCallError, and a leaked flag would disable the
-    // re-wire for the rest of the session.
+    // qScopeGuard: the SDK wrappers can throw.
     const auto clearRunning = qScopeGuard([this] { m_rewireRunning = false; });
 
     const QStringList loaded = m_coreModuleManager->loadedModules();
     bool rewired = false;
 
-    // For each package module that came back: drop the client's cached
-    // object handles and re-run the event subscriptions. RemoteLogosObject
-    // never reports itself stale (isValid() is the base-class unconditional
-    // true), so after a module reload every call would otherwise keep using
-    // the pre-unload replica/connection: requests can still execute
-    // module-side, but async replies travel as completion events over the
-    // dead replica's channel and never arrive — and fresh acquires on the
-    // dead connection block the UI in waitForSource timeouts.
+    // Reconnect drops the client's stale replica handles (RemoteLogosObject
+    // never reports itself stale), then re-run the event subscriptions.
     if (!m_pmEventsWired && loaded.contains(QStringLiteral("package_manager"))) {
         if (LogosAPIClient* client = m_logosAPI->getClient("package_manager")) {
-            // The reconnect drops the node the handlers were registered
-            // against, so nothing recorded here is live any more — forget it
-            // all and let the subscribe pass below re-issue every event.
+            // The old handlers die with the node — re-issue every event.
             m_pmSubscribedEvents.clear();
             client->reconnect();
         }
@@ -436,9 +361,7 @@ void PackageCoordinator::rewirePackageIpc()
     }
 
     if (rewired) {
-        // Repopulate everything fetched over the old wiring — UI-plugin
-        // metadata, installType/missing-deps/dependents caches, catalog,
-        // repository list.
+        // Repopulate everything fetched over the old wiring.
         refresh();
     }
 }
@@ -451,9 +374,7 @@ bool PackageCoordinator::subscribeToPackageDownloaderEvents()
     if (!client || !client->isConnected()) return false;
 
     // Same contract as the package_manager twin: report whether the
-    // subscription actually landed, not merely that the client is connected.
-    // Returning a bare `true` here would latch m_pdEventsWired against a
-    // replica that was never acquired, and the watcher would stop retrying.
+    // subscription actually landed.
     LogosModules logos(m_logosAPI);
     const bool ok = logos.package_downloader.on("catalogChanged",
                                                 [this](const QVariantList&) {
@@ -1003,13 +924,8 @@ void PackageCoordinator::fetchUiPluginMetadata()
         if (!self) return;
 
         if (uiPlugins.isEmpty()) {
-            // A truthful reply always contains at least main_ui — the running
-            // UI is itself an installed UI plugin, and uninstallUiModule
-            // refuses to remove it. Empty means the fetch failed or raced a
-            // package_manager restart: keep the last-known metadata instead
-            // of wiping the UI Modules tab / sidebar to an empty list. The
-            // core-module-set watcher re-fires refresh() once the module is
-            // back and re-wired.
+            // A truthful reply always contains at least main_ui — empty means
+            // the fetch failed or raced a restart; keep last-known metadata.
             qWarning() << "PackageCoordinator: getInstalledUiPlugins returned"
                           " an empty list — treating as a failed fetch,"
                           " keeping last-known UI-plugin metadata";
@@ -1255,10 +1171,8 @@ void PackageCoordinator::refreshDependencyInfo()
         [self](QVariantList packages) {
         if (!self) return;
         if (packages.isEmpty()) {
-            // Same invariant as fetchUiPluginMetadata: main_ui at minimum is
-            // always installed, so an empty list is a failed/racing fetch,
-            // not truth. Keep the previous installType / missing-deps /
-            // dependents caches — stale-but-present beats an empty UI.
+            // Same invariant as fetchUiPluginMetadata: empty list is a failed
+            // fetch, not truth — keep the previous caches.
             qWarning() << "PackageCoordinator: getInstalledPackages returned"
                           " an empty list — treating as a failed fetch,"
                           " keeping dependency caches";

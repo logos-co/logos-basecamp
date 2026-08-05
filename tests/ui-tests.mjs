@@ -590,11 +590,7 @@ test("app manager: 'local' header renders iff local rows exist", async (app) => 
 });
 
 // --- Tray Show/Hide (issue #268) ---
-//
-// Drives the real Window through the inspector: showHideWindow is a private
-// slot, so QMetaObject::invokeMethod reaches it without needing a system tray
-// (headless CI has no tray daemon). The unit tests cover Qt's window-state
-// semantics; these cover our state machine on top of them.
+// callMethod reaches the private showHideWindow slot without a tray daemon.
 
 async function windowObject(app) {
   const res = await app.inspector.send("findByProperty", {
@@ -631,8 +627,8 @@ test("window: tray toggle restores a minimized window on the first click", async
     await invoke(app, win, "showHideWindow");
 
     const { visible, minimized } = await windowProps(app, win);
-    // Regression guard for #268: a minimized window is still visible() to Qt,
-    // so a visibility-only toggle hid it again and the click did nothing.
+    // #268: minimized is still visible() to Qt, so a visibility-only toggle
+    // hid it again.
     if (visible !== true || minimized === true) {
       throw new Error(
         `after one toggle: visible=${visible} minimized=${minimized} ` +
@@ -649,9 +645,7 @@ test("window: tray toggle hides a shown window", async (app) => {
     await invoke(app, win, "show");
     await invoke(app, win, "showHideWindow");
 
-    // Offscreen CI reports the window as active, so this can't cover the
-    // background-window case: gating Hide on activation makes it unreachable
-    // from the tray menu, and that stays a manual check.
+    // Offscreen CI always reports active — the background-window case stays manual.
     const { visible } = await windowProps(app, win);
     if (visible !== false) {
       throw new Error(`toggle left visible=${visible} (expected false)`);

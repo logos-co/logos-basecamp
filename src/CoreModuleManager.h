@@ -49,19 +49,9 @@ public:
     // progress — callers should still refresh their UI state).
     bool unloadModuleWithDependents(const QString& name);
 
-    // True while one of the three load/unload wrappers above is inside its
-    // logos_core_* call.
-    //
-    // Those C entry points spin nested Qt event loops internally (the
-    // QRemoteObjects load/teardown handshakes), and a nested event loop
-    // dispatches queued calls and zero-delay timers. Anything that would issue
-    // blocking IPC from a queued callback must consult this first, or it will
-    // execute in the middle of a module operation and stack its own blocking
-    // wait underneath — see PackageCoordinator::rewirePackageIpc, where doing
-    // exactly that starved a plugin load until it timed out.
-    //
-    // A depth counter, not a bool: the nested loop can dispatch UI actions that
-    // re-enter load/unload.
+    // True while a load/unload wrapper is inside its logos_core_* call (which
+    // spins a nested event loop — don't issue blocking IPC from queued
+    // callbacks then; see PackageCoordinator::rewirePackageIpc).
     bool moduleOperationInFlight() const { return m_moduleOpDepth > 0; }
 
     // Cached stats as of the last timer tick (may be up to ~2s stale). Empty
@@ -84,28 +74,19 @@ public:
                                    const QString& argsJson);
 
 signals:
-    // Emitted by refresh(), after every stats-timer tick, and (queued, via
-    // notifyModuleSetChanged) after every load/unload that touched the
-    // loaded set. MainUIBackend forwards this into its own signal of the
-    // same name via a signal-to-signal connect — QML binds to that
-    // forwarder. PackageCoordinator also watches it to detect
-    // package_manager going away / coming back so it can re-wire its IPC.
+    // Emitted by refresh(), every stats tick, and (queued) after load/unload.
+    // MainUIBackend forwards it to QML; PackageCoordinator watches it to
+    // re-wire package IPC.
     void coreModulesChanged();
 
 private slots:
     void updateModuleStats();
 
 private:
-    // Queued coreModulesChanged emission for the load/unload wrappers. The
-    // C API entry points can be reached with a QML signal handler still on
-    // the stack (and logos_core_load_module spins a nested event loop
-    // internally); deferring the emit keeps receivers — QML bindings, the
-    // PackageCoordinator re-wire path — off that stack.
+    // Queued coreModulesChanged emit — keeps receivers off the C-API call stack.
     void notifyModuleSetChanged();
 
-    // Nesting depth of the logos_core_* load/unload calls — see
-    // moduleOperationInFlight().
-    int m_moduleOpDepth = 0;
+    int m_moduleOpDepth = 0; // see moduleOperationInFlight()
 
     LogosAPI* m_logosAPI;   // not owned
     QTimer*   m_statsTimer; // owned (parent=this)

@@ -25,8 +25,7 @@ import Basecamp.Backend 1.0
 Item {
     id: root
 
-    // Stable handle for UI automation (doc-tests drive this layer through the
-    // QML inspector's findByProperty/callMethod).
+    // Stable handle for UI automation
     objectName: "overlayDialogs"
 
     // True iff any dialog is currently visible. Drives input-blocking
@@ -50,12 +49,7 @@ Item {
         property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
     }
 
-    // Each dialog instance carries a mode-derived objectName (matching the
-    // button convention inside ConfirmationDialog) so UI automation can
-    // assert WHICH dialog is open via its `visible` property. Text-based
-    // assertions alone can't: the per-mode instances keep their constant
-    // titles — and whatever body text they last rendered — in the object
-    // tree even while closed.
+    // Mode-derived objectNames let UI automation assert which dialog is open.
     ConfirmationDialog {
         id: missingDepsDialog
         objectName: "confirmationDialog.missingDeps"
