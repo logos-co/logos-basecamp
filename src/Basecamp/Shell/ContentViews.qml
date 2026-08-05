@@ -44,16 +44,21 @@ Item {
         // App Manager (sidebar sidebarAppManager -> stack index 0)
         AppManagerView {
             id: appManagerView
-            appsProxy:    backend.uiAppsProxy
-            repositories: backend.repositories
-            loading:      backend.appsLoading
+            appsProxy:      backend.uiAppsProxy
+            repositories:   backend.repositories
+            loading:        backend.appsLoading
             onAppClicked: function(name, repositoryUrl) {
                 // Primary click — fast-path launch for installed apps.
                 backend.openApp(name, repositoryUrl, ({}), true)
             }
             onManageAppRequested: function(name, repositoryUrl) {
-                // Right-click — force the dialog open.
+                // Context menu's Install… / App details… — force the dialog
+                // open. The modal is the install confirmation (version picker
+                // + required packages), so both items land here.
                 backend.openApp(name, repositoryUrl, ({}), false)
+            }
+            onUninstallAppRequested: function(name, repositoryUrl) {
+                backend.uninstallApp(name, repositoryUrl)
             }
             onNavigateToRepositories: {
                 backend.setCurrentActiveSectionIndex(root.sidebarSettings)

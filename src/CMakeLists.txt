@@ -125,6 +125,7 @@ set(SOURCES
     CoreModuleManager.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
+    UninstallPlan.cpp
     InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
@@ -264,6 +265,7 @@ qt_add_qml_module(basecamp_appmanager_qml
         Basecamp/AppManager/AppManagerView.qml
         Basecamp/AppManager/AppManagerPanelHeader.qml
         Basecamp/AppManager/AppRepoSection.qml
+        Basecamp/AppManager/AppContextMenu.qml
         Basecamp/AppManager/AppGrid.qml
         Basecamp/AppManager/AppGridDelegate.qml
         Basecamp/AppManager/AppListDelegate.qml
@@ -301,6 +303,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/ContentViews.qml
         Basecamp/Shell/OverlayDialogs.qml
         Basecamp/Shell/ConfirmationDialog.qml
+        Basecamp/Shell/UninstallDialog.qml
         Basecamp/Shell/WelcomePage.qml
 )
 

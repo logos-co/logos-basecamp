@@ -19,6 +19,7 @@ Dialog {
     signal installRequested(string name, string repositoryUrl, var versionPins)
     signal launchRequested(string name)
     signal versionChangeRequested(string name, string repositoryUrl, var versionPins)
+    signal uninstallRequested(string name, string repositoryUrl)
 
     function openWith(metadata_) {
         root.metadata = metadata_ || ({})
@@ -103,6 +104,17 @@ Dialog {
             }
             return ""
         }
+
+        // Uninstall affordance. Keyed on installedVersion, NOT `installed` —
+        // the latter is `installStatus === Installed`, which goes false the
+        // moment an upgrade is available even though the package is very much
+        // on disk. Embedded packages and main_ui are structurally protected.
+        readonly property string installType: root.metadata.installType || ""
+        readonly property bool canUninstall:
+            d.installedVersion.length > 0
+            && !d.installing
+            && d.installType !== "embedded"
+            && d.targetName !== "main_ui"
 
         readonly property bool actionEnabled:
             d.targetName.length > 0
@@ -380,6 +392,28 @@ Dialog {
                 }
 
                 Item { Layout.fillWidth: true }
+
+                LogosButton {
+                    id: uninstallButton
+                    objectName: "addApplicationDialog.uninstallButton"
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.preferredHeight: 40
+                    Layout.leftMargin: Theme.spacing.small
+                    Layout.rightMargin: Theme.spacing.small
+                    visible: d.canUninstall
+                    text: qsTr("Uninstall")
+                    onClicked: {
+                        root.uninstallRequested(d.targetName, d.targetRepoUrl)
+                        root.close()
+                    }
+                    contentItem: LogosText {
+                        text: uninstallButton.text
+                        color: Theme.palette.error
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Item {}
+                }
 
                 LogosButton {
                     id: actionButton
