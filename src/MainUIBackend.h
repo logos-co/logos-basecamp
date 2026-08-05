@@ -94,6 +94,11 @@ class MainUIBackend : public QObject {
     // and again during a user-initiated Reload (remoteRefresh).
     Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
 
+    // Gates every Uninstall affordance until the dependency caches have been
+    // populated once — see PackageCoordinator::dependencyDataReady.
+    Q_PROPERTY(bool dependencyDataReady READ dependencyDataReady
+               NOTIFY dependencyDataReadyChanged)
+
     // Settings → Modules Reload overlay. Ref-counted so UI + Core refreshes
     // kicked together (e.g. on tab show) share one spinner.
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
@@ -118,6 +123,7 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     bool appsLoading() const;
+    bool dependencyDataReady() const;
     bool modulesLoading() const;
 
     // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
@@ -144,9 +150,13 @@ public slots:
     // Friendly module label, resolved from the catalog with fallback to `name`.
     Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
 
-    // Uninstall flow — delegated to PackageCoordinator.
+    // Uninstall flow — delegated to PackageCoordinator. uninstallApp is the
+    // App-Manager entry point: it composes a batch (app + orphaned deps) and
+    // goes through the multi gate, where the other two are single-package.
     Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
     Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
+    Q_INVOKABLE void uninstallApp(const QString& name,
+                                  const QString& repositoryUrl = QString());
 
     // Cascade confirmation flow. Local unload cascade lives on
     // UIPluginManager; uninstall/upgrade cascade lives on PackageCoordinator.
@@ -156,6 +166,10 @@ public slots:
     Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
+    // Cancels the local "waiting for dep data" state used by uninstallApp
+    // before the first refresh completes — see
+    // PackageCoordinator::cancelPendingUninstallApp.
+    Q_INVOKABLE void cancelPendingUninstallApp(const QString& name);
 
     // Install gate (package_manager_ui-initiated) — delegated to
     // PackageCoordinator, which forwards the decision to the module's
@@ -217,13 +231,16 @@ signals:
     void navigateToRepositoriesRequested();
 
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
-    // UIPluginManager; installGate + uninstallCascade come from
+    // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.
     void missingDepsPopupRequested(const QString& name, const QStringList& missing);
     void unloadCascadeConfirmationRequested(const QString& name, const QStringList& loadedDependents);
-    void uninstallCascadeConfirmationRequested(const QString& name,
-                                               const QStringList& installedDependents,
-                                               const QStringList& loadedDependents);
+    // Single uninstall-confirmation trigger for all four initiators — pure
+    // re-emit of PackageCoordinator::uninstallPlanRequested, whose comment
+    // documents the payload.
+    void uninstallPlanRequested(const QVariantMap& plan);
+
+    void dependencyDataReadyChanged();
     // Distinct signal for upgrade/downgrade/reinstall — see
     // PackageCoordinator::upgradeCascadeConfirmationRequested for why we
     // can't reuse the uninstall variant (the dialog needs the target
@@ -234,9 +251,6 @@ signals:
                                              const QStringList& installedDependents,
                                              const QStringList& loadedDependents,
                                              const QVariantList& depChanges);
-    void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
-                                                    const QStringList& installedDependents,
-                                                    const QStringList& loadedDependents);
 
     // Install gate (package_manager_ui-initiated) — pure re-emit
     // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the

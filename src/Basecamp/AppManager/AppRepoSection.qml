@@ -14,6 +14,7 @@ ColumnLayout {
 
     signal appClicked(string name, string repositoryUrl)
     signal appManageRequested(string name, string repositoryUrl)
+    signal appUninstallRequested(string name, string repositoryUrl)
 
     Layout.fillWidth: true
     spacing: Theme.spacing.medium
@@ -53,8 +54,14 @@ ColumnLayout {
         onAppClicked: function(name, repositoryUrl) {
             root.appClicked(name, repositoryUrl || "")
         }
-        onAppManageRequested: function(name, repositoryUrl) {
+        onAppDetailsRequested: function(name, repositoryUrl) {
             root.appManageRequested(name, repositoryUrl || "")
+        }
+        onAppInstallRequested: function(name, repositoryUrl) {
+            root.appManageRequested(name, repositoryUrl || "")
+        }
+        onAppUninstallRequested: function(name, repositoryUrl) {
+            root.appUninstallRequested(name, repositoryUrl || "")
         }
     }
 }

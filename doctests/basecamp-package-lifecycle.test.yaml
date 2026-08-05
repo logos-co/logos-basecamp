@@ -533,8 +533,8 @@ sections:
             - name: "The gated uninstall confirmation appears"
               action: wait_for
               texts:
-                - "Uninstall and Unload Dependents?"
-                - "Uninstall 'Lifecycle Demo'? This will remove the package files from disk."
+                - "Uninstall \"Lifecycle Demo\"?"
+                - "This will remove the package files from disk."
               timeout: 30000
 
             # Settle vs. proof, and the screenshot's anchor — see the install
@@ -557,7 +557,7 @@ sections:
             - name: "Confirm the uninstall"
               action: click_object
               find_by: "objectName"
-              find_value: "confirmationDialog.uninstallCascade.confirm"
+              find_value: "uninstallDialog.confirmButton"
               text: "Basecamp tears down the app's running view, then hands control back to the package manager, which deletes the package files."
 
             - name: "Give the uninstall a moment to complete"

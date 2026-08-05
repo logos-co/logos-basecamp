@@ -33,7 +33,7 @@ Item {
     // — see MainContainer::onOverlayActiveChanged.
     property bool anyDialogOpen: missingDepsDialog.visible
                                   || unloadCascadeDialog.visible
-                                  || uninstallCascadeDialog.visible
+                                  || uninstallDialog.visible
                                   || upgradeCascadeDialog.visible
                                   || installGateDialog.visible
                                   || addApplicationDialog.visible
@@ -66,15 +66,23 @@ Item {
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
-    ConfirmationDialog {
-        id: uninstallCascadeDialog
-        objectName: "confirmationDialog.uninstallCascade"
-        mode: "uninstallCascade"
-        displayNameLookup: _dialogDeps.displayNameLookup
-        onContinueClicked: (name) => backend.confirmUninstallCascade(name)
-        onCancelClicked: (name) => backend.cancelPendingAction(name)
-        onContinueClickedMulti: (names) => backend.confirmUninstallMultiCascade(names)
-        onCancelClickedMulti: (names) => backend.cancelMultiUninstall(names)
+    // The one uninstall confirmation — all four initiators arrive here.
+    UninstallDialog {
+        id: uninstallDialog
+        objectName: "uninstallDialog"
+        onConfirmed: function(plan) {
+            if (plan.multi) backend.confirmUninstallMultiCascade(plan.batch)
+            else            backend.confirmUninstallCascade(plan.batch[0])
+        }
+        onCancelled: function(plan) {
+            // Real-plan cancel — a module request is in flight.
+            if (plan.multi) backend.cancelMultiUninstall(plan.batch)
+            else            backend.cancelPendingAction(plan.batch[0])
+        }
+        onCancelledWhileLoading: function(plan) {
+            // No module IPC has fired yet; just drop the local pending name.
+            backend.cancelPendingUninstallApp(plan.targetName)
+        }
     }
 
     // Distinct dialog instance for upgrade/downgrade/reinstall cascades so
@@ -113,6 +121,9 @@ Item {
         id: addApplicationDialog
         requiredPackagesModel: backend.requiredPackagesModel
         onClosed: backend.notifyAddApplicationDialogClosed()
+        onUninstallRequested: function(name, repositoryUrl) {
+            backend.uninstallApp(name, repositoryUrl)
+        }
         onInstallRequested: function(name, repositoryUrl, versionPins) {
             addApplicationDialog.installStage = InstallStage.Downloading
             backend.confirmCatalogInstall(name, repositoryUrl, versionPins)
@@ -149,23 +160,14 @@ Item {
             unloadCascadeDialog.openWith("unloadCascade", name, loadedDependents);
         }
 
-        // Uninstall cascade gets TWO lists:
-        //  * installedDependents — everything installed that depends on
-        //    `name`, recursively. These will structurally break (fail to load
-        //    next time) after the uninstall.
-        //  * loadedDependents — subset currently loaded. These get torn down
-        //    now as part of the cascade.
-        // Both are rendered so the user can see full impact + immediate impact.
-        function onUninstallCascadeConfirmationRequested(name, installedDependents, loadedDependents) {
-            uninstallCascadeDialog.openWithTwoLists("uninstallCascade", name,
-                                                    installedDependents, loadedDependents);
+        // Everything the popup renders — what's going, what's staying and
+        // why, what breaks — is already resolved in the payload. See
+        // PackageCoordinator::buildPlanPayload.
+        function onUninstallPlanRequested(plan) {
+            uninstallDialog.openWithPlan(plan);
         }
 
-        function onUninstallMultiCascadeConfirmationRequested(names, installedDependents, loadedDependents) {
-            uninstallCascadeDialog.openWithMultiTargets(names, installedDependents, loadedDependents);
-        }
-
-        // Upgrade cascade: same dependent-impact shape as uninstall (the
+// Upgrade cascade: same dependent-impact shape as uninstall (the
         // package_manager performs an uninstall step first), but carries
         // the target version + UpgradeMode so the dialog can lead with
         // "Upgrade to vX.Y.Z" / "Downgrade to vX.Y.Z" / "Reinstall vX.Y.Z"

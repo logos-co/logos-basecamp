@@ -18,6 +18,7 @@ Rectangle {
     property bool loading: false
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
+    signal uninstallAppRequested(string name, string repositoryUrl)
     signal navigateToRepositories()
     signal refreshRequested()
 
@@ -265,6 +266,7 @@ Rectangle {
 
                                     onAppClicked: (name, url) => root.appClicked(name, url)
                                     onAppManageRequested: (name, url) => root.manageAppRequested(name, url)
+                                    onAppUninstallRequested: (name, url) => root.uninstallAppRequested(name, url)
                                 }
                             }
 
@@ -287,6 +289,7 @@ Rectangle {
 
                                 onAppClicked: (name, url) => root.appClicked(name, url)
                                 onAppManageRequested: (name, url) => root.manageAppRequested(name, url)
+                                onAppUninstallRequested: (name, url) => root.uninstallAppRequested(name, url)
                             }
                         }
                     }

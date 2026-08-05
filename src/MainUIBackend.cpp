@@ -100,9 +100,12 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     connect(m_uiPluginManager, &UIPluginManager::pluginWindowActivateRequested,
             this,              &MainUIBackend::pluginWindowActivateRequested);
 
-    // PackageCoordinator emits its own dialog-request signals; forward them.
-    connect(m_packageCoordinator, &PackageCoordinator::uninstallCascadeConfirmationRequested,
-            this,             &MainUIBackend::uninstallCascadeConfirmationRequested);
+    // Forward PackageCoordinator dialog signals. One uninstallPlanRequested
+    // serves all four initiators — see buildPlanPayload.
+    connect(m_packageCoordinator, &PackageCoordinator::uninstallPlanRequested,
+            this,             &MainUIBackend::uninstallPlanRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
+            this,             &MainUIBackend::dependencyDataReadyChanged);
     // Distinct upgrade/downgrade/reinstall cascade signal — the dialog
     // shape is the same as the uninstall variant, but the title + body
     // need the target releaseTag + UpgradeMode (so a downgrade doesn't
@@ -113,8 +116,6 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
             this,             &MainUIBackend::installGateConfirmationRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::uninstallMultiCascadeConfirmationRequested,
-            this,             &MainUIBackend::uninstallMultiCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
             this,             &MainUIBackend::requestOpenAddApplicationDialog);
     connect(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
@@ -268,10 +269,13 @@ QString MainUIBackend::displayNameFor(const QString& n) const {
     return m_packageCoordinator ? m_packageCoordinator->displayNameFor(n) : n;
 }
 void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }
+void MainUIBackend::uninstallApp(const QString& n, const QString& repositoryUrl)
+                                                             { m_packageCoordinator->uninstallApp(n, repositoryUrl); }
 void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
 void MainUIBackend::confirmUninstallCascade(const QString& n) { m_packageCoordinator->confirmUninstallCascade(n); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
+void MainUIBackend::cancelPendingUninstallApp(const QString& name)         { m_packageCoordinator->cancelPendingUninstallApp(name); }
 void MainUIBackend::confirmInstallGate(const QString& n)      { m_packageCoordinator->confirmInstallGate(n); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
@@ -296,6 +300,9 @@ QVariantList MainUIBackend::repositories() const        { return m_packageCoordi
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
+
+bool MainUIBackend::dependencyDataReady() const
+{ return m_packageCoordinator && m_packageCoordinator->dependencyDataReady(); }
 
 bool MainUIBackend::modulesLoading() const
 { return m_modulesLoadingCount > 0; }

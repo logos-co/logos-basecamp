@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InstallEnums.h"
+#include "UninstallPlan.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -77,6 +78,11 @@ public:
     // events, etc.) leave this false so they don't flash the overlay.
     bool appsLoading() const { return m_appsLoading; }
 
+    // False until refreshDependencyInfo has completed at least once.
+    // uninstallApp reads this to decide fast-path vs loading-then-defer;
+    // no other caller gates on it.
+    bool dependencyDataReady() const { return m_dependencyDataReady; }
+
 public slots:
     // Install gate (package_manager_ui-initiated). The module holds the pending
     // install; these just forward the user's decision back so it either emits
@@ -101,6 +107,8 @@ public slots:
     // refuses "main_ui" because uninstalling it would brick Basecamp.
     Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
     Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
+    Q_INVOKABLE void uninstallApp(const QString& name,
+                                  const QString& repositoryUrl = QString());
 
     // Cascade confirmation — called from QML once the user OKs the
     // uninstall / upgrade / local-upgrade dialog. Dispatches to the right
@@ -119,6 +127,10 @@ public slots:
     // match (MainUIBackend fans out cancelPendingAction to both managers so
     // one of them will always be a no-op).
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
+
+    // Drops the local "waiting for dep data" state used by uninstallApp
+    // before any module IPC has fired. No-op if the name doesn't match.
+    Q_INVOKABLE void cancelPendingUninstallApp(const QString& name);
 
     // Full rescan of the package catalog. Fires the same fetchUiPluginMetadata
     // → refreshDependencyInfo chain the file-install event subscriptions
@@ -173,12 +185,8 @@ signals:
     void catalogInstallFinished(const QString& name);
     void catalogInstallFailed(const QString& name, const QString& error);
     void launchAppRequested(const QString& name);
-
-    // Uninstall cascade dialog trigger — the "destructive" variant, driven by
-    // the module's beforeUninstall gate (a real removal).
-    void uninstallCascadeConfirmationRequested(const QString& name,
-                                               const QStringList& installedDependents,
-                                               const QStringList& loadedDependents);
+    void uninstallPlanRequested(const QVariantMap& plan);
+    void dependencyDataReadyChanged();
 
     // Upgrade/Downgrade/Reinstall cascade dialog trigger. Same dependent-
     // impact lists as the uninstall variant (the package_manager performs
@@ -205,15 +213,6 @@ signals:
                                           const QString& releaseTag,
                                           const QVariantList& depChanges);
 
-    // Multi-uninstall cascade dialog trigger. `names` is the full batch of
-    // packages being uninstalled. `installedDependents` is the union of each
-    // name's recursive reverse dependents minus the names already in the batch
-    // (the module computed it that way; we just pass through). `loadedDependents`
-    // is the subset of installedDependents currently running.
-    void uninstallMultiCascadeConfirmationRequested(const QStringList& names,
-                                                    const QStringList& installedDependents,
-                                                    const QStringList& loadedDependents);
-
     // Repository management — change-notify for the QML-facing cache and
     // an outcome signal for add/remove/toggle (success or error string).
     void repositoriesChanged();
@@ -228,7 +227,7 @@ private slots:
     // beforeUninstall / beforeUpgrade handlers. Both ack synchronously (to
     // cancel the module's 3s ack timer) then — if the ack landed — set the
     // pending slot here and emit the appropriate cascade-confirmation
-    // signal: uninstallCascadeConfirmationRequested for a real removal,
+    // signal: uninstallPlanRequested for a real removal (as a batch of one),
     // upgradeCascadeConfirmationRequested for a version swap (so the
     // dialog can lead with the target version + UpgradeMode instead of
     // bare "Uninstall and Unload Dependents?"). An ack rejection means
@@ -304,9 +303,49 @@ private:
     void populateAppsModel(const QVariantList& catalog,
                            const QHash<QString, QString>& installedByName);
 
+    // Assemble the plan input from the package-state caches. Compose vs
+    // explain is picked by the caller via uninstallplan::composeFrom /
+    // ::explainOf — this just wires the caches into `Input`.
+    uninstallplan::Input planInput(const QStringList& targets) const;
+
+    // The QVariantMap the uninstall dialog renders:
+    //
+    //   {
+    //     kind:       "app" | "packages",
+    //     multi:      bool,                    // confirm route: multi vs single
+    //     batch:      ["chat_ui", "chat_module", ...],
+    //     removable:  [{ name, displayName, version, isTarget, isLoaded }],
+    //     kept:       [{ name, displayName, reason, requiredBy: [] }],
+    //     dependents: [{ name, displayName, isLoaded }],
+    //   }
+    //
+    // One map rather than positional arguments — the signals it replaced
+    // already carried five and six.
+    //
+    // `installedDependents` comes from the module's gate event, which is the
+    // authoritative view of what breaks; the locally-computed equivalent is
+    // only used when the module didn't supply one.
+    QVariantMap buildPlanPayload(const QStringList& batch,
+                                 const QStringList& installedDependents,
+                                 const QString& kind,
+                                 bool multi) const;
+
+    // Stub payload for the pre-cache-ready UninstallDialog spinner. The
+    // real plan follows in a second payload once the module acks.
+    QVariantMap buildLoadingPayload(const QString& name,
+                                    const QString& kind) const;
+
+    // Cache-ready half of uninstallApp: compose batch → requestMultiUninstall.
+    void performUninstallApp(const QString& name);
+
+    // Everything loaded right now — core modules from liblogos plus UI plugin
+    // widgets mounted in this process. Feeds the plan's isLoaded flags.
+    QSet<QString> loadedNames() const;
+
     // Full rescan: getInstalledPackages → per-entry resolveFlatDependencies +
     // resolveFlatDependents. Populates m_installTypeByModule,
-    // m_missingDepsByModule, m_dependentsByModule. Emits uiModulesChanged +
+    // m_missingDepsByModule, m_dependenciesByModule, m_dependentsByModule.
+    // Emits uiModulesChanged +
     // coreModulesChanged + launcherAppsChanged when done so the QML bindings
     // pick up the new installType / missing-deps values.
     void refreshDependencyInfo();
@@ -369,6 +408,25 @@ private:
     QMap<QString, QString>     m_displayNameByModule;
     QMap<QString, QStringList> m_missingDepsByModule;
     QMap<QString, QStringList> m_dependentsByModule;
+    // Full recursive forward closure per installed package. Same
+    // resolveFlatDependencies call that already feeds m_missingDepsByModule —
+    // that one threw away everything except the "not_installed" rows, this
+    // one keeps the lot, so the whole on-disk graph is available host-side
+    // with no extra IPC.
+    QMap<QString, QStringList> m_dependenciesByModule;
+    bool m_dependencyDataReady = false;
+
+    // The names the user actually asked to remove, remembered across the
+    // request so the popup can tell "the app" apart from "what it dragged
+    // in". Cleared once the payload is built; empty means every row in the
+    // batch is an explicit target, which is the correct reading for a
+    // package_manager_ui or Settings-initiated uninstall.
+    QStringList m_lastRequestedTargets;
+    QString     m_lastRequestKind = QStringLiteral("packages");
+
+    // App-Manager target parked on dependencyDataReadyChanged; empty when idle.
+    QString m_pendingUninstallAppName;
+    QMetaObject::Connection m_pendingUninstallAppConn;
 
     PendingAction m_pendingAction;
     QHash<QString, QVariantList> m_versionsByRepoAndName;

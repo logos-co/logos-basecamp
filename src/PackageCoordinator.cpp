@@ -261,7 +261,24 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
         onBeforeMultiUninstall(names, installedDeps);
     });
 
-    return ok;
+    // The multi-uninstall cancellation counterpart. package_manager_ui
+    // subscribes to uninstallCancelled and toasts it, so the single-uninstall
+    // path is already covered on that surface — but nothing anywhere listens
+    // for the multi variant, and the App Manager now runs exclusively through
+    // it. Without this a 3s ack timeout (or a cancel that raced the dialog)
+    // is completely silent.
+    logos.package_manager.on("multiUninstallCancelled", [this](const QVariantList& data) {
+        if (data.isEmpty()) return;
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(data.first().toString().toUtf8());
+        if (!doc.isObject()) return;
+        const QString reason = doc.object().value("reason").toString();
+        // A user-driven cancel already had a visible dialog; only surface the
+        // ones the user didn't ask for.
+        m_lastRequestedTargets.clear();
+        if (reason.contains(QStringLiteral("user cancelled"))) return;
+        qWarning() << "multiUninstallCancelled:" << reason;
+    });
 }
 
 void PackageCoordinator::onCoreModuleSetChanged()
@@ -454,11 +471,84 @@ void PackageCoordinator::uninstallUiModule(const QString& moduleName)
     logos.package_manager.requestUninstallAsync(
         moduleName, [self, moduleName](QVariantMap result) {
             if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                qWarning() << "requestUninstall rejected for" << moduleName << ":"
-                           << result.value("error").toString();
-            }
+            if (result.value("success", false).toBool()) return;
+            const QString error = result.value("error").toString();
+            qWarning() << "requestUninstall rejected for" << moduleName << ":" << error;
         });
+}
+
+void PackageCoordinator::uninstallApp(const QString& name, const QString& repositoryUrl)
+{
+    Q_UNUSED(repositoryUrl);
+    if (name.isEmpty()) return;
+    if (name == QStringLiteral("main_ui")) {
+        qWarning() << "Refusing to uninstall main_ui";
+        return;
+    }
+
+    if (m_dependencyDataReady) {
+        performUninstallApp(name);
+        return;
+    }
+
+    // Cache still populating — open the dialog in a loading state and defer
+    // the real dispatch until dependencyDataReadyChanged fires. Drop any
+    // prior deferred connection first so re-clicking during the cold-boot
+    // window doesn't stack callbacks.
+    QObject::disconnect(m_pendingUninstallAppConn);
+    m_pendingUninstallAppName = name;
+    emit uninstallPlanRequested(
+        buildLoadingPayload(name, QStringLiteral("app")));
+
+    QPointer<PackageCoordinator> self(this);
+    m_pendingUninstallAppConn = connect(
+        this, &PackageCoordinator::dependencyDataReadyChanged, this,
+        [self, name]() {
+            if (!self) return;
+            if (self->m_pendingUninstallAppName != name) return;   // cancelled
+            self->m_pendingUninstallAppName.clear();
+            QObject::disconnect(self->m_pendingUninstallAppConn);
+            self->performUninstallApp(name);
+        });
+}
+
+void PackageCoordinator::performUninstallApp(const QString& name)
+{
+    // Compose: target + orphaned deps. requestMultiUninstall refuses the
+    // whole batch if any member is embedded, so filter here.
+    const uninstallplan::Plan plan =
+        uninstallplan::composeFrom(planInput({name}));
+    if (plan.batch.isEmpty()) {
+        qWarning() << "performUninstallApp:" << name << "is not installed — ignoring";
+        return;
+    }
+
+    qDebug() << "performUninstallApp:" << name << "batch=" << plan.batch;
+
+    // Remembered only so the explain pass can flag which rows the user
+    // actually picked; the batch itself is recomputed on arrival.
+    m_lastRequestedTargets = {name};
+    m_lastRequestKind      = QStringLiteral("app");
+
+    if (!m_logosAPI) return;
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    const QStringList batch = plan.batch;
+    logos.package_manager.requestMultiUninstallAsync(
+        batch, [self, batch](QVariantMap result) {
+            if (!self) return;
+            if (result.value("success", false).toBool()) return;
+            const QString error = result.value("error").toString();
+            qWarning() << "requestMultiUninstall rejected for" << batch << ":" << error;
+            self->m_lastRequestedTargets.clear();
+        });
+}
+
+void PackageCoordinator::cancelPendingUninstallApp(const QString& name)
+{
+    if (m_pendingUninstallAppName != name) return;
+    m_pendingUninstallAppName.clear();
+    QObject::disconnect(m_pendingUninstallAppConn);
 }
 
 void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
@@ -474,11 +564,160 @@ void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
     logos.package_manager.requestUninstallAsync(
         moduleName, [self, moduleName](QVariantMap result) {
             if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                qWarning() << "requestUninstall rejected for" << moduleName << ":"
-                           << result.value("error").toString();
-            }
+            if (result.value("success", false).toBool()) return;
+            const QString error = result.value("error").toString();
+            qWarning() << "requestUninstall rejected for" << moduleName << ":" << error;
         });
+}
+
+// ---------------------------------------------------------------------------
+// Uninstall plan — compose (what to remove) and explain (why the rest stays)
+// ---------------------------------------------------------------------------
+
+QSet<QString> PackageCoordinator::loadedNames() const
+{
+    QSet<QString> loaded;
+    if (m_coreModuleManager) {
+        const QStringList core = m_coreModuleManager->loadedModules();
+        loaded = QSet<QString>(core.cbegin(), core.cend());
+    }
+    if (m_uiPluginManager) {
+        // intersectWithLoaded already merges core + in-process UI widgets, so
+        // asking it about every installed name yields the full loaded set —
+        // including ui_qml plugins, which never appear in loadedModules().
+        const QStringList all = m_installTypeByModule.keys();
+        for (const QString& n : m_uiPluginManager->intersectWithLoaded(all))
+            loaded.insert(n);
+    }
+    return loaded;
+}
+
+uninstallplan::Input PackageCoordinator::planInput(const QStringList& targets) const
+{
+    uninstallplan::Input in;
+    in.targets = targets;
+    for (auto it = m_dependenciesByModule.cbegin();
+         it != m_dependenciesByModule.cend(); ++it) {
+        in.dependencies.insert(it.key(), it.value());
+    }
+    for (auto it = m_dependentsByModule.cbegin();
+         it != m_dependentsByModule.cend(); ++it) {
+        in.dependents.insert(it.key(), it.value());
+    }
+    // m_installTypeByModule is keyed on every installed package (UI + core),
+    // which makes its key list the installed set — and its values the
+    // embedded/user split the plan needs.
+    for (auto it = m_installTypeByModule.cbegin();
+         it != m_installTypeByModule.cend(); ++it) {
+        in.installed << it.key();
+        if (it.value() == QLatin1String("embedded")) in.embedded.insert(it.key());
+    }
+    in.protectedNames = {QStringLiteral("main_ui")};
+    for (auto it = m_displayNameByModule.cbegin();
+         it != m_displayNameByModule.cend(); ++it) {
+        in.displayNames.insert(it.key(), it.value());
+    }
+    in.versions = m_installedVersionByName;
+    in.loaded   = loadedNames();
+    return in;
+}
+
+namespace {
+
+QVariantMap removableRowToMap(const uninstallplan::Row& r)
+{
+    return {
+        {QStringLiteral("name"),        r.name},
+        {QStringLiteral("displayName"), r.displayName},
+        {QStringLiteral("version"),     r.version},
+        {QStringLiteral("isTarget"),    r.isTarget},
+        {QStringLiteral("isLoaded"),    r.isLoaded},
+    };
+}
+
+}  // namespace
+
+QVariantMap PackageCoordinator::buildLoadingPayload(const QString& name,
+                                                    const QString& kind) const
+{
+    // Stub payload; UninstallDialog reads `loading` to swap in the spinner.
+    // `multi: false` sends cancel through cancelPendingUninstallApp (no
+    // module IPC to unwind).
+    QVariantMap payload;
+    payload.insert(QStringLiteral("loading"),    true);
+    payload.insert(QStringLiteral("kind"),       kind);
+    payload.insert(QStringLiteral("multi"),      false);
+    payload.insert(QStringLiteral("batch"),      QVariantList{name});
+    payload.insert(QStringLiteral("targetName"), name);
+    payload.insert(QStringLiteral("removable"),  QVariantList{});
+    payload.insert(QStringLiteral("kept"),       QVariantList{});
+    payload.insert(QStringLiteral("dependents"), QVariantList{});
+    return payload;
+}
+
+QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
+                                                 const QStringList& installedDependents,
+                                                 const QString& kind,
+                                                 bool multi) const
+{
+    // Explain pass: the batch is already fixed, so it IS the target list and
+    // no orphan expansion runs. Everything left in the closure lands in
+    // `kept` with the reason it survived.
+    const uninstallplan::Plan plan =
+        uninstallplan::explainOf(planInput(batch));
+
+    // Which of those rows the user actually picked. Empty (PMUI / Settings)
+    // means "all of them", which is the honest reading there.
+    const QSet<QString> picked(m_lastRequestedTargets.cbegin(),
+                               m_lastRequestedTargets.cend());
+
+    QVariantList removable;
+    removable.reserve(plan.removable.size());
+    for (const uninstallplan::Row& r : plan.removable) {
+        uninstallplan::Row row = r;
+        row.isTarget = picked.isEmpty() || picked.contains(r.name);
+        removable.append(removableRowToMap(row));
+    }
+
+    QVariantList kept;
+    kept.reserve(plan.kept.size());
+    for (const uninstallplan::KeptRow& k : plan.kept) {
+        kept.append(QVariantMap{
+            {QStringLiteral("name"),        k.name},
+            {QStringLiteral("displayName"), k.displayName},
+            // Enum → string for the QML payload. See uninstallplan::reasonName.
+            {QStringLiteral("reason"),      uninstallplan::reasonName(k.reason)},
+            {QStringLiteral("requiredBy"),  k.requiredBy},
+        });
+    }
+
+    // The module's dependents list is authoritative (it walked the same graph
+    // at request time, under its own lock). Fall back to the locally computed
+    // one only when the gate didn't carry it.
+    QStringList dependentNames = installedDependents;
+    if (dependentNames.isEmpty()) {
+        for (const uninstallplan::Row& r : plan.dependents) dependentNames << r.name;
+    }
+    const QSet<QString> loaded    = loadedNames();
+    const QSet<QString> batchSet(batch.cbegin(), batch.cend());
+    QVariantList dependents;
+    for (const QString& n : dependentNames) {
+        if (n.isEmpty() || batchSet.contains(n)) continue;
+        dependents.append(QVariantMap{
+            {QStringLiteral("name"),        n},
+            {QStringLiteral("displayName"), displayNameFor(n)},
+            {QStringLiteral("isLoaded"),    loaded.contains(n)},
+        });
+    }
+
+    return {
+        {QStringLiteral("kind"),       kind},
+        {QStringLiteral("multi"),      multi},
+        {QStringLiteral("batch"),      batch},
+        {QStringLiteral("removable"),  removable},
+        {QStringLiteral("kept"),       kept},
+        {QStringLiteral("dependents"), dependents},
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -687,11 +926,16 @@ void PackageCoordinator::onBeforeUninstall(const QString& name, const QStringLis
                            << result.value("error").toString();
                 return;
             }
-            const QStringList loadedDeps = self->m_uiPluginManager
-                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
-                : QStringList{};
             self->m_pendingAction = {PendingOp::UninstallCascade, name, QString{}, 0};
-            emit self->uninstallCascadeConfirmationRequested(name, installedDeps, loadedDeps);
+            // A batch of one. The single-uninstall gate is what
+            // package_manager_ui's trash icon and Settings → Modules use, so
+            // confirm/cancel route to the single slots — hence multi=false.
+            // Everything else (the Kept section, the dependent warning) is
+            // identical to the multi path.
+            const QVariantMap payload = self->buildPlanPayload(
+                {name}, installedDeps, QStringLiteral("packages"), /*multi=*/false);
+            self->m_lastRequestedTargets.clear();
+            emit self->uninstallPlanRequested(payload);
         });
 }
 
@@ -809,13 +1053,29 @@ void PackageCoordinator::onBeforeMultiUninstall(const QStringList& names,
             if (!result.value("success", false).toBool()) {
                 qWarning() << "ackPendingAction (multi) rejected for" << ackName << ":"
                            << result.value("error").toString();
+                // The module already cancelled; drop the remembered targets so
+                // they can't mislabel the next batch that comes through.
+                self->m_lastRequestedTargets.clear();
                 return;
             }
-            const QStringList loadedDeps = self->m_uiPluginManager
-                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
-                : QStringList{};
             self->m_pendingAction = {PendingOp::MultiUninstallCascade, QString{}, QString{}, 0, names};
-            emit self->uninstallMultiCascadeConfirmationRequested(names, installedDeps, loadedDeps);
+            // `kind` is "app" only when WE composed this batch from a single
+            // App Manager row; a batch we didn't originate (package_manager_ui
+            // bulk selection) is always "packages", and a stale target list
+            // that isn't part of the arriving batch is dropped rather than
+            // used to mislabel someone else's request.
+            QString kind = QStringLiteral("packages");
+            const QSet<QString> batchSet(names.cbegin(), names.cend());
+            bool targetsBelong = !self->m_lastRequestedTargets.isEmpty();
+            for (const QString& t : self->m_lastRequestedTargets)
+                if (!batchSet.contains(t)) targetsBelong = false;
+            if (targetsBelong) kind = self->m_lastRequestKind;
+            else               self->m_lastRequestedTargets.clear();
+
+            const QVariantMap payload =
+                self->buildPlanPayload(names, installedDeps, kind, /*multi=*/true);
+            self->m_lastRequestedTargets.clear();
+            emit self->uninstallPlanRequested(payload);
         });
 }
 
@@ -1221,12 +1481,19 @@ void PackageCoordinator::refreshDependencyInfo()
         // Second pass — per-module missing/dependents queries. Dispatched
         // for every entry in the full installed-packages list (both UI and
         // core) so that QML lookups work uniformly regardless of which tab
-        // is surfacing the button. Read from the member — typeMap was
-        // moved-from above and is empty here.
+        // is surfacing the button. `typeMap` was moved into
+        // m_installTypeByModule above, so we read from the destination.
         QStringList names = self->m_installTypeByModule.keys();
         if (names.isEmpty()) {
             self->m_missingDepsByModule.clear();
             self->m_dependentsByModule.clear();
+            self->m_dependenciesByModule.clear();
+            // Nothing installed is a complete answer, not an unfinished one —
+            // flip the gate so the UI doesn't wait forever on an empty box.
+            if (!self->m_dependencyDataReady) {
+                self->m_dependencyDataReady = true;
+                emit self->dependencyDataReadyChanged();
+            }
             emit self->uiModulesChanged();
             emit self->coreModulesChanged();
             // Sidebar reads from launcherApps (not uiModules) so it needs its
@@ -1238,14 +1505,21 @@ void PackageCoordinator::refreshDependencyInfo()
         LogosModules inner(self->m_logosAPI);
         auto remaining = std::make_shared<int>(names.size() * 2);
         auto missingMap = std::make_shared<QMap<QString, QStringList>>();
+        auto dependenciesMap = std::make_shared<QMap<QString, QStringList>>();
         auto dependentsMap = std::make_shared<QMap<QString, QStringList>>();
         QPointer<PackageCoordinator> selfCopy(self.data());
 
-        auto maybeFinish = [selfCopy, missingMap, dependentsMap, remaining]() {
+        auto maybeFinish = [selfCopy, missingMap, dependenciesMap,
+                            dependentsMap, remaining]() {
             if (!selfCopy) return;
             if (--(*remaining) > 0) return;
             selfCopy->m_missingDepsByModule = *missingMap;
+            selfCopy->m_dependenciesByModule = *dependenciesMap;
             selfCopy->m_dependentsByModule = *dependentsMap;
+            if (!selfCopy->m_dependencyDataReady) {
+                selfCopy->m_dependencyDataReady = true;
+                emit selfCopy->dependencyDataReadyChanged();
+            }
             if (selfCopy->m_appsModel) {
                 for (auto it = missingMap->cbegin(); it != missingMap->cend(); ++it)
                     selfCopy->m_appsModel->setMissingDeps(it.key(), it.value());
@@ -1260,18 +1534,24 @@ void PackageCoordinator::refreshDependencyInfo()
         };
 
         for (const QString& name : names) {
-            // Derive the missing-deps list client-side from the flat forward projection:
-            // every node with status == "not_installed" is a missing dep.
+            // One call, two caches. The missing-deps list is the subset with
+            // status == "not_installed"; the full closure (minus those) is
+            // what the uninstall plan walks. Keeping both here is why the
+            // dependency cleanup needs no extra IPC.
             inner.package_manager.resolveFlatDependenciesAsync(
-                name, true, [missingMap, name, maybeFinish](QVariantList deps) {
-                    QStringList out;
+                name, true,
+                [missingMap, dependenciesMap, name, maybeFinish](QVariantList deps) {
+                    QStringList missing;
+                    QStringList installed;
                     for (const QVariant& v : deps) {
                         const QVariantMap m = v.toMap();
-                        if (m.value("status").toString() != "not_installed") continue;
                         const QString s = m.value("name").toString();
-                        if (!s.isEmpty()) out << s;
+                        if (s.isEmpty()) continue;
+                        if (m.value("status").toString() == "not_installed") missing << s;
+                        else                                                 installed << s;
                     }
-                    missingMap->insert(name, out);
+                    missingMap->insert(name, missing);
+                    dependenciesMap->insert(name, installed);
                     maybeFinish();
                 });
 
@@ -1596,6 +1876,10 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     metadata["installStatus"]    = tileStatus;
     metadata["isInstalled"]      = tileStatus == InstallStatus::Installed;
     metadata["installedVersion"] = installedVersion;
+    // Needed by the dialog's Uninstall affordance: "embedded" packages ship
+    // inside the bundle and package_manager refuses to remove them, so the
+    // button has to hide rather than offer a call that always fails.
+    metadata["installType"]      = m_installTypeByModule.value(name);
     const QVariantList versionsList = catalogRow.value("versions").toList();
     metadata["latestVersion"] = versionsList.isEmpty()
         ? QString()
