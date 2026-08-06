@@ -279,6 +279,8 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
         if (reason.contains(QStringLiteral("user cancelled"))) return;
         qWarning() << "multiUninstallCancelled:" << reason;
     });
+
+    return ok;
 }
 
 void PackageCoordinator::onCoreModuleSetChanged()
