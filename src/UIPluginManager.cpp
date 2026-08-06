@@ -250,6 +250,10 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                     if (replica) {
                         connect(replica, SIGNAL(navigateToRepositoriesRequested()),
                                 this,    SIGNAL(navigateToRepositoriesRequested()));
+                        connect(replica,
+                                SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
+                                this,
+                                SLOT(onPmuiInstallProgress(int,QString,int,int,bool,QString)));
                     }
                 }
             }
@@ -269,6 +273,26 @@ void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& err
     qWarning() << "Failed to load UI module" << name << ":" << error;
     // Surface to the user, not just the log (forwarded to the QML overlay).
     emit pluginLoadFailedNotice(name, error);
+}
+
+void UIPluginManager::onPmuiInstallProgress(int progressType, const QString& packageName,
+                                            int completed, int total, bool success,
+                                            const QString& error)
+{
+    Q_UNUSED(progressType);
+    Q_UNUSED(completed);
+    Q_UNUSED(total);
+    // `success` discriminates, not the error string — progress emits reuse it
+    // for non-error status text ("Upgrading X…").
+    if (success) {
+        return;
+    }
+    qWarning() << "package_manager_ui install failure for" << packageName << ":" << error;
+    emit packageInstallFailedNotice(
+        packageName,
+        error.isEmpty() ? QStringLiteral("The package manager reported an "
+                                         "unspecified installation failure.")
+                        : error);
 }
 
 QStringList UIPluginManager::loadingModules() const
