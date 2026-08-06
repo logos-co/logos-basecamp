@@ -17,16 +17,24 @@
   ];
   
   # Common runtime dependencies
-  buildInputs = [ 
-    pkgs.qt6.qtbase 
+  buildInputs = [
+    pkgs.qt6.qtbase
     pkgs.qt6.qtremoteobjects
     pkgs.qt6.qtdeclarative
     pkgs.zstd
-    pkgs.krb5
     pkgs.abseil-cpp
     pkgs.zlib
     pkgs.icu
-  ];
+  ]
+  # krb5 does not cross-evaluate to mingw: it carries a host-platform `bash` in
+  # its own buildInputs, so the splice fails with "Refusing to evaluate package
+  # 'bash-5.3p9' ... not available on the requested hostPlatform" -- an error
+  # naming bash, several levels away from the actual cause.
+  #
+  # Guarded rather than deleted: nothing in Basecamp links Kerberos directly
+  # (it arrives as an optional Qt network transitive), but it is left in place
+  # on Unix so this stays a Windows change and not a behavioural one.
+  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5;
   
   # Common CMake flags
   cmakeFlags = [
@@ -50,7 +58,7 @@
   # Metadata
   meta = with pkgs.lib; {
     description = "Logos Basecamp - Qt application with UI plugins";
-    platforms = platforms.unix;
+    platforms = platforms.unix ++ platforms.windows;
     mainProgram = "LogosBasecamp";
   };
 }

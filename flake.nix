@@ -85,9 +85,21 @@
           { name = "nix-bundle-macos-app"; commit = revOf nix-bundle-macos-app; }
         ];
       };
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
-        inherit system;
-        pkgs = import nixpkgs { inherit system; };
+      # The BUILD platform for a given target. Bundlers and code generators RUN
+      # during the build, so on the x86_64-windows cross target they must come
+      # from the build system -- taking them from packages.x86_64-windows would
+      # hand the builder a PE it cannot execute.
+      buildSystemFor = target:
+        if target == "x86_64-windows" then "x86_64-linux" else target;
+
+      # forAllSystems, plus the "x86_64-windows" pseudo-system. A cross
+      # derivation's `system` attr is its BUILD platform, so the Windows
+      # attributes evaluate anywhere and realise on x86_64-linux. Keying it as a
+      # system rather than a package-name suffix is what lets the 34
+      # `dep.packages.${system}.x` interpolations below stay untouched.
+      forAllSystems = f: logos-nix.lib.forAllTargets ({ system, pkgs }:
+        let buildSystem = buildSystemFor system; in f {
+        inherit system pkgs;
         logosSdk = logos-cpp-sdk.packages.${system}.default;
         logosProtocolPkg = logos-protocol.packages.${system}.default;
         logosQtSdk = logos-qt-sdk.packages.${system}.default;
@@ -115,9 +127,13 @@
         logosLiblogosSrc = logos-liblogos.outPath;
         logosPackageManagerModuleSrc = logos-package-manager-module.outPath;
         logosCapabilityModuleSrc = logos-capability-module.outPath;
-        installDev = nix-bundle-logos-module-install.bundlers.${system}.dev;
-        installPortable = nix-bundle-logos-module-install.bundlers.${system}.portable;
-        dirBundler = nix-bundle-dir.bundlers.${system}.qtApp;
+        # Bundlers run ON the builder, so they are keyed by buildSystem, not by
+        # the target. nix-bundle-dir in particular is ELF/Mach-O only (its
+        # bundle.sh branches `file -b` -> Mach-O | ELF with no PE case), so on
+        # Windows it must not be invoked at all -- see nix/app.nix.
+        installDev = nix-bundle-logos-module-install.bundlers.${buildSystem}.dev;
+        installPortable = nix-bundle-logos-module-install.bundlers.${buildSystem}.portable;
+        dirBundler = nix-bundle-dir.bundlers.${buildSystem}.qtApp;
       });
     in
     {

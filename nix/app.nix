@@ -7,6 +7,22 @@ let
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
 
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
+  # qtwebview is dead weight that becomes a hard blocker under cross.
+  #
+  # It propagates qtwebengine -- a full Chromium -- and that does not
+  # cross-evaluate to mingw: the failure surfaces as "Refusing to evaluate
+  # package 'cups-2.4.19'", three levels away from the actual cause.
+  #
+  # Nothing uses it: no C++ include of QtWebView/QWebView, no `import QtWebView`
+  # in any QML, and app/CMakeLists.txt's `find_package(Qt6 COMPONENTS ...)` list
+  # omits WebView entirely. The only surviving mention is a stale line in
+  # docs/project.md.
+  #
+  # Guarded rather than deleted so this stays a Windows-only change. Dropping it
+  # on Unix as well would shrink every bundle and is worth doing separately.
+  qtWebview = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.qt6.qtwebview;
+  qtWebviewQml = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
+    "${pkgs.qt6.qtwebview}/lib/qt-6/qml";
 in
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-basecamp";
@@ -14,8 +30,7 @@ pkgs.stdenv.mkDerivation rec {
 
   inherit src;
   # Platform-specific build inputs for system webviews
-  buildInputs = common.buildInputs ++ [
-    pkgs.qt6.qtwebview
+  buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
     # Qt split: the app links logos-qt-sdk::logos_qt_sdk, which carries the
     # logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
@@ -38,11 +53,9 @@ pkgs.stdenv.mkDerivation rec {
     [
       pkgs.qt6.qtbase
       pkgs.qt6.qtremoteobjects
-      pkgs.qt6.qtwebview
       pkgs.qt6.qtdeclarative
       pkgs.qt6.qtsvg
       pkgs.zstd
-      pkgs.krb5
       pkgs.zlib
       pkgs.glib
       pkgs.stdenv.cc.cc
@@ -54,6 +67,9 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.boost
       pkgs.openssl
     ]
+    # See common.buildInputs: krb5 carries a host-platform bash and does not
+    # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.
+    ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.libglvnd
       pkgs.mesa.drivers
@@ -70,12 +86,19 @@ pkgs.stdenv.mkDerivation rec {
   );
   qtPluginPath = pkgs.lib.concatStringsSep ":" ([
     "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
-    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
     "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
-  ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+  ]
+  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
+    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
+  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
     "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
   ]);
-  qmlImportPath = "${placeholder "out"}/lib:${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml";
+  qmlImportPath = pkgs.lib.concatStringsSep ":" ([
+    "${placeholder "out"}/lib"
+    "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+  ] ++ qtWebviewQml ++ [
+    "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+  ]);
 
   preConfigure = ''
     runHook prePreConfigure
@@ -118,7 +141,7 @@ pkgs.stdenv.mkDerivation rec {
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
     extraDirs = [ "modules" "plugins" ];
-    extraClosurePaths = [ pkgs.qt6.qtwebview pkgs.qt6.qtsvg ]
+    extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
       ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ];
   };
 
@@ -135,7 +158,11 @@ pkgs.stdenv.mkDerivation rec {
 
     # Set up Qt environment variables
     export QT_PLUGIN_PATH="${qtPluginPath}"
-    export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+    export QML2_IMPORT_PATH="${pkgs.lib.concatStringsSep ":" ([
+      "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+    ] ++ qtWebviewQml ++ [
+      "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+    ])}"
 
     # Remove any remaining references to /build/ in binaries and set proper RPATH
     find $out -type f -executable -exec sh -c '
