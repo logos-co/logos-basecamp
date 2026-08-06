@@ -32,7 +32,7 @@ intro: |
   The run is **hermetic**: the app fixture is hand-crafted in the spec itself
   (see the package-lifecycle doc-test for the full anatomy of an `.lgx` —
   this spec reuses its recipe for a single version), the core-module fixture
-  is built from a pinned `logos-test-modules` flake via Nix and repacked into
+  is built from the `logos-test-modules` flake via Nix and repacked into
   an `.lgx`, and everything installs into a throwaway `--user-dir`. The
   bundle does fetch its default repository's catalog in the background, but
   nothing from it is downloaded or installed here.
@@ -204,12 +204,16 @@ sections:
           Detect the host's platform variant, seed the package with the
           manifest (plain **ustar** — the LGX reader doesn't speak macOS
           `tar`'s default pax headers), `lgx add` the payload, and verify. The
-          archive lands at a **fixed absolute path** (`/tmp/basecamp-persist/`)
-          because the UI run passes it into the app over the inspector, where
-          a relative path would be ambiguous. The fresh, empty `--user-dir`
+          archives land at a **fixed absolute path** (`/tmp/basecamp-persist/`)
+          because the UI run passes them into the app over the inspector as
+          literal `file://` URLs — the harness bakes those into the generated
+          test verbatim, so no relative or per-run path can work there. Only
+          the two archives live under `/tmp`; every other artifact stays in
+          the working directory. The fresh, empty `--user-dir`
           created alongside is the star of this spec — it is the only thing
           that carries state from the first launch to the second.
         run: |
+          set -e
           case "$(uname -s) $(uname -m)" in
             "Linux x86_64")   VARIANT=linux-x86_64 ;;
             "Linux aarch64")  VARIANT=linux-arm64 ;;
@@ -246,12 +250,14 @@ sections:
           output *is* an installed package — a stamped `manifest.json`, a
           `variant` marker, and the shared library with its bundled deps — so
           repacking it as an `.lgx` is the hand-crafting recipe in reverse:
-          seed a tar with its manifest, `lgx add` the binaries back in as the
-          variant payload, and let it restamp the content hashes.
+          seed a tar with its manifest (its version pinned to a spec-owned
+          `0.0.1`, so the install-gate text asserted below stays deterministic
+          whatever version upstream ships), `lgx add` the binaries back in as
+          the variant payload, and let it restamp the content hashes.
         run: |
           set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-module
+          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-module
           SRC=result-port-module/modules/test_fullapi_cpp
           VARIANT=$(cat "$SRC/variant")
           payload=build/persist/module-payload
@@ -264,22 +270,27 @@ sections:
             [ "$base" = "variant" ] && continue
             cp -RL "$f" "$payload/"
           done
-          cp -L "$SRC/manifest.json" "$seed/manifest.json"
+          # Seed the manifest with the version pinned to a spec-owned 0.0.1:
+          # the install gate's dialog text embeds the version, and the UI
+          # runner's text assertions are exact-match, so a spec-owned version
+          # keeps that text deterministic whatever version upstream ships.
+          # (jq runs via nix so the host needs nothing installed.)
+          nix run nixpkgs#jq -- '.version = "0.0.1"' "$SRC/manifest.json" > "$seed/manifest.json"
           chmod -R u+w "$payload" "$seed"
           # The module's entry point (per-variant `main` in its manifest,
           # e.g. test_fullapi_cpp_plugin.dylib) — lgx add needs it explicitly
-          # when the payload is a directory. The grep -v filters out the
-          # same-named content-hash key ("variants/<variant>").
-          MAIN=$(grep "\"$VARIANT\"" "$SRC/manifest.json" | grep -v "variants/" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1)
-          echo "main: $MAIN"
-          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx manifest.json variants
-          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx \
+          # when the payload is a directory.
+          MAIN=$(nix run nixpkgs#jq -- -r --arg v "$VARIANT" '.main[$v]' "$SRC/manifest.json")
+          [ -n "$MAIN" ] && [ "$MAIN" != "null" ]
+          echo "main: $MAIN (upstream version: $(nix run nixpkgs#jq -- -r .version "$SRC/manifest.json"))"
+          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_fullapi_cpp.lgx manifest.json variants
+          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_fullapi_cpp.lgx \
             --variant "$VARIANT" --files "$payload" --main "$MAIN" -y
-          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx
+          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_fullapi_cpp.lgx
           ls /tmp/basecamp-persist
         expect_contains:
           - "Package structure is valid"
-          - "test_fullapi_cpp-1.0.0.lgx"
+          - "test_fullapi_cpp.lgx"
 
   - title: "First launch: install the app and the core module"
     step: true
@@ -393,14 +404,17 @@ sections:
               find_by: "objectName"
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
-              args: ["file:///tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx"]
+              args: ["file:///tmp/basecamp-persist/test_fullapi_cpp.lgx"]
               text: "The same `installLocalPackage` → `inspectPackage` → `requestInstall` route as the app — a core module is just an `.lgx` whose payload happens to be compiled code."
 
+            # The runner's text matching is exact-match, so this wait needs
+            # the dialog's full one-line message — deterministic because the
+            # pack step pins the fixture's version to 0.0.1.
             - name: "The install gate asks about the module"
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_fullapi_cpp' v1.0.0. No other packages need to change."
+                - "Install 'test_fullapi_cpp' v0.0.1. No other packages need to change."
               timeout: 30000
               screenshot: "persist-module-install-dialog.png"
 
@@ -583,17 +597,24 @@ sections:
           would notice.
         run: |
           set -e
-          rm -rf /tmp/basecamp-persist/moved
-          mkdir -p /tmp/basecamp-persist/moved/bundle
-          cp -R result-bundle/. /tmp/basecamp-persist/moved/bundle
-          chmod -R u+w /tmp/basecamp-persist/moved/bundle
-          mv testdata/persist-user /tmp/basecamp-persist/moved/user
+          # chmod before rm: a stale moved/ from a previous run holds
+          # read-only directories copied out of the store, which rm -rf
+          # alone cannot remove.
+          chmod -R u+w build/persist/moved 2>/dev/null || true
+          rm -rf build/persist/moved
+          mkdir -p build/persist/moved/bundle
+          cp -R result-bundle/. build/persist/moved/bundle
+          chmod -R u+w build/persist/moved/bundle
+          mv testdata/persist-user build/persist/moved/user
           rm -f /tmp/basecamp-persist/*.lgx
-          ls /tmp/basecamp-persist/moved /tmp/basecamp-persist/moved/user
+          # List the moved tree AND the installed payloads inside it — the
+          # plugins/ and modules/ dirs themselves were pre-created empty, so
+          # only their contents prove the installs are coming along.
+          ls build/persist/moved build/persist/moved/user/plugins build/persist/moved/user/modules
         expect_contains:
           - "bundle"
-          - "plugins"
-          - "modules"
+          - "test_persist_qml"
+          - "test_fullapi_cpp"
 
       - title: "Prove the copy is self-contained: zero store references in its dynamic-link metadata"
         text: |
@@ -606,18 +627,23 @@ sections:
           inside the bundle, or a system library — never a store path.
         run: |
           set -e
-          BUNDLE=/tmp/basecamp-persist/moved/bundle
+          BUNDLE=build/persist/moved/bundle
           case "$(uname -s)" in
             Darwin) list_dynlinks() { otool -l "$1"; } ;;
             Linux)  list_dynlinks() { ldd "$1" 2>/dev/null || true; } ;;
           esac
+          # A file list + while-read instead of for-in-$(...): survives
+          # whitespace in paths and keeps the counters in this shell. An
+          # empty list falls through to "scanned 0", which fails the
+          # expectation below rather than aborting mid-script.
+          find "$BUNDLE" -type f -exec file {} + | grep -E "Mach-O|ELF" | cut -d: -f1 > build/persist/dynobjects.txt || true
           total=0; bad=0
-          for f in $(find "$BUNDLE" -type f -exec file {} + | grep -E "Mach-O|ELF" | cut -d: -f1); do
+          while IFS= read -r f; do
             total=$((total+1))
             if list_dynlinks "$f" | grep -q "/nix/store"; then
               bad=$((bad+1)); echo "STORE-REF: $f"
             fi
-          done
+          done < build/persist/dynobjects.txt
           echo "scanned $total dynamic objects, $bad with store references"
           if [ "$total" -gt 0 ] && [ "$bad" -eq 0 ]; then
             echo "BUNDLE-IS-SELF-CONTAINED"
@@ -627,7 +653,7 @@ sections:
 
       - title: "Launch from the moved copies and verify everything still works"
         ui_test:
-          launch: "/tmp/basecamp-persist/moved/bundle/bin/LogosBasecamp --user-dir /tmp/basecamp-persist/moved/user"
+          launch: "./build/persist/moved/bundle/bin/LogosBasecamp --user-dir ./build/persist/moved/user"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
