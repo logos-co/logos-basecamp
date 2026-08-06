@@ -248,12 +248,24 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                 if (name == QStringLiteral("package_manager_ui")) {
                     QObject* replica = bridge->module(name);
                     if (replica) {
-                        connect(replica, SIGNAL(navigateToRepositoriesRequested()),
-                                this,    SIGNAL(navigateToRepositoriesRequested()));
-                        connect(replica,
-                                SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
-                                this,
-                                SLOT(onPmuiInstallProgress(int,QString,int,int,bool,QString)));
+                        // String-based connects resolve against the replica's
+                        // metaobject at runtime — a signature drift in the PMU
+                        // .rep would fail silently, so guard each result.
+                        if (!connect(replica, SIGNAL(navigateToRepositoriesRequested()),
+                                     this,    SIGNAL(navigateToRepositoriesRequested()))) {
+                            qCritical() << "package_manager_ui replica signal"
+                                        << "navigateToRepositoriesRequested() not found"
+                                        << "- signature drift vs package_manager_ui.rep?";
+                        }
+                        if (!connect(replica,
+                                     SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
+                                     this,
+                                     SLOT(onPmuiInstallProgress(int,QString,int,int,bool,QString)))) {
+                            qCritical() << "package_manager_ui replica signal"
+                                        << "installationProgressUpdated(...) not found"
+                                        << "- signature drift vs package_manager_ui.rep?"
+                                        << "Install failures will NOT surface in the UI.";
+                        }
                     }
                 }
             }
