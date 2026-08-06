@@ -446,7 +446,7 @@ sections:
 
             # Settle vs. proof, and the screenshot's anchor — see the install
             # gate above. Doubly worth asserting here: upgradeCascade is a
-            # DISTINCT dialog instance from uninstallCascade, and only
+            # DISTINCT dialog instance from the uninstall dialog, and only
             # `visible` can tell the two apart.
             - name: "…and it is the upgrade gate that is open"
               action: expect_property
@@ -538,13 +538,13 @@ sections:
               timeout: 30000
 
             # Settle vs. proof, and the screenshot's anchor — see the install
-            # gate above. The upgrade story ran uninstallCascade's twin
-            # (upgradeCascade) a few steps ago, so a text match here proves
-            # even less than usual.
-            - name: "…and it is the uninstall-cascade dialog that is open"
+            # gate above. The upgrade story ran the dedicated UninstallDialog's
+            # sibling (upgradeCascade) a few steps ago, so a text match here
+            # proves even less than usual.
+            - name: "…and it is the uninstall dialog that is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "confirmationDialog.uninstallCascade"
+              find_value: "uninstallDialog"
               property: "visible"
               value: true
 
