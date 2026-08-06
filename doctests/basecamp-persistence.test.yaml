@@ -1,0 +1,710 @@
+name: "Installed apps survive a restart — and a move: Basecamp persistence & portability"
+output: basecamp-persistence.md
+release: ""
+
+intro: |
+  Installing an app is only useful if it is still there tomorrow. This doc-test
+  proves **persistence** — and then **portability** — with three launches of
+  the real, shippable Basecamp bundle:
+
+  1. **Install** a local `.lgx` (a tiny QML-only app) the only way Basecamp
+     installs anything — through the bundled Package Manager app, confirmed by
+     Basecamp's **install gate** — and open it once to see it run.
+  2. **Install a core module** the same way: a second `.lgx` whose payload is
+     *compiled code* (a shared library built hermetically from
+     `logos-test-modules`), routed through the very same gate.
+  3. **Relaunch** the bundle against the same user-dir. No install events, no
+     gates, no reload workarounds this time: the boot-time scan rediscovers
+     both packages on disk — the app is back in the sidebar and renders its
+     payload, and the core module is back in the Module Inspector.
+  4. **Move everything.** "Portable" is a claim about *place*, not just time:
+     copy the bundle out of the Nix store onto plain disk, prove the copy's
+     dynamic-link metadata carries not a single `/nix/store` reference, move
+     the user-dir to a different absolute path, delete the original `.lgx`
+     files — then launch a third time entirely from the moved copies. The app
+     and the module are still there, and the compiled payload still loads.
+
+  The persistence layer under test is the user dir: an installed app lands
+  under `<user-dir>/plugins/`, an installed core module under
+  `<user-dir>/modules/`, and everything the second launch knows about either
+  comes from those files alone.
+
+  The run is **hermetic**: the app fixture is hand-crafted in the spec itself
+  (see the package-lifecycle doc-test for the full anatomy of an `.lgx` —
+  this spec reuses its recipe for a single version), the core-module fixture
+  is built from a pinned `logos-test-modules` flake via Nix and repacked into
+  an `.lgx`, and everything installs into a throwaway `--user-dir`. The
+  bundle does fetch its default repository's catalog in the background, but
+  nothing from it is downloaded or installed here.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle and the logos-qt-mcp UI driver, two
+  local `.lgx` packages — a hand-crafted QML-only app and a compiled core
+  module repacked from a hermetic Nix build — and three headless UI runs:
+  the first installs both through Basecamp's install gate; the second
+  relaunches the bundle against the same user-dir and proves both survived
+  the restart; the third runs a store-free copy of the bundle against a
+  moved user-dir and proves the whole arrangement is portable.
+
+what_you_learn:
+  - Where installed packages live — apps under the user dir's `plugins/`, core modules under its `modules/` — and that those files are the only thing a restart needs
+  - That a compiled core module travels the exact same `.lgx` + install-gate path as a QML app; only the payload differs
+  - That a relaunched Basecamp rediscovers installed packages from disk alone — sidebar entry, Module Inspector row, metadata, and payload — with no install events involved
+  - What "portable" means mechanically — every dynamic-link reference in the shipped bundle is `@rpath`/`$ORIGIN`-relative or a system library, so a byte-for-byte folder copy runs from any path, with no Nix store behind it
+  - That the installed state is path-independent too — a moved user-dir, with the original `.lgx` files deleted, still yields the app and a loadable module
+  - Why the first launch needs a manual reload after a local app install (a current stack bug) while a fresh boot does not
+  - How to drive a multi-launch scenario headlessly with logos-qt-mcp
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
+  - |
+    **If upgrading from Basecamp 0.1.1 or lower:**
+
+    > ⚠️ **Please clear your user dir before running** ⚠️
+    >
+    > - macOS: `~/Library/Application Support/Logos/LogosBasecamp`
+    > - Linux: `~/.config/Logos/LogosBasecamp` or `~/.local/share/Logos/LogosBasecamp`
+
+    Package state written by Basecamp 0.1.1 or older is not compatible with the
+    install flow driven here. This doc-test itself is unaffected — it isolates
+    everything under a throwaway `--user-dir` — but if you follow along against
+    your real Basecamp install (i.e. run the bundle *without* `--user-dir`), a
+    stale user dir from an old version can make installs misbehave.
+
+sections:
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+      - title: "Build the lgx packaging CLI"
+        text: |
+          [`lgx`](https://github.com/logos-co/logos-package) is the packaging
+          tool — used below to add the payload to the fixture package and stamp
+          its content hashes.
+        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
+        check_file: "result-lgx/bin/lgx"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle — the same
+      self-contained directory you ship, with the QML inspector compiled in so
+      the driver can attach (`#bin-bundle-dir-inspector`, the inspector-enabled
+      twin of `#bin-bundle-dir`).
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Craft the LGX fixture packages: an app and a core module"
+    step: true
+    text: |
+      Two fixtures. First a QML-only (`ui_qml`) app, version 0.1.1. An `.lgx` is a gzipped
+      **ustar** tar: a `manifest.json` at the root and the payload under
+      `variants/<platform>/` — for a QML-only app the payload is three tiny
+      text files. The manifest must carry content hashes, so the package is
+      built in two moves: seed a tar with just the manifest, then let
+      [`lgx add`](https://github.com/logos-co/logos-package) inject the
+      payload and stamp the hashes. (The package-lifecycle doc-test walks
+      this anatomy in detail.)
+
+      The manifest's `display_name` ("Persistence Demo") is what Basecamp
+      shows in the sidebar; its `name` (`test_persist_qml`) must match the
+      QML module URI declared in `qmldir`.
+    steps:
+      - title: "Write the manifest"
+        text: |
+          A `ui_qml` package has no binary entry points, so `main` stays empty
+          and `view` names the QML file to load:
+        file:
+          path: build/persist/manifest.json
+          language: json
+          content: |
+            {
+              "author": "",
+              "category": "testing",
+              "dependencies": [],
+              "description": "Persistence doc-test fixture (QML-only app)",
+              "display_name": "Persistence Demo",
+              "icon": "",
+              "main": {},
+              "manifestVersion": "0.3.0",
+              "name": "test_persist_qml",
+              "type": "ui_qml",
+              "version": "0.1.1",
+              "view": "Main.qml"
+            }
+
+      - title: "Write the module metadata"
+        file:
+          path: build/persist/payload/metadata.json
+          language: json
+          content: |
+            {
+              "name": "test_persist_qml",
+              "display_name": "Persistence Demo",
+              "version": "0.1.1",
+              "type": "ui_qml",
+              "category": "testing",
+              "description": "Persistence doc-test fixture (QML-only app)",
+              "view": "Main.qml",
+              "dependencies": []
+            }
+
+      - title: "Write the QML view"
+        text: |
+          The app's whole UI. It prints its own version, so the second launch
+          can prove not just that *an* app came back but that the exact
+          installed payload did:
+        file:
+          path: build/persist/payload/Main.qml
+          language: qml
+          content: |
+            import QtQuick
+
+            Rectangle {
+                id: root
+                color: "#1e1e1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "Persistence demo view v0.1.1"
+                    color: "#ffffff"
+                    font.pixelSize: 24
+                }
+            }
+
+      - title: "Write the qmldir"
+        file:
+          path: build/persist/payload/qmldir
+          language: text
+          content: |
+            module com.logos.module.test_persist_qml
+
+      - title: "Pack the .lgx and prepare an empty user-dir"
+        text: |
+          Detect the host's platform variant, seed the package with the
+          manifest (plain **ustar** — the LGX reader doesn't speak macOS
+          `tar`'s default pax headers), `lgx add` the payload, and verify. The
+          archive lands at a **fixed absolute path** (`/tmp/basecamp-persist/`)
+          because the UI run passes it into the app over the inspector, where
+          a relative path would be ambiguous. The fresh, empty `--user-dir`
+          created alongside is the star of this spec — it is the only thing
+          that carries state from the first launch to the second.
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   VARIANT=linux-x86_64 ;;
+            "Linux aarch64")  VARIANT=linux-arm64 ;;
+            "Darwin arm64")   VARIANT=darwin-arm64 ;;
+            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          chmod -R u+w /tmp/basecamp-persist 2>/dev/null || true
+          rm -rf /tmp/basecamp-persist
+          mkdir -p /tmp/basecamp-persist
+          seed="build/persist/seed"
+          rm -rf "$seed"
+          mkdir -p "$seed/variants"
+          cp build/persist/manifest.json "$seed/manifest.json"
+          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx manifest.json variants
+          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx \
+            --variant "$VARIANT" --files build/persist/payload -y
+          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx
+          chmod -R u+w testdata/persist-user 2>/dev/null || true
+          rm -rf testdata/persist-user
+          mkdir -p testdata/persist-user/modules testdata/persist-user/plugins
+          ls /tmp/basecamp-persist
+        expect_contains:
+          - "Package structure is valid"
+          - "test_persist_qml-0.1.1.lgx"
+
+      - title: "Build and pack the core-module fixture"
+        text: |
+          A core module's payload is **compiled code**, so it can't be
+          hand-written like the QML app — instead, build the `test_fullapi_cpp`
+          module from [`logos-test-modules`](https://github.com/logos-co/logos-test-modules)
+          as a portable install output (the same hermetic source the full-API
+          doc-tests use, so it is known to load inside the bundle). That
+          output *is* an installed package — a stamped `manifest.json`, a
+          `variant` marker, and the shared library with its bundled deps — so
+          repacking it as an `.lgx` is the hand-crafting recipe in reverse:
+          seed a tar with its manifest, `lgx add` the binaries back in as the
+          variant payload, and let it restamp the content hashes.
+        run: |
+          set -e
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-module
+          SRC=result-port-module/modules/test_fullapi_cpp
+          VARIANT=$(cat "$SRC/variant")
+          payload=build/persist/module-payload
+          seed=build/persist/module-seed
+          rm -rf "$payload" "$seed"
+          mkdir -p "$payload" "$seed/variants"
+          for f in "$SRC"/*; do
+            base=$(basename "$f")
+            [ "$base" = "manifest.json" ] && continue
+            [ "$base" = "variant" ] && continue
+            cp -RL "$f" "$payload/"
+          done
+          cp -L "$SRC/manifest.json" "$seed/manifest.json"
+          chmod -R u+w "$payload" "$seed"
+          # The module's entry point (per-variant `main` in its manifest,
+          # e.g. test_fullapi_cpp_plugin.dylib) — lgx add needs it explicitly
+          # when the payload is a directory. The grep -v filters out the
+          # same-named content-hash key ("variants/<variant>").
+          MAIN=$(grep "\"$VARIANT\"" "$SRC/manifest.json" | grep -v "variants/" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1)
+          echo "main: $MAIN"
+          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx manifest.json variants
+          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx \
+            --variant "$VARIANT" --files "$payload" --main "$MAIN" -y
+          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx
+          ls /tmp/basecamp-persist
+        expect_contains:
+          - "Package structure is valid"
+          - "test_fullapi_cpp-1.0.0.lgx"
+
+  - title: "First launch: install the app and the core module"
+    step: true
+    text: |
+      Launch the bundle headless against the empty user-dir and install the
+      fixture the only way Basecamp installs anything: the bundled **Package
+      Manager** app (`package_manager_ui`) initiates, Basecamp's install gate
+      confirms. The local-file install goes through PMU's own code path
+      (`installLocalPackage` — the same slot its "Select LGX Package" file
+      picker reaches, which a headless driver can't operate), invoked via the
+      inspector on PMU's `pmui.BackendStore` hook with an explicit `file://`
+      URL. The gate's confirm button is clicked by its stable `objectName`.
+    steps:
+      - title: "Install and open the app"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/persist-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the empty user-dir. Only the baked-in apps are present — no Persistence Demo yet."
+              screenshot: "persist-launch.png"
+
+            # The plugin's view (and the pmui.BackendStore automation hook)
+            # is created lazily on first activation — wait for PMU's own
+            # header text instead of sleeping a fixed amount.
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "The Package Manager view loads"
+              action: wait_for
+              texts: ["Manage your plugins and packages."]
+              timeout: 60000
+
+            - name: "Let its backend connections settle"
+              action: sleep
+              ms: 3000
+
+            - name: "Hand the package to the Package Manager"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-persist/test_persist_qml-0.1.1.lgx"]
+              text: "PMU inspects the LGX, sees it isn't installed, and calls the `package_manager` module's `requestInstall` gate; the module emits `beforeInstall` and Basecamp raises the install gate."
+
+            - name: "Basecamp's install gate asks for confirmation"
+              action: wait_for
+              texts:
+                - "Install Package?"
+                - "Install 'test_persist_qml' v0.1.1. No other packages need to change."
+              timeout: 30000
+              screenshot: "persist-install-dialog.png"
+
+            - name: "Confirm the install"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              text: "The decision flows back through the module gate and PMU installs the file straight from disk into the user-dir."
+
+            # WORKAROUND — same stack bug the package-lifecycle doc-test
+            # flags: `uiPluginFileInstalled` isn't emitted for QML-only
+            # packages, so nothing auto-refreshes after a fresh local
+            # install. Hit Reload on the Applications panel, as a user
+            # would. (Note for later: the second launch needs none of this.)
+            - name: "Open the Applications panel"
+              action: click
+              target: "Applications"
+
+            - name: "Applications view loads"
+              action: wait_for
+              texts: ["Install and manage applications."]
+              timeout: 30000
+
+            - name: "Reload the app list"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.reloadButton"
+
+            - name: "The app appears in the sidebar"
+              action: wait_for
+              texts: ["Persistence Demo"]
+              timeout: 60000
+              screenshot: "persist-installed.png"
+
+            - name: "Open the app from the sidebar"
+              action: click
+              target: "Persistence Demo"
+
+            - name: "The app runs in the installing process"
+              action: wait_for
+              texts: ["Persistence demo view v0.1.1"]
+              timeout: 30000
+              text: "The baseline: in the process that performed the install, the app is listed and runs. Whether any of this survives the process is the next section's question."
+              screenshot: "persist-app.png"
+
+            # ── Install the core module ────────────────────────────────────
+            # Same entry point, different package type: the payload is a
+            # compiled shared library, but PMU inspects and gates it exactly
+            # like the QML app.
+            - name: "Return to the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "Hand the core-module package to the Package Manager"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-persist/test_fullapi_cpp-1.0.0.lgx"]
+              text: "The same `installLocalPackage` → `inspectPackage` → `requestInstall` route as the app — a core module is just an `.lgx` whose payload happens to be compiled code."
+
+            - name: "The install gate asks about the module"
+              action: wait_for
+              texts:
+                - "Install Package?"
+                - "Install 'test_fullapi_cpp' v1.0.0. No other packages need to change."
+              timeout: 30000
+              screenshot: "persist-module-install-dialog.png"
+
+            - name: "Confirm the module install"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              text: "PMU installs the module's files under the user dir's `modules/`."
+
+            - name: "Give the install a moment to complete"
+              action: sleep
+              ms: 5000
+
+            # The installed module's row in the Module Inspector — like the
+            # app's sidebar entry above, visibility in the installing process
+            # is the baseline, not the persistence proof.
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings loads"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Open the Module Inspector"
+              action: click
+              target: "Module Inspector"
+
+            - name: "The installed core module is listed"
+              action: wait_for
+              texts: ["test_fullapi_cpp"]
+              timeout: 60000
+              screenshot: "persist-module-installed.png"
+        post_text: |
+          Both installs landed in `testdata/persist-user` — the app under
+          `plugins/`, the core module under `modules/`. That directory is all
+          the next launch gets.
+
+  - title: "Second launch: the app and the module are still there"
+    step: true
+    text: |
+      Shut the first instance down and launch a fresh one against the **same**
+      user-dir. Nothing is installed in this run and no reload workaround is
+      needed: the relaunched bundle's boot-time scan finds both packages in
+      the user dir, so the app is simply *there* — in the sidebar, running
+      its payload — and the core module is back in the Module Inspector.
+      This is the persistence proof: everything the process knows about
+      either package it learned from disk.
+    steps:
+      - title: "Relaunch and verify both packages survived"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/persist-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "The bundle relaunches against the same user-dir"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "A brand-new process, same `--user-dir`. Everything it knows about the Persistence Demo app it can only know from the files the first launch installed."
+              screenshot: "persist-relaunch.png"
+
+            # No install call, no gate, no Reload click preceded this — the
+            # sidebar entry can only come from the boot-time scan of the
+            # user-dir. This is the persistence assertion.
+            - name: "The installed app is back in the sidebar — from disk alone"
+              action: wait_for
+              texts: ["Persistence Demo"]
+              timeout: 60000
+              text: "The app is in the sidebar of a process that never saw an install: the boot-time scan rediscovered the package from the user dir. That's what surviving a restart means. (Note the fresh boot also needs no Reload — the workaround above is only about missing *live* install events.)"
+
+            - name: "Open the app from the sidebar"
+              action: click
+              target: "Persistence Demo"
+
+            - name: "It loads and renders the installed payload"
+              action: wait_for
+              texts: ["Persistence demo view v0.1.1"]
+              timeout: 30000
+              text: "Not just listed but loadable: the plugin loads from the persisted files and the view prints its version — the exact installed payload is what runs after the restart."
+              screenshot: "persist-restart-app.png"
+
+            # ── The core module survived too ───────────────────────────────
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings loads"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Open the Module Inspector"
+              action: click
+              target: "Module Inspector"
+
+            - name: "The Module Inspector loads"
+              action: wait_for
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
+              timeout: 30000
+
+            # Collapse the table to the fixture's row so the row-level texts
+            # below ("Not loaded", "Load", "Loaded", "Unload") are
+            # unambiguous — every other row is a baked-in module carrying the
+            # same button/status labels.
+            - name: "Filter the module table down to the fixture"
+              action: set_property
+              find_by: "objectName"
+              find_value: "moduleInspectorView"
+              property: "searchText"
+              value: "test_fullapi_cpp"
+
+            # Like the sidebar assertion above: no install preceded this in
+            # the current process, so the row can only come from the
+            # boot-time scan of the user-dir's modules/.
+            - name: "The installed core module is back — from disk alone"
+              action: wait_for
+              texts: ["test_fullapi_cpp", "Not loaded"]
+              timeout: 60000
+              text: "The module is listed in a process that never saw its install: the runtime rediscovered the compiled payload from the user dir's `modules/`, exactly as it rediscovered the QML app from `plugins/`. Installed modules come back **known but not loaded** — running a module is an explicit act, so a restart restores availability, not the previous load state."
+              screenshot: "persist-restart-modules.png"
+
+            # Clicked by its per-module objectName — "Load"/"Unload" labels
+            # repeat across rows and across the (hidden) Apps Inspector
+            # table, so a text click is not reliable here.
+            - name: "Load the persisted module"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+
+            - name: "Give the runtime time to load the shared library"
+              action: sleep
+              ms: 10000
+
+            # The load-success assertion reads the row's status badge by its
+            # per-module objectName rather than waiting on row texts —
+            # "Loaded"/"Unload" wording also exists in the (hidden) Apps
+            # Inspector table, so a bare text wait can pass without this
+            # row ever changing.
+            - name: "The compiled payload loaded into the runtime"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+              text: "The module-side twin of opening the app: the runtime loaded the shared library from the persisted files and the fixture's own status badge flips to **Loaded**. The restart preserved not just a listing but a working, loadable binary."
+              screenshot: "persist-restart-module-loaded.png"
+        post_text: |
+          Two green runs prove the persistence contract for both package
+          types: a gate-confirmed install writes everything into the user dir
+          — the app under `plugins/`, the core module under `modules/` — and
+          a fresh Basecamp process reconstructs both from that directory
+          alone, with no install machinery involved. One claim is still
+          untested, though: everything so far ran from the bundle's original
+          Nix store path, against the user-dir's original location. The next
+          section takes both away.
+
+  - title: "Third launch: move everything — the bundle is truly portable"
+    step: true
+    text: |
+      A **portable** build claims more than surviving a restart: nothing may
+      tie the bundle to *where it was built*, nor the installed state to
+      *where it was installed*. This section calls that bluff in three moves —
+      copy the bundle out of the Nix store onto plain disk, prove the copy
+      carries no dynamic-link reference back into the store, and move the
+      user-dir to a different absolute path while deleting the original
+      `.lgx` files. Then a third launch runs entirely from the moved copies:
+      a machine without Nix would see exactly what this launch sees.
+    steps:
+      - title: "Copy the bundle out of the store, move the user-dir"
+        text: |
+          `cp -R` on the out-link is the honest test: it follows the
+          `result-bundle` symlink but preserves the symlinks *inside* the
+          bundle (all relative — Qt framework `Versions/Current` links and
+          the like), so the copy is exactly what a user gets by copying the
+          folder. The user-dir is **moved**, not copied, and the source
+          `.lgx` files are deleted — if anything in the stack remembered the
+          old user-dir path or the install-source path, the third launch
+          would notice.
+        run: |
+          set -e
+          rm -rf /tmp/basecamp-persist/moved
+          mkdir -p /tmp/basecamp-persist/moved/bundle
+          cp -R result-bundle/. /tmp/basecamp-persist/moved/bundle
+          chmod -R u+w /tmp/basecamp-persist/moved/bundle
+          mv testdata/persist-user /tmp/basecamp-persist/moved/user
+          rm -f /tmp/basecamp-persist/*.lgx
+          ls /tmp/basecamp-persist/moved /tmp/basecamp-persist/moved/user
+        expect_contains:
+          - "bundle"
+          - "plugins"
+          - "modules"
+
+      - title: "Prove the copy is self-contained: zero store references in its dynamic-link metadata"
+        text: |
+          Raw bytes are the wrong thing to grep — harmless `/nix/store`
+          strings survive in debug text. What decides whether the copy runs
+          on a store-less machine is the **dynamic-link metadata**: Mach-O
+          load commands (macOS, read with `otool` from the Xcode command-line
+          tools) or the resolved shared-library set (Linux, read with `ldd`).
+          Every dependency must be `@rpath`/`@loader_path`/`$ORIGIN`-relative,
+          inside the bundle, or a system library — never a store path.
+        run: |
+          set -e
+          BUNDLE=/tmp/basecamp-persist/moved/bundle
+          case "$(uname -s)" in
+            Darwin) list_dynlinks() { otool -l "$1"; } ;;
+            Linux)  list_dynlinks() { ldd "$1" 2>/dev/null || true; } ;;
+          esac
+          total=0; bad=0
+          for f in $(find "$BUNDLE" -type f -exec file {} + | grep -E "Mach-O|ELF" | cut -d: -f1); do
+            total=$((total+1))
+            if list_dynlinks "$f" | grep -q "/nix/store"; then
+              bad=$((bad+1)); echo "STORE-REF: $f"
+            fi
+          done
+          echo "scanned $total dynamic objects, $bad with store references"
+          if [ "$total" -gt 0 ] && [ "$bad" -eq 0 ]; then
+            echo "BUNDLE-IS-SELF-CONTAINED"
+          fi
+        expect_contains:
+          - "BUNDLE-IS-SELF-CONTAINED"
+
+      - title: "Launch from the moved copies and verify everything still works"
+        ui_test:
+          launch: "/tmp/basecamp-persist/moved/bundle/bin/LogosBasecamp --user-dir /tmp/basecamp-persist/moved/user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "The relocated bundle boots against the relocated user-dir"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "Same binary bits, entirely new paths: the bundle runs from plain disk outside the store, the user-dir sits at a path Basecamp has never seen, and the `.lgx` files the installs came from no longer exist."
+              screenshot: "portable-relaunch.png"
+
+            - name: "The installed app survived the move"
+              action: wait_for
+              texts: ["Persistence Demo"]
+              timeout: 60000
+
+            - name: "Open the app from the sidebar"
+              action: click
+              target: "Persistence Demo"
+
+            - name: "Its payload renders from the moved user-dir"
+              action: wait_for
+              texts: ["Persistence demo view v0.1.1"]
+              timeout: 30000
+              text: "The restart proof, replayed at a new address: the boot-time scan found the app in the moved `plugins/`, and the payload it renders came along."
+              screenshot: "portable-app.png"
+
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings loads"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Open the Module Inspector"
+              action: click
+              target: "Module Inspector"
+
+            - name: "Filter the module table down to the fixture"
+              action: set_property
+              find_by: "objectName"
+              find_value: "moduleInspectorView"
+              property: "searchText"
+              value: "test_fullapi_cpp"
+
+            - name: "The core module survived the move"
+              action: wait_for
+              texts: ["test_fullapi_cpp", "Not loaded"]
+              timeout: 60000
+
+            - name: "Load the moved module"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+
+            - name: "Give the runtime time to load the shared library"
+              action: sleep
+              ms: 10000
+
+            - name: "The compiled payload loads from its new location"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+              text: "The strongest portability claim in the spec: a shared library installed at one path, moved to another, `dlopen`ed by a bundle copy running outside the store — and it loads. No byte of this launch touched an original location."
+              screenshot: "portable-module-loaded.png"
+        post_text: |
+          Three green runs, three claims pinned down. Persistence: a
+          gate-confirmed install writes everything into the user dir and a
+          fresh process reconstructs both packages from that directory alone.
+          Self-containment: the shipped bundle's dynamic-link metadata holds
+          zero `/nix/store` references, verified over every binary in a copy
+          on plain disk. Portability: bundle and state both keep working
+          after being moved — proving neither remembers where it came from.
+          Uninstalling, upgrading, and the gates themselves are the
+          package-lifecycle doc-test's territory; this spec pins down what
+          that doc-test's single launch could not: installs outlive the
+          process, and the process outlives its path.

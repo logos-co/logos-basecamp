@@ -188,6 +188,12 @@ Item {
 
                     Item {
                         ModuleStatusBadge {
+                            // Automation-only: per-module handle so UI tests
+                            // can assert one row's load state — the badge
+                            // wording ("Loaded"/"Not loaded") also appears in
+                            // other tables, so text matching is ambiguous.
+                            objectName: "moduleInspector.status."
+                                        + (rowItem && rowItem.name ? rowItem.name : "")
                             anchors.left: parent.left
                             anchors.verticalCenter: parent.verticalCenter
                             row: rowItem

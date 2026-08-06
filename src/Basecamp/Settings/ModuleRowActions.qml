@@ -26,6 +26,9 @@ RowLayout {
     spacing: Theme.spacing.small
 
     LogosButton {
+        // Automation-only: per-module handle so UI tests can click one row's
+        // toggle — the "Load"/"Unload" labels repeat across rows and tables.
+        objectName: "moduleRow.loadToggle." + (root.row && root.row.name ? root.row.name : "")
         Layout.preferredWidth: 100
         Layout.preferredHeight: 40
         radius: Theme.spacing.radiusLarge
