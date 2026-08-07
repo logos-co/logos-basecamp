@@ -36,6 +36,18 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     subscribeToPackageInstallationEvents();
     subscribeToPackageDownloaderEvents();
 
+    // A module absent at startup may be installed and loaded later in the
+    // session. Without this the guards above would turn a 6-minute stall into a
+    // silently non-functional Modules view, which is a worse bug. Both
+    // subscribe functions are idempotent, so re-running them is free once armed.
+    if (m_coreModuleManager) {
+        connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
+                this, [this]() {
+                    subscribeToPackageInstallationEvents();
+                    subscribeToPackageDownloaderEvents();
+                });
+    }
+
     // NB: initial metadata fetch is deferred until MainUIBackend calls
     // refresh() — the uiPluginsFetched signal would otherwise fire before
     // UIPluginManager's setPackageCoordinator runs and the slot connection
@@ -45,16 +57,54 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
 
 PackageCoordinator::~PackageCoordinator() = default;
 
+namespace {
+
+// Is a module actually loaded in THIS process?
+//
+// The obvious guard -- `client->isConnected()` -- was dead code: QtRO's
+// connectToNode() only validates the URL scheme and never contacts a peer, so
+// it reported "connected" for modules that were never loaded. Every call past
+// it then blocked 20 s in waitForSource, twice over (the token handshake tries
+// capability_module first). Measured cost with package_manager absent: ~417 s
+// of blocked GUI thread on macOS and 361 s on Linux before Basecamp's window
+// appeared, because all of this runs inside the Window constructor.
+//
+// logos_core_get_loaded_modules answers the same question in-process, with no
+// IPC and no timeout. The same guard already ships in
+// logos-logoscore-cli/src/daemon/daemon.cpp, which skips its identical
+// setEmbeddedModulesDirectory block and reports that package commands are
+// unavailable for the session.
+bool moduleIsLoaded(CoreModuleManager* core, const QString& name)
+{
+    if (!core) {
+        // No oracle available: keep the previous behaviour rather than silently
+        // disabling package management.
+        return true;
+    }
+    return core->loadedModules().contains(name);
+}
+
+} // namespace
+
 void PackageCoordinator::subscribeToPackageInstallationEvents()
 {
     if (!m_logosAPI) {
         return;
     }
 
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) {
+    if (m_packageManagerSubscribed) {
         return;
     }
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) {
+        if (!m_warnedPackageManagerMissing) {
+            m_warnedPackageManagerMissing = true;
+            qWarning() << "PackageCoordinator: package_manager is not loaded -- skipping its "
+                          "directory setup and event subscriptions. Package management is "
+                          "unavailable until it loads; this will be retried automatically.";
+        }
+        return;
+    }
+    m_packageManagerSubscribed = true;
 
     LogosModules logos(m_logosAPI);
 
@@ -225,8 +275,18 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
 {
     if (!m_logosAPI) return;
 
-    LogosAPIClient* client = m_logosAPI->getClient("package_downloader");
-    if (!client || !client->isConnected()) return;
+    if (m_packageDownloaderSubscribed) {
+        return;
+    }
+    if (!moduleIsLoaded(m_coreModuleManager, "package_downloader")) {
+        if (!m_warnedPackageDownloaderMissing) {
+            m_warnedPackageDownloaderMissing = true;
+            qWarning() << "PackageCoordinator: package_downloader is not loaded -- skipping its "
+                          "event subscriptions; this will be retried automatically.";
+        }
+        return;
+    }
+    m_packageDownloaderSubscribed = true;
 
     LogosModules logos(m_logosAPI);
     logos.package_downloader.on("catalogChanged", [this](const QVariantList&) {
