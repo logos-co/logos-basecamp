@@ -470,6 +470,15 @@ if(APPLE)
         PREFIX ""
         SUFFIX ".dylib"
     )
+elseif(WIN32)
+    # Windows MUST be tested before the else-branch. Without it the plugin was
+    # emitted as main_ui.so -- a genuine PE carrying a Unix extension -- and
+    # app/window.cpp looks for ".dll" on Q_OS_WIN, so it would never be found
+    # and the app would report "No main UI" with nothing obviously wrong.
+    set_target_properties(main_ui PROPERTIES
+        PREFIX ""
+        SUFFIX ".dll"
+    )
 else()
     set_target_properties(main_ui PROPERTIES
         PREFIX ""

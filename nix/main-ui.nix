@@ -142,6 +142,8 @@ pkgs.stdenv.mkDerivation {
     # Find and copy the built library file
     if [ -f "build/main_ui.dylib" ]; then
       cp build/main_ui.dylib $out/lib/
+    elif [ -f "build/main_ui.dll" ]; then
+      cp build/main_ui.dll $out/lib/
     elif [ -f "build/main_ui.so" ]; then
       cp build/main_ui.so $out/lib/
     else
