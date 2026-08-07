@@ -47,10 +47,17 @@ void PluginLoader::load(const PluginLoadRequest& request)
 
     setLoading(request.name, true);
 
-    // Yield to the event loop so the UI can paint the loading state
-    QTimer::singleShot(0, this, [this, request]() {
-        startLoad(request);
-    });
+    // Deferred dispatch yields to the event loop so the UI can paint the
+    // loading state; runExclusive because startLoad enters logos_core_*.
+    if (m_coreModuleManager) {
+        m_coreModuleManager->runExclusive(this, [this, request]() {
+            startLoad(request);
+        });
+    } else {
+        QTimer::singleShot(0, this, [this, request]() {
+            startLoad(request);
+        });
+    }
 }
 
 bool PluginLoader::isLoading(const QString& name) const

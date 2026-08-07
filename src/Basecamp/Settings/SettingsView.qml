@@ -15,6 +15,7 @@ Rectangle {
     property var    uiModulesModel:      null
     property var    coreModulesModel:    null
     property bool   modulesLoading:      false
+    property bool   moduleOpsBusy:       false
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -193,6 +194,7 @@ Rectangle {
                     AppsInspectorView {
                         sourceModel: root.uiModulesModel
                         loading:     root.modulesLoading
+                        opsBusy:     root.moduleOpsBusy
                         searchText:  d.searchText
 
                         onReloadRequested: root.appsRefreshRequested()
@@ -205,6 +207,7 @@ Rectangle {
                     ModuleInspectorView {
                         sourceModel: root.coreModulesModel
                         loading:     root.modulesLoading
+                        opsBusy:     root.moduleOpsBusy
                         searchText:  d.searchText
 
                         onReloadRequested: root.modulesRefreshRequested()

@@ -109,6 +109,10 @@ class MainUIBackend : public QObject {
     // kicked together (e.g. on tab show) share one spinner.
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
+    // Disables the inspector Load/Unload toggles while a module op is
+    // queued or running (see CoreModuleManager::runExclusive).
+    Q_PROPERTY(bool moduleOpsBusy READ moduleOpsBusy NOTIFY moduleOpsBusyChanged)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -132,6 +136,7 @@ public:
     bool dependencyDataReady() const;
     bool packageIpcDegraded() const;
     bool modulesLoading() const;
+    bool moduleOpsBusy() const;
 
     // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
     // a handle to the managers directly. QML goes through the delegating
@@ -277,6 +282,7 @@ signals:
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
     void modulesLoadingChanged();
+    void moduleOpsBusyChanged();
     void repositoryOperationCompleted(const QString& operation,
                                       const QString& url,
                                       bool success,

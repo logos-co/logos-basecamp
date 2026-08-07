@@ -76,6 +76,7 @@ Item {
             uiModulesModel:      backend.uiModulesModel
             coreModulesModel:    backend.coreModulesModel
             modulesLoading:      backend.modulesLoading
+            moduleOpsBusy:       backend.moduleOpsBusy
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)

@@ -152,6 +152,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
             this, &MainUIBackend::refreshCoreModulesModel);
     connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
             this, &MainUIBackend::refreshCoreModulesModel);
+    connect(m_coreModuleManager, &CoreModuleManager::moduleOpsBusyChanged,
+            this, &MainUIBackend::moduleOpsBusyChanged);
 
     // Kick the first catalog scan now that all wiring is in place. We do
     // this AFTER setPackageCoordinator (and its signal connections) so the
@@ -311,6 +313,9 @@ bool MainUIBackend::packageIpcDegraded() const
 
 bool MainUIBackend::modulesLoading() const
 { return m_modulesLoadingCount > 0; }
+
+bool MainUIBackend::moduleOpsBusy() const
+{ return m_coreModuleManager && m_coreModuleManager->moduleOpsBusy(); }
 
 void MainUIBackend::beginModulesLoading()
 {

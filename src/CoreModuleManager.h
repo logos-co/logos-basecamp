@@ -2,9 +2,13 @@
 
 #include <QObject>
 #include <QMap>
+#include <QPair>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
+#include <QVector>
+#include <functional>
 #include "logos_api.h"
 
 class QTimer;
@@ -54,6 +58,16 @@ public:
     // callbacks then; see PackageCoordinator::rewirePackageIpc).
     bool moduleOperationInFlight() const { return m_moduleOpDepth > 0; }
 
+    // Run `op` serialized against all other module ops and off the caller's
+    // signal-handler stack — the logos_core_* nested event loops deliver
+    // queued events, so a re-entrant second op would deadlock liblogos.
+    // Ops whose `context` died while queued are skipped.
+    void runExclusive(QObject* context, std::function<void()> op);
+
+    // True while runExclusive ops are queued or running (drives the
+    // inspector toggles' disabled state via MainUIBackend).
+    bool moduleOpsBusy() const { return m_opDraining || !m_opQueue.isEmpty(); }
+
     // Cached stats as of the last timer tick (may be up to ~2s stale). Empty
     // entries for modules the poller hasn't seen yet. QML renders "0.0" via
     // the caller's compose layer when absent — we return the raw map here.
@@ -79,6 +93,8 @@ signals:
     // re-wire package IPC.
     void coreModulesChanged();
 
+    void moduleOpsBusyChanged();
+
 private slots:
     void updateModuleStats();
 
@@ -86,7 +102,18 @@ private:
     // Queued coreModulesChanged emit — keeps receivers off the C-API call stack.
     void notifyModuleSetChanged();
 
+    void drainOpQueue();
+
+    // Emits moduleOpsBusyChanged only on actual transitions.
+    void notifyOpsBusyChanged();
+
     int m_moduleOpDepth = 0; // see moduleOperationInFlight()
+
+    // runExclusive state.
+    QVector<QPair<QPointer<QObject>, std::function<void()>>> m_opQueue;
+    bool m_opDraining = false;
+    bool m_opDrainScheduled = false;
+    bool m_opsBusyNotified = false;
 
     LogosAPI* m_logosAPI;   // not owned
     QTimer*   m_statsTimer; // owned (parent=this)

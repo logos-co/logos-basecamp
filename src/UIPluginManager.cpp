@@ -295,11 +295,11 @@ void UIPluginManager::unloadUiModule(const QString& moduleName)
     // the button that was just clicked. QQuickItemPrivate::derefWindow then
     // crashes trying to walk that button's child tree while the window pointer
     // on one of its children is already null.
-    // Deferring via QueuedConnection lets the click handler fully unwind first;
-    // by the time the lambda runs the Repeater delegate tree is stable again.
-    QMetaObject::invokeMethod(this, [this, moduleName]{
+    // Deferring lets the click handler fully unwind first; by the time the
+    // lambda runs the Repeater delegate tree is stable again.
+    m_coreModuleManager->runExclusive(this, [this, moduleName]{
         unloadUiModuleImpl(moduleName);
-    }, Qt::QueuedConnection);
+    });
 }
 
 void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
@@ -398,24 +398,21 @@ QString UIPluginManager::currentVisibleApp() const
 
 void UIPluginManager::loadCoreModule(const QString& moduleName)
 {
-    // Defer the ENTIRE body — not just the emit. Callers are typically
-    // QML Button.onClicked handlers, and m_coreModuleManager->loadModule
-    // ultimately calls logos_core_load_module_with_dependencies, which
-    // internally spins a nested Qt event loop (via
+    // runExclusive defers the ENTIRE body — not just the emit. Callers are
+    // typically QML Button.onClicked handlers, and
+    // m_coreModuleManager->loadModule ultimately calls
+    // logos_core_load_module_with_dependencies, which internally spins a
+    // nested Qt event loop (via
     // QConnectedReplicaImplementation::waitForSource during the
     // informModuleToken round-trip, see liblogos_core). Running that
     // nested loop while a QML signal handler is still on the stack lets
     // Qt deliver a pending DeferredDelete for the firing Button/Repeater
     // delegate, and then the destructor trips "Object destroyed while
     // one of its QML signal handlers is in progress" → qFatal.
-    // Queueing through the event loop lets the click handler unwind
-    // first; the nested loop is then harmless.
-    QMetaObject::invokeMethod(this, [this, moduleName]{
+    m_coreModuleManager->runExclusive(this, [this, moduleName]{
         qDebug() << "Loading core module:" << moduleName;
 
-        bool success = m_coreModuleManager
-                     ? m_coreModuleManager->loadModule(moduleName)
-                     : false;
+        bool success = m_coreModuleManager->loadModule(moduleName);
 
         if (success) {
             qDebug() << "Successfully loaded core module:" << moduleName;
@@ -423,7 +420,7 @@ void UIPluginManager::loadCoreModule(const QString& moduleName)
         } else {
             qDebug() << "Failed to load core module:" << moduleName;
         }
-    }, Qt::QueuedConnection);
+    });
 }
 
 void UIPluginManager::unloadCoreModule(const QString& moduleName)
@@ -448,7 +445,7 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
     // the nested loop while the click handler is still on the stack is
     // what trips QQmlData::destroyed's "Object destroyed while one of its
     // QML signal handlers is in progress" qFatal.
-    QMetaObject::invokeMethod(this, [this, moduleName]{
+    m_coreModuleManager->runExclusive(this, [this, moduleName]{
         qDebug() << "Unloading core module:" << moduleName;
 
         // Cascade check — mirror unloadUiModule. Without this, clicking
@@ -471,9 +468,7 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
             }
         }
 
-        bool success = m_coreModuleManager
-                     ? m_coreModuleManager->unloadModule(moduleName)
-                     : false;
+        bool success = m_coreModuleManager->unloadModule(moduleName);
 
         if (success) {
             qDebug() << "Successfully unloaded core module:" << moduleName;
@@ -481,7 +476,7 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
         } else {
             qDebug() << "Failed to unload core module:" << moduleName;
         }
-    }, Qt::QueuedConnection);
+    });
 }
 
 void UIPluginManager::refreshUiModules()
@@ -566,7 +561,7 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
     // spins a nested Qt event loop inside the QRemoteObjects teardown.
     // Running that while the click handler is still on the stack would
     // trip the QQmlData::destroyed qFatal.
-    QMetaObject::invokeMethod(this, [this, moduleName]{
+    m_coreModuleManager->runExclusive(this, [this, moduleName]{
         // Snapshot the loaded-dependents list BEFORE the cascade runs. Once
         // unloadModuleWithDependents returns, the target is off the loaded-
         // modules list and loadedDependentsOf would come up empty. UI-plugin
@@ -576,9 +571,7 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
         const QStringList loadedDeps = loadedDependentsOf(moduleName);
 
         qDebug() << "Cascade-unloading" << moduleName;
-        bool ok = m_coreModuleManager
-                ? m_coreModuleManager->unloadModuleWithDependents(moduleName)
-                : false;
+        bool ok = m_coreModuleManager->unloadModuleWithDependents(moduleName);
         if (!ok) {
             qWarning() << "unloadModuleWithDependents failed for" << moduleName;
             // Don't tear down the UI widget either — the core plugin is
@@ -594,7 +587,7 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
         }
 
         // The UI widget for the target itself still needs to be unloaded.
-        // We're already inside a QueuedConnection lambda so the original
+        // We're already inside a deferred runExclusive op so the original
         // click handler has returned — call the impl directly instead of
         // scheduling another async hop. m_pendingUnload is inactive so the
         // cascade guard in unloadUiModuleImpl won't re-trigger.
@@ -605,7 +598,7 @@ void UIPluginManager::confirmUnloadCascade(const QString& moduleName)
         emit coreModulesChanged();
         emit uiModulesChanged();
         emit launcherAppsChanged();
-    }, Qt::QueuedConnection);
+    });
 }
 
 void UIPluginManager::cancelUnloadCascade(const QString& moduleName)

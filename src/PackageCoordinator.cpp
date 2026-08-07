@@ -793,10 +793,8 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     // spins a nested event loop, and running that under the dialog's onClicked
     // handler trips a QQmlData::destroyed qFatal. Pending state is cleared above;
     // queue the rest so the click handler unwinds first.
-    QPointer<PackageCoordinator> selfDefer(this);
-    QMetaObject::invokeMethod(this,
-        [this, selfDefer, moduleName, isUpgrade, releaseTag]() {
-        if (!selfDefer) return;
+    m_coreModuleManager->runExclusive(this,
+        [this, moduleName, isUpgrade, releaseTag]() {
 
     // Snapshot the loaded-dependents list BEFORE the cascade — once
     // unloadModuleWithDependents returns, the target is off the loaded-
@@ -869,7 +867,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     emit coreModulesChanged();
     emit uiModulesChanged();
     emit launcherAppsChanged();
-    }, Qt::QueuedConnection);  // run the cascade off the click stack
+    });  // run the cascade off the click stack
 }
 
 void PackageCoordinator::refresh()

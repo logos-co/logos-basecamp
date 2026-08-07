@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QScopeGuard>
 #include <QTimer>
 #include <QVariantList>
 
@@ -142,6 +143,47 @@ void CoreModuleManager::notifyModuleSetChanged()
 {
     QMetaObject::invokeMethod(this, [this]{ emit coreModulesChanged(); },
                               Qt::QueuedConnection);
+}
+
+void CoreModuleManager::runExclusive(QObject* context, std::function<void()> op)
+{
+    m_opQueue.append({QPointer<QObject>(context), std::move(op)});
+
+    // If a drain is already running, it picks this entry up once the current
+    // op returns — scheduling another would re-enter it via the nested loop.
+    if (!m_opDraining && !m_opDrainScheduled) {
+        m_opDrainScheduled = true;
+        QMetaObject::invokeMethod(this, &CoreModuleManager::drainOpQueue,
+                                  Qt::QueuedConnection);
+    }
+
+    notifyOpsBusyChanged();
+}
+
+void CoreModuleManager::drainOpQueue()
+{
+    m_opDrainScheduled = false;
+    if (m_opDraining) return;
+
+    m_opDraining = true;
+    const auto clearDraining = qScopeGuard([this]{
+        m_opDraining = false;
+        notifyOpsBusyChanged();
+    });
+
+    while (!m_opQueue.isEmpty()) {
+        const auto entry = m_opQueue.takeFirst();
+        if (!entry.first) continue;
+        entry.second(); // may spin a nested loop; new submissions only append
+    }
+}
+
+void CoreModuleManager::notifyOpsBusyChanged()
+{
+    const bool busy = moduleOpsBusy();
+    if (busy == m_opsBusyNotified) return;
+    m_opsBusyNotified = busy;
+    emit moduleOpsBusyChanged();
 }
 
 QVariantMap CoreModuleManager::moduleStats(const QString& name) const

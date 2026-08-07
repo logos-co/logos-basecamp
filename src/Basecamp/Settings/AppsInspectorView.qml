@@ -28,6 +28,7 @@ Item {
     // (one shared page-level search bar, styled like AppManagerView).
     property var sourceModel: null
     property bool loading: false
+    property bool opsBusy: false
     property string searchText: ""
 
     signal reloadRequested()
@@ -235,7 +236,7 @@ Item {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         row: rowItem
-                        busy: root.loading
+                        busy: root.loading || root.opsBusy
                         toggleObjectName: rowItem
                                           ? "uiModules." + rowItem.name + ".toggleButton" : ""
 
