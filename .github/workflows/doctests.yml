@@ -162,6 +162,13 @@ jobs:
           #     core-module dependency exists nowhere, then asserts the sidebar
           #     red-cross marker and the Missing Dependencies dialog raised by
           #     the load gate (hermetic: hand-written user-dir fixture).
+          #   basecamp-persistence — installs a hand-crafted local .lgx through
+          #     the install gate, then relaunches the bundle against the same
+          #     user-dir and asserts the app is rediscovered from disk alone;
+          #     a third launch runs a store-free copy of the bundle against a
+          #     moved user-dir and asserts true portability (zero /nix/store
+          #     refs in dynamic-link metadata, app + module still loadable)
+          #     (hermetic — no catalog packages are downloaded or installed).
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
@@ -171,6 +178,7 @@ jobs:
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
+            doctests/basecamp-persistence.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -198,7 +206,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-module-unload basecamp-missing-deps; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-module-unload basecamp-missing-deps basecamp-persistence; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
