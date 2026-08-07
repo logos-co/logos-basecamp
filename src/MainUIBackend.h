@@ -15,6 +15,7 @@ class CoreModuleManager;
 class PackageCoordinator;
 class QWidget;
 class UIPluginManager;
+class UpdateChecker;
 
 // MainUIBackend — thin QML-facing facade.
 //
@@ -86,6 +87,23 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
 
+    // Host-app update check (issue #319). The build-info properties above are
+    // CONSTANT and so can't carry this — update state changes at runtime.
+    // All of these are Skipped/empty on dev and pre-release builds, where the
+    // checker makes no network request at all. See UpdateChecker.
+    Q_PROPERTY(int     updateCheckState  READ updateCheckState  NOTIFY updateCheckStateChanged)
+    Q_PROPERTY(bool    updateAvailable   READ updateAvailable   NOTIFY updateCheckStateChanged)
+    Q_PROPERTY(QString latestVersion     READ latestVersion     NOTIFY updateCheckStateChanged)
+    Q_PROPERTY(QString releaseUrl        READ releaseUrl        NOTIFY updateCheckStateChanged)
+    Q_PROPERTY(bool    downloadSupported READ downloadSupported NOTIFY updateCheckStateChanged)
+
+    Q_PROPERTY(int     updateDownloadStage READ updateDownloadStage NOTIFY updateDownloadStateChanged)
+    Q_PROPERTY(qreal   downloadProgress    READ downloadProgress    NOTIFY updateDownloadStateChanged)
+    Q_PROPERTY(QString downloadProgressText READ downloadProgressText NOTIFY updateDownloadStateChanged)
+    Q_PROPERTY(QString downloadedFilePath  READ downloadedFilePath  NOTIFY updateDownloadStateChanged)
+    Q_PROPERTY(QString downloadError       READ downloadError       NOTIFY updateDownloadStateChanged)
+    Q_PROPERTY(QString updateInstallHint   READ updateInstallHint   NOTIFY updateDownloadStateChanged)
+
     // Package repositories
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
@@ -119,6 +137,19 @@ public:
     QString buildVersion() const;
     bool isPortableBuild() const;
     QVariantList buildCommits() const;
+
+    // Update-check accessors — all delegate to UpdateChecker.
+    int     updateCheckState() const;
+    bool    updateAvailable() const;
+    QString latestVersion() const;
+    QString releaseUrl() const;
+    bool    downloadSupported() const;
+    int     updateDownloadStage() const;
+    qreal   downloadProgress() const;
+    QString downloadProgressText() const;
+    QString downloadedFilePath() const;
+    QString downloadError() const;
+    QString updateInstallHint() const;
 
     QVariantList repositories() const;
     bool repositoriesLoading() const;
@@ -213,8 +244,17 @@ public slots:
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
 
+    // Host-app update operations — delegated to UpdateChecker.
+    Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void startUpdateDownload();
+    Q_INVOKABLE void cancelUpdateDownload();
+    Q_INVOKABLE void revealUpdateDownload();
+    Q_INVOKABLE void openReleasePage();
+
 signals:
     void currentActiveSectionIndexChanged();
+    void updateCheckStateChanged();
+    void updateDownloadStateChanged();
 
     // App-Manager dialog + install lifecycle. See PackageCoordinator for
     // the contract — these are pure re-emits.
@@ -311,6 +351,9 @@ private:
     PackageCoordinator*    m_packageCoordinator;
     ModuleInstanceModel* m_uiModulesModel;
     ModuleInstanceModel* m_coreModulesModel;
+    // Independent of the three managers above — talks to GitHub, not to
+    // liblogos or package_manager. See UpdateChecker.
+    UpdateChecker*     m_updateChecker;
 
     // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
     int  m_modulesLoadingCount = 0;

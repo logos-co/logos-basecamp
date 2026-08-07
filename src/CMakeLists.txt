@@ -8,7 +8,10 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find Qt packages
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets RemoteObjects Quick Qml QuickWidgets QuickControls2)
+# Network is used by UpdateChecker (the host-app update check). It already
+# arrived transitively via Qt6::Qml — which is why restricted/DenyAll*.cpp
+# compiles today — but depending on that is a latent breakage.
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets RemoteObjects Quick Qml QuickWidgets QuickControls2 Network)
 
 # Allow override from environment or command line (for nix builds)
 if(NOT DEFINED LOGOS_CPP_SDK_ROOT)
@@ -132,6 +135,7 @@ set(SOURCES
     PluginLoader.cpp
     WorkspaceArea.cpp
     ShortcutBridge.cpp
+    UpdateChecker.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp
@@ -229,6 +233,8 @@ qt_add_qml_module(basecamp_backend_qml
         AppsFilterProxy.cpp
         ModulesFilterProxy.h
         ModulesFilterProxy.cpp
+        UpdateEnums.h
+        UpdateEnums.cpp
 )
 
 qt_add_qml_module(basecamp_common_qml
@@ -408,6 +414,7 @@ target_link_libraries(main_ui
         Qt6::Qml
         Qt6::QuickWidgets
         Qt6::QuickControls2
+        Qt6::Network
         component-interfaces
         ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
         Logos::DesignSystem
