@@ -431,6 +431,26 @@ target_link_libraries(main_ui
 # Link logos_core library if available (for logos_core_get_module_stats)
 if(_liblogos_found)
     target_link_libraries(main_ui PRIVATE logos_core)
+
+    # Windows: take LogosAPI / LogosAPIClient / TokenManager FROM liblogos_core
+    # rather than re-linking them out of liblogos_qt_sdk.a below. main_ui and
+    # LogosBasecamp.exe live in the same process, and PE gives them no symbol
+    # interposition, so two static copies mean two TokenManager singletons: the
+    # host saves the capability token into its copy and the plugin reads its own
+    # empty one, which is why every module call came back "rejecting
+    # unauthorized call" and package_manager_ui never reached the sidebar.
+    #
+    # This does NOT remove the logos_qt_sdk link below and must not be
+    # "simplified" into doing so. The dllimport is what makes the import win:
+    # it routes the reference through __imp_, so the plain symbol is never
+    # undefined and ld never pulls the archive member, whatever the link order.
+    # Dropping the define while keeping the link is the silent-failure case --
+    # it still links, and quietly binds back to the archive.
+    #
+    # See logos-protocol/cpp/logos_shared_api.h for the full argument.
+    if(WIN32)
+        target_compile_definitions(main_ui PRIVATE LOGOS_SHARED_USE_DLL)
+    endif()
 endif()
 
 # Link the SDK via its exported CMake target so the consumer inherits
@@ -446,6 +466,14 @@ if(NOT _cpp_sdk_is_source)
     find_package(logos-qt-sdk REQUIRED CONFIG
         PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
         NO_DEFAULT_PATH)
+    # On Windows the archives behind these targets are emptied out so the
+    # symbols can only come from liblogos_core.dll -- see
+    # cmake/LogosSharedFromDll.cmake. The link below is kept verbatim: it is
+    # still what carries the include dirs and the Qt/OpenSSL/Boost interface.
+    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
+    logos_use_shared_runtime_from_dll(
+        logos-qt-sdk::logos_qt_sdk
+        logos-protocol::logos_protocol)
     target_link_libraries(main_ui PRIVATE logos-qt-sdk::logos_qt_sdk)
 else()
     if(EXISTS "${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol")

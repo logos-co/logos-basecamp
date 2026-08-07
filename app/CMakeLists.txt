@@ -136,6 +136,15 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     find_package(logos-qt-sdk REQUIRED CONFIG
         PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
         NO_DEFAULT_PATH)
+    # Windows: the host is the image that WRITES the capability token, so if it
+    # keeps a static copy of TokenManager the plugin never sees the token no
+    # matter what the plugin links. Empty out the archives here too and let
+    # liblogos_core.dll be the one provider — cmake/LogosSharedFromDll.cmake.
+    # The link interface above is deliberately left intact.
+    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
+    logos_use_shared_runtime_from_dll(
+        logos-qt-sdk::logos_qt_sdk
+        logos-protocol::logos_protocol)
 endif()
 
 set(PROJECT_SOURCES
@@ -190,6 +199,16 @@ target_link_libraries(LogosBasecamp PRIVATE
 
 if(APPLE)
     target_link_libraries(LogosBasecamp PRIVATE "-framework Cocoa" "-framework QuartzCore")
+endif()
+
+# Windows: import the shared runtime types from liblogos_core instead of taking
+# a second static copy from liblogos_qt_sdk.a. The host is the image that WRITES
+# the capability token (module_manager.cpp calls TokenManager::instance()
+# .saveToken), so if it keeps its own copy the token never reaches main_ui no
+# matter what the plugin does. Same opt-in, same reasoning, as main_ui in
+# src/CMakeLists.txt; see logos-protocol/cpp/logos_shared_api.h.
+if(WIN32)
+    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_SHARED_USE_DLL)
 endif()
 
 # Copy the core library to the app's lib directory and fix its install name
