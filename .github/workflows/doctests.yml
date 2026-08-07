@@ -160,6 +160,13 @@ jobs:
           #     to the Package Manager and asserts Basecamp's Install Failed
           #     notice surfaces each error (then proves the intact package
           #     still gates normally; hermetic — nothing is installed).
+          #   basecamp-persistence — installs a hand-crafted local .lgx through
+          #     the install gate, then relaunches the bundle against the same
+          #     user-dir and asserts the app is rediscovered from disk alone;
+          #     a third launch runs a store-free copy of the bundle against a
+          #     moved user-dir and asserts true portability (zero /nix/store
+          #     refs in dynamic-link metadata, app + module still loadable)
+          #     (hermetic — no catalog packages are downloaded or installed).
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
@@ -169,6 +176,7 @@ jobs:
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
             doctests/basecamp-failure-paths.test.yaml \
+            doctests/basecamp-persistence.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -196,7 +204,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-failure-paths; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-persistence basecamp-failure-paths; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
