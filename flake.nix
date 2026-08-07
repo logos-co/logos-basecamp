@@ -146,8 +146,14 @@
         # the target. nix-bundle-dir in particular is ELF/Mach-O only (its
         # bundle.sh branches `file -b` -> Mach-O | ELF with no PE case), so on
         # Windows it must not be invoked at all -- see nix/app.nix.
-        installDev = nix-bundle-logos-module-install.bundlers.${buildSystem}.dev;
-        installPortable = nix-bundle-logos-module-install.bundlers.${buildSystem}.portable;
+        # Keyed by the TARGET, not buildSystem: the install bundler now does its
+        # own host/target split internally -- it takes lgpm from the build
+        # system (it runs there) and the .lgx bundler from the target (which
+        # decides the variant name and library extension). Keying the whole
+        # thing by buildSystem made it label a Windows package "linux-amd64"
+        # and look for a .so payload that was really a .dll.
+        installDev = nix-bundle-logos-module-install.bundlers.${system}.dev;
+        installPortable = nix-bundle-logos-module-install.bundlers.${system}.portable;
         dirBundler = nix-bundle-dir.bundlers.${buildSystem}.qtApp;
       });
     in
