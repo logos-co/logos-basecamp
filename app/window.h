@@ -34,6 +34,11 @@ private slots:
 
 private:
     void setupUi();
+    // Shrink the window if its FRAME does not fit the screen's available
+    // geometry. Runs once, from showEvent: frame margins are unknown until the
+    // platform window exists, so the constructor's clamp cannot account for
+    // them. No-op whenever the window already fits, which is the normal case.
+    void fitFrameToAvailableGeometry();
     void createTrayIcon();
     void setIcon();
     bool isWindowShown() const;

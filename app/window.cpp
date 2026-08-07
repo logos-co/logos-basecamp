@@ -1,5 +1,6 @@
 #include "window.h"
 #include <QApplication>
+#include <QGuiApplication>
 #include <QScreen>
 #include <QDebug>
 #include <QLabel>
@@ -153,7 +154,37 @@ void Window::setupUi()
     // the old 1024px those rightmost columns were clipped off-screen. The
     // window can still be resized down to MainContainer's 800x600 minimum.
     setWindowTitle("Logos Basecamp");
-    resize(1600, 900);
+    {
+        // ...but never larger than the screen actually offers. A window bigger
+        // than the work area opens with its right and bottom edges off-screen,
+        // and on Windows it cannot be dragged back into view, so whatever hangs
+        // off is simply unreachable -- here, the sidebar's bottom-anchored
+        // system buttons. Measured on a 1271x839-logical RDP session: the
+        // 1600x900 request overflowed right by ~342 and bottom by ~97 logical
+        // px. Nothing else in this repo consults the screen; the QScreen
+        // include at the top of this file has been unused until now.
+        //
+        // Clamp to availableGeometry EXACTLY, not to a fraction of it. This has
+        // to be a no-op on every display big enough to hold the design size --
+        // which is all of them in normal use -- or it silently undoes the
+        // widening documented above. Qt raises the result back to
+        // MainContainer's 800x600 minimum on its own, so there is no second
+        // floor to keep in sync here.
+        //
+        // Skipped under the offscreen platform: QOffscreenScreen hardcodes its
+        // geometry to 800x600, so clamping to it would shrink every headless UI
+        // doctest window and break qt-mcp's scene-position clicks.
+        //
+        // NOT handled: a screen that shrinks AFTER launch (an RDP session with
+        // /dynamic-resolution). That needs a screenChanged / availableGeometry
+        // Changed re-fit, which moves a window out from under the user and is a
+        // separate decision.
+        QSize target(1600, 900);
+        const QScreen* windowScreen = screen();
+        if (windowScreen && QGuiApplication::platformName() != QLatin1String("offscreen"))
+            target = target.boundedTo(windowScreen->availableGeometry().size());
+        resize(target);
+    }
 
     setAutoFillBackground(true);
     {
@@ -212,9 +243,51 @@ void Window::resizeEvent(QResizeEvent* event)
 void Window::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
+    static bool fitted = false;
+    if (!fitted) {
+        fitted = true;
+        fitFrameToAvailableGeometry();
+    }
 #ifdef Q_OS_MAC
     applyMacWindowRoundedCorners(this);
 #endif
+}
+
+void Window::fitFrameToAvailableGeometry()
+{
+    const QScreen* windowScreen = screen();
+    // QOffscreenScreen hardcodes 800x600, so honouring it would shrink every
+    // headless UI-doctest window and break qt-mcp's scene-position clicks.
+    if (!windowScreen || QGuiApplication::platformName() == QLatin1String("offscreen"))
+        return;
+
+    // Compare SIZES, not rectangles, and never touch the position.
+    //
+    // QRect::contains() is the obvious formulation and is wrong here on two
+    // counts. On Windows, frameGeometry() comes from GetWindowRect, which
+    // includes DWM's INVISIBLE resize border (~13px per side at 192dpi), so a
+    // perfectly placed window never reports as contained and this would run on
+    // every single launch. On macOS, Qt hands back a frame whose title bar sits
+    // above availableGeometry's origin, so containment fails there too -- and
+    // acting on it moved the window 66px down at launch, a visible change on a
+    // platform where nothing is broken. Measured both.
+    const QSize avail = windowScreen->availableGeometry().size();
+    const QSize frame = frameGeometry().size();
+    if (frame.width() <= avail.width() && frame.height() <= avail.height())
+        return;  // fits -- the normal case, and the only case on macOS/Linux
+
+    // resize() sets the CLIENT size while availableGeometry() bounds the FRAME,
+    // so the constructor's clamp is short by the decoration margins -- and those
+    // are only knowable once the platform window exists, which is why this runs
+    // here and not there. Measured on a 3456x1826 work area: the clamped client
+    // filled the work area exactly and the frame still hung 72px below it,
+    // putting the sidebar's bottom-anchored system buttons under the taskbar.
+    //
+    // boundedTo(size()) makes this strictly a shrink. Without it, a window that
+    // is merely too TALL also gets stretched to the full available WIDTH --
+    // measured on this path: 1600 logical wide silently became 1715.
+    const QSize decoration = frame - size();
+    resize((avail - decoration).boundedTo(size()).expandedTo(minimumSize()));
 }
 
 #ifdef Q_OS_MAC
