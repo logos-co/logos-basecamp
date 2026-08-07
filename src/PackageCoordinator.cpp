@@ -1057,6 +1057,20 @@ void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
 
 void PackageCoordinator::fetchUiPluginMetadata()
 {
+    // The !m_logosAPI branch below already does the right thing when package
+    // metadata is unavailable -- clear the loading state and tell the UI -- so
+    // an absent package_manager takes the same path rather than blocking 20 s
+    // acquiring a token for a module that is not there. Without this the app
+    // would show its window and then sit in a loading state for the timeout.
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) {
+        if (m_appsLoading) {
+            m_appsLoading = false;
+            emit appsLoadingChanged();
+        }
+        emit uiModulesChanged();
+        return;
+    }
+
     if (!m_logosAPI) {
         if (m_appsLoading) {
             m_appsLoading = false;
@@ -1293,6 +1307,9 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 void PackageCoordinator::refreshDependencyInfo()
 {
     if (!m_logosAPI) return;
+    // Same reasoning as fetchUiPluginMetadata: no package_manager, no
+    // dependency info to fetch, and no reason to block on discovering that.
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
