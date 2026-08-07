@@ -122,7 +122,15 @@
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
         logosDesignSystem = logos-design-system.packages.${system}.default;
         logosViewModuleRuntime = logos-view-module-runtime.packages.${system}.default;
-        logosQtMcp = logos-qt-mcp.packages.${system}.default;
+        # logos-qt-mcp is the QML inspector used by the UI test harness. It has
+        # no Windows target and is not needed to RUN the app -- nix/app.nix
+        # already takes `logosQtMcp ? null` and gates the inspector on it -- so
+        # Windows builds simply go without it. The inspector-dependent outputs
+        # (integration-test, shutdown-test, mcp-server) are correspondingly
+        # absent from the Windows package set; see the `packages` block.
+        logosQtMcp =
+          if system == "x86_64-windows" then null
+          else logos-qt-mcp.packages.${system}.default;
         logosCppSdkSrc = logos-cpp-sdk.outPath;
         logosLiblogosSrc = logos-liblogos.outPath;
         logosPackageManagerModuleSrc = logos-package-manager-module.outPath;
