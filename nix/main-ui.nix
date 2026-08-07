@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, logosDesignSystem, buildInfo, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, logosDesignSystem, buildInfo, distributed ? false }:
 
 let
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
@@ -11,8 +11,9 @@ pkgs.stdenv.mkDerivation {
   inherit src;
   inherit (common) meta;
   
-  # Add logosSdk to nativeBuildInputs for logos-cpp-generator
-  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk ];
+  # logos-cpp-generator must RUN here, so it comes from the BUILD system.
+  # logosSdk (the target output) stays for -DLOGOS_CPP_SDK_ROOT below.
+  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdkBuild ];
   buildInputs = common.buildInputs ++ [ logosProtocolPkg logosQtSdk logosDesignSystem ];
   
   preConfigure = ''
@@ -100,7 +101,14 @@ pkgs.stdenv.mkDerivation {
     test -d "${logosModule}" || (echo "logosModule not found" && exit 1)
     test -d "${logosLiblogos}" || (echo "logosLiblogos not found" && exit 1)
     
+    # $cmakeFlags FIRST -- this hand-rolled configurePhase bypasses the cmake
+    # setup hook, so without it -DCMAKE_SYSTEM_NAME=Windows is dropped and
+    # FindThreads probes for pthreads, surfacing as "Qt6 could not be found
+    # because dependency Threads could not be found". The second line carries
+    # Qt's host-TOOL package paths. Both are empty on native builds.
     cmake -S src -B build \
+      $cmakeFlags \
+      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
