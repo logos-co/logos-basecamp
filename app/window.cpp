@@ -22,6 +22,8 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
+#include <QPointer>
+#include <QScopedValueRollback>
 #include "LogosBasecampPaths.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
@@ -175,11 +177,13 @@ void Window::setupUi()
         // geometry to 800x600, so clamping to it would shrink every headless UI
         // doctest window and break qt-mcp's scene-position clicks.
         //
-        // NOT handled: a screen that shrinks AFTER launch (an RDP session with
-        // /dynamic-resolution). That needs a screenChanged / availableGeometry
-        // Changed re-fit, which moves a window out from under the user and is a
-        // separate decision.
+        // A screen that shrinks AFTER launch -- an RDP session with
+        // /dynamic-resolution -- is handled by rebindScreenWatch() +
+        // scheduleFitToScreen(), wired from showEvent once the platform window
+        // exists. It cannot be done here: the window has no screen it has
+        // actually landed on yet, and its frame margins are not yet knowable.
         QSize target(1600, 900);
+        m_desiredSize = target;  // what to grow back to when room returns
         const QScreen* windowScreen = screen();
         if (windowScreen && QGuiApplication::platformName() != QLatin1String("offscreen"))
             target = target.boundedTo(windowScreen->availableGeometry().size());
@@ -207,6 +211,12 @@ void Window::setupUi()
 void Window::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
+    // Leaving maximized/fullscreen/minimized restores a normal-state size that
+    // may predate a screen change, so re-check. Scheduled rather than immediate:
+    // the macOS branch below deliberately resizes to w-1,h-1 and back via
+    // singleShot(0), and the settle delay lands after that has finished.
+    if (event->type() == QEvent::WindowStateChange)
+        scheduleFitToScreen();
 #ifdef Q_OS_MAC
     if (event->type() == QEvent::WindowStateChange) {
         const bool fullScreen = (windowState() & Qt::WindowFullScreen) != 0;
@@ -234,6 +244,17 @@ void Window::changeEvent(QEvent* event)
 void Window::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
+    // A resize the user performed redefines what the window is entitled to when
+    // room returns; one WE performed must not, or the fit becomes
+    // min(previous, available) -- monotone non-increasing, so the window would
+    // converge on the smallest work area seen all session and never grow back.
+    // Guarded on isVisible() so Qt's own pre-show sizing does not count.
+    // Also skipped while maximized/fullscreen: that size belongs to the window
+    // manager, not to the user's intent, and recording it would make a later
+    // un-maximize try to grow the window back to full-screen size.
+    if (!m_applyingFit && isVisible()
+        && !(windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen)))
+        m_desiredSize = size();
 #ifdef Q_OS_MAC
     if (m_trafficLightsTitleBar && m_trafficLightsTitleBar->isVisible())
         m_trafficLightsTitleBar->setGeometry(0, 0, width(), TrafficLightsTitleBar::kTitleBarHeight);
@@ -243,22 +264,87 @@ void Window::resizeEvent(QResizeEvent* event)
 void Window::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
-    static bool fitted = false;
-    if (!fitted) {
-        fitted = true;
-        fitFrameToAvailableGeometry();
-    }
+    // Both idempotent, so this runs unconditionally rather than behind a
+    // one-shot flag. That is what makes a tray restore re-fit if -- and only if
+    // -- the screen shrank while the window was hidden: the fit is skipped
+    // while !isVisible(), so a screen change during that time is picked up here
+    // instead. A process-wide `static` would also have been wrong outright,
+    // gating every Window ever constructed on the first one.
+    rebindScreenWatch();
+    fitFrameToAvailableGeometry();
 #ifdef Q_OS_MAC
     applyMacWindowRoundedCorners(this);
 #endif
 }
 
+void Window::scheduleFitToScreen()
+{
+    if (!m_fitTimer) {
+        m_fitTimer = new QTimer(this);
+        m_fitTimer->setSingleShot(true);
+        // An RDP client with /dynamic-resolution resizes the desktop
+        // continuously while its own window is dragged. Fitting each
+        // intermediate would chase the drag; wait for it to settle. Long enough
+        // to outlive a drag frame, short enough to be invisible.
+        m_fitTimer->setInterval(150);
+        connect(m_fitTimer, &QTimer::timeout, this, &Window::fitFrameToAvailableGeometry);
+    }
+    m_fitTimer->start();  // restart, collapsing a burst into one fit
+}
+
+void Window::rebindScreenWatch()
+{
+    QWindow* handle = windowHandle();
+    if (!handle)
+        return;  // not mapped yet; showEvent calls back
+
+    if (handle != m_watchedWindow) {
+        QObject::disconnect(m_screenChangedConnection);
+        m_watchedWindow = handle;
+        m_screenChangedConnection = connect(handle, &QWindow::screenChanged, this,
+                                            [this](QScreen*) { rebindScreenWatch(); });
+    }
+
+    QScreen* current = handle->screen();
+    if (current == m_watchedScreen)
+        return;
+    // Re-point exactly, by handle: disconnect(sender, ...) would also tear down
+    // unrelated connections, and reconnecting without disconnecting would
+    // double-fire.
+    QObject::disconnect(m_availableGeometryConnection);
+    m_watchedScreen = current;
+    if (current) {
+        m_availableGeometryConnection =
+            connect(current, &QScreen::availableGeometryChanged, this,
+                    [this](const QRect&) { scheduleFitToScreen(); });
+    }
+    // Deliberately NO fit here. screenChanged fires when the window MOVES to
+    // another monitor -- which the user did on purpose -- and, on Windows, when
+    // Qt migrates windows onto the 1024x768 lock screen on RDP disconnect.
+    // Fitting then would shrink the window to lock-screen size with no way back.
+}
+
 void Window::fitFrameToAvailableGeometry()
 {
-    const QScreen* windowScreen = screen();
-    // QOffscreenScreen hardcodes 800x600, so honouring it would shrink every
-    // headless UI-doctest window and break qt-mcp's scene-position clicks.
-    if (!windowScreen || QGuiApplication::platformName() == QLatin1String("offscreen"))
+    // QOffscreenScreen hardcodes its geometry, so honouring it would shrink
+    // every headless UI-doctest window and break qt-mcp's scene-position clicks.
+    if (QGuiApplication::platformName() == QLatin1String("offscreen"))
+        return;
+    // Basecamp hides to the tray on close, on EVERY platform (see closeEvent),
+    // and hide() does not set Qt::WindowMinimized -- so the state check below
+    // does not cover it. A hidden window has no meaningful frame geometry and
+    // nothing to fit; showEvent re-runs this on restore.
+    if (!isVisible())
+        return;
+    // Maximized and fullscreen sizes belong to the window manager, and a
+    // minimized window's geometry is not its restored geometry.
+    if (windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen | Qt::WindowMinimized))
+        return;
+    const QWindow* handle = windowHandle();
+    if (!handle)
+        return;
+    const QScreen* windowScreen = handle->screen();
+    if (!windowScreen)
         return;
 
     // Compare SIZES, not rectangles, and never touch the position.
@@ -272,9 +358,6 @@ void Window::fitFrameToAvailableGeometry()
     // acting on it moved the window 66px down at launch, a visible change on a
     // platform where nothing is broken. Measured both.
     const QSize avail = windowScreen->availableGeometry().size();
-    const QSize frame = frameGeometry().size();
-    if (frame.width() <= avail.width() && frame.height() <= avail.height())
-        return;  // fits -- the normal case, and the only case on macOS/Linux
 
     // resize() sets the CLIENT size while availableGeometry() bounds the FRAME,
     // so the constructor's clamp is short by the decoration margins -- and those
@@ -282,12 +365,26 @@ void Window::fitFrameToAvailableGeometry()
     // here and not there. Measured on a 3456x1826 work area: the clamped client
     // filled the work area exactly and the frame still hung 72px below it,
     // putting the sidebar's bottom-anchored system buttons under the taskbar.
-    //
-    // boundedTo(size()) makes this strictly a shrink. Without it, a window that
-    // is merely too TALL also gets stretched to the full available WIDTH --
-    // measured on this path: 1600 logical wide silently became 1715.
-    const QSize decoration = frame - size();
-    resize((avail - decoration).boundedTo(size()).expandedTo(minimumSize()));
+    const QSize decoration = frameGeometry().size() - size();
+
+    // Bounded by what the window is ENTITLED to, not by its current size. Using
+    // the current size makes this min(previous, available) on every event, a
+    // monotone non-increasing map: the window would ratchet down to the smallest
+    // work area seen all session and never grow back -- so a taskbar that
+    // auto-hides and reappears, or an RDP window dragged smaller and back, would
+    // permanently shrink Basecamp. m_desiredSize is the launch design size,
+    // replaced by any resize the USER performs (see resizeEvent), so growing
+    // back can never exceed what was actually asked for.
+    const QSize want = m_desiredSize.isValid() ? m_desiredSize : size();
+    const QSize target = (avail - decoration).boundedTo(want).expandedTo(minimumSize());
+
+    // The whole idempotence of this function. It is also why no re-entrancy flag
+    // is needed: our own resize lands here again with the same inputs and stops.
+    if (target == size())
+        return;
+
+    QScopedValueRollback<bool> applying(m_applyingFit, true);
+    resize(target);
 }
 
 #ifdef Q_OS_MAC
