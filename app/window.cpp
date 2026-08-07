@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QPluginLoader>
+#include "win_dll_search.h"
 #include <QDir>
 #include <QFile>
 #include <QSystemTrayIcon>
@@ -104,6 +105,10 @@ void Window::setupUi()
 
     // Load the main_ui plugin with the appropriate extension (now in subdirectory)
     QString mainUiPluginPath = resolvePlugin("main_ui", "main_ui");
+    // main_ui lives in its own plugins/main_ui/ directory, so anything vendored
+    // beside it is invisible to Windows' loader without this. No-op elsewhere;
+    // the reference is intentionally held for the process lifetime.
+    ModuleLib::preloadPluginWithOwnDirSearch(mainUiPluginPath);
     QPluginLoader loader(mainUiPluginPath);
 
     QWidget* mainContent = nullptr;
