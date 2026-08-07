@@ -661,6 +661,151 @@ test("window: tray toggle hides a shown window", async (app) => {
   }
 });
 
+// --- Host-app update notice (issue #319) ---
+//
+// Hermetic: no network. Two env overrides make a dev build exercise the
+// feature deterministically, and they are defaulted here so these tests run as
+// part of the normal suite rather than only when someone remembers to set them:
+//
+//   LOGOS_UPDATE_CURRENT_VERSION — forges the installed version AND waives the
+//     isPortableBuild() gate (a dev build has no AppImage/DMG to replace, so
+//     the checker otherwise skips outright).
+//   LOGOS_UPDATE_CHECK_URL — points the check at a file:// stub, so the
+//     assertions don't depend on whatever GitHub currently calls "latest".
+//
+// Deliberately `||=`: an explicit value from the caller still wins.
+//
+// nix/integration-test.nix sets LOGOS_DISABLE_UPDATE_CHECK=1 to keep that
+// derivation hermetic on every machine, which parks the checker in Skipped —
+// so these two tests don't apply there and are not registered.
+const updateChecksDisabled = !!process.env.LOGOS_DISABLE_UPDATE_CHECK;
+if (!updateChecksDisabled) {
+  process.env.LOGOS_UPDATE_CURRENT_VERSION ||= "0.0.1";
+  process.env.LOGOS_UPDATE_CHECK_URL ||=
+    `file://${resolve(__dirname, "fixtures/update-release-stub.json")}`;
+}
+
+// UpdateCheckState::Skipped — mirrors src/UpdateEnums.h.
+const UPDATE_CHECK_SKIPPED = 1;
+
+// The env vars above only reach the app when THIS process spawned it (--ci).
+// In the documented default mode (`node tests/ui-tests.mjs` against an
+// already-running app) the app never saw them, so the checker parked itself in
+// Skipped and these assertions would burn their full 20s timeout before failing
+// with an opaque message. Detect that and skip honestly instead.
+async function skipIfCheckerInactive(app, anchorId) {
+  const state = await backendProp(app, anchorId, "backend.updateCheckState");
+  if (state === UPDATE_CHECK_SKIPPED) {
+    console.log("  \x1b[33m○\x1b[0m update checker is Skipped in this app instance " +
+                "— run with --ci so the stub env reaches it");
+    return true;
+  }
+  return false;
+}
+
+async function dashboardAnchor(app) {
+  await app.click("Settings");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+  await app.click("Dashboard", { type: "LogosItemDelegate" });
+  const anchor = await app.findByProperty("objectName", "dashboard.updateSection");
+  if (!anchor.matches.length) throw new Error("dashboard.updateSection not found");
+  return anchor.matches[0].id;
+}
+
+// One property per call: evaluate returns primitives, and object literals come
+// back as an opaque <QJSValue> (see the note on the repositories helpers above).
+async function backendProp(app, anchorId, expr) {
+  return (await app.inspector.send("evaluate", { objectId: anchorId, expression: expr })).result;
+}
+
+if (updateChecksDisabled) {
+  console.log('  \x1b[33m\u25cb\x1b[0m updates: skipped (LOGOS_DISABLE_UPDATE_CHECK is set)');
+} else {
+  test("updates: stale build surfaces an update notice", async (app) => {
+    const anchorId = await dashboardAnchor(app);
+    if (await skipIfCheckerInactive(app, anchorId)) return;
+
+    // The check is deferred ~5s after construction, so poll rather than assume.
+    await app.waitFor(
+      async () => {
+        if (await backendProp(app, anchorId, "backend.updateAvailable") !== true) {
+          throw new Error("backend.updateAvailable still false");
+        }
+      },
+      { timeout: 20000, interval: 500, description: "update check to report an update" }
+    );
+
+    const latest = await backendProp(app, anchorId, "backend.latestVersion");
+    if (latest !== "9.9.9") throw new Error(`latestVersion=${latest} (expected 9.9.9)`);
+
+    const url = await backendProp(app, anchorId, "backend.releaseUrl");
+    if (!String(url).startsWith("https://github.com/logos-co/logos-basecamp/")) {
+      throw new Error(`releaseUrl not on the basecamp repo: ${url}`);
+    }
+
+    // Assert on the update-available BLOCK, not the outer section. The outer
+    // section is visible for Checking/UpToDate/Failed too, so asserting there
+    // only restates that the checker isn't Skipped — which the poll above
+    // already proved.
+    const availBlock = await app.findByProperty("objectName", "dashboard.updateAvailable");
+    if (!availBlock.matches.length) throw new Error("dashboard.updateAvailable not found");
+    const availVisible = (await app.inspector.send("evaluate", {
+      objectId: availBlock.matches[0].id, expression: "visible",
+    })).result;
+    if (availVisible !== true) throw new Error("dashboard.updateAvailable is not visible");
+
+    // And the sidebar badge — the part a user actually notices.
+    //
+    // Read `visible` through evaluate, not getProperties: the latter returns
+    // `properties` as an ARRAY of {name, type, value} records, so indexing it
+    // like an object silently yields undefined and the assertion never fails
+    // honestly.
+    const badge = await app.findByProperty("objectName", "sidebar.updateBadge");
+    if (!badge.matches.length) throw new Error("sidebar.updateBadge not found");
+    const badgeId = badge.matches[0].id;
+    const badgeVisible = (await app.inspector.send("evaluate", {
+      objectId: badgeId, expression: "visible",
+    })).result;
+    if (badgeVisible !== true) throw new Error("sidebar update badge is not visible");
+
+    // The sidebar column is a fixed 80px (MainContainer.cpp), so a badge that
+    // renders wider than that is clipped in the real UI even though `visible`
+    // is true.
+    const badgeWidth = (await app.inspector.send("evaluate", {
+      objectId: badgeId, expression: "width",
+    })).result;
+    if (!(badgeWidth > 0 && badgeWidth <= 80)) {
+      throw new Error(`sidebar badge width ${badgeWidth} does not fit the 80px column`);
+    }
+  });
+
+  test("updates: unknown platform degrades to the link-out, not an error", async (app) => {
+    const anchorId = await dashboardAnchor(app);
+    if (await skipIfCheckerInactive(app, anchorId)) return;
+    await app.waitFor(
+      async () => {
+        if (await backendProp(app, anchorId, "backend.updateAvailable") !== true) {
+          throw new Error("backend.updateAvailable still false");
+        }
+      },
+      { timeout: 20000, interval: 500, description: "update check to report an update" }
+    );
+
+    // The stub release publishes no assets at all, so no artifact can match this
+    // platform. That must present as Unsupported (release-page link only), never
+    // as a Failed/error state — the notice is still useful without a download.
+    const supported = await backendProp(app, anchorId, "backend.downloadSupported");
+    if (supported !== false) throw new Error("expected downloadSupported=false for an assetless release");
+    const stage = await backendProp(app, anchorId, "backend.updateDownloadStage");
+    if (stage !== 1) throw new Error(`updateDownloadStage=${stage} (expected 1 = Unsupported)`);
+    const err = await backendProp(app, anchorId, "backend.downloadError");
+    if (err) throw new Error(`downloadError should be empty, got: ${err}`);
+  });
+}
+
 // --- Run ---
 
 run();

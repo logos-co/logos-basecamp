@@ -32,6 +32,12 @@ pkgs.runCommand "logos-basecamp-smoke-test" {
   mkdir -p "$LOGOS_USER_DIR"
 
   export QT_QPA_PLATFORM=offscreen
+  # Keep the derivation hermetic. On a release/** branch VERSION is present,
+  # so UpdateChecker would consider itself eligible and hit api.github.com --
+  # which succeeds on a sandbox=false host and DNS-fails on Linux CI, i.e. the
+  # same derivation behaving two ways. It would also float an "Update" badge
+  # into the sidebar under the UI tests.
+  export LOGOS_DISABLE_UPDATE_CHECK=1
   export QT_FORCE_STDERR_LOGGING=1
   export QT_LOGGING_RULES="qt.*.debug=false;default.debug=true"
 
