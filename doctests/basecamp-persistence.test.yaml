@@ -544,7 +544,7 @@ sections:
             - name: "Load the persisted module"
               action: click_object
               find_by: "objectName"
-              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              find_value: "coreModules.test_fullapi_cpp.toggleButton"
 
             - name: "Give the runtime time to load the shared library"
               action: sleep
@@ -558,7 +558,7 @@ sections:
             - name: "The compiled payload loaded into the runtime"
               action: expect_property
               find_by: "objectName"
-              find_value: "moduleInspector.status.test_fullapi_cpp"
+              find_value: "coreModules.test_fullapi_cpp.status"
               property: "text"
               value: "Loaded"
               text: "The module-side twin of opening the app: the runtime loaded the shared library from the persisted files and the fixture's own status badge flips to **Loaded**. The restart preserved not just a listing but a working, loadable binary."
@@ -708,7 +708,7 @@ sections:
             - name: "Load the moved module"
               action: click_object
               find_by: "objectName"
-              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              find_value: "coreModules.test_fullapi_cpp.toggleButton"
 
             - name: "Give the runtime time to load the shared library"
               action: sleep
@@ -717,7 +717,7 @@ sections:
             - name: "The compiled payload loads from its new location"
               action: expect_property
               find_by: "objectName"
-              find_value: "moduleInspector.status.test_fullapi_cpp"
+              find_value: "coreModules.test_fullapi_cpp.status"
               property: "text"
               value: "Loaded"
               text: "The strongest portability claim in the spec: a shared library installed at one path, moved to another, `dlopen`ed by a bundle copy running outside the store — and it loads. No byte of this launch touched an original location."
