@@ -168,14 +168,24 @@
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
           # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied).
-          installedDev = map installDev [
+          # Windows ships NO pre-installed modules yet. The install path runs
+          # each module through nix-bundle-logos-module-install -> nix-bundle-lgx
+          # -> nix-bundle-dir, and nix-bundle-dir is ELF/Mach-O only: its
+          # bundle.sh branches `file -b` on Mach-O | ELF with no PE case, so it
+          # would emit an empty payload rather than fail. Cutting the list keeps
+          # the whole bundler chain, lgpm and the four module repos off the
+          # Windows critical path; Basecamp starts with an empty module list and
+          # the window, sidebar and tabs still render. Restore this once the PE
+          # path through nix-bundle-dir exists.
+          onWindows = pkgs.stdenv.hostPlatform.isWindows;
+          installedDev = if onWindows then [ ] else map installDev [
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
             mainUIPlugin
             packageManagerUIPlugin
           ];
-          installedDistributed = map installPortable [
+          installedDistributed = if onWindows then [ ] else map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule

@@ -242,18 +242,21 @@ elseif(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# Copy the logos_host executable from the core build directory
+# Copy the logos_host executable from the core build directory.
+# CMAKE_EXECUTABLE_SUFFIX is "" natively and ".exe" under mingw; naming the bare
+# binary made this POST_BUILD step fail the LINK of LogosBasecamp itself, so the
+# error read "FAILED: LogosBasecamp.exe" with no undefined references anywhere --
+# the real message was the "Error copying file ... logos_host" line above it.
+set(_logos_host_name "logos_host${CMAKE_EXECUTABLE_SUFFIX}")
 if(_liblogos_is_source)
-    add_custom_command(TARGET LogosBasecamp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/build/bin/logos_host ${CMAKE_CURRENT_BINARY_DIR}/logos_host
-        COMMENT "Copying logos_host executable to app directory"
-    )
+    set(_logos_host_src "${LOGOS_LIBLOGOS_ROOT}/build/bin/${_logos_host_name}")
 else()
-    add_custom_command(TARGET LogosBasecamp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy ${LOGOS_LIBLOGOS_ROOT}/bin/logos_host ${CMAKE_CURRENT_BINARY_DIR}/logos_host
-        COMMENT "Copying logos_host executable to app directory"
-    )
+    set(_logos_host_src "${LOGOS_LIBLOGOS_ROOT}/bin/${_logos_host_name}")
 endif()
+add_custom_command(TARGET LogosBasecamp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy "${_logos_host_src}" "${CMAKE_CURRENT_BINARY_DIR}/${_logos_host_name}"
+    COMMENT "Copying ${_logos_host_name} to app directory"
+)
 
 # Create bin/plugins directory in build folder
 add_custom_command(TARGET LogosBasecamp POST_BUILD

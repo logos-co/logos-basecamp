@@ -212,7 +212,17 @@ pkgs.stdenv.mkDerivation rec {
       cp -r ${logosQtMcp}/* ./logos-qt-mcp/
     ''}
 
+    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
+    # setup hook, so without it the cross-compilation flags nixpkgs computes are
+    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
+    # nowhere near the cause: CMake's FindThreads then probes for pthreads
+    # instead of Win32 threads, fails, and Qt6Config reports
+    # "Qt6 could not be found because dependency Threads could not be found".
+    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
+    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
     cmake -S app -B build \
+      $cmakeFlags \
+      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
@@ -226,7 +236,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
-      -DENABLE_QML_INSPECTOR=${if enableInspector then "ON" else "OFF"} \
+      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
       ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
 
     runHook postConfigure
@@ -247,14 +257,32 @@ pkgs.stdenv.mkDerivation rec {
     # Create output directories
     mkdir -p $out/bin $out/lib $out/modules $out/plugins
 
-    # Install app binary
-    if [ -f "build/LogosBasecamp" ]; then
+    # Install app binary.
+    #
+    # Probe both names and FAIL if neither exists. The previous
+    # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
+    # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
+    # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+    _bc=""
+    for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+      if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
+    done
+    if [ -z "$_bc" ]; then
+      echo "Error: LogosBasecamp was not produced by the build" >&2
+      ls -la build 2>&1 >&2 | head -40 || true
+      exit 1
+    fi
+    if true; then
       ${if portable then ''
         # Portable: install binary directly (nix-bundle-dir handles Qt paths)
-        cp build/LogosBasecamp "$out/bin/LogosBasecamp"
+        cp "$_bc" "$out/bin/$(basename "$_bc")"
+      '' else if pkgs.stdenv.hostPlatform.isWindows then ''
+        # Windows: no shell wrapper -- a POSIX /bin/sh launcher cannot run
+        # there, and Qt path setup belongs in a qt.conf beside the exe.
+        cp "$_bc" "$out/bin/$(basename "$_bc")"
       '' else ''
         # Dev: hide real binary, create wrapper that sets Qt env vars
-        cp build/LogosBasecamp "$out/bin/.LogosBasecamp"
+        cp "$_bc" "$out/bin/.LogosBasecamp"
 
         cat > $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 #!/bin/sh
@@ -280,20 +308,29 @@ WRAPPER_EOF
     fi
 
     # Install ui-host binary from logos-view-module-runtime (process-isolated UI plugins)
-    if [ -f "${logosViewModuleRuntime}/bin/ui-host" ]; then
-      cp "${logosViewModuleRuntime}/bin/ui-host" "$out/bin/ui-host"
-      echo "Installed ui-host binary from logos-view-module-runtime"
-    fi
+    for _x in "" ".exe"; do
+      if [ -f "${logosViewModuleRuntime}/bin/ui-host$_x" ]; then
+        cp -L "${logosViewModuleRuntime}/bin/ui-host$_x" "$out/bin/ui-host$_x"
+        echo "Installed ui-host$_x from logos-view-module-runtime"
+        break
+      fi
+    done
 
     # Copy the core binaries from liblogos
-    if [ -f "${logosLiblogos}/bin/logoscore" ]; then
-      cp -L "${logosLiblogos}/bin/logoscore" "$out/bin/"
-      echo "Installed logoscore binary"
-    fi
-    if [ -f "${logosLiblogos}/bin/logos_host" ]; then
-      cp -L "${logosLiblogos}/bin/logos_host" "$out/bin/"
-      echo "Installed logos_host binary"
-    fi
+    for _x in "" ".exe"; do
+      if [ -f "${logosLiblogos}/bin/logoscore$_x" ]; then
+        cp -L "${logosLiblogos}/bin/logoscore$_x" "$out/bin/"
+        echo "Installed logoscore$_x"
+        break
+      fi
+    done
+    for _x in "" ".exe"; do
+      if [ -f "${logosLiblogos}/bin/logos_host$_x" ]; then
+        cp -L "${logosLiblogos}/bin/logos_host$_x" "$out/bin/"
+        echo "Installed logos_host$_x"
+        break
+      fi
+    done
 
     # Copy shared libraries from liblogos (includes logos_core and its dependency package_manager_lib)
     for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so; do

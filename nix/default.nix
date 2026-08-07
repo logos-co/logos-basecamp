@@ -22,10 +22,14 @@
     pkgs.qt6.qtremoteobjects
     pkgs.qt6.qtdeclarative
     pkgs.zstd
-    pkgs.abseil-cpp
     pkgs.zlib
     pkgs.icu
   ]
+  # abseil-cpp does not cross-compile to mingw: absl/base/internal/
+  # thread_identity.cc includes <pthread.h>, which mingw-w64 with mcfgthread
+  # does not ship. Like krb5 below it is dead weight here -- "absl" appears
+  # nowhere in the sources or CMake, only in this file and the README.
+  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.abseil-cpp
   # krb5 does not cross-evaluate to mingw: it carries a host-platform `bash` in
   # its own buildInputs, so the splice fails with "Refusing to evaluate package
   # 'bash-5.3p9' ... not available on the requested hostPlatform" -- an error
@@ -44,7 +48,14 @@
     "-DLOGOS_QT_SDK_ROOT=${logosQtSdk}"
     "-DLOGOS_MODULE_ROOT=${logosModule}"
     "-DLOGOS_LIBLOGOS_ROOT=${logosLiblogos}"
-  ];
+  ]
+  # Qt splits its host TOOLS (repc, moc, qmltyperegistrar, qsb) into separate
+  # packages that must run on the BUILD machine; -DQT_HOST_PATH=<qtbase> cannot
+  # reach them. Empty on native builds. The symptom when absent is actively
+  # misleading: CMake reports 'Failed to find required Qt component
+  # "RemoteObjects"', but the TARGET Qt6RemoteObjects is present -- it is
+  # Qt6RemoteObjectsTools, the host-side package, that is missing.
+  ++ (pkgs.logosQtCrossCmakeFlags or [ ]);
   
   # Environment variables
   env = {
