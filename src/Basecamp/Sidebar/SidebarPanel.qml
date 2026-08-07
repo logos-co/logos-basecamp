@@ -179,6 +179,10 @@ Control {
                     checked: backend.currentActiveSectionIndex -1 === index
                     text: modelData.name
                     icon.source: modelData.icon
+                    // Settings hosts the Dashboard's Updates section, so it is
+                    // the only entry that carries the update marker.
+                    showNotificationDot: modelData.name === "Settings"
+                                         && backend.updateAvailable
                     onClicked: root.updateLauncherIndex(_d.workspaceSections.length + index)
                     onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
                 }
@@ -186,19 +190,35 @@ Control {
         }
 
         // Version footer — falls back to the build-type label
-        // ("Dev build" / "Portable build"). Selectable so the release tag can
-        // be copied out of the sidebar.
-        LogosSelectableText {
+        // ("Dev build" / "Portable build"). The badge stacks above the version
+        // rather than sitting beside it: the sidebar column is only 80px wide
+        // (see MainContainer.cpp), too narrow for both on one row.
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.alignment: Qt.AlignHCenter
-            horizontalAlignment: TextEdit.AlignHCenter
-            text: backend.buildVersion.length > 0
-                ? backend.buildVersion
-                : (backend.isPortableBuild ? qsTr("Portable build")
-                                           : qsTr("Dev build"))
-            color: Theme.palette.textSecondary
-            font.pixelSize: Theme.typography.badgeText
-            wrapMode: TextEdit.WrapAnywhere
+            spacing: Theme.spacing.tiny
+
+            LogosBadge {
+                objectName: "sidebar.updateBadge"
+                Layout.alignment: Qt.AlignHCenter
+                visible: backend.updateAvailable
+                // LogosBadge uppercases its own label.
+                text: qsTr("Update")
+                color: Theme.palette.primary
+            }
+
+            // Selectable so the release tag can be copied out of the sidebar.
+            LogosSelectableText {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignHCenter
+                horizontalAlignment: TextEdit.AlignHCenter
+                text: backend.buildVersion.length > 0
+                    ? backend.buildVersion
+                    : (backend.isPortableBuild ? qsTr("Portable build")
+                                               : qsTr("Dev build"))
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.badgeText
+                wrapMode: TextEdit.WrapAnywhere
+            }
         }
     }
 
