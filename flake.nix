@@ -191,7 +191,7 @@
           # the window, sidebar and tabs still render. Restore this once the PE
           # path through nix-bundle-dir exists.
           onWindows = pkgs.stdenv.hostPlatform.isWindows;
-          installedDev = if onWindows then [ ] else map installDev [
+          installedDev = map installDev [
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
