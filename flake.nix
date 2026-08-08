@@ -265,15 +265,28 @@
               mainProgram = "LogosBasecamp";
             };
           });
-          # nix-bundle-dir is the ELF/Mach-O relocator: it rewrites rpaths and
-          # install names so the binaries stop pointing into /nix/store. A PE
-          # has neither -- its import table carries DLL BASE NAMES only, and
-          # Windows searches the executable's own directory first -- so the
-          # Windows build is ALREADY relocatable and nixpkgs' win-dll-link.sh
-          # has staged the closure into bin/. Running bundle.sh over it would
-          # not help; it branches `file -b` on Mach-O|ELF with no PE case and
-          # would emit an EMPTY payload while exiting 0. nix-bundle-lgx skips
-          # it on Windows for exactly this reason (d539a3f); do the same here.
+          # INTERIM, and neither branch of this is right yet -- see below.
+          #
+          # nix-bundle-dir does two separable jobs. (a) RELOCATION: rewriting
+          # rpaths / install names so binaries stop pointing into /nix/store.
+          # A PE genuinely needs none of that -- its import table carries DLL
+          # BASE NAMES only, Windows searches the executable's own directory
+          # first, and win-dll-link.sh has already staged bin/. (b) Qt STAGING:
+          # the Qt plugin scan, the QML module scan and qt.conf generation.
+          # (b) is FORMAT-AGNOSTIC and is required on Windows just as much as
+          # anywhere else -- Qt plugins and QML module DLLs are LoadLibrary'd,
+          # so nothing in the import closure reveals them.
+          #
+          # Running the bundler unmodified on Windows takes the (a) path, whose
+          # `file -b` chain has no PE case, and emits an EMPTY payload while
+          # exiting 0. Skipping it entirely -- what this does -- keeps the app
+          # and the modules but produces no qt.conf, no lib/qt-6/plugins and no
+          # qwindows.dll, so the app cannot start either.
+          #
+          # The real fix is a PE branch in nix-bundle-dir's bundle.sh that skips
+          # (a) and keeps (b), plus a fixpoint sweep of the DLL closure over the
+          # staged plugins. When that lands, DELETE bundleFor and go back to
+          # dirBundler on every platform.
           winBundler = drv: drv;
           bundleFor = if onWindows then winBundler else dirBundler;
           binBundleDir = withMainProgram (bundleFor appDistributed);

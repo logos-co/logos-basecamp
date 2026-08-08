@@ -332,12 +332,39 @@ WRAPPER_EOF
       fi
     done
 
-    # Copy shared libraries from liblogos (includes logos_core and its dependency package_manager_lib)
-    for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so; do
+    # Copy shared libraries from liblogos (includes logos_core and its dependency
+    # package_manager_lib).
+    #
+    # The glob listed only *.dylib and *.so, so on Windows it matched NOTHING and
+    # -- guarded by `[ -f ]` and `|| true` -- copied nothing while exiting 0. The
+    # thirteen DLLs sitting in that same lib/ (liblogos_core, libpackage_manager_lib,
+    # liblgx, icuuc76, icudt76, libsodium-26, ...) were silently dropped, and
+    # LogosBasecamp.exe imports liblogos_core.dll DIRECTLY: the app died at
+    # 0xC0000135 (STATUS_DLL_NOT_FOUND) before main(), which produces no Qt error,
+    # no stderr, no output of any kind. It only ever ran because those DLLs were
+    # hand-staged into the payload by the operator.
+    #
+    # DLLs go to bin/, NOT lib/. Windows searches the executable's own directory
+    # first and has no rpath, and nixpkgs' win-dll-link.sh (which pulls in the rest
+    # of the closure) only ever processes $out/bin.
+    _libdest="$out/lib"
+    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isWindows ''_libdest="$out/bin"''}
+    _copied=0
+    for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so "${logosLiblogos}/lib/"*.dll; do
+      # A non-matching glob stays literal, so test before copying.
       if [ -f "$f" ]; then
-        cp -L "$f" "$out/lib/" || true
+        cp -L "$f" "$_libdest/" || true
+        _copied=$((_copied + 1))
       fi
     done
+    echo "Installed $_copied shared librar(y|ies) from liblogos into $_libdest"
+    # Assert rather than trust: this loop silently copying zero is exactly the
+    # defect above, and it exits 0 either way.
+    if [ "$_copied" -eq 0 ]; then
+      echo "ERROR: copied no shared libraries from ${logosLiblogos}/lib" >&2
+      ls -la "${logosLiblogos}/lib" >&2 || true
+      exit 1
+    fi
 
     # Copy SDK library if it exists
     if ls "${logosSdk}/lib/"liblogos_sdk.* >/dev/null 2>&1; then
