@@ -1943,13 +1943,43 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
+    // Installing was left on the default 20 s IPC deadline while DOWNLOADING
+    // got five minutes -- backwards. Downloading is network-bound and can be
+    // retried; installing is disk-bound over a payload that package_manager
+    // reads, gunzips and tar-parses three times and Merkle-hashes twice, then
+    // extracts and copies. It is ~1 s on a warm dev box and unbounded on a slow
+    // disk, a large package, or a machine where the antivirus scans every DLL
+    // as it lands. Blowing the deadline does not cancel any of that work: the
+    // files still install and the reply is simply abandoned, so the user is
+    // told the install failed when it did not. Match the download budget.
+    constexpr int kInstallIpcDeadlineMs = 5 * 60 * 1000;
     logos.package_manager.installPluginAsync(filePath, false,
         [self, packageName, onDone](QVariantMap installResult) {
             if (!self) return;
             const bool success = installPluginSucceeded(installResult);
-            const QString err  = installResult.value("error").toString();
+            QString err = installResult.value("error").toString();
+            // INTERIM, and there is a real API for this -- it is just not on
+            // this branch yet. An EMPTY reply is what a dropped or timed-out
+            // call looks like from here, because `installPluginAsync`'s
+            // callback has no error slot and the generated wrapper substitutes
+            // a default-constructed QVariantMap. A successful install always
+            // carries "path", so an empty map is never a genuine answer, which
+            // makes the inference sound -- but it is still an inference.
+            //
+            // REPLACE with `installPluginAsyncResult(...)`, whose callback takes
+            // `logos::AsyncResult<QVariantMap>` (`.value`, `.error`, `.ok()`),
+            // once logos-cpp-sdk feat/windows-cross picks up master's f3369fa
+            // ("async callers can see the error, sync callers can set a
+            // deadline", #132). That branch is currently 12 commits behind
+            // master and predates it. Note f3369fa did NOT change the async
+            // default deadline, so the Timeout below stays either way.
+            if (!success && err.isEmpty() && installResult.isEmpty())
+                err = QStringLiteral("no reply from package_manager (timed out after %1 s, or the module stopped responding); "
+                                     "the package may in fact be installed — check before retrying")
+                          .arg(kInstallIpcDeadlineMs / 1000);
             if (onDone) onDone(success, success ? QString() : err);
-        });
+        },
+        Timeout(kInstallIpcDeadlineMs));
 }
 
 void PackageCoordinator::installResultsSequential(const QVariantList& results,
