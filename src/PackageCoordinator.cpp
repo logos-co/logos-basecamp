@@ -1953,30 +1953,31 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
     // files still install and the reply is simply abandoned, so the user is
     // told the install failed when it did not. Match the download budget.
     constexpr int kInstallIpcDeadlineMs = 5 * 60 * 1000;
-    logos.package_manager.installPluginAsync(filePath, false,
-        [self, packageName, onDone](QVariantMap installResult) {
+    // `installPluginAsyncResult`, not `installPluginAsync`: the plain async
+    // wrapper hands the callback a bare QVariantMap, so a transport failure is
+    // indistinguishable from a provider that legitimately returned an empty
+    // one. AsyncResult<T> carries the value and the error together, which is
+    // the whole reason it exists.
+    logos.package_manager.installPluginAsyncResult(filePath, false,
+        [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
-            const bool success = installPluginSucceeded(installResult);
-            QString err = installResult.value("error").toString();
-            // INTERIM, and there is a real API for this -- it is just not on
-            // this branch yet. An EMPTY reply is what a dropped or timed-out
-            // call looks like from here, because `installPluginAsync`'s
-            // callback has no error slot and the generated wrapper substitutes
-            // a default-constructed QVariantMap. A successful install always
-            // carries "path", so an empty map is never a genuine answer, which
-            // makes the inference sound -- but it is still an inference.
-            //
-            // REPLACE with `installPluginAsyncResult(...)`, whose callback takes
-            // `logos::AsyncResult<QVariantMap>` (`.value`, `.error`, `.ok()`),
-            // once logos-cpp-sdk feat/windows-cross picks up master's f3369fa
-            // ("async callers can see the error, sync callers can set a
-            // deadline", #132). That branch is currently 12 commits behind
-            // master and predates it. Note f3369fa did NOT change the async
-            // default deadline, so the Timeout below stays either way.
-            if (!success && err.isEmpty() && installResult.isEmpty())
-                err = QStringLiteral("no reply from package_manager (timed out after %1 s, or the module stopped responding); "
-                                     "the package may in fact be installed — check before retrying")
-                          .arg(kInstallIpcDeadlineMs / 1000);
+            // Transport-level failure FIRST -- a timeout leaves `value`
+            // default-constructed, and reading it as an install verdict is
+            // exactly the mistake this channel removes. The message names the
+            // module and the deadline (logos::callErrorTimeout builds it), and
+            // says the package may in fact be installed: blowing the deadline
+            // cancels nothing, so the files may well be on disk.
+            if (!r.ok()) {
+                const QString detail = QString::fromStdString(r.error.message);
+                if (onDone) onDone(false,
+                    QStringLiteral("%1 — the package may in fact be installed; check before retrying")
+                        .arg(detail.isEmpty()
+                                 ? QStringLiteral("package_manager did not reply")
+                                 : detail));
+                return;
+            }
+            const bool success = installPluginSucceeded(r.value);
+            const QString err  = r.value.value("error").toString();
             if (onDone) onDone(success, success ? QString() : err);
         },
         Timeout(kInstallIpcDeadlineMs));
