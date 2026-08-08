@@ -370,14 +370,40 @@ pkgs.stdenv.mkDerivation rec {
       exit 1
     fi
 
+    # `find -L`, and NO -maxdepth. Both were wrong before and both were silent:
+    #
+    #  * `-type f` does not match a SYMLINK, and 12 of the 36 PE entries in
+    #    $out/bin are relative symlinks created by nixpkgs' win-dll-link.sh
+    #    (Qt6Core, Qt6Gui, Qt6Widgets, Qt6Network, Qt6RemoteObjects,
+    #    libcrypto/libssl, libzstd, libb2, libpng16, libpcre2,
+    #    libdouble-conversion). Their import tables were never read, so four
+    #    non-system names in this tree were reachable only through roots the
+    #    gate could not see -- three of them entries on nix-bundle-lgx's
+    #    windowsHostLibs, the list this gate is the only thing able to falsify.
+    #    `-L` makes -type f test the TARGET, so a symlink to a real file matches.
+    #  * `-maxdepth 1` skipped any PE below the first level of lib/, modules/<m>/
+    #    or plugins/<p>/. Demonstrated: a DLL one directory deeper left the gate
+    #    at rc=0 while a full-depth sweep found 8 unresolved imports.
+    #
+    # A dangling symlink is invisible to `find -L -type f`, so it is checked
+    # separately below rather than being silently dropped from the root set.
     _pe_roots() {
-      find "$out/bin" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
-      [ -d "$out/lib" ] && { find "$out/lib" -maxdepth 1 -type f -name '*.dll' 2>/dev/null || true; }
+      find -L "$out/bin" -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+      [ -d "$out/lib" ] && { find -L "$out/lib" -type f -name '*.dll' 2>/dev/null || true; }
       for _d in "$out"/modules/* "$out"/plugins/*; do
         [ -d "$_d" ] || continue
-        find "$_d" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+        find -L "$_d" -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
       done
     }
+
+    _dangling=$(find "$out" -xtype l 2>/dev/null | wc -l)
+    if [ "$_dangling" -ne 0 ]; then
+      echo "ERROR: $_dangling dangling symlink(s) in the bundle:" >&2
+      find "$out" -xtype l >&2
+      echo "These are invisible to the import sweep below and unopenable at" >&2
+      echo "runtime, so they would fail as 0xC0000135 with no output." >&2
+      exit 1
+    fi
 
     declare -A _unresolved
     _staged=0
@@ -447,7 +473,11 @@ pkgs.stdenv.mkDerivation rec {
       echo "store path is absent from windowsDllClosure's rootPaths in app.nix." >&2
       exit 1
     fi
-    echo "Every non-system PE import in bin/, lib/, modules/ and plugins/ resolves."
+    # State the SIZE of what was checked, not just the verdict. The previous
+    # message claimed full coverage of bin/, lib/, modules/ and plugins/ while
+    # silently excluding 12 of 36 bin/ entries and everything below depth 1, and
+    # because it was the only line on the pass path it was read as proof.
+    echo "PE import closure verified: $(_pe_roots | wc -l) root(s), $_imports_read import(s) read, 0 unresolved."
   '';
 
   configurePhase = ''
