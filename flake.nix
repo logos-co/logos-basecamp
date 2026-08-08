@@ -180,16 +180,8 @@
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
-          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied).
-          # Windows ships NO pre-installed modules yet. The install path runs
-          # each module through nix-bundle-logos-module-install -> nix-bundle-lgx
-          # -> nix-bundle-dir, and nix-bundle-dir is ELF/Mach-O only: its
-          # bundle.sh branches `file -b` on Mach-O | ELF with no PE case, so it
-          # would emit an empty payload rather than fail. Cutting the list keeps
-          # the whole bundler chain, lgpm and the four module repos off the
-          # Windows critical path; Basecamp starts with an empty module list and
-          # the window, sidebar and tabs still render. Restore this once the PE
-          # path through nix-bundle-dir exists.
+          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied
+          # off Windows; see binBundleDir for why Windows skips that step).
           onWindows = pkgs.stdenv.hostPlatform.isWindows;
           installedDev = map installDev [
             logosPackageManagerModuleLib
@@ -198,7 +190,7 @@
             mainUIPlugin
             packageManagerUIPlugin
           ];
-          installedDistributed = if onWindows then [ ] else map installPortable [
+          installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
@@ -273,8 +265,19 @@
               mainProgram = "LogosBasecamp";
             };
           });
-          binBundleDir = withMainProgram (dirBundler appDistributed);
-          binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
+          # nix-bundle-dir is the ELF/Mach-O relocator: it rewrites rpaths and
+          # install names so the binaries stop pointing into /nix/store. A PE
+          # has neither -- its import table carries DLL BASE NAMES only, and
+          # Windows searches the executable's own directory first -- so the
+          # Windows build is ALREADY relocatable and nixpkgs' win-dll-link.sh
+          # has staged the closure into bin/. Running bundle.sh over it would
+          # not help; it branches `file -b` on Mach-O|ELF with no PE case and
+          # would emit an EMPTY payload while exiting 0. nix-bundle-lgx skips
+          # it on Windows for exactly this reason (d539a3f); do the same here.
+          winBundler = drv: drv;
+          bundleFor = if onWindows then winBundler else dirBundler;
+          binBundleDir = withMainProgram (bundleFor appDistributed);
+          binBundleDirInspector = withMainProgram (bundleFor appDistributedWithInspector);
         in
         {
           # Individual outputs
