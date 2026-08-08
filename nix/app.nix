@@ -191,6 +191,73 @@ pkgs.stdenv.mkDerivation rec {
     runHook prePostFixup
   '';
 
+  # Windows only: stage liblogos' OWN dependency DLLs, and then PROVE the closure.
+  #
+  # Copying ${logosLiblogos}/lib into bin/ (see installPhase) is necessary but not
+  # sufficient. liblogos_core.dll and logos_host.exe each import libspdlog.dll and
+  # libfmt.dll, and those two live in liblogos' BIN, not its lib/ -- nixpkgs'
+  # win-dll-link.sh walked logos_host.exe's imports and staged the closure there.
+  # spdlog is a buildInput of liblogos, not of basecamp, so basecamp's OWN
+  # win-dll-link pass cannot find them either. Measured with a PE-capable objdump
+  # over the built bundle: with lib/ copied and bin/ not, libspdlog.dll and
+  # libfmt.dll were the only non-OS names left unresolved for LogosBasecamp.exe --
+  # i.e. still 0xC0000135 before main(), the exact symptom copying lib/ cured for
+  # liblogos_core itself. Mirrors what logos-package-manager/nix/lib.nix already
+  # does with liblgx's closure.
+  #
+  # This is postFixup, NOT installPhase, and the ordering is load-bearing:
+  # win-dll-link.sh registers _linkDLLs in fixupOutputHooks, which run BEFORE
+  # postFixup. Doing it in installPhase instead makes the `already present` skip
+  # below vacuous, so Qt6Core/Qt6Network/Qt6RemoteObjects get copied out of
+  # liblogos as real files while Qt6Gui/Qt6Widgets stay symlinked into basecamp's
+  # own qtbase -- a bin/ with a MIXED Qt in it the moment those two pins diverge.
+  # Running after the hook lets the symlinks win and copies only what is genuinely
+  # unprovided.
+  postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isWindows ''
+    # Explicit `for` + `-f`, not a nullglob array: a fully interpolated literal
+    # path contains no wildcard, so nullglob would leave it in the array and any
+    # guard over it would pass vacuously.
+    _dlldeps=0
+    for dep in "${logosLiblogos}/bin/"*.dll; do
+      [ -f "$dep" ] || continue
+      # Anything win-dll-link.sh already resolved (symlink) or installPhase copied
+      # stays; -e follows symlinks, which is what we want here.
+      [ -e "$out/bin/$(basename "$dep")" ] && continue
+      cp -L "$dep" "$out/bin/"
+      _dlldeps=$((_dlldeps + 1))
+    done
+    echo "Staged $_dlldeps dependency DLL(s) from ${logosLiblogos}/bin"
+
+    # Assert the invariant, not the mechanism: every DLL that liblogos_core.dll
+    # imports AND that liblogos itself ships must now resolve next to the
+    # executable. Names liblogos does not ship (kernel32, api-ms-*, ...) are OS
+    # DLLs and are deliberately not checked, so this needs no hand-maintained
+    # system-DLL list to stay correct.
+    _objdump="''${OBJDUMP:-}"
+    if [ -z "$_objdump" ] || ! command -v "$_objdump" >/dev/null 2>&1; then
+      echo "ERROR: no \$OBJDUMP in this Windows-host stdenv; cannot verify the DLL closure" >&2
+      exit 1
+    fi
+    _n_imports=$("$_objdump" -p "$out/bin/liblogos_core.dll" | grep -c 'DLL Name:')
+    # A zero here means the objdump has no PE target, not that the DLL is
+    # dependency-free. Treat it as a measurement failure, never as a pass.
+    if [ "$_n_imports" -eq 0 ]; then
+      echo "ERROR: $_objdump reported 0 imports for liblogos_core.dll (no PE target?)" >&2
+      exit 1
+    fi
+    echo "liblogos_core.dll declares $_n_imports direct imports; checking the ones liblogos ships"
+    _unmet=""
+    for _imp in $("$_objdump" -p "$out/bin/liblogos_core.dll" | awk '/DLL Name:/{print $3}'); do
+      if [ -e "${logosLiblogos}/bin/$_imp" ] || [ -e "${logosLiblogos}/lib/$_imp" ]; then
+        [ -e "$out/bin/$_imp" ] || _unmet="$_unmet $_imp"
+      fi
+    done
+    if [ -n "$_unmet" ]; then
+      echo "ERROR: liblogos ships these DLLs but they did not reach $out/bin:$_unmet" >&2
+      exit 1
+    fi
+  '';
+
   configurePhase = ''
     runHook preConfigure
 
