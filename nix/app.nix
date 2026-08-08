@@ -23,6 +23,50 @@ let
   qtWebview = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.qt6.qtwebview;
   qtWebviewQml = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
     "${pkgs.qt6.qtwebview}/lib/qt-6/qml";
+
+  # DLLs Windows itself provides. An import of one of these is satisfied out of
+  # %SystemRoot%, never by us; everything NOT on this list has to ship with the
+  # bundle. Compared with the extension stripped and case-folded, because import
+  # tables mix spellings freely -- the real tables in this tree contain
+  # "KERNEL32.dll", "IPHLPAPI.DLL" and "bcrypt.dll" side by side.
+  #
+  # Erring long here would hide a real gap, so entries are only added when a
+  # measured import turns out to be an OS DLL. `api-ms-win-*` and `ext-ms-*`
+  # (the API-set stubs) are matched by prefix in the shell.
+  windowsSystemDlls = [
+    "kernel32" "kernelbase" "ntdll" "user32" "gdi32" "gdiplus" "advapi32"
+    "shell32" "shcore" "shlwapi" "ole32" "oleaut32" "oleacc" "comdlg32"
+    "comctl32" "ws2_32" "wsock32" "mswsock" "crypt32" "bcrypt" "ncrypt"
+    "secur32" "iphlpapi" "dbghelp" "version" "winmm" "imm32" "netapi32"
+    "userenv" "dwmapi" "uxtheme" "d2d1" "d3d9" "d3d11" "d3d12" "dxgi"
+    "dwrite" "opengl32" "glu32" "setupapi" "wtsapi32" "mpr" "rpcrt4"
+    "msvcrt" "normaliz" "winspool" "odbc32" "authz" "dnsapi" "wldap32"
+    "winhttp" "wininet" "psapi" "cfgmgr32" "uiautomationcore" "windowscodecs"
+    "avicap32" "msimg32" "powrprof" "propsys" "usp10" "wintrust" "avrt"
+  ];
+
+  # Windows only. Every store path that may legitimately provide a DLL this
+  # bundle needs, enumerated as a CLOSURE rather than as a hand-written list.
+  #
+  # A PE embeds no /nix/store strings, so Nix's reference scanner finds nothing
+  # in a cross-built .exe or .dll and this derivation's own closure is useless
+  # for the purpose: the providers have to be named from the build side. These
+  # roots mirror `buildInputs` below plus the Logos components, and closureInfo
+  # walks them transitively -- which matters, because the DLL that goes missing
+  # is typically three or four levels down (libcurl -> libidn2 -> libiconv) and
+  # no direct dependency of anything here.
+  windowsDllClosure = pkgs.pkgsBuildBuild.closureInfo {
+    rootPaths = common.buildInputs ++ [
+      pkgs.qt6.qtdeclarative
+      logosProtocolPkg
+      logosQtSdk
+      logosLiblogos
+      logosModule
+      logosSdk
+      logosDesignSystem
+      logosViewModuleRuntime
+    ] ++ installedModules;
+  };
 in
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-basecamp";
@@ -256,6 +300,154 @@ pkgs.stdenv.mkDerivation rec {
       echo "ERROR: liblogos ships these DLLs but they did not reach $out/bin:$_unmet" >&2
       exit 1
     fi
+
+    # ---------------------------------------------------------------------
+    # Drive the WHOLE bundle's PE import closure to a fixpoint, then prove it.
+    #
+    # nixpkgs' win-dll-link.sh does walk imports to a fixpoint, but only over
+    # `$prefix/bin` (its entry point is `_linkDLLs() { linkDLLsInfolder
+    # "$prefix/bin"; }`), and it resolves each name against LINK_DLL_FOLDERS --
+    # which is one level of buildInputs, contributed by an env hook. When a name
+    # is not on that path it gives up in SILENCE:
+    #
+    #     readarray -d "" pathsFound < <(find "''${searchPaths[@]}" -name "$file" ...)
+    #     if [ ''${#pathsFound[@]} -eq 0 ]; then continue; fi
+    #
+    # Two consequences, both of which shipped:
+    #
+    #  1. $out/modules/<m>/ and $out/plugins/<p>/ are populated in installPhase
+    #     from .lgx payloads and UI-plugin outputs -- i.e. AFTER that hook has
+    #     run, and in directories it never looks at. Nothing ever read their
+    #     import tables. Measured here before this block existed: main_ui.dll
+    #     imports Qt6Qml.dll, Qt6QuickControls2.dll and Qt6QuickWidgets.dll and
+    #     not one of them was in plugins/main_ui/ or in bin/.
+    #
+    #  2. A DLL that is itself absent cannot have ITS imports read, so one pass
+    #     over a tree is never enough. package_downloader needs three rounds:
+    #     package_downloader_plugin -> libpackage_downloader_lib -> libcurl-4 ->
+    #     libidn2-0 -> libiconv-2.
+    #
+    # The failure mode is why this is a hard error and not a warning: a missing
+    # DLL is ERROR_MOD_NOT_FOUND (126) / 0xC0000135 at LoadLibrary time, blamed
+    # on the plugin rather than on the DLL that is absent, with no Qt message
+    # and no stderr. It exits 0 at build time every single time.
+    #
+    # Windows searches the importing module's own directory first (logos-module
+    # pre-loads with LOAD_WITH_ALTERED_SEARCH_PATH) and then the application
+    # directory, so "resolved" here means: beside the importer, or in $out/bin.
+    # Anything still unresolved is staged into $out/bin out of the closure.
+    _sysdlls=${pkgs.lib.escapeShellArg (pkgs.lib.concatStringsSep " " windowsSystemDlls)}
+    _is_system_dll() {
+      local _b="''${1,,}" _s
+      _b="''${_b%.dll}"; _b="''${_b%.drv}"; _b="''${_b%.exe}"
+      case "$_b" in
+        api-ms-win-*|ext-ms-*) return 0 ;;
+      esac
+      for _s in $_sysdlls; do [ "$_b" = "$_s" ] && return 0; done
+      return 1
+    }
+
+    # Index the closure by lower-cased base name. bin/ wins over lib/ only by
+    # first-writer; both are real providers under mingw and nothing in this tree
+    # ships the same DLL twice with different contents.
+    declare -A _dllsrc
+    _indexed=0
+    while IFS= read -r _sp; do
+      [ -d "$_sp" ] || continue
+      while IFS= read -r _f; do
+        _b="$(basename "$_f")"; _k="''${_b,,}"
+        if [ -z "''${_dllsrc[$_k]:-}" ]; then
+          _dllsrc[$_k]="$_f"; _indexed=$((_indexed + 1))
+        fi
+      done < <(find "$_sp" -maxdepth 3 -type f -name '*.dll' 2>/dev/null)
+    done < ${windowsDllClosure}/store-paths
+    echo "Windows DLL index: $_indexed distinct name(s) across the build closure"
+    # A zero index would make every "unresolved" below a measurement artefact
+    # rather than a real gap, so it is fatal on its own.
+    if [ "$_indexed" -eq 0 ]; then
+      echo "ERROR: the build closure contains no .dll at all -- the closure is" >&2
+      echo "wrong, or this is not a Windows build" >&2
+      exit 1
+    fi
+
+    _pe_roots() {
+      find "$out/bin" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+      [ -d "$out/lib" ] && { find "$out/lib" -maxdepth 1 -type f -name '*.dll' 2>/dev/null || true; }
+      for _d in "$out"/modules/* "$out"/plugins/*; do
+        [ -d "$_d" ] || continue
+        find "$_d" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+      done
+    }
+
+    declare -A _unresolved
+    _staged=0
+    _imports_read=0
+    _round=0
+    while :; do
+      _round=$((_round + 1))
+      _added=0
+      while IFS= read -r _root; do
+        _rootdir="$(dirname "$_root")"
+        while IFS= read -r _imp; do
+          [ -n "$_imp" ] || continue
+          _imports_read=$((_imports_read + 1))
+          _is_system_dll "$_imp" && continue
+          # -e, not -f: win-dll-link.sh's entries are relative symlinks.
+          [ -e "$_rootdir/$_imp" ] && continue
+          [ -e "$out/bin/$_imp" ] && continue
+          _src="''${_dllsrc[''${_imp,,}]:-}"
+          if [ -z "$_src" ]; then
+            _unresolved["$_imp"]="''${_unresolved["$_imp"]:-}''${_root#$out/} "
+            continue
+          fi
+          # cp -L, never cp -a: the provider is very often win-dll-link.sh's own
+          # relative symlink into a third store path, and copying it as a link
+          # stages something that dangles the moment the tree is moved.
+          cp -L "$_src" "$out/bin/$_imp"
+          chmod u+w "$out/bin/$_imp"
+          echo "  round $_round  + $_imp  <- ''${_root#$out/}"
+          _added=$((_added + 1)); _staged=$((_staged + 1))
+        done < <("$_objdump" -p "$_root" 2>/dev/null | sed -n 's/.*DLL Name: *//p' | tr -d '\r')
+      done < <(_pe_roots)
+      [ "$_added" -eq 0 ] && break
+      if [ "$_round" -ge 25 ]; then
+        echo "ERROR: the DLL import closure did not reach a fixpoint in $_round rounds" >&2
+        exit 1
+      fi
+    done
+    echo "DLL import closure converged after $_round round(s); staged $_staged DLL(s) into bin/"
+
+    # A zero here is the measurement bug this whole block exists to avoid: an
+    # objdump without a PE target prints nothing and every import "resolves".
+    if [ "$_imports_read" -eq 0 ]; then
+      echo "ERROR: read 0 imports from the entire bundle -- $_objdump has no PE" >&2
+      echo "target, or _pe_roots matched nothing. Not a pass." >&2
+      exit 1
+    fi
+
+    # `+x`: under `set -u`, ''${#arr[@]} on an associative array that never
+    # received an element is itself an error, which would fail the SUCCESS path.
+    if [ -n "''${_unresolved[*]+x}" ]; then
+      echo "" >&2
+      echo "ERROR: ''${#_unresolved[@]} DLL import(s) cannot be resolved from this bundle:" >&2
+      for _n in "''${!_unresolved[@]}"; do
+        echo "  $_n" >&2
+        printf '%s\n' ''${_unresolved["$_n"]} | sort -u | while IFS= read -r _i; do
+          [ -n "$_i" ] && echo "      imported by: $_i" >&2
+        done
+      done
+      echo "" >&2
+      echo "A PE import table carries base names only, so this is not a degraded" >&2
+      echo "feature: it is 0xC0000135 (STATUS_DLL_NOT_FOUND) before main() runs," >&2
+      echo "or ERROR_MOD_NOT_FOUND blamed on the plugin, with no output at all." >&2
+      echo "Two causes, in order of likelihood: (a) an .lgx payload dropped it," >&2
+      echo "because nix-bundle-lgx's windowsHostLibs claims this bundle ships it" >&2
+      echo "and it does not -- that list is an unverifiable promise about THIS" >&2
+      echo "output, and this is the check that falsifies it; or (b) the providing" >&2
+      echo "store path is absent from windowsDllClosure's rootPaths in app.nix." >&2
+      exit 1
+    fi
+    echo "Every non-system PE import in bin/, lib/, modules/ and plugins/ resolves."
   '';
 
   configurePhase = ''
@@ -434,9 +626,16 @@ WRAPPER_EOF
     fi
 
     # Copy SDK library if it exists
-    if ls "${logosSdk}/lib/"liblogos_sdk.* >/dev/null 2>&1; then
-      cp -L "${logosSdk}/lib/"liblogos_sdk.* "$out/lib/" || true
-    fi
+    # Test each candidate, do not `ls` the glob. With nullglob set (it is, in
+    # this phase) an unmatched glob vanishes, so `ls` ran with NO arguments,
+    # listed the working directory and succeeded -- after which `cp -L "$out/lib/"`
+    # ran with a single argument. Measured in the mingw build log:
+    #   cp: missing destination file operand after '.../lib/'
+    # Guarded by `|| true`, so it exited 0 having copied nothing.
+    for _sdklib in "${logosSdk}/lib/"liblogos_sdk.*; do
+      [ -f "$_sdklib" ] || continue
+      cp -L "$_sdklib" "$out/lib/"
+    done
 
     # Copy pre-installed modules and plugins from bundled install outputs.
     # Each entry in installedModules has modules/ and/or plugins/ subdirectories.
