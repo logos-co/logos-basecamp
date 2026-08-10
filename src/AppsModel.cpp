@@ -8,6 +8,35 @@
 
 namespace {
 constexpr QChar kSep = QLatin1Char('\n');
+// The bundler refuses to emit a 0.4.0 package whose icon is not a validated
+// 256x256 assets/icon.png, so the version is a guarantee that the artwork is
+// safe to render edge-to-edge. Below 0.4.0 the icon is whatever the author
+// shipped — typically a 24-28px glyph that must stay inset.
+//
+// Mirrors Manifest::requiresIconContract() in logos-package, the authority
+// for this rule; keep the two in step.
+bool manifestSupportsFullBleedIconImpl(const QString& manifestVersion)
+{
+    const QStringList parts = manifestVersion.split(QLatin1Char('.'));
+    if (parts.size() < 2) return false;
+    bool okMajor = false, okMinor = false;
+    const int major = parts.at(0).toInt(&okMajor);
+    const int minor = parts.at(1).toInt(&okMinor);
+    if (!okMajor || !okMinor) return false;
+    if (major > 0) return true;
+    return major == 0 && minor >= 4;
+}
+
+QString catalogIconUrl(const QVariantMap& row)
+{
+    const QString raw = row.value("icon").toString();
+    return raw.contains(QLatin1String("://")) ? raw : QString();
+}
+}
+
+bool AppsModel::supportsFullBleedIcon(const QString& manifestVersion)
+{
+    return manifestSupportsFullBleedIconImpl(manifestVersion);
 }
 
 QString AppsModel::key(const QString& repo, const QString& name)
@@ -36,8 +65,8 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case DescriptionRole:      return r.description;
     case CategoryRole:         return r.category;
     case TypeRole:             return r.type;
-    case ColorRole:            return r.color;
     case IconUrlRole:          return r.iconUrl;
+    case SupportsFullBleedIconRole: return r.supportsFullBleedIcon;
     case VersionsRole:         return r.versions;
     case DependenciesRole:     return r.dependencies;
     case InstalledVersionRole: return r.installedVersion;
@@ -81,8 +110,8 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {DescriptionRole,      "description"},
         {CategoryRole,         "category"},
         {TypeRole,             "type"},
-        {ColorRole,            "color"},
         {IconUrlRole,          "iconUrl"},
+        {SupportsFullBleedIconRole, "supportsFullBleedIcon"},
         {VersionsRole,         "versions"},
         {DependenciesRole,     "dependencies"},
         {InstalledVersionRole, "installedVersion"},
@@ -266,8 +295,9 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description    = row.value("description").toString();
             r.category       = row.value("category").toString();
             r.type           = row.value("type").toString();
-            r.color          = row.value("color").toString();
-            r.iconUrl        = row.value("iconUrl").toString();
+            r.iconUrl        = catalogIconUrl(row);
+            r.supportsFullBleedIcon = AppsModel::supportsFullBleedIcon(
+                row.value("manifestVersion").toString());
             r.versions       = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
             m_rows.append(std::move(r));
@@ -282,14 +312,20 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             r.description = row.value("description").toString();
             r.category    = row.value("category").toString();
             r.type        = row.value("type").toString();
-            r.color       = row.value("color").toString();
-            r.iconUrl     = row.value("iconUrl").toString();
+            const QString ic = catalogIconUrl(row);
+            if (!ic.isEmpty())
+                r.iconUrl = ic;
+            else if (r.installedVersion.isEmpty())
+                r.iconUrl.clear();
+            r.supportsFullBleedIcon = AppsModel::supportsFullBleedIcon(
+                row.value("manifestVersion").toString());
             r.versions    = row.value("versions").toList();
             recomputeVersionDerivedFields(r);
             const QModelIndex mi = index(idx);
             emit dataChanged(mi, mi, {
                 DisplayNameRole, DescriptionRole, CategoryRole, TypeRole,
-                ColorRole, IconUrlRole, VersionsRole, LatestVersionRole,
+                IconUrlRole, SupportsFullBleedIconRole,
+                VersionsRole, LatestVersionRole,
                 HasUpdateRole, DependenciesRole, InstallStatusRole
             });
         }
