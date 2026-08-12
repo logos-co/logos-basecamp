@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosProtocolPkg, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -7,6 +7,66 @@ let
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
 
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
+  # qtwebview is dead weight that becomes a hard blocker under cross.
+  #
+  # It propagates qtwebengine -- a full Chromium -- and that does not
+  # cross-evaluate to mingw: the failure surfaces as "Refusing to evaluate
+  # package 'cups-2.4.19'", three levels away from the actual cause.
+  #
+  # Nothing uses it: no C++ include of QtWebView/QWebView, no `import QtWebView`
+  # in any QML, and app/CMakeLists.txt's `find_package(Qt6 COMPONENTS ...)` list
+  # omits WebView entirely. The only surviving mention is a stale line in
+  # docs/project.md.
+  #
+  # Guarded rather than deleted so this stays a Windows-only change. Dropping it
+  # on Unix as well would shrink every bundle and is worth doing separately.
+  qtWebview = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.qt6.qtwebview;
+  qtWebviewQml = pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
+    "${pkgs.qt6.qtwebview}/lib/qt-6/qml";
+
+  # DLLs Windows itself provides. An import of one of these is satisfied out of
+  # %SystemRoot%, never by us; everything NOT on this list has to ship with the
+  # bundle. Compared with the extension stripped and case-folded, because import
+  # tables mix spellings freely -- the real tables in this tree contain
+  # "KERNEL32.dll", "IPHLPAPI.DLL" and "bcrypt.dll" side by side.
+  #
+  # Erring long here would hide a real gap, so entries are only added when a
+  # measured import turns out to be an OS DLL. `api-ms-win-*` and `ext-ms-*`
+  # (the API-set stubs) are matched by prefix in the shell.
+  windowsSystemDlls = [
+    "kernel32" "kernelbase" "ntdll" "user32" "gdi32" "gdiplus" "advapi32"
+    "shell32" "shcore" "shlwapi" "ole32" "oleaut32" "oleacc" "comdlg32"
+    "comctl32" "ws2_32" "wsock32" "mswsock" "crypt32" "bcrypt" "ncrypt"
+    "secur32" "iphlpapi" "dbghelp" "version" "winmm" "imm32" "netapi32"
+    "userenv" "dwmapi" "uxtheme" "d2d1" "d3d9" "d3d11" "d3d12" "dxgi"
+    "dwrite" "opengl32" "glu32" "setupapi" "wtsapi32" "mpr" "rpcrt4"
+    "msvcrt" "normaliz" "winspool" "odbc32" "authz" "dnsapi" "wldap32"
+    "winhttp" "wininet" "psapi" "cfgmgr32" "uiautomationcore" "windowscodecs"
+    "avicap32" "msimg32" "powrprof" "propsys" "usp10" "wintrust" "avrt"
+  ];
+
+  # Windows only. Every store path that may legitimately provide a DLL this
+  # bundle needs, enumerated as a CLOSURE rather than as a hand-written list.
+  #
+  # A PE embeds no /nix/store strings, so Nix's reference scanner finds nothing
+  # in a cross-built .exe or .dll and this derivation's own closure is useless
+  # for the purpose: the providers have to be named from the build side. These
+  # roots mirror `buildInputs` below plus the Logos components, and closureInfo
+  # walks them transitively -- which matters, because the DLL that goes missing
+  # is typically three or four levels down (libcurl -> libidn2 -> libiconv) and
+  # no direct dependency of anything here.
+  windowsDllClosure = pkgs.pkgsBuildBuild.closureInfo {
+    rootPaths = common.buildInputs ++ [
+      pkgs.qt6.qtdeclarative
+      logosProtocolPkg
+      logosQtSdk
+      logosLiblogos
+      logosModule
+      logosSdk
+      logosDesignSystem
+      logosViewModuleRuntime
+    ] ++ installedModules;
+  };
 in
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-basecamp";
@@ -14,8 +74,7 @@ pkgs.stdenv.mkDerivation rec {
 
   inherit src;
   # Platform-specific build inputs for system webviews
-  buildInputs = common.buildInputs ++ [
-    pkgs.qt6.qtwebview
+  buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
     # Qt split: the app links logos-qt-sdk::logos_qt_sdk, which carries the
     # logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
@@ -31,18 +90,16 @@ pkgs.stdenv.mkDerivation rec {
   inherit (common) meta;
 
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
-  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdk pkgs.patchelf pkgs.removeReferencesTo ];
+  nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdkBuild pkgs.patchelf pkgs.removeReferencesTo ];
 
   # Provide Qt/GL runtime paths so the wrapper can inject them
   qtLibPath = pkgs.lib.makeLibraryPath (
     [
       pkgs.qt6.qtbase
       pkgs.qt6.qtremoteobjects
-      pkgs.qt6.qtwebview
       pkgs.qt6.qtdeclarative
       pkgs.qt6.qtsvg
       pkgs.zstd
-      pkgs.krb5
       pkgs.zlib
       pkgs.glib
       pkgs.stdenv.cc.cc
@@ -54,6 +111,9 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.boost
       pkgs.openssl
     ]
+    # See common.buildInputs: krb5 carries a host-platform bash and does not
+    # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.
+    ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.libglvnd
       pkgs.mesa.drivers
@@ -70,12 +130,19 @@ pkgs.stdenv.mkDerivation rec {
   );
   qtPluginPath = pkgs.lib.concatStringsSep ":" ([
     "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
-    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
     "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
-  ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+  ]
+  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
+    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
+  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
     "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
   ]);
-  qmlImportPath = "${placeholder "out"}/lib:${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml";
+  qmlImportPath = pkgs.lib.concatStringsSep ":" ([
+    "${placeholder "out"}/lib"
+    "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+  ] ++ qtWebviewQml ++ [
+    "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+  ]);
 
   preConfigure = ''
     runHook prePreConfigure
@@ -118,7 +185,7 @@ pkgs.stdenv.mkDerivation rec {
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
     extraDirs = [ "modules" "plugins" ];
-    extraClosurePaths = [ pkgs.qt6.qtwebview pkgs.qt6.qtsvg ]
+    extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
       ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ];
   };
 
@@ -135,7 +202,11 @@ pkgs.stdenv.mkDerivation rec {
 
     # Set up Qt environment variables
     export QT_PLUGIN_PATH="${qtPluginPath}"
-    export QML2_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.qt6.qtwebview}/lib/qt-6/qml:${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+    export QML2_IMPORT_PATH="${pkgs.lib.concatStringsSep ":" ([
+      "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+    ] ++ qtWebviewQml ++ [
+      "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+    ])}"
 
     # Remove any remaining references to /build/ in binaries and set proper RPATH
     find $out -type f -executable -exec sh -c '
@@ -164,6 +235,251 @@ pkgs.stdenv.mkDerivation rec {
     runHook prePostFixup
   '';
 
+  # Windows only: stage liblogos' OWN dependency DLLs, and then PROVE the closure.
+  #
+  # Copying ${logosLiblogos}/lib into bin/ (see installPhase) is necessary but not
+  # sufficient. liblogos_core.dll and logos_host.exe each import libspdlog.dll and
+  # libfmt.dll, and those two live in liblogos' BIN, not its lib/ -- nixpkgs'
+  # win-dll-link.sh walked logos_host.exe's imports and staged the closure there.
+  # spdlog is a buildInput of liblogos, not of basecamp, so basecamp's OWN
+  # win-dll-link pass cannot find them either. Measured with a PE-capable objdump
+  # over the built bundle: with lib/ copied and bin/ not, libspdlog.dll and
+  # libfmt.dll were the only non-OS names left unresolved for LogosBasecamp.exe --
+  # i.e. still 0xC0000135 before main(), the exact symptom copying lib/ cured for
+  # liblogos_core itself. Mirrors what logos-package-manager/nix/lib.nix already
+  # does with liblgx's closure.
+  #
+  # This is postFixup, NOT installPhase, and the ordering is load-bearing:
+  # win-dll-link.sh registers _linkDLLs in fixupOutputHooks, which run BEFORE
+  # postFixup. Doing it in installPhase instead makes the `already present` skip
+  # below vacuous, so Qt6Core/Qt6Network/Qt6RemoteObjects get copied out of
+  # liblogos as real files while Qt6Gui/Qt6Widgets stay symlinked into basecamp's
+  # own qtbase -- a bin/ with a MIXED Qt in it the moment those two pins diverge.
+  # Running after the hook lets the symlinks win and copies only what is genuinely
+  # unprovided.
+  postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isWindows ''
+    # Explicit `for` + `-f`, not a nullglob array: a fully interpolated literal
+    # path contains no wildcard, so nullglob would leave it in the array and any
+    # guard over it would pass vacuously.
+    _dlldeps=0
+    for dep in "${logosLiblogos}/bin/"*.dll; do
+      [ -f "$dep" ] || continue
+      # Anything win-dll-link.sh already resolved (symlink) or installPhase copied
+      # stays; -e follows symlinks, which is what we want here.
+      [ -e "$out/bin/$(basename "$dep")" ] && continue
+      cp -L "$dep" "$out/bin/"
+      _dlldeps=$((_dlldeps + 1))
+    done
+    echo "Staged $_dlldeps dependency DLL(s) from ${logosLiblogos}/bin"
+
+    # Assert the invariant, not the mechanism: every DLL that liblogos_core.dll
+    # imports AND that liblogos itself ships must now resolve next to the
+    # executable. Names liblogos does not ship (kernel32, api-ms-*, ...) are OS
+    # DLLs and are deliberately not checked, so this needs no hand-maintained
+    # system-DLL list to stay correct.
+    _objdump="''${OBJDUMP:-}"
+    if [ -z "$_objdump" ] || ! command -v "$_objdump" >/dev/null 2>&1; then
+      echo "ERROR: no \$OBJDUMP in this Windows-host stdenv; cannot verify the DLL closure" >&2
+      exit 1
+    fi
+    _n_imports=$("$_objdump" -p "$out/bin/liblogos_core.dll" | grep -c 'DLL Name:')
+    # A zero here means the objdump has no PE target, not that the DLL is
+    # dependency-free. Treat it as a measurement failure, never as a pass.
+    if [ "$_n_imports" -eq 0 ]; then
+      echo "ERROR: $_objdump reported 0 imports for liblogos_core.dll (no PE target?)" >&2
+      exit 1
+    fi
+    echo "liblogos_core.dll declares $_n_imports direct imports; checking the ones liblogos ships"
+    _unmet=""
+    for _imp in $("$_objdump" -p "$out/bin/liblogos_core.dll" | awk '/DLL Name:/{print $3}'); do
+      if [ -e "${logosLiblogos}/bin/$_imp" ] || [ -e "${logosLiblogos}/lib/$_imp" ]; then
+        [ -e "$out/bin/$_imp" ] || _unmet="$_unmet $_imp"
+      fi
+    done
+    if [ -n "$_unmet" ]; then
+      echo "ERROR: liblogos ships these DLLs but they did not reach $out/bin:$_unmet" >&2
+      exit 1
+    fi
+
+    # ---------------------------------------------------------------------
+    # Drive the WHOLE bundle's PE import closure to a fixpoint, then prove it.
+    #
+    # nixpkgs' win-dll-link.sh does walk imports to a fixpoint, but only over
+    # `$prefix/bin` (its entry point is `_linkDLLs() { linkDLLsInfolder
+    # "$prefix/bin"; }`), and it resolves each name against LINK_DLL_FOLDERS --
+    # which is one level of buildInputs, contributed by an env hook. When a name
+    # is not on that path it gives up in SILENCE:
+    #
+    #     readarray -d "" pathsFound < <(find "''${searchPaths[@]}" -name "$file" ...)
+    #     if [ ''${#pathsFound[@]} -eq 0 ]; then continue; fi
+    #
+    # Two consequences, both of which shipped:
+    #
+    #  1. $out/modules/<m>/ and $out/plugins/<p>/ are populated in installPhase
+    #     from .lgx payloads and UI-plugin outputs -- i.e. AFTER that hook has
+    #     run, and in directories it never looks at. Nothing ever read their
+    #     import tables. Measured here before this block existed: main_ui.dll
+    #     imports Qt6Qml.dll, Qt6QuickControls2.dll and Qt6QuickWidgets.dll and
+    #     not one of them was in plugins/main_ui/ or in bin/.
+    #
+    #  2. A DLL that is itself absent cannot have ITS imports read, so one pass
+    #     over a tree is never enough. package_downloader needs three rounds:
+    #     package_downloader_plugin -> libpackage_downloader_lib -> libcurl-4 ->
+    #     libidn2-0 -> libiconv-2.
+    #
+    # The failure mode is why this is a hard error and not a warning: a missing
+    # DLL is ERROR_MOD_NOT_FOUND (126) / 0xC0000135 at LoadLibrary time, blamed
+    # on the plugin rather than on the DLL that is absent, with no Qt message
+    # and no stderr. It exits 0 at build time every single time.
+    #
+    # Windows searches the importing module's own directory first (logos-module
+    # pre-loads with LOAD_WITH_ALTERED_SEARCH_PATH) and then the application
+    # directory, so "resolved" here means: beside the importer, or in $out/bin.
+    # Anything still unresolved is staged into $out/bin out of the closure.
+    _sysdlls=${pkgs.lib.escapeShellArg (pkgs.lib.concatStringsSep " " windowsSystemDlls)}
+    _is_system_dll() {
+      local _b="''${1,,}" _s
+      _b="''${_b%.dll}"; _b="''${_b%.drv}"; _b="''${_b%.exe}"
+      case "$_b" in
+        api-ms-win-*|ext-ms-*) return 0 ;;
+      esac
+      for _s in $_sysdlls; do [ "$_b" = "$_s" ] && return 0; done
+      return 1
+    }
+
+    # Index the closure by lower-cased base name. bin/ wins over lib/ only by
+    # first-writer; both are real providers under mingw and nothing in this tree
+    # ships the same DLL twice with different contents.
+    declare -A _dllsrc
+    _indexed=0
+    while IFS= read -r _sp; do
+      [ -d "$_sp" ] || continue
+      while IFS= read -r _f; do
+        _b="$(basename "$_f")"; _k="''${_b,,}"
+        if [ -z "''${_dllsrc[$_k]:-}" ]; then
+          _dllsrc[$_k]="$_f"; _indexed=$((_indexed + 1))
+        fi
+      done < <(find "$_sp" -maxdepth 3 -type f -name '*.dll' 2>/dev/null)
+    done < ${windowsDllClosure}/store-paths
+    echo "Windows DLL index: $_indexed distinct name(s) across the build closure"
+    # A zero index would make every "unresolved" below a measurement artefact
+    # rather than a real gap, so it is fatal on its own.
+    if [ "$_indexed" -eq 0 ]; then
+      echo "ERROR: the build closure contains no .dll at all -- the closure is" >&2
+      echo "wrong, or this is not a Windows build" >&2
+      exit 1
+    fi
+
+    # `find -L`, and NO -maxdepth. Both were wrong before and both were silent:
+    #
+    #  * `-type f` does not match a SYMLINK, and 12 of the 36 PE entries in
+    #    $out/bin are relative symlinks created by nixpkgs' win-dll-link.sh
+    #    (Qt6Core, Qt6Gui, Qt6Widgets, Qt6Network, Qt6RemoteObjects,
+    #    libcrypto/libssl, libzstd, libb2, libpng16, libpcre2,
+    #    libdouble-conversion). Their import tables were never read, so four
+    #    non-system names in this tree were reachable only through roots the
+    #    gate could not see -- three of them entries on nix-bundle-lgx's
+    #    windowsHostLibs, the list this gate is the only thing able to falsify.
+    #    `-L` makes -type f test the TARGET, so a symlink to a real file matches.
+    #  * `-maxdepth 1` skipped any PE below the first level of lib/, modules/<m>/
+    #    or plugins/<p>/. Demonstrated: a DLL one directory deeper left the gate
+    #    at rc=0 while a full-depth sweep found 8 unresolved imports.
+    #
+    # A dangling symlink is invisible to `find -L -type f`, so it is checked
+    # separately below rather than being silently dropped from the root set.
+    _pe_roots() {
+      find -L "$out/bin" -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+      [ -d "$out/lib" ] && { find -L "$out/lib" -type f -name '*.dll' 2>/dev/null || true; }
+      for _d in "$out"/modules/* "$out"/plugins/*; do
+        [ -d "$_d" ] || continue
+        find -L "$_d" -type f \( -name '*.dll' -o -name '*.exe' \) 2>/dev/null || true
+      done
+    }
+
+    _dangling=$(find "$out" -xtype l 2>/dev/null | wc -l)
+    if [ "$_dangling" -ne 0 ]; then
+      echo "ERROR: $_dangling dangling symlink(s) in the bundle:" >&2
+      find "$out" -xtype l >&2
+      echo "These are invisible to the import sweep below and unopenable at" >&2
+      echo "runtime, so they would fail as 0xC0000135 with no output." >&2
+      exit 1
+    fi
+
+    declare -A _unresolved
+    _staged=0
+    _imports_read=0
+    _round=0
+    while :; do
+      _round=$((_round + 1))
+      _added=0
+      while IFS= read -r _root; do
+        _rootdir="$(dirname "$_root")"
+        while IFS= read -r _imp; do
+          [ -n "$_imp" ] || continue
+          _imports_read=$((_imports_read + 1))
+          _is_system_dll "$_imp" && continue
+          # -e, not -f: win-dll-link.sh's entries are relative symlinks.
+          [ -e "$_rootdir/$_imp" ] && continue
+          [ -e "$out/bin/$_imp" ] && continue
+          _src="''${_dllsrc[''${_imp,,}]:-}"
+          if [ -z "$_src" ]; then
+            _unresolved["$_imp"]="''${_unresolved["$_imp"]:-}''${_root#$out/} "
+            continue
+          fi
+          # cp -L, never cp -a: the provider is very often win-dll-link.sh's own
+          # relative symlink into a third store path, and copying it as a link
+          # stages something that dangles the moment the tree is moved.
+          cp -L "$_src" "$out/bin/$_imp"
+          chmod u+w "$out/bin/$_imp"
+          echo "  round $_round  + $_imp  <- ''${_root#$out/}"
+          _added=$((_added + 1)); _staged=$((_staged + 1))
+        done < <("$_objdump" -p "$_root" 2>/dev/null | sed -n 's/.*DLL Name: *//p' | tr -d '\r')
+      done < <(_pe_roots)
+      [ "$_added" -eq 0 ] && break
+      if [ "$_round" -ge 25 ]; then
+        echo "ERROR: the DLL import closure did not reach a fixpoint in $_round rounds" >&2
+        exit 1
+      fi
+    done
+    echo "DLL import closure converged after $_round round(s); staged $_staged DLL(s) into bin/"
+
+    # A zero here is the measurement bug this whole block exists to avoid: an
+    # objdump without a PE target prints nothing and every import "resolves".
+    if [ "$_imports_read" -eq 0 ]; then
+      echo "ERROR: read 0 imports from the entire bundle -- $_objdump has no PE" >&2
+      echo "target, or _pe_roots matched nothing. Not a pass." >&2
+      exit 1
+    fi
+
+    # `+x`: under `set -u`, ''${#arr[@]} on an associative array that never
+    # received an element is itself an error, which would fail the SUCCESS path.
+    if [ -n "''${_unresolved[*]+x}" ]; then
+      echo "" >&2
+      echo "ERROR: ''${#_unresolved[@]} DLL import(s) cannot be resolved from this bundle:" >&2
+      for _n in "''${!_unresolved[@]}"; do
+        echo "  $_n" >&2
+        printf '%s\n' ''${_unresolved["$_n"]} | sort -u | while IFS= read -r _i; do
+          [ -n "$_i" ] && echo "      imported by: $_i" >&2
+        done
+      done
+      echo "" >&2
+      echo "A PE import table carries base names only, so this is not a degraded" >&2
+      echo "feature: it is 0xC0000135 (STATUS_DLL_NOT_FOUND) before main() runs," >&2
+      echo "or ERROR_MOD_NOT_FOUND blamed on the plugin, with no output at all." >&2
+      echo "Two causes, in order of likelihood: (a) an .lgx payload dropped it," >&2
+      echo "because nix-bundle-lgx's windowsHostLibs claims this bundle ships it" >&2
+      echo "and it does not -- that list is an unverifiable promise about THIS" >&2
+      echo "output, and this is the check that falsifies it; or (b) the providing" >&2
+      echo "store path is absent from windowsDllClosure's rootPaths in app.nix." >&2
+      exit 1
+    fi
+    # State the SIZE of what was checked, not just the verdict. The previous
+    # message claimed full coverage of bin/, lib/, modules/ and plugins/ while
+    # silently excluding 12 of 36 bin/ entries and everything below depth 1, and
+    # because it was the only line on the pass path it was read as proof.
+    echo "PE import closure verified: $(_pe_roots | wc -l) root(s), $_imports_read import(s) read, 0 unresolved."
+  '';
+
   configurePhase = ''
     runHook preConfigure
 
@@ -185,7 +501,17 @@ pkgs.stdenv.mkDerivation rec {
       cp -r ${logosQtMcp}/* ./logos-qt-mcp/
     ''}
 
+    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
+    # setup hook, so without it the cross-compilation flags nixpkgs computes are
+    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
+    # nowhere near the cause: CMake's FindThreads then probes for pthreads
+    # instead of Win32 threads, fails, and Qt6Config reports
+    # "Qt6 could not be found because dependency Threads could not be found".
+    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
+    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
     cmake -S app -B build \
+      $cmakeFlags \
+      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
@@ -199,7 +525,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
-      -DENABLE_QML_INSPECTOR=${if enableInspector then "ON" else "OFF"} \
+      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
       ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
 
     runHook postConfigure
@@ -220,14 +546,32 @@ pkgs.stdenv.mkDerivation rec {
     # Create output directories
     mkdir -p $out/bin $out/lib $out/modules $out/plugins
 
-    # Install app binary
-    if [ -f "build/LogosBasecamp" ]; then
+    # Install app binary.
+    #
+    # Probe both names and FAIL if neither exists. The previous
+    # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
+    # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
+    # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+    _bc=""
+    for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+      if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
+    done
+    if [ -z "$_bc" ]; then
+      echo "Error: LogosBasecamp was not produced by the build" >&2
+      ls -la build 2>&1 >&2 | head -40 || true
+      exit 1
+    fi
+    if true; then
       ${if portable then ''
         # Portable: install binary directly (nix-bundle-dir handles Qt paths)
-        cp build/LogosBasecamp "$out/bin/LogosBasecamp"
+        cp "$_bc" "$out/bin/$(basename "$_bc")"
+      '' else if pkgs.stdenv.hostPlatform.isWindows then ''
+        # Windows: no shell wrapper -- a POSIX /bin/sh launcher cannot run
+        # there, and Qt path setup belongs in a qt.conf beside the exe.
+        cp "$_bc" "$out/bin/$(basename "$_bc")"
       '' else ''
         # Dev: hide real binary, create wrapper that sets Qt env vars
-        cp build/LogosBasecamp "$out/bin/.LogosBasecamp"
+        cp "$_bc" "$out/bin/.LogosBasecamp"
 
         cat > $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 #!/bin/sh
@@ -253,32 +597,75 @@ WRAPPER_EOF
     fi
 
     # Install ui-host binary from logos-view-module-runtime (process-isolated UI plugins)
-    if [ -f "${logosViewModuleRuntime}/bin/ui-host" ]; then
-      cp "${logosViewModuleRuntime}/bin/ui-host" "$out/bin/ui-host"
-      echo "Installed ui-host binary from logos-view-module-runtime"
-    fi
-
-    # Copy the core binaries from liblogos
-    if [ -f "${logosLiblogos}/bin/logoscore" ]; then
-      cp -L "${logosLiblogos}/bin/logoscore" "$out/bin/"
-      echo "Installed logoscore binary"
-    fi
-    if [ -f "${logosLiblogos}/bin/logos_host" ]; then
-      cp -L "${logosLiblogos}/bin/logos_host" "$out/bin/"
-      echo "Installed logos_host binary"
-    fi
-
-    # Copy shared libraries from liblogos (includes logos_core and its dependency package_manager_lib)
-    for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so; do
-      if [ -f "$f" ]; then
-        cp -L "$f" "$out/lib/" || true
+    for _x in "" ".exe"; do
+      if [ -f "${logosViewModuleRuntime}/bin/ui-host$_x" ]; then
+        cp -L "${logosViewModuleRuntime}/bin/ui-host$_x" "$out/bin/ui-host$_x"
+        echo "Installed ui-host$_x from logos-view-module-runtime"
+        break
       fi
     done
 
-    # Copy SDK library if it exists
-    if ls "${logosSdk}/lib/"liblogos_sdk.* >/dev/null 2>&1; then
-      cp -L "${logosSdk}/lib/"liblogos_sdk.* "$out/lib/" || true
+    # Copy the core binaries from liblogos
+    for _x in "" ".exe"; do
+      if [ -f "${logosLiblogos}/bin/logoscore$_x" ]; then
+        cp -L "${logosLiblogos}/bin/logoscore$_x" "$out/bin/"
+        echo "Installed logoscore$_x"
+        break
+      fi
+    done
+    for _x in "" ".exe"; do
+      if [ -f "${logosLiblogos}/bin/logos_host$_x" ]; then
+        cp -L "${logosLiblogos}/bin/logos_host$_x" "$out/bin/"
+        echo "Installed logos_host$_x"
+        break
+      fi
+    done
+
+    # Copy shared libraries from liblogos (includes logos_core and its dependency
+    # package_manager_lib).
+    #
+    # The glob listed only *.dylib and *.so, so on Windows it matched NOTHING and
+    # -- guarded by `[ -f ]` and `|| true` -- copied nothing while exiting 0. The
+    # thirteen DLLs sitting in that same lib/ (liblogos_core, libpackage_manager_lib,
+    # liblgx, icuuc76, icudt76, libsodium-26, ...) were silently dropped, and
+    # LogosBasecamp.exe imports liblogos_core.dll DIRECTLY: the app died at
+    # 0xC0000135 (STATUS_DLL_NOT_FOUND) before main(), which produces no Qt error,
+    # no stderr, no output of any kind. It only ever ran because those DLLs were
+    # hand-staged into the payload by the operator.
+    #
+    # DLLs go to bin/, NOT lib/. Windows searches the executable's own directory
+    # first and has no rpath, and nixpkgs' win-dll-link.sh (which pulls in the rest
+    # of the closure) only ever processes $out/bin.
+    _libdest="$out/lib"
+    ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isWindows ''_libdest="$out/bin"''}
+    _copied=0
+    for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so "${logosLiblogos}/lib/"*.dll; do
+      # A non-matching glob stays literal, so test before copying.
+      if [ -f "$f" ]; then
+        cp -L "$f" "$_libdest/" || true
+        _copied=$((_copied + 1))
+      fi
+    done
+    echo "Installed $_copied shared librar(y|ies) from liblogos into $_libdest"
+    # Assert rather than trust: this loop silently copying zero is exactly the
+    # defect above, and it exits 0 either way.
+    if [ "$_copied" -eq 0 ]; then
+      echo "ERROR: copied no shared libraries from ${logosLiblogos}/lib" >&2
+      ls -la "${logosLiblogos}/lib" >&2 || true
+      exit 1
     fi
+
+    # Copy SDK library if it exists
+    # Test each candidate, do not `ls` the glob. With nullglob set (it is, in
+    # this phase) an unmatched glob vanishes, so `ls` ran with NO arguments,
+    # listed the working directory and succeeded -- after which `cp -L "$out/lib/"`
+    # ran with a single argument. Measured in the mingw build log:
+    #   cp: missing destination file operand after '.../lib/'
+    # Guarded by `|| true`, so it exited 0 having copied nothing.
+    for _sdklib in "${logosSdk}/lib/"liblogos_sdk.*; do
+      [ -f "$_sdklib" ] || continue
+      cp -L "$_sdklib" "$out/lib/"
+    done
 
     # Copy pre-installed modules and plugins from bundled install outputs.
     # Each entry in installedModules has modules/ and/or plugins/ subdirectories.

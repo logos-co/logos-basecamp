@@ -85,10 +85,29 @@
           { name = "nix-bundle-macos-app"; commit = revOf nix-bundle-macos-app; }
         ];
       };
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
-        inherit system;
-        pkgs = import nixpkgs { inherit system; };
+      # The BUILD platform for a given target. Bundlers and code generators RUN
+      # during the build, so on the x86_64-windows cross target they must come
+      # from the build system -- taking them from packages.x86_64-windows would
+      # hand the builder a PE it cannot execute.
+      buildSystemFor = target:
+        if target == "x86_64-windows" then "x86_64-linux" else target;
+
+      # forAllSystems, plus the "x86_64-windows" pseudo-system. A cross
+      # derivation's `system` attr is its BUILD platform, so the Windows
+      # attributes evaluate anywhere and realise on x86_64-linux. Keying it as a
+      # system rather than a package-name suffix is what lets the 34
+      # `dep.packages.${system}.x` interpolations below stay untouched.
+      forAllSystems = f: logos-nix.lib.forAllTargets ({ system, pkgs }:
+        let buildSystem = buildSystemFor system; in f {
+        inherit system pkgs;
         logosSdk = logos-cpp-sdk.packages.${system}.default;
+        # The SAME output carries BOTH the target headers/CMake package AND the
+        # logos-cpp-generator binary, so this is a SPLIT, not a swap: keep
+        # logosSdk for -DLOGOS_CPP_SDK_ROOT and use logosSdkBuild wherever the
+        # generator must RUN. Getting it backwards succeeds on native and, under
+        # cross, puts a PE on the builder's PATH -- the symptom is
+        # "logos-cpp-generator: command not found".
+        logosSdkBuild = logos-cpp-sdk.packages.${buildSystem}.default;
         logosProtocolPkg = logos-protocol.packages.${system}.default;
         logosQtSdk = logos-qt-sdk.packages.${system}.default;
         logosModule = logos-module.packages.${system}.default;
@@ -110,18 +129,36 @@
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
         logosDesignSystem = logos-design-system.packages.${system}.default;
         logosViewModuleRuntime = logos-view-module-runtime.packages.${system}.default;
-        logosQtMcp = logos-qt-mcp.packages.${system}.default;
+        # logos-qt-mcp is the QML inspector used by the UI test harness. It has
+        # no Windows target and is not needed to RUN the app -- nix/app.nix
+        # already takes `logosQtMcp ? null` and gates the inspector on it -- so
+        # Windows builds simply go without it. The inspector-dependent outputs
+        # (integration-test, shutdown-test, mcp-server) are correspondingly
+        # absent from the Windows package set; see the `packages` block.
+        logosQtMcp =
+          if system == "x86_64-windows" then null
+          else logos-qt-mcp.packages.${system}.default;
         logosCppSdkSrc = logos-cpp-sdk.outPath;
         logosLiblogosSrc = logos-liblogos.outPath;
         logosPackageManagerModuleSrc = logos-package-manager-module.outPath;
         logosCapabilityModuleSrc = logos-capability-module.outPath;
+        # Bundlers run ON the builder, so they are keyed by buildSystem, not by
+        # the target. nix-bundle-dir in particular is ELF/Mach-O only (its
+        # bundle.sh branches `file -b` -> Mach-O | ELF with no PE case), so on
+        # Windows it must not be invoked at all -- see nix/app.nix.
+        # Keyed by the TARGET, not buildSystem: the install bundler now does its
+        # own host/target split internally -- it takes lgpm from the build
+        # system (it runs there) and the .lgx bundler from the target (which
+        # decides the variant name and library extension). Keying the whole
+        # thing by buildSystem made it label a Windows package "linux-amd64"
+        # and look for a .so payload that was really a .dll.
         installDev = nix-bundle-logos-module-install.bundlers.${system}.dev;
         installPortable = nix-bundle-logos-module-install.bundlers.${system}.portable;
-        dirBundler = nix-bundle-dir.bundlers.${system}.qtApp;
+        dirBundler = nix-bundle-dir.bundlers.${buildSystem}.qtApp;
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -131,19 +168,21 @@
 
           # Plugin packages (development builds)
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
           };
           packageManagerUIPlugin = logosPackageManagerUI;
 
           # Plugin packages (distributed builds for DMG/AppImage)
           mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo;
+            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
             distributed = true;
           };
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
-          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied).
+          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied
+          # off Windows; see binBundleDir for why Windows skips that step).
+          onWindows = pkgs.stdenv.hostPlatform.isWindows;
           installedDev = map installDev [
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
@@ -161,7 +200,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -169,7 +208,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -178,7 +217,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -226,8 +265,32 @@
               mainProgram = "LogosBasecamp";
             };
           });
-          binBundleDir = withMainProgram (dirBundler appDistributed);
-          binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
+          # INTERIM, and neither branch of this is right yet -- see below.
+          #
+          # nix-bundle-dir does two separable jobs. (a) RELOCATION: rewriting
+          # rpaths / install names so binaries stop pointing into /nix/store.
+          # A PE genuinely needs none of that -- its import table carries DLL
+          # BASE NAMES only, Windows searches the executable's own directory
+          # first, and win-dll-link.sh has already staged bin/. (b) Qt STAGING:
+          # the Qt plugin scan, the QML module scan and qt.conf generation.
+          # (b) is FORMAT-AGNOSTIC and is required on Windows just as much as
+          # anywhere else -- Qt plugins and QML module DLLs are LoadLibrary'd,
+          # so nothing in the import closure reveals them.
+          #
+          # Running the bundler unmodified on Windows takes the (a) path, whose
+          # `file -b` chain has no PE case, and emits an EMPTY payload while
+          # exiting 0. Skipping it entirely -- what this does -- keeps the app
+          # and the modules but produces no qt.conf, no lib/qt-6/plugins and no
+          # qwindows.dll, so the app cannot start either.
+          #
+          # The real fix is a PE branch in nix-bundle-dir's bundle.sh that skips
+          # (a) and keeps (b), plus a fixpoint sweep of the DLL closure over the
+          # staged plugins. When that lands, DELETE bundleFor and go back to
+          # dirBundler on every platform.
+          winBundler = drv: drv;
+          bundleFor = if onWindows then winBundler else dirBundler;
+          binBundleDir = withMainProgram (bundleFor appDistributed);
+          binBundleDirInspector = withMainProgram (bundleFor appDistributedWithInspector);
         in
         {
           # Individual outputs

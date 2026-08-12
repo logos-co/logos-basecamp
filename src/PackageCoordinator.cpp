@@ -36,6 +36,18 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     subscribeToPackageInstallationEvents();
     subscribeToPackageDownloaderEvents();
 
+    // A module absent at startup may be installed and loaded later in the
+    // session. Without this the guards above would turn a 6-minute stall into a
+    // silently non-functional Modules view, which is a worse bug. Both
+    // subscribe functions are idempotent, so re-running them is free once armed.
+    if (m_coreModuleManager) {
+        connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
+                this, [this]() {
+                    subscribeToPackageInstallationEvents();
+                    subscribeToPackageDownloaderEvents();
+                });
+    }
+
     // NB: initial metadata fetch is deferred until MainUIBackend calls
     // refresh() — the uiPluginsFetched signal would otherwise fire before
     // UIPluginManager's setPackageCoordinator runs and the slot connection
@@ -45,16 +57,54 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
 
 PackageCoordinator::~PackageCoordinator() = default;
 
+namespace {
+
+// Is a module actually loaded in THIS process?
+//
+// The obvious guard -- `client->isConnected()` -- was dead code: QtRO's
+// connectToNode() only validates the URL scheme and never contacts a peer, so
+// it reported "connected" for modules that were never loaded. Every call past
+// it then blocked 20 s in waitForSource, twice over (the token handshake tries
+// capability_module first). Measured cost with package_manager absent: ~417 s
+// of blocked GUI thread on macOS and 361 s on Linux before Basecamp's window
+// appeared, because all of this runs inside the Window constructor.
+//
+// logos_core_get_loaded_modules answers the same question in-process, with no
+// IPC and no timeout. The same guard already ships in
+// logos-logoscore-cli/src/daemon/daemon.cpp, which skips its identical
+// setEmbeddedModulesDirectory block and reports that package commands are
+// unavailable for the session.
+bool moduleIsLoaded(CoreModuleManager* core, const QString& name)
+{
+    if (!core) {
+        // No oracle available: keep the previous behaviour rather than silently
+        // disabling package management.
+        return true;
+    }
+    return core->loadedModules().contains(name);
+}
+
+} // namespace
+
 void PackageCoordinator::subscribeToPackageInstallationEvents()
 {
     if (!m_logosAPI) {
         return;
     }
 
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) {
+    if (m_packageManagerSubscribed) {
         return;
     }
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) {
+        if (!m_warnedPackageManagerMissing) {
+            m_warnedPackageManagerMissing = true;
+            qWarning() << "PackageCoordinator: package_manager is not loaded -- skipping its "
+                          "directory setup and event subscriptions. Package management is "
+                          "unavailable until it loads; this will be retried automatically.";
+        }
+        return;
+    }
+    m_packageManagerSubscribed = true;
 
     LogosModules logos(m_logosAPI);
 
@@ -225,8 +275,18 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
 {
     if (!m_logosAPI) return;
 
-    LogosAPIClient* client = m_logosAPI->getClient("package_downloader");
-    if (!client || !client->isConnected()) return;
+    if (m_packageDownloaderSubscribed) {
+        return;
+    }
+    if (!moduleIsLoaded(m_coreModuleManager, "package_downloader")) {
+        if (!m_warnedPackageDownloaderMissing) {
+            m_warnedPackageDownloaderMissing = true;
+            qWarning() << "PackageCoordinator: package_downloader is not loaded -- skipping its "
+                          "event subscriptions; this will be retried automatically.";
+        }
+        return;
+    }
+    m_packageDownloaderSubscribed = true;
 
     LogosModules logos(m_logosAPI);
     logos.package_downloader.on("catalogChanged", [this](const QVariantList&) {
@@ -997,6 +1057,20 @@ void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
 
 void PackageCoordinator::fetchUiPluginMetadata()
 {
+    // The !m_logosAPI branch below already does the right thing when package
+    // metadata is unavailable -- clear the loading state and tell the UI -- so
+    // an absent package_manager takes the same path rather than blocking 20 s
+    // acquiring a token for a module that is not there. Without this the app
+    // would show its window and then sit in a loading state for the timeout.
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) {
+        if (m_appsLoading) {
+            m_appsLoading = false;
+            emit appsLoadingChanged();
+        }
+        emit uiModulesChanged();
+        return;
+    }
+
     if (!m_logosAPI) {
         if (m_appsLoading) {
             m_appsLoading = false;
@@ -1233,6 +1307,9 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 void PackageCoordinator::refreshDependencyInfo()
 {
     if (!m_logosAPI) return;
+    // Same reasoning as fetchUiPluginMetadata: no package_manager, no
+    // dependency info to fetch, and no reason to block on discovering that.
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
@@ -1866,13 +1943,44 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
-    logos.package_manager.installPluginAsync(filePath, false,
-        [self, packageName, onDone](QVariantMap installResult) {
+    // Installing was left on the default 20 s IPC deadline while DOWNLOADING
+    // got five minutes -- backwards. Downloading is network-bound and can be
+    // retried; installing is disk-bound over a payload that package_manager
+    // reads, gunzips and tar-parses three times and Merkle-hashes twice, then
+    // extracts and copies. It is ~1 s on a warm dev box and unbounded on a slow
+    // disk, a large package, or a machine where the antivirus scans every DLL
+    // as it lands. Blowing the deadline does not cancel any of that work: the
+    // files still install and the reply is simply abandoned, so the user is
+    // told the install failed when it did not. Match the download budget.
+    constexpr int kInstallIpcDeadlineMs = 5 * 60 * 1000;
+    // `installPluginAsyncResult`, not `installPluginAsync`: the plain async
+    // wrapper hands the callback a bare QVariantMap, so a transport failure is
+    // indistinguishable from a provider that legitimately returned an empty
+    // one. AsyncResult<T> carries the value and the error together, which is
+    // the whole reason it exists.
+    logos.package_manager.installPluginAsyncResult(filePath, false,
+        [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
-            const bool success = installPluginSucceeded(installResult);
-            const QString err  = installResult.value("error").toString();
+            // Transport-level failure FIRST -- a timeout leaves `value`
+            // default-constructed, and reading it as an install verdict is
+            // exactly the mistake this channel removes. The message names the
+            // module and the deadline (logos::callErrorTimeout builds it), and
+            // says the package may in fact be installed: blowing the deadline
+            // cancels nothing, so the files may well be on disk.
+            if (!r.ok()) {
+                const QString detail = QString::fromStdString(r.error.message);
+                if (onDone) onDone(false,
+                    QStringLiteral("%1 — the package may in fact be installed; check before retrying")
+                        .arg(detail.isEmpty()
+                                 ? QStringLiteral("package_manager did not reply")
+                                 : detail));
+                return;
+            }
+            const bool success = installPluginSucceeded(r.value);
+            const QString err  = r.value.value("error").toString();
             if (onDone) onDone(success, success ? QString() : err);
-        });
+        },
+        Timeout(kInstallIpcDeadlineMs));
 }
 
 void PackageCoordinator::installResultsSequential(const QVariantList& results,
