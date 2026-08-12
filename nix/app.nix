@@ -186,7 +186,51 @@ pkgs.stdenv.mkDerivation rec {
   passthru = {
     extraDirs = [ "modules" "plugins" ];
     extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
-      ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ];
+      ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ]
+      # Windows ONLY, and NOT because Windows needs extra Qt features -- it
+      # needs the same ones, DECLARED differently.
+      #
+      # An ELF or Mach-O binary records where its dependencies live: the
+      # qtdeclarative / libjpeg / sqlite store paths end up in rpaths and
+      # install names, Nix scans them out as references, and closureInfo gets
+      # all three without anyone naming them. A PE import table carries DLL
+      # BASE NAMES only ("libjpeg-62.dll") and embeds no /nix/store string
+      # anywhere, so Nix records NO reference and these paths never enter the
+      # closure at all. The bundler cannot stage what is not in the closure.
+      #
+      # Measured -- each entry below is a build that FAILED without it, on the
+      # real x86_64-windows Basecamp bundle, once flake.nix stopped bypassing
+      # the bundler:
+      #
+      #   qtdeclarative  Phase 2b staged 17 Qt plugin files, then: "QtQuick/
+      #                  QtQml DLLs are in bin/, so this bundle renders QML,
+      #                  but no QML module directory for this target was found
+      #                  in the closure." Adding it stages 1651 QML files and
+      #                  lets the Phase 2e sweep pull in 40 more Qt DLLs.
+      #   libjpeg.bin    "libjpeg-62.dll -- imported by
+      #                  lib/qt-6/plugins/imageformats/qjpeg.dll".
+      #   sqlite.bin     "libsqlite3-0.dll -- imported by
+      #                  lib/qt-6/plugins/sqldrivers/qsqlite.dll".
+      #
+      # `.bin`, not the default output, is deliberate and was checked rather
+      # than assumed: for both packages the mingw DLL is installed into the
+      # `bin` output (`…-libjpeg-turbo-…-bin/bin/libjpeg-62.dll`,
+      # `…-sqlite-…-bin/bin/libsqlite3-0.dll`), so rooting the closure at the
+      # default output would add nothing and the build would fail unchanged.
+      #
+      # These last two are Qt's OWN plugin dependencies, not Basecamp's -- we
+      # never call libjpeg or sqlite. They have to be declared here anyway,
+      # because passthru.extraClosurePaths on the bundled derivation is the
+      # only channel nix-bundle-dir reads.
+      #
+      # Windows-gated rather than unconditional so it provably cannot perturb
+      # the Linux/macOS bundles, where the references already exist and adding
+      # them would be a no-op that would still have to be re-proven.
+      ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isWindows [
+        pkgs.qt6.qtdeclarative
+        pkgs.libjpeg.bin
+        pkgs.sqlite.bin
+      ];
   };
 
   # This is an aggregate runtime layout; avoid stripping to prevent hook errors

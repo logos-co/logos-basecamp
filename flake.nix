@@ -180,9 +180,14 @@
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
-          # Distributed build: portable self-contained bundle (nix-bundle-dir pre-applied
-          # off Windows; see binBundleDir for why Windows skips that step).
-          onWindows = pkgs.stdenv.hostPlatform.isWindows;
+          # Distributed build: portable self-contained bundle. Off Windows that
+          # portability comes from nix-bundle-dir; on Windows nix-bundle-lgx
+          # takes its own `mkWindowsPayload` path instead and does not call
+          # nix-bundle-dir at all. That is nix-bundle-lgx's business, not this
+          # flake's -- a MODULE must not carry the Qt/OpenSSL/runtime DLLs the
+          # host already ships in bin/, so the PE path needs a hostLibs strip
+          # that nix-bundle-dir does not have yet. Unrelated to binBundleDir
+          # below, which is the APP and therefore is the thing that ships them.
           installedDev = map installDev [
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
@@ -265,32 +270,103 @@
               mainProgram = "LogosBasecamp";
             };
           });
-          # INTERIM, and neither branch of this is right yet -- see below.
+          # dirBundler on EVERY platform, Windows included.
           #
-          # nix-bundle-dir does two separable jobs. (a) RELOCATION: rewriting
-          # rpaths / install names so binaries stop pointing into /nix/store.
-          # A PE genuinely needs none of that -- its import table carries DLL
-          # BASE NAMES only, Windows searches the executable's own directory
-          # first, and win-dll-link.sh has already staged bin/. (b) Qt STAGING:
-          # the Qt plugin scan, the QML module scan and qt.conf generation.
-          # (b) is FORMAT-AGNOSTIC and is required on Windows just as much as
-          # anywhere else -- Qt plugins and QML module DLLs are LoadLibrary'd,
-          # so nothing in the import closure reveals them.
+          # The `winBundler = drv: drv` / `bundleFor` bypass that used to sit
+          # here was placed on an explicit condition: "the real fix is a PE
+          # branch in nix-bundle-dir's bundle.sh that skips relocation and keeps
+          # Qt staging; when that lands, DELETE bundleFor". It has landed, and
+          # this flake's root `nix-bundle-dir` input already resolves to it
+          # (f843b8ec, which is `main`), so the condition is met and the bypass
+          # is gone.
           #
-          # Running the bundler unmodified on Windows takes the (a) path, whose
-          # `file -b` chain has no PE case, and emits an EMPTY payload while
-          # exiting 0. Skipping it entirely -- what this does -- keeps the app
-          # and the modules but produces no qt.conf, no lib/qt-6/plugins and no
-          # qwindows.dll, so the app cannot start either.
+          # Why it was never a working alternative: nix-bundle-dir does two
+          # separable jobs. (a) RELOCATION -- rewriting rpaths / install names
+          # so binaries stop pointing into /nix/store. (b) Qt STAGING -- the Qt
+          # plugin scan, the QML module scan and qt.conf generation; that half
+          # is FORMAT-AGNOSTIC and Windows needs it exactly as much as anywhere
+          # else, because Qt plugins and QML module DLLs are LoadLibrary'd and
+          # nothing in the import table reveals them.
           #
-          # The real fix is a PE branch in nix-bundle-dir's bundle.sh that skips
-          # (a) and keeps (b), plus a fixpoint sweep of the DLL closure over the
-          # staged plugins. When that lands, DELETE bundleFor and go back to
-          # dirBundler on every platform.
-          winBundler = drv: drv;
-          bundleFor = if onWindows then winBundler else dirBundler;
-          binBundleDir = withMainProgram (bundleFor appDistributed);
-          binBundleDirInspector = withMainProgram (bundleFor appDistributedWithInspector);
+          # The bypass was argued for on the grounds that a PE needs none of
+          # (a). Only the rpath REWRITING half of that is true, and the
+          # measurement below is what corrects it: the un-bundled tree reaches
+          # a third of its bin/ through 12 SYMLINKS into /nix/store, which no
+          # amount of "PE imports are base names" makes portable. Phase 1's
+          # `cp -aL` is what dereferences them, and skipping the bundler
+          # skipped that as surely as it skipped (b).
+          #
+          # Measured, not assumed. Both trees were realised on x86_64-linux
+          # from ONE tree -- same appDistributed derivation, the only variable
+          # being whether dirBundler is applied -- and compared entry by entry:
+          #
+          #                              bypass(drv:drv)   dirBundler
+          #     entries                              85         1740
+          #     regular files                        59         1657
+          #     symlinks                             12            0
+          #     bytes                            259 MB       479 MB
+          #     *.dll in bin/                        33           88
+          #     bin/qt.conf                     MISSING      present
+          #     lib/qt-6/…/platforms/qwindows.dll
+          #                                     MISSING      present
+          #     lib/qt-6 (plugins + qml)        MISSING   1533 files
+          #     nix closure refs                     12            1
+          #
+          # Those 12 symlinks are the part that matters most, and they are why
+          # "the bypass at least shipped the app" was never true. bin/Qt6Core
+          # .dll, Qt6Gui.dll, Qt6Widgets.dll, Qt6Network.dll, Qt6RemoteObjects
+          # .dll, libssl/libcrypto, libpng16, libzstd, libb2, pcre2 and
+          # double-conversion were SYMLINKS into /nix/store. Copy that tree to
+          # a Windows box -- the entire point of a portable bundle -- and every
+          # one of them dangles: 0xC0000135, no output, before main(). The
+          # bundled tree resolves all 12 into real files and has no symlink
+          # left. Its single remaining nix reference is an inert /nix string
+          # embedded in a PE's data, which imports nothing.
+          #
+          # 55 DLLs exist only in the bundled bin/: the Qt Quick / Controls /
+          # Labs set the fixpoint sweep pulls in once the QML modules are
+          # staged, plus libcurl and its TLS/HTTP2 chain mirrored beside the
+          # package_downloader module that imports them.
+          #
+          # The one thing the bundler does NOT carry over: README.txt and
+          # share/ (a .desktop file and a hicolor icon, 9 paths). That is not a
+          # Windows regression -- bundle.sh Phase 1 copies bin/, lib/ and
+          # extraDirs on EVERY platform, so the shipping Linux and macOS
+          # bundles have never had them either; the bypass "kept" them only by
+          # doing nothing at all. Both are dead weight off-store anyway:
+          # README.txt is a build-info file whose every line is a /nix/store
+          # path, and a .desktop file does nothing on Windows.
+          #
+          # Getting here also required three additions to the app's
+          # passthru.extraClosurePaths (see nix/app.nix) -- qtdeclarative,
+          # libjpeg.bin, sqlite.bin. Each was a build the bundler FAILED,
+          # naming the missing DLL and the plugin that imported it, rather than
+          # shipping a tree that dies before main(). That is the behaviour the
+          # bypass was hiding.
+          #
+          # NOT demonstrated, stated plainly:
+          #
+          #  * None of this has been RUN on Windows, by this change or by CI,
+          #    which has never executed a Windows binary. Every claim above is
+          #    build-time and tree-shape only.
+          #  * The two trees measured came from a harness that drops ONE entry
+          #    from installedDistributed -- packageManagerUIPlugin -- because
+          #    logos-package-manager-ui does not cross-compile at the rev this
+          #    flake pins: its generated logos_sdk.h includes
+          #    package_manager_api.h, which is not produced for the Windows
+          #    target. That is pre-existing and independent of this change; the
+          #    identical derivation fails when built straight from the pinned
+          #    rev with no basecamp involved. Everything above concerns Qt
+          #    staging and the DLL closure, which that one plugin does not
+          #    participate in -- but the numbers are from a bundle missing it.
+          #  * For the same reason `nix build .#packages.x86_64-windows.*`
+          #    cannot succeed on this branch as pinned. A second, unrelated
+          #    blocker sits in front of it at EVAL time: line ~119's
+          #    logos-package-downloader-module has no x86_64-windows target, so
+          #    the attribute cannot even be evaluated. Both blockers predate
+          #    this change and are identical with the bypass in place.
+          binBundleDir = withMainProgram (dirBundler appDistributed);
+          binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
         in
         {
           # Individual outputs
