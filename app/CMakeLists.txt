@@ -141,9 +141,13 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     # matter what the plugin links. Empty out the archives here too and let
     # liblogos_core.dll be the one provider — cmake/LogosSharedFromDll.cmake.
     # The link interface above is deliberately left intact.
+    #
+    # logos-qt-host, not logos-qt-sdk: the Qt host runtime moved there and
+    # `logos-qt-sdk::logos_qt_sdk` is now an INTERFACE library re-exporting it,
+    # with no archive of its own to empty out.
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
     logos_use_shared_runtime_from_dll(
-        logos-qt-sdk::logos_qt_sdk
+        logos-qt-host::logos_qt_host
         logos-protocol::logos_protocol)
 endif()
 
@@ -202,7 +206,7 @@ if(APPLE)
 endif()
 
 # Windows: import the shared runtime types from liblogos_core instead of taking
-# a second static copy from liblogos_qt_sdk.a. The host is the image that WRITES
+# a second static copy from liblogos_qt_host.a. The host is the image that WRITES
 # the capability token (module_manager.cpp calls TokenManager::instance()
 # .saveToken), so if it keeps its own copy the token never reaches main_ui no
 # matter what the plugin does. Same opt-in, same reasoning, as main_ui in

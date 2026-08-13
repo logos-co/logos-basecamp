@@ -433,7 +433,7 @@ if(_liblogos_found)
     target_link_libraries(main_ui PRIVATE logos_core)
 
     # Windows: take LogosAPI / LogosAPIClient / TokenManager FROM liblogos_core
-    # rather than re-linking them out of liblogos_qt_sdk.a below. main_ui and
+    # rather than re-linking them out of liblogos_qt_host.a below. main_ui and
     # LogosBasecamp.exe live in the same process, and PE gives them no symbol
     # interposition, so two static copies mean two TokenManager singletons: the
     # host saves the capability token into its copy and the plugin reads its own
@@ -470,9 +470,13 @@ if(NOT _cpp_sdk_is_source)
     # symbols can only come from liblogos_core.dll -- see
     # cmake/LogosSharedFromDll.cmake. The link below is kept verbatim: it is
     # still what carries the include dirs and the Qt/OpenSSL/Boost interface.
+    #
+    # The Qt archive is logos-qt-host's, not logos-qt-sdk's: the host runtime
+    # moved there, and `logos-qt-sdk::logos_qt_sdk` is an INTERFACE library that
+    # re-exports it. find_package(logos-qt-sdk) brings the target in with it.
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
     logos_use_shared_runtime_from_dll(
-        logos-qt-sdk::logos_qt_sdk
+        logos-qt-host::logos_qt_host
         logos-protocol::logos_protocol)
     target_link_libraries(main_ui PRIVATE logos-qt-sdk::logos_qt_sdk)
 else()
