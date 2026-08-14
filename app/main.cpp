@@ -4,6 +4,7 @@
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
 #include "LogRedirector.h"
+#include "AccessPolicyOption.h"
 #ifdef ENABLE_QML_INSPECTOR
 #include "inspectorserver.h"
 #endif
@@ -126,6 +127,11 @@ int main(int argc, char *argv[])
     app.setApplicationName("LogosBasecamp");
     app.styleHints()->setTabFocusBehavior(Qt::TabFocusAllControls);
 
+    // Inter-module access policy, resolved from the CLI below. Empty ⇒ install
+    // nothing (enforcement off) — Basecamp's default, unchanged. See the
+    // logos_core_set_access_policy call further down.
+    QByteArray accessPolicyJson;
+
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against
     // isolated data trees (plugins, modules, module_data, logs). LOGOS_USER_DIR
@@ -139,10 +145,37 @@ int main(int argc, char *argv[])
                            "modules, module_data, logs for this instance)."),
             QStringLiteral("path"));
         parser.addOption(userDirOption);
+        QCommandLineOption accessPolicyOption(QStringLiteral("access-policy"),
+            QStringLiteral("Inter-module access policy (default: none, no "
+                           "enforcement). 'enforce' turns on deny-by-default: a "
+                           "module may only call the modules it declares as "
+                           "dependencies. Also accepts a path to a JSON policy "
+                           "file, or inline JSON."),
+            QStringLiteral("enforce|path|json"));
+        parser.addOption(accessPolicyOption);
         if (!parser.parse(app.arguments())) {
             std::cerr << parser.errorText().toStdString() << std::endl;
             return 1;
         }
+
+        // The flag wins; LOGOS_ACCESS_POLICY is the way in for a launch that
+        // has no argv to speak of (double-clicked bundle, desktop entry).
+        // Neither present ⇒ stays empty ⇒ enforcement off.
+        const QString accessPolicyArg = parser.isSet(accessPolicyOption)
+            ? parser.value(accessPolicyOption)
+            : QString::fromUtf8(qgetenv("LOGOS_ACCESS_POLICY"));
+        if (!accessPolicyArg.trimmed().isEmpty()) {
+            const auto resolved = LogosBasecamp::resolveAccessPolicy(accessPolicyArg);
+            if (!resolved.ok) {
+                // Abort rather than boot: the operator explicitly asked to lock
+                // this runtime down, and starting anyway would hand them a
+                // wide-open one that looks like it obeyed.
+                std::cerr << resolved.error.toStdString() << std::endl;
+                return 1;
+            }
+            accessPolicyJson = resolved.policyJson.toUtf8();
+        }
+
         if (parser.isSet(userDirOption)) {
             const QString absUserDir =
                 QFileInfo(parser.value(userDirOption)).absoluteFilePath();
@@ -190,15 +223,27 @@ int main(int argc, char *argv[])
     logos_core_set_persistence_base_path(
         LogosBasecampPaths::moduleDataDirectory().toUtf8().constData());
 
-    // Access policy temporarily disabled (allow all): passing NULL clears any
-    // policy so no enforcement runs. The enforce mode's derived deny-by-default
-    // gates every ui_qml app's calls to its own backend module, because UI
-    // plugins are loaded out-of-process and aren't tracked as dependents in the
-    // core ModuleRegistry — so they're never in a module's derived allowed-caller
-    // set and get denied (e.g. accounts_ui -> accounts_module). Re-enable once the
-    // access policy is redesigned to account for ui_qml callers.
+    // Inter-module access policy. DEFAULT: none — passing NULL clears any
+    // policy so no enforcement runs, and any loaded module may call any other.
+    //
+    // Why off by default: enforce mode's derived deny-by-default gates every
+    // ui_qml app's calls to its own backend module, because UI plugins are
+    // loaded out-of-process and aren't tracked as dependents in the core
+    // ModuleRegistry — so they're never in a module's derived allowed-caller
+    // set and get denied (e.g. accounts_ui -> accounts_module). Until the
+    // derivation accounts for ui_qml callers, turning this on by default would
+    // break the app.
+    //
+    // Operators can still opt IN per launch with `--access-policy enforce`
+    // (or LOGOS_ACCESS_POLICY), and name the ui_qml callers explicitly via a
+    // policy document's `restrictions` — see the README.
     // (Must be set before logos_core_start().)
-    logos_core_set_access_policy(nullptr);
+    if (accessPolicyJson.isEmpty()) {
+        logos_core_set_access_policy(nullptr);
+    } else {
+        qInfo().noquote() << "Installing inter-module access policy:" << accessPolicyJson;
+        logos_core_set_access_policy(accessPolicyJson.constData());
+    }
 
     // Start the core
     logos_core_start();

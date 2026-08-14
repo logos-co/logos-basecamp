@@ -144,6 +144,8 @@ set(PROJECT_SOURCES
     window.cpp
     utils/LogRedirector.h
     utils/LogRedirector.cpp
+    utils/AccessPolicyOption.h
+    utils/AccessPolicyOption.cpp
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
