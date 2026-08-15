@@ -65422,11 +65422,11 @@
     "logos-lidl_371": {
       "inputs": {
         "logos-nix": [
-          "logos-qt-sdk",
+          "logos-plugin-qt",
           "logos-nix"
         ],
         "nixpkgs": [
-          "logos-qt-sdk",
+          "logos-plugin-qt",
           "logos-lidl",
           "logos-nix",
           "nixpkgs"
@@ -263734,6 +263734,38 @@
         "type": "github"
       }
     },
+    "logos-plugin-qt_146": {
+      "inputs": {
+        "logos-lidl": "logos-lidl_371",
+        "logos-module": [
+          "logos-module"
+        ],
+        "logos-nix": [
+          "logos-nix"
+        ],
+        "logos-protocol": [
+          "logos-protocol"
+        ],
+        "nixpkgs": [
+          "logos-plugin-qt",
+          "logos-nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786730326,
+        "narHash": "sha256-zr5fNLbpVvni1lsWTXGbojHu05tPcqLvVcBhAm5sglM=",
+        "owner": "logos-co",
+        "repo": "logos-plugin-qt",
+        "rev": "8ccb1fc81642ee52e843b69ac3f90a1ec7084299",
+        "type": "github"
+      },
+      "original": {
+        "owner": "logos-co",
+        "repo": "logos-plugin-qt",
+        "type": "github"
+      }
+    },
     "logos-plugin-qt_15": {
       "inputs": {
         "logos-module": "logos-module_70",
@@ -287960,38 +287992,6 @@
       }
     },
     "logos-qt-sdk_195": {
-      "inputs": {
-        "logos-cpp-sdk": [
-          "logos-cpp-sdk"
-        ],
-        "logos-lidl": "logos-lidl_371",
-        "logos-nix": [
-          "logos-nix"
-        ],
-        "logos-protocol": [
-          "logos-protocol"
-        ],
-        "nixpkgs": [
-          "logos-qt-sdk",
-          "logos-nix",
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1786469121,
-        "narHash": "sha256-8sM8d98dquIUOcu9YRlAnpRZ5zcTqWCZii5AyhCwi1k=",
-        "owner": "logos-co",
-        "repo": "logos-qt-sdk",
-        "rev": "c6be61d0ba3f1c06c1a5ff7ad6d42f3eda254877",
-        "type": "github"
-      },
-      "original": {
-        "owner": "logos-co",
-        "repo": "logos-qt-sdk",
-        "type": "github"
-      }
-    },
-    "logos-qt-sdk_196": {
       "inputs": {
         "logos-cpp-sdk": [
           "logos-view-module-runtime",
@@ -312803,7 +312803,7 @@
         ],
         "logos-nix": "logos-nix_6268",
         "logos-protocol": "logos-protocol_258",
-        "logos-qt-sdk": "logos-qt-sdk_196",
+        "logos-qt-sdk": "logos-qt-sdk_195",
         "nixpkgs": [
           "nixpkgs"
         ]
@@ -500820,9 +500820,9 @@
         "logos-package-manager": "logos-package-manager_124",
         "logos-package-manager-module": "logos-package-manager-module",
         "logos-package-manager-ui": "logos-package-manager-ui",
+        "logos-plugin-qt": "logos-plugin-qt_146",
         "logos-protocol": "logos-protocol_257",
         "logos-qt-mcp": "logos-qt-mcp_146",
-        "logos-qt-sdk": "logos-qt-sdk_195",
         "logos-view-module-runtime": "logos-view-module-runtime_146",
         "nix-bundle-appimage": "nix-bundle-appimage_329",
         "nix-bundle-dir": "nix-bundle-dir_1061",

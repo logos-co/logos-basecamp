@@ -119,31 +119,46 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     include_directories(
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include
-        ${LOGOS_QT_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include/core
+        ${LOGOS_QT_HOST_ROOT}/include
+        ${LOGOS_QT_HOST_ROOT}/include/cpp
+        ${LOGOS_QT_HOST_ROOT}/include/core
         ${LOGOS_PROTOCOL_ROOT}/include
         ${LOGOS_PROTOCOL_ROOT}/include/cpp
     )
-    link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_SDK_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
-    # Link the Qt SDK via its exported target so the app inherits the full
-    # transitive link interface (logos-protocol, OpenSSL, Boost::system,
+    link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_HOST_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
+    # Link the Qt host runtime via its exported target so the app inherits the
+    # full transitive link interface (logos-protocol, OpenSSL, Boost::system,
     # nlohmann_json) — a bare archive on the link line would leave Boost.Asio
     # TLS symbols undefined.
     find_package(logos-protocol REQUIRED CONFIG
         PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
         NO_DEFAULT_PATH)
-    find_package(logos-qt-sdk REQUIRED CONFIG
-        PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
+    find_package(logos-qt-host REQUIRED CONFIG
+        PATHS ${LOGOS_QT_HOST_ROOT}/lib/cmake/logos-qt-host
         NO_DEFAULT_PATH)
+    # Fail loudly rather than silently dropping the host runtime off the link
+    # line: the app's LogosAPI/LogosProviderObject symbols all come from here.
+    if(NOT TARGET logos-qt-host::logos_qt_host)
+        message(FATAL_ERROR
+            "find_package(logos-qt-host) succeeded but did not define "
+            "logos-qt-host::logos_qt_host. LOGOS_QT_HOST_ROOT="
+            "${LOGOS_QT_HOST_ROOT}")
+    endif()
     # Windows: the host is the image that WRITES the capability token, so if it
     # keeps a static copy of TokenManager the plugin never sees the token no
     # matter what the plugin links. Empty out the archives here too and let
     # liblogos_core.dll be the one provider — cmake/LogosSharedFromDll.cmake.
     # The link interface above is deliberately left intact.
+    #
+    # Retargeted from logos-qt-sdk::logos_qt_sdk to logos-qt-host::logos_qt_host
+    # by the B4 host split: the archive that carries LogosAPI/TokenManager moved
+    # repos, so the archive that must be emptied moved with it. Naming the old
+    # target here would be a silent no-op (the foreach() skips targets that do
+    # not exist) and Windows would regress to the 29 "rejecting unauthorized
+    # call" lines this shim exists to prevent.
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
     logos_use_shared_runtime_from_dll(
-        logos-qt-sdk::logos_qt_sdk
+        logos-qt-host::logos_qt_host
         logos-protocol::logos_protocol)
 endif()
 
@@ -182,11 +197,12 @@ if(ENABLE_QML_INSPECTOR)
     message(STATUS "QML Inspector enabled")
 endif()
 
-# Link with logos_core, the Qt SDK, and all Qt modules needed by plugins.
-# Plugins (main_ui) are loaded at runtime and depend on
-# these Qt libraries. Linking them here ensures the portable bundler includes
-# them in the app bundle. logos-qt-sdk::logos_qt_sdk replaced logos_sdk in
-# the qt split and carries the logos-protocol library transitively.
+# Link with logos_core, the Qt host runtime, and all Qt modules needed by
+# plugins. Plugins (main_ui) are loaded at runtime and depend on these Qt
+# libraries. Linking them here ensures the portable bundler includes them in
+# the app bundle. logos-qt-host::logos_qt_host is the host runtime the qt
+# split first put in logos-qt-sdk and the host split moved to logos-plugin-qt;
+# it carries the logos-protocol library transitively.
 target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Widgets
     Qt6::RemoteObjects
@@ -195,7 +211,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     logos_core
-    logos-qt-sdk::logos_qt_sdk
+    logos-qt-host::logos_qt_host
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
 )
 

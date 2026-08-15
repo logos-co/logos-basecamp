@@ -1,5 +1,5 @@
 # Builds the main UI plugin
-{ pkgs, common, src, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, logosDesignSystem, buildInfo, distributed ? false }:
+{ pkgs, common, src, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, logosLiblogos, logosViewModuleRuntime, logosDesignSystem, buildInfo, distributed ? false }:
 
 let
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
@@ -14,7 +14,7 @@ pkgs.stdenv.mkDerivation {
   # logos-cpp-generator must RUN here, so it comes from the BUILD system.
   # logosSdk (the target output) stays for -DLOGOS_CPP_SDK_ROOT below.
   nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdkBuild ];
-  buildInputs = common.buildInputs ++ [ logosProtocolPkg logosQtSdk logosDesignSystem ];
+  buildInputs = common.buildInputs ++ [ logosProtocolPkg logosQtHost logosDesignSystem ];
   
   preConfigure = ''
     runHook prePreConfigure
@@ -116,7 +116,7 @@ pkgs.stdenv.mkDerivation {
       -DLOGOS_PORTABLE_BUILD=${if distributed then "ON" else "OFF"} \
       -DLOGOS_CPP_SDK_ROOT=${logosSdk} \
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
-      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
+      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \

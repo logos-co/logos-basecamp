@@ -69,27 +69,30 @@ if(_liblogos_found)
     message(STATUS "Using logos-liblogos at: ${LOGOS_LIBLOGOS_ROOT}")
 endif()
 
-# The SDK stack since the Qt split: logos-qt-sdk carries the Qt developer
-# layer (LogosAPI etc.) this app uses; logos-protocol the transports; the
-# Qt-free logos-cpp-sdk only std headers.
+# The SDK stack since the Qt host split: logos-plugin-qt's logos-qt-host
+# carries the Qt HOST RUNTIME (LogosAPI, LogosAPIProvider, the provider bases)
+# this plugin links; logos-protocol the transports; the Qt-free logos-cpp-sdk
+# only std headers. The runtime used to live in logos-qt-sdk — logos-qt-sdk is
+# no longer an input here at all, because the host runtime was the only thing
+# basecamp ever took from it.
 if(NOT DEFINED LOGOS_PROTOCOL_ROOT AND DEFINED ENV{LOGOS_PROTOCOL_ROOT})
     set(LOGOS_PROTOCOL_ROOT "$ENV{LOGOS_PROTOCOL_ROOT}")
 endif()
-if(NOT DEFINED LOGOS_QT_SDK_ROOT AND DEFINED ENV{LOGOS_QT_SDK_ROOT})
-    set(LOGOS_QT_SDK_ROOT "$ENV{LOGOS_QT_SDK_ROOT}")
+if(NOT DEFINED LOGOS_QT_HOST_ROOT AND DEFINED ENV{LOGOS_QT_HOST_ROOT})
+    set(LOGOS_QT_HOST_ROOT "$ENV{LOGOS_QT_HOST_ROOT}")
 endif()
 set(_cpp_sdk_found FALSE)
-if(EXISTS "${LOGOS_QT_SDK_ROOT}/cpp/logos_api.h")
+if(EXISTS "${LOGOS_QT_HOST_ROOT}/cpp/logos_api.h")
     set(_cpp_sdk_found TRUE)
     set(_cpp_sdk_is_source TRUE)
-elseif(EXISTS "${LOGOS_QT_SDK_ROOT}/include/cpp/logos_api.h")
+elseif(EXISTS "${LOGOS_QT_HOST_ROOT}/include/cpp/logos_api.h")
     set(_cpp_sdk_found TRUE)
     set(_cpp_sdk_is_source FALSE)
 endif()
 
 if(NOT _cpp_sdk_found)
-    message(FATAL_ERROR "logos-qt-sdk not found at ${LOGOS_QT_SDK_ROOT}. "
-                        "Set LOGOS_QT_SDK_ROOT (and LOGOS_PROTOCOL_ROOT).")
+    message(FATAL_ERROR "logos-qt-host not found at ${LOGOS_QT_HOST_ROOT}. "
+                        "Set LOGOS_QT_HOST_ROOT (and LOGOS_PROTOCOL_ROOT).")
 endif()
 
 message(STATUS "Using logos-cpp-sdk at: ${LOGOS_CPP_SDK_ROOT}")
@@ -143,20 +146,20 @@ set(SOURCES
 # Add SDK sources based on layout type
 if(_cpp_sdk_is_source)
     list(APPEND SOURCES
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api.cpp
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api.h
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api_provider.cpp
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_api_provider.h
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_provider_object.cpp
-        ${LOGOS_QT_SDK_ROOT}/cpp/logos_provider_object.h
-        ${LOGOS_QT_SDK_ROOT}/cpp/qt_provider_object.cpp
-        ${LOGOS_QT_SDK_ROOT}/cpp/qt_provider_object.h
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_api.cpp
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_api.h
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_api_provider.cpp
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_api_provider.h
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_provider_object.cpp
+        ${LOGOS_QT_HOST_ROOT}/cpp/logos_provider_object.h
+        ${LOGOS_QT_HOST_ROOT}/cpp/qt_provider_object.cpp
+        ${LOGOS_QT_HOST_ROOT}/cpp/qt_provider_object.h
     )
 endif()
 
 # Use umbrella source that includes all generated wrappers to avoid duplicate symbols
 if(_cpp_sdk_is_source)
-    set(GENERATED_LOGOS_SDK_DIR ${LOGOS_QT_SDK_ROOT}/cpp/generated)
+    set(GENERATED_LOGOS_SDK_DIR ${LOGOS_QT_HOST_ROOT}/cpp/generated)
 else()
     # For nix builds, generated files are in the source directory
     set(GENERATED_LOGOS_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/generated_code)
@@ -336,17 +339,17 @@ if(_cpp_sdk_is_source)
     target_include_directories(main_ui PRIVATE 
         ${LOGOS_CPP_SDK_ROOT}/cpp
         ${LOGOS_CPP_SDK_ROOT}/cpp/generated
-        ${LOGOS_QT_SDK_ROOT}/cpp
-        ${LOGOS_QT_SDK_ROOT}/core
+        ${LOGOS_QT_HOST_ROOT}/cpp
+        ${LOGOS_QT_HOST_ROOT}/core
         ${LOGOS_PROTOCOL_ROOT}/cpp
     )
 else()
     target_include_directories(main_ui PRIVATE 
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include
-        ${LOGOS_QT_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include/core
+        ${LOGOS_QT_HOST_ROOT}/include
+        ${LOGOS_QT_HOST_ROOT}/include/cpp
+        ${LOGOS_QT_HOST_ROOT}/include/core
         ${LOGOS_PROTOCOL_ROOT}/include
         ${LOGOS_PROTOCOL_ROOT}/include/cpp
         ${GENERATED_LOGOS_SDK_DIR}
@@ -453,28 +456,41 @@ if(_liblogos_found)
     endif()
 endif()
 
-# Link the SDK via its exported CMake target so the consumer inherits
+# Link the host runtime via its exported CMake target so the consumer inherits
 # INTERFACE_LINK_LIBRARIES (OpenSSL::SSL, OpenSSL::Crypto, Boost::system,
-# nlohmann_json). Bare `find_library` only puts liblogos_sdk.a on the
+# nlohmann_json). Bare `find_library` only puts liblogos_qt_host.a on the
 # link line — every Boost.Asio TLS symbol it pulls in (X509_check_host,
 # SSL_*, ...) ends up undefined at link time on Linux as soon as the
-# SDK adds any code path that references the ssl transports.
+# runtime adds any code path that references the ssl transports.
 if(NOT _cpp_sdk_is_source)
     find_package(logos-protocol REQUIRED CONFIG
         PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
         NO_DEFAULT_PATH)
-    find_package(logos-qt-sdk REQUIRED CONFIG
-        PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
+    find_package(logos-qt-host REQUIRED CONFIG
+        PATHS ${LOGOS_QT_HOST_ROOT}/lib/cmake/logos-qt-host
         NO_DEFAULT_PATH)
+    # Fail loudly rather than silently dropping the host runtime off the link
+    # line: main_ui's LogosAPI symbols all come from here.
+    if(NOT TARGET logos-qt-host::logos_qt_host)
+        message(FATAL_ERROR
+            "find_package(logos-qt-host) succeeded but did not define "
+            "logos-qt-host::logos_qt_host. LOGOS_QT_HOST_ROOT="
+            "${LOGOS_QT_HOST_ROOT}")
+    endif()
     # On Windows the archives behind these targets are emptied out so the
     # symbols can only come from liblogos_core.dll -- see
     # cmake/LogosSharedFromDll.cmake. The link below is kept verbatim: it is
     # still what carries the include dirs and the Qt/OpenSSL/Boost interface.
+    #
+    # Retargeted from logos-qt-sdk::logos_qt_sdk to logos-qt-host::logos_qt_host
+    # by the B4 host split -- the archive holding LogosAPI/TokenManager moved to
+    # logos-plugin-qt, so the archive to empty moved with it. main_ui and the app
+    # must name the SAME target here or PE gives each image its own TokenManager.
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
     logos_use_shared_runtime_from_dll(
-        logos-qt-sdk::logos_qt_sdk
+        logos-qt-host::logos_qt_host
         logos-protocol::logos_protocol)
-    target_link_libraries(main_ui PRIVATE logos-qt-sdk::logos_qt_sdk)
+    target_link_libraries(main_ui PRIVATE logos-qt-host::logos_qt_host)
 else()
     if(EXISTS "${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol")
         find_package(logos-protocol REQUIRED CONFIG

@@ -1,5 +1,5 @@
 # Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -59,7 +59,7 @@ let
     rootPaths = common.buildInputs ++ [
       pkgs.qt6.qtdeclarative
       logosProtocolPkg
-      logosQtSdk
+      logosQtHost
       logosLiblogos
       logosModule
       logosSdk
@@ -76,10 +76,10 @@ pkgs.stdenv.mkDerivation rec {
   # Platform-specific build inputs for system webviews
   buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
-    # Qt split: the app links logos-qt-sdk::logos_qt_sdk, which carries the
-    # logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
+    # Qt host split: the app links logos-qt-host::logos_qt_host, which carries
+    # the logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
     logosProtocolPkg
-    logosQtSdk
+    logosQtHost
   ] ++ (
     if pkgs.stdenv.isLinux then
       # Linux: WebKitGTK as backend + Wayland platform plugin
@@ -105,7 +105,7 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.stdenv.cc.cc
       pkgs.freetype
       pkgs.fontconfig
-      # Qt split: the app links logos-qt-sdk → logos-protocol, whose shared
+      # Qt host split: the app links logos-qt-host → logos-protocol, whose shared
       # runtime deps (Boost.System, OpenSSL) must be reachable now that the
       # binary's RPATH is stripped for bundling.
       pkgs.boost
@@ -155,8 +155,9 @@ pkgs.stdenv.mkDerivation rec {
     mkdir -p ./logos-cpp-sdk/include/cpp
     cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
 
-    # core/interface.h moved to logos-qt-sdk in the qt split; the app finds it
-    # via LOGOS_QT_SDK_ROOT, so nothing to stage here anymore.
+    # core/interface.h ships with logos-qt-host (it moved to logos-qt-sdk in
+    # the qt split, and on to the host runtime in the host split); the app
+    # finds it via LOGOS_QT_HOST_ROOT, so nothing to stage here anymore.
 
     # Copy SDK library files to lib directory (no-op since the qt split — the
     # base SDK is header-only; kept for older layouts)
@@ -565,7 +566,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
-      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
+      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
