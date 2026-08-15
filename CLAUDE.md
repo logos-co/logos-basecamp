@@ -12,18 +12,18 @@ nix build
 nix build && ./result/bin/LogosBasecamp
 
 # Iterate on QML without rebuilding — relaunch to pick up edits.
-DEV_QML_PATH=$PWD/src nix build && DEV_QML_PATH=$PWD/src ./result/bin/LogosBasecamp
+DEV_QML_PATH=$PWD/app nix build && DEV_QML_PATH=$PWD/app ./result/bin/LogosBasecamp
 ```
 
 QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
 .AppManager, .Settings, .Shell, plus .Backend for C++ types) — bytecode is
-embedded in main_ui. No runtime QML disk cache, so the qrc-keyed cache
+embedded in the LogosBasecamp binary. No runtime QML disk cache, so the qrc-keyed cache
 staleness bug doesn't apply.
 
 ### `DEV_QML_PATH` — iterate on view layouts without rebuilding
 
 Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
-(typically `<repo>/src`, which contains `Basecamp/Sidebar/`,
+(typically `<repo>/app`, which contains `Basecamp/Sidebar/`,
 `Basecamp/Shell/`, etc.). MainContainer's three view-entry `setSource` calls
 will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
 embedded qrc resource. Relaunch the app to pick up edits.
@@ -66,7 +66,7 @@ nix build .#integration-test -L
 - **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Dashboard, Modules, Settings)
 - **Plugins** appear as sidebar icons: `package_manager_ui`
 - Plugins are loaded from `~/Library/Application Support/Logos/LogosBasecampDev/plugins/`
-- Main UI is in `src/Basecamp/`, organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
+- Main UI is in `app/Basecamp/`, organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
 
 ## C++ Architecture
 
@@ -86,20 +86,20 @@ MainUIBackend (facade, QML-facing — owns the other three as Qt children)
                                orchestration, install & uninstall-cascade dialogs)
 ```
 
-### MainUIBackend (`src/MainUIBackend.h/.cpp`)
+### MainUIBackend (`app/MainUIBackend.h/.cpp`)
 Thin QML-facing facade. Holds only navigation state (`m_currentActiveSectionIndex`, `m_sections`). Every QML-visible slot/signal is a one-line delegation into one of the three managers. The `coreModules()` Q_PROPERTY is the one exception — it composes data from multiple managers (known list + stats from CoreModuleManager, installType from PackageCoordinator). The `cancelPendingAction(name)` slot fans out to both UIPluginManager and PackageCoordinator so the un-involved one no-ops.
 
-### CoreModuleManager (`src/CoreModuleManager.h/.cpp`)
+### CoreModuleManager (`app/CoreModuleManager.h/.cpp`)
 Single owner of the `logos_core_*` C API. Provides thin wrappers: `knownModules()`, `loadedModules()`, `loadModule()`, `unloadModule()`, `unloadModuleWithDependents()`, plus a stats timer that periodically queries `logos_core_get_module_stats`. Nothing else in the app calls the C API directly.
 
-### UIPluginManager (`src/UIPluginManager.h/.cpp`)
+### UIPluginManager (`app/UIPluginManager.h/.cpp`)
 Owns UI plugin widget lifecycle in-process: PluginLoader wiring, widget teardown, app launcher state, UI-plugin metadata cache (`m_uiPluginMetadata`) used for load dispatch. Runs the local *unload* cascade (no package_manager involvement). Queries PackageCoordinator for installType / missing-deps / dependents via accessor methods. Exposes `intersectWithLoaded(names)` + `teardownUiPluginWidget(name)` for PackageCoordinator to call during uninstall cascade.
 
 - **Load/unload**: `loadUiModule`, `unloadUiModule`, `loadCoreModule`, `unloadCoreModule` — pre-flight dependency checks, then delegates to CoreModuleManager
 - **Unload cascade**: `confirmUnloadCascade`, `cancelUnloadCascade` — single-slot `m_pendingUnload` drives the QML dialog
 - **App launcher**: `activateApp`, `onAppLauncherClicked`, `setCurrentVisibleApp`
 
-### PackageCoordinator (`src/PackageCoordinator.h/.cpp`)
+### PackageCoordinator (`app/PackageCoordinator.h/.cpp`)
 Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install gate dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.
 
 - **Install gate**: basecamp initiates no installs of its own — `package_manager_ui` does, for both catalog downloads and local `.lgx` picks. We subscribe to the module's `beforeInstall`, show the `installGate` dialog, and forward the decision via `confirmInstallGate()`/`cancelInstallGate()`; PMU then performs the install
@@ -114,12 +114,12 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 
 | File | Purpose |
 |------|---------|
-| `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate) — hosted in a transparent top-level QQuickWidget |
-| `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `upgradeCascade`, `installGate` |
-| `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
-| `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
-| `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
-| `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
+| `app/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate) — hosted in a transparent top-level QQuickWidget |
+| `app/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `uninstallCascade`, `upgradeCascade`, `installGate` |
+| `app/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
+| `app/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
+| `app/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
+| `app/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
 
 ## QML Inspector (MCP)
 
@@ -139,8 +139,8 @@ The app runs an inspector server (default: localhost:3768) that the `qml-inspect
 
 ## Key Directories
 
-- `src/Basecamp/` - QML UI source files, organised by feature (Sidebar/AppManager/Settings/Shell/Icons)
-- `nix/` - Nix build configurations (app.nix, main-ui.nix, smoke-test.nix, integration-test.nix)
+- `app/Basecamp/` - QML UI source files, organised by feature (Sidebar/AppManager/Settings/Shell/Icons)
+- `nix/` - Nix build configurations (app.nix, smoke-test.nix, integration-test.nix)
 - `logos-qt-mcp` - QML Inspector: MCP server, test framework, Qt plugin (separate repo, flake input)
 - `tests/` - UI integration tests
 - `qt-ios/` - iOS build scripts

@@ -1,4 +1,4 @@
-// srcdeps: ../app/utils/AccessPolicyOption.cpp
+// srcdeps: utils/AccessPolicyOption.cpp
 //
 // Unit tests for Basecamp's --access-policy resolution (app/utils/
 // AccessPolicyOption.{h,cpp}) — the opt-in half of deny-by-default inter-module

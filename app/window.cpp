@@ -3,12 +3,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QDebug>
-#include <QLabel>
-#include <QVBoxLayout>
-#include <QPluginLoader>
-#include "win_dll_search.h"
 #include <QDir>
-#include <QFile>
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QMenuBar>
@@ -18,40 +13,18 @@
 #include <QCloseEvent>
 #include <QIcon>
 #include <QPixmap>
-#include <IComponent.h>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
 #include <QPointer>
 #include <QScopedValueRollback>
 #include "LogosBasecampPaths.h"
+#include "MainContainer.h"
+#include "logos_api.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
     #include "macWindowStyle.h"
 #endif
-
-Window::Window(QWidget *parent)
-    : QMainWindow(parent)
-    , m_logosAPI(nullptr)
-    , m_trayIcon(nullptr)
-    , m_trayIconMenu(nullptr)
-    , m_showHideAction(nullptr)
-    , m_quitAction(nullptr)
-{
-    setObjectName(QStringLiteral("logosMainWindow"));
-    setupUi();
-    createTrayIcon();
-#ifdef Q_OS_MAC
-    createMenuBar();
-#endif
-#ifdef Q_OS_LINUX
-    // GNOME/KDE convention: Ctrl+Q quits. QKeySequence::Quit maps to Ctrl+Q
-    // on X11/Wayland and is empty on Windows.
-    auto* quitShortcut = new QShortcut(QKeySequence::Quit, this);
-    quitShortcut->setObjectName(QStringLiteral("logosQuitShortcut"));
-    connect(quitShortcut, &QShortcut::activated, this, &Window::quitApplication);
-#endif
-}
 
 Window::Window(LogosAPI* logosAPI, QWidget *parent)
     : QMainWindow(parent)
@@ -85,70 +58,18 @@ Window::~Window()
 
 void Window::setupUi()
 {
-    // Determine the appropriate plugin extension based on the platform
-    QString pluginExtension;
-    #if defined(Q_OS_WIN)
-        pluginExtension = ".dll";
-    #elif defined(Q_OS_MAC)
-        pluginExtension = ".dylib";
-    #else // Linux and other Unix-like systems
-        pluginExtension = ".so";
-    #endif
-
-    QString embeddedPluginsDir = LogosBasecampPaths::embeddedPluginsDirectory() + "/";
-    QString userPluginsDir = LogosBasecampPaths::pluginsDirectory() + "/";
-
-    // Search embedded (pre-installed at build time) first, then user-writable directory.
-    auto resolvePlugin = [&](const QString& subdir, const QString& name) -> QString {
-        QString embeddedPath = embeddedPluginsDir + subdir + "/" + name + pluginExtension;
-        if (QFile::exists(embeddedPath))
-            return embeddedPath;
-        return userPluginsDir + subdir + "/" + name + pluginExtension;
-    };
-
-    // Load the main_ui plugin with the appropriate extension (now in subdirectory)
-    QString mainUiPluginPath = resolvePlugin("main_ui", "main_ui");
-    // main_ui lives in its own plugins/main_ui/ directory, so anything vendored
-    // beside it is invisible to Windows' loader without this. No-op elsewhere;
-    // the reference is intentionally held for the process lifetime.
-    ModuleLib::preloadPluginWithOwnDirSearch(mainUiPluginPath);
-    QPluginLoader loader(mainUiPluginPath);
-
-    QWidget* mainContent = nullptr;
-    QObject* mainUiPlugin = nullptr;
-
-    if (loader.load()) {
-        mainUiPlugin = loader.instance();
-        if (mainUiPlugin) {
-            // Try to create the main window using the plugin's createWidget method
-            QMetaObject::invokeMethod(mainUiPlugin, "createWidget",
-                                    Qt::DirectConnection,
-                                    Q_RETURN_ARG(QWidget*, mainContent),
-                                    Q_ARG(LogosAPI*, m_logosAPI));
-        }
-    }
-
-    if (mainContent) {
-        setCentralWidget(mainContent);
-    } else {
-        qWarning() << "================================================";
-        qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;
-        qWarning() << "Error:" << loader.errorString();
-        qWarning() << "================================================";
-        // Fallback: show a message when plugin is not found
-        QWidget* fallbackWidget = new QWidget(this);
-        QVBoxLayout* layout = new QVBoxLayout(fallbackWidget);
-
-        QLabel* messageLabel = new QLabel("No main UI module found", fallbackWidget);
-        QFont font = messageLabel->font();
-        font.setPointSize(14);
-        messageLabel->setFont(font);
-        messageLabel->setAlignment(Qt::AlignCenter);
-
-        layout->addWidget(messageLabel);
-        setCentralWidget(fallbackWidget);
-        qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;
-    }
+    // The UI shell is compiled into this executable. It used to be a Qt plugin
+    // (plugins/main_ui/main_ui.{so,dylib,dll}) loaded here through QPluginLoader
+    // and reached over QMetaObject::invokeMethod("createWidget"), which bought
+    // nothing: the shell is not a module — it needs a QWidget* handed back, the
+    // logos_core_* lifecycle, and TokenManager access, and two of those three
+    // are host privileges. The plugin boundary only added a second image, and on
+    // PE a second image means a second copy of every function-local static.
+    //
+    // There is deliberately no "No main UI module found" fallback any more:
+    // failure to construct the shell is no longer a runtime resolution that can
+    // miss, it is a link error.
+    setCentralWidget(new MainContainer(m_logosAPI));
 
     // Set window title and size. The default launch width is wide enough for
     // the Package Manager's full table (category sidebar + columns through

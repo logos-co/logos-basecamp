@@ -14,7 +14,7 @@
 # binaries. Sources no unit test links at all (PackageCoordinator,
 # UIPluginManager, PluginLoader, MainContainer, MainUIBackend) produce no
 # .gcno and therefore do NOT appear in the report as 0% — the percentage here
-# is "coverage of the code under unit test", not of all of src/. Adding a
+# is "coverage of the code under unit test", not of all of app/. Adding a
 # source to tests/CMakeLists.txt is what pulls it into the denominator.
 { pkgs, src, logosPackageHeaders, failUnderLine ? 0, failUnderBranch ? 0 }:
 
@@ -76,11 +76,11 @@ pkgs.stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out
 
-    # --filter src/ keeps the report to production code (the tests' own
+    # --filter app/ keeps the report to production code (the tests' own
     # translation units and CMake's *_autogen moc stubs are excluded).
     gcovr \
       --root "$PWD" \
-      --filter 'src/' \
+      --filter 'app/' \
       --exclude '.*_autogen.*' \
       --gcov-executable "${gcovExecutable}" \
       --exclude-unreachable-branches \

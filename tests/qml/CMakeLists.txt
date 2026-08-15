@@ -9,7 +9,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickTest Test)
 
 enable_testing()
 
-set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../app")
 
 if(DEFINED LOGOS_PACKAGE_HEADERS)
     set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")

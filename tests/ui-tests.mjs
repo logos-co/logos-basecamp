@@ -106,7 +106,9 @@ async function openModuleInspector(app) {
 test("apps inspector: shows installed UI plugins", async (app) => {
   await openAppsInspector(app);
   await app.waitFor(
-    async () => { await app.expectTexts(["Main UI", "Package Manager"]); },
+    // Basecamp's own shell is compiled into the executable since the main_ui
+    // fold, so it is not an installed UI plugin and has no "Main UI" row.
+    async () => { await app.expectTexts(["Package Manager"]); },
     { timeout: 10000, interval: 500, description: "Apps Inspector list to populate" }
   );
 });

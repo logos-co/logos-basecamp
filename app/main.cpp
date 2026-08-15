@@ -1,6 +1,5 @@
 #include "window.h"
 #include "logos_api.h"
-#include "token_manager.h"
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
 #include "LogRedirector.h"
@@ -278,12 +277,6 @@ int main(int argc, char *argv[])
     }
 
     LogosAPI logosAPI("core", nullptr);
-
-    qDebug() << "LogosAPI: printing keys";
-    QList<QString> keys = logosAPI.getTokenManager()->getTokenKeys();
-    for (const QString& key : keys) {
-        qDebug() << "LogosAPI: Token key:" << key << "value:" << logosAPI.getTokenManager()->getToken(key);
-    }
 
     // Set application icon.
 #ifdef Q_OS_LINUX

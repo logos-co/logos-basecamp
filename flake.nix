@@ -12,10 +12,10 @@
       inputs.logos-nix.follows = "logos-nix";
     };
     # The Qt HOST RUNTIME — LogosAPI, LogosAPIProvider, the LogosProviderBase
-    # macros and the legacy QMetaObject adapter — that both LogosBasecamp and
-    # the main_ui plugin link. It lived in logos-qt-sdk until the host split
-    # moved it here; the runtime was the only thing basecamp ever took from
-    # logos-qt-sdk, so that input is gone rather than kept alongside this one.
+    # macros and the legacy QMetaObject adapter — that LogosBasecamp links. It
+    # lived in logos-qt-sdk until the host split moved it here; the runtime was
+    # the only thing basecamp ever took from logos-qt-sdk, so that input is gone
+    # rather than kept alongside this one.
     # Keeping both would put two copies of the same 392 symbols on the link.
     logos-plugin-qt = {
       url = "github:logos-co/logos-plugin-qt";
@@ -56,7 +56,7 @@
   outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
-      # Build info (version + commit hashes) baked into the main UI plugin so
+      # Build info (version + commit hashes) baked into the app binary so
       # the Dashboard can render it. Commits come from the flake inputs'
       # locked revs; self's rev is "dirty" when the checkout has uncommitted
       # changes or is overridden via a path input.
@@ -128,7 +128,7 @@
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         # Headers-only output (include/ with logos/semver.hpp + semver/, no
-        # library). main_ui's AppsModel includes the shared semver comparator;
+        # library). The app's AppsModel includes the shared semver comparator;
         # it links nothing from lgx, so the headers output keeps liblgx out of
         # the app entirely.
         logosPackageHeaders = logos-package.packages.${system}.headers;
@@ -172,17 +172,17 @@
           };
           src = ./.;
 
-          # Plugin packages (development builds)
-          mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtHost logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
-          };
+          # Basecamp's own UI shell is NOT a plugin any more. It used to be
+          # built here as `mainUIPlugin` (nix/main-ui.nix), bundled with
+          # nix-bundle-logos-module-install and shipped as
+          # plugins/main_ui/main_ui.{so,dylib,dll}; it is now compiled straight
+          # into the LogosBasecamp binary by nix/app.nix.
+          #
+          # Deleting these bindings is the load-bearing half of that fold. With
+          # the C++ folded in but the plugin still built and installed, nothing
+          # loads it, nothing breaks, and every check still passes -- while the
+          # output ships a second, stale copy of the entire UI.
           packageManagerUIPlugin = logosPackageManagerUI;
-
-          # Plugin packages (distributed builds for DMG/AppImage)
-          mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtHost logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
-            distributed = true;
-          };
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
@@ -198,20 +198,18 @@
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            mainUIPlugin
             packageManagerUIPlugin
           ];
           installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            mainUIPluginDistributed
             packageManagerUIPlugin
           ];
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -219,7 +217,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -228,7 +226,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -375,8 +373,8 @@
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
         in
         {
-          # Individual outputs
-          main-ui-plugin = mainUIPlugin;
+          # Individual outputs. `main-ui-plugin` is deliberately gone: the UI
+          # shell is part of `app` now, not a separately buildable plugin.
           package-manager-ui-plugin = packageManagerUIPlugin;
           app = app;
 
