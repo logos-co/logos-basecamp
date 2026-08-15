@@ -12,7 +12,17 @@
       inputs.logos-nix.follows = "logos-nix";
     };
     logos-qt-sdk = {
-      url = "github:logos-co/logos-qt-sdk";
+      # Pinned by rev, unlike the other inputs here, because app/CMakeLists.txt
+      # and src/CMakeLists.txt name the `logos-qt-host::logos_qt_host` target
+      # and the commit that re-exports it (logos-qt-sdk c4f2c6a) has not
+      # reached that repo's master yet. An unpinned input locks onto a master
+      # without it, and since LogosSharedFromDll.cmake was made FATAL on an
+      # unknown target, configuring dies with "logos-qt-host::logos_qt_host is
+      # not a target" rather than silently keeping a second copy of the shared
+      # runtime -- which on Windows means a second TokenManager and refused
+      # cross-module calls at runtime. This is the same rev the workspace
+      # pins. Drop the rev once it merges.
+      url = "github:logos-co/logos-qt-sdk/b6d4c4bf9745bcde6907fb2090f6e308763fd087";
       inputs.logos-nix.follows = "logos-nix";
       inputs.logos-protocol.follows = "logos-protocol";
       inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
@@ -24,7 +34,21 @@
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    logos-package-manager-ui = {
+      url = "github:logos-co/logos-package-manager-ui";
+      # The UI carries its OWN pins of the two modules it fronts, and without
+      # these follows the app resolves two different builds of each: the one
+      # this flake pins, and the older one inside the UI's lock. On Windows
+      # that is fatal rather than merely wasteful -- the UI's pins predate
+      # `x86_64-windows`, so resolving its header dependency falls back to the
+      # module's SOURCE TREE and the build dies far away, inside a generated
+      # translation unit, with
+      #     fatal error: package_manager_api.h: No such file or directory
+      # Bumping this input cannot fix it: it is already at the UI's master, and
+      # the stale pins are inside that repo's own lock.
+      inputs.package_manager.follows = "logos-package-manager-module";
+      inputs.package_downloader.follows = "logos-package-downloader-module";
+    };
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime = {
       url = "github:logos-co/logos-view-module-runtime";
