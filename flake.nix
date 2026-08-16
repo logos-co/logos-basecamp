@@ -45,18 +45,66 @@
       inputs.logos-module.follows = "logos-module";
     };
     logos-module.url = "github:logos-co/logos-module";
+    # The Qt-plugin module loader: the QtPluginFormatLoader that liblogos_core
+    # links AND the logos_host binary this app ships (nix/app.nix copies it out
+    # of ${logosLiblogos}/bin, which is just liblogos re-exporting this
+    # package's bin/ — see logos-liblogos/nix/bin.nix).
+    #
+    # Declared HERE, as a top-level input, purely so `logos-liblogos.inputs.
+    # default-module-loader` below has something to follow. liblogos's own lock
+    # pins e648735, the commit BEFORE the host-services grant, and that is the
+    # one hop of this chain basecamp was missing: 06134bfc is what teaches
+    # logos_host the `--host-services` flag, stamps it as the `hostServices`
+    # property on the LogosAPI object (right after loadModule()'s name check, so
+    # the identity the grant is bound to is already verified), and holds the
+    # host-side name-bound policy in QtPluginFormatLoader::buildArguments.
+    #
+    # Without it, capability_module at 07dba1f asks for `token_registry` and
+    # never receives it, so it fails CLOSED and every gated call becomes
+    # "ModuleProxy: rejecting unauthorized call". The module half of the chain
+    # is already in place: the plugin's generated glue reads that property and
+    # calls logos_module_grant_host_services -> lp_grant_host_services in its
+    # OWN image (verified with nm on the built plugin, not with strings).
+    #
+    # logos-protocol MUST follow, exactly as liblogos declares it for this same
+    # input: this loader's own lock pins protocol 03842db, which predates
+    # lp_grant_host_services entirely, and the emitted glue's
+    # `#if LOGOS_PROTOCOL_VERSION_MINOR >= 3` guard would compile away to
+    # nothing against it. c8bab12 is 0.4. logos-cpp-sdk / logos-qt-sdk are
+    # deliberately NOT followed: the loader's own lock already resolves them to
+    # e3744fb / c6be61d, which is exactly what liblogos's follows resolve to, so
+    # leaving them alone keeps this build byte-identical to liblogos's own
+    # except for the loader rev itself.
+    #
+    # Rev-pinned rather than tracking the branch: 06134bfc is the tip of
+    # feat/host-services-grant. Drop the rev once that merges, at which point
+    # liblogos's own lock can carry it and this input can go away.
+    logos-module-loader-qt = {
+      url = "github:logos-co/logos-module-loader-qt/06134bfcb726a53b889ffa56e43b08e94938b6cf";
+      inputs.logos-protocol.follows = "logos-protocol";
+    };
     # Rev-pinned: f2a15ef3 is the tip of fix/b4-align-protocol-with-qt-host —
     # the liblogos aligned with the split host runtime and the per-client token
     # store. liblogos_core.dll's export list (the other half of the Windows
     # one-copy fix) lands there, not on master.
-    logos-liblogos.url = "github:logos-co/logos-liblogos/f2a15ef3022d8fb71dac3d612c8edec839fc51e7";
+    logos-liblogos = {
+      url = "github:logos-co/logos-liblogos/f2a15ef3022d8fb71dac3d612c8edec839fc51e7";
+      inputs.default-module-loader.follows = "logos-module-loader-qt";
+    };
     logos-package-manager.url = "github:logos-co/logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     # Rev-pinned: 07dba1f is the tip of feat/universal-capability, built against
     # the new module-builder. Master's capability_module targets the pre-split
     # runtime and would load a second host copy into this process.
-    logos-capability-module.url = "github:logos-co/logos-capability-module/0cb33fb";
+    #
+    # This was walked back to 0cb33fb (the legacy hand-written Qt plugin) for one
+    # reason: 07dba1f is a UNIVERSAL module that asks the host for the
+    # `token_registry` / `token_delivery` services and fails CLOSED when they do
+    # not arrive, and the loader pinned here could not grant them. That is fixed
+    # above, at logos-module-loader-qt — so the pin returns to the rev the
+    # comment always described.
+    logos-capability-module.url = "github:logos-co/logos-capability-module/07dba1fb32ec889e28848c7730f0d5b3912a5b5b";
     logos-package.url = "github:logos-co/logos-package";
     # Rev-pinned: c932e1c is the tip of feat/universal-view-plugin — the
     # generated view plugin. This UI is loaded in-process by the app, so it must
@@ -86,7 +134,11 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  # logos-module-loader-qt is in the formals only because Nix passes EVERY
+  # declared input to this function and this set has no ellipsis. Nothing here
+  # uses it directly — it exists so logos-liblogos.inputs.default-module-loader
+  # has a top-level input to follow.
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
