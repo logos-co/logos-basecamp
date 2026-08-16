@@ -428,7 +428,6 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     Qt6::Network
-    logos_core
     logos-qt-host::logos_qt_host
     ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
     Logos::DesignSystem
@@ -447,6 +446,30 @@ target_link_libraries(LogosBasecamp PRIVATE
     $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_shell_qmlplugin>
     $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_icons_qmlplugin>
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
+    # logos_core is LAST, and that position is load-bearing on Windows.
+    #
+    # On Windows liblogos_core.dll is the single provider of the shared C++
+    # runtime, so the static archives that define those types are emptied out
+    # (LogosSharedFromDll.cmake) and every reference to them has to be satisfied
+    # by liblogos_core's IMPORT LIBRARY. GNU ld resolves an archive left to
+    # right: it only takes members that satisfy references that are already
+    # undefined when it reaches them. With logos_core listed before
+    # LOGOS_VIEW_MODULE_RUNTIME_LIB, the view runtime's references to
+    # LogosAPIClient::whenObjectAvailable / ::eventSubscriptionState /
+    # ::pendingEventSubscriptions and logos::qvariantToNlohmann came up AFTER
+    # the import library had already been passed, and the mingw link failed with
+    # four undefined references — even though liblogos_core.dll exports all four
+    # (measured: they are in its export table and its .dll.a).
+    #
+    # This did not bite before the main_ui fold only because of where the two
+    # sat: the plugin's CMakeLists linked LOGOS_VIEW_MODULE_RUNTIME_LIB in its
+    # main target_link_libraries() and logos_core in a separate, LATER call, so
+    # the generated order was already correct. Folding the UI shell into this
+    # executable brought the view runtime onto a link line whose logos_core came
+    # eighth. Nothing else on this list defines symbols logos_core needs — it is
+    # an import library for a DLL — so last is both correct and the position
+    # that cannot be broken by adding another archive above it.
+    logos_core
 )
 
 if(APPLE)
