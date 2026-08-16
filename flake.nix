@@ -56,7 +56,7 @@
     # Rev-pinned: 07dba1f is the tip of feat/universal-capability, built against
     # the new module-builder. Master's capability_module targets the pre-split
     # runtime and would load a second host copy into this process.
-    logos-capability-module.url = "github:logos-co/logos-capability-module/07dba1fb32ec889e28848c7730f0d5b3912a5b5b";
+    logos-capability-module.url = "github:logos-co/logos-capability-module/0cb33fb";
     logos-package.url = "github:logos-co/logos-package";
     # Rev-pinned: c932e1c is the tip of feat/universal-view-plugin — the
     # generated view plugin. This UI is loaded in-process by the app, so it must
