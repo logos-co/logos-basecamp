@@ -8,6 +8,7 @@
 #include <QIcon>
 #include <QMutexLocker>
 #include <QPluginLoader>
+#include "win_dll_search.h"
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -137,6 +138,14 @@ void PluginLoader::loadCppPluginAsync(const PluginLoadRequest& request)
     // Qt's QLibraryStore caches loaded libraries globally, so the subsequent
     // QPluginLoader::load() on the main thread will be instant.
     QThread* thread = QThread::create([path = request.pluginPath]() {
+        // Add the plugin's OWN directory to the DLL search before the image is
+        // mapped, so a UI plugin can resolve libraries vendored beside it.
+        // Windows searches the EXECUTABLE's directory, not the importing DLL's.
+        // No-op off Windows. The reference is deliberately not released: these
+        // plugins stay resident for the process lifetime (QPluginLoader's
+        // destructor does not unload), and this is the load that actually maps
+        // the image -- the main-thread load below then hits Qt's cache.
+        ModuleLib::preloadPluginWithOwnDirSearch(path);
         QPluginLoader loader(path);
         loader.load();
     });
@@ -152,6 +161,10 @@ void PluginLoader::loadCppPluginAsync(const PluginLoadRequest& request)
 
 void PluginLoader::finishCppPluginLoad(const PluginLoadRequest& request)
 {
+    // Normally a no-op: loadCppPluginAsync already mapped the image. Kept so
+    // this path is correct on its own, since a caller reaching it without the
+    // async pre-load would otherwise fail to resolve vendored DLLs.
+    ModuleLib::preloadPluginWithOwnDirSearch(request.pluginPath);
     QPluginLoader loader(request.pluginPath);
     if (!loader.load()) {
         qWarning() << "Failed to load plugin:" << request.name << "-" << loader.errorString();
