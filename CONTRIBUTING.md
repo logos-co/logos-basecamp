@@ -39,8 +39,18 @@ nix build .#app                    # local (non-portable) dev build
 
 nix build .#smoke-test -L          # validates the app starts without QML errors
 nix build .#integration-test -L    # end-to-end UI tests (hermetic, CI-safe)
+nix build .#host-services-test -L  # capability trust root actually works (see below)
 nix build .#doctests -L            # C++ doctests
 ```
+
+`host-services-test` is the guard on the capability trust root: it asserts that a
+NON-`core` identity (ui-host, running `package_manager_ui`) actually *completes* a
+token-gated call chain, which is only possible when `capability_module` really
+received its `token_registry` / `token_delivery` host-services grant from the
+module loader this build pins. Run it after touching any of `logos-liblogos`,
+`logos-module-loader-qt`, `logos-protocol`, `logos-plugin-qt` or
+`logos-capability-module` pins — a loader that predates the grant makes
+capability_module fail closed, and every other check stays green.
 
 Portable release-shaped builds:
 

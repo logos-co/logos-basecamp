@@ -518,6 +518,17 @@
           # Integration test (UI tests via Qt Inspector)
           integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
 
+          # Host-services grant guard. Asserts that a NON-"core" identity
+          # (ui-host running package_manager_ui) actually completes a
+          # capability-gated call chain — i.e. that capability_module really
+          # received its token_registry/token_delivery grant from the loader
+          # basecamp pins, rather than failing closed. See
+          # nix/host-services-test.nix and tests/host-services-assert.mjs.
+          # Build: nix build .#host-services-test
+          host-services-test = import ./nix/host-services-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+          };
+
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
@@ -540,6 +551,12 @@
             appBin = "${macosApp}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
           integration-test-bundle = import ./nix/integration-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
+          host-services-test-bundle = import ./nix/host-services-test.nix {
             inherit pkgs src;
             appPkg = macosAppTest;
             inherit logosQtMcp;
@@ -568,6 +585,7 @@
         qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
         shutdown-test = self.packages.${system}.shutdown-test;
+        host-services-test = self.packages.${system}.host-services-test;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {

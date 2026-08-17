@@ -19,6 +19,15 @@ const projectRoot = resolve(__dirname, "..");
 const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp");
 const { test, run } = await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
 
+// Shared with the dedicated `host-services-test` check. Registered here as well
+// because this suite is the one CI already runs by name (`nix build
+// .#integration-test` / `.#integration-test-bundle`), and it is the suite that
+// reported 16 passed / 0 failed against a build where capability_module never
+// received its host-services grant and 34 gated calls were refused.
+const { assertHostServicesGrantReached } = await import(
+  resolve(__dirname, "host-services-assert.mjs")
+);
+
 // Helper: click a plugin's sidebar icon and wait for its UI to load.
 // Plugins load asynchronously after clicking, so we wait for expected
 // content to appear before proceeding.
@@ -101,6 +110,21 @@ test("package_manager_ui: section click loads PMUI's own QML", async (app) => {
   if ((stillPlaceholder.matches || []).length > 0) {
     throw new Error("PMUI placeholder is still in the stack — the real widget never arrived");
   }
+});
+
+// --- Host-services grant ---
+//
+// The test above proves PMUI's QML is LIVE. It says nothing about whether PMUI
+// can actually TALK to anything, and that gap is why this suite certified a
+// build in which capability_module had been denied its token_registry /
+// token_delivery grant: ui-host's every call came back
+// "ModuleProxy: rejecting unauthorized call" (34 of them), PMUI rendered its
+// chrome over an empty backend, and all 16 tests still passed.
+//
+// This one asserts the opposite direction — an outcome only a SUCCESSFUL
+// privileged operation can produce. See tests/host-services-assert.mjs.
+test("host-services: package_manager_ui completes a capability-gated call chain", async (app) => {
+  await assertHostServicesGrantReached(app, { timeout: 90000, log: console.log });
 });
 
 test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {

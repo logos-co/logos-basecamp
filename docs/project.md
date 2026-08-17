@@ -50,12 +50,15 @@ logos-basecamp/
 │   │   ├── DenyAllReply.h/cpp
 │       └── RestrictedUrlInterceptor.h/cpp
 ├── tests/                                # Integration tests
-│   └── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
+│   ├── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
+│   ├── host-services-tests.mjs           # Capability trust-root guard (spec)
+│   └── host-services-assert.mjs          # ...its assertion, shared with ui-tests
 ├── nix/                                  # Nix build modules
 │   ├── default.nix                       # Common build settings
 │   ├── app.nix                           # Application package (UI shell included)
 │   ├── smoke-test.nix                    # Smoke test derivation
 │   ├── integration-test.nix              # UI integration test harness
+│   ├── host-services-test.nix            # Host-services grant guard
 │   ├── appimage.nix                      # Linux AppImage packaging
 │   ├── macos-bundle.nix                  # macOS .app bundle
 │   └── macos-dmg.nix                     # macOS DMG packaging

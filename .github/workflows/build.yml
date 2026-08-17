@@ -146,6 +146,15 @@ jobs:
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
+      # Guards the capability trust root end to end: asserts a NON-"core"
+      # identity actually completes a capability-gated call chain, so a
+      # logos-liblogos / default-module-loader pin that predates the
+      # host-services grant fails HERE instead of shipping green.
+      # (integration-test carries the same assertion, but a pin failure
+      # deserves a gate whose name says what broke.)
+      - name: Host-services grant guard
+        run: nix build .#host-services-test -L
+
       # Report-only non-blocking for now
       - name: Coverage report
         continue-on-error: true
@@ -199,6 +208,11 @@ jobs:
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L
+
+      # macOS twin of the Linux job's host-services guard, run against the
+      # real .app bundle (same pairing as integration-test-bundle above).
+      - name: Host-services grant guard
+        run: nix build .#host-services-test-bundle -L
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
