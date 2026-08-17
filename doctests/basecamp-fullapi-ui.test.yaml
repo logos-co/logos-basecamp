@@ -124,6 +124,13 @@ sections:
               text: "The bundle launches headless against the assembled user-dir."
               screenshot: "fullapi-launch.png"
 
+            # The icon appears only once the UI-plugin metadata fetch
+            # succeeds, which can lag launch by a few seconds.
+            - name: "The Full API UI app appears in the sidebar"
+              action: wait_for
+              texts: ["Full API UI"]
+              timeout: 60000
+
             - name: "Open the Full API UI plugin"
               action: click
               target: "Full API UI"
@@ -263,6 +270,11 @@ sections:
               timeout: 60000
               screenshot: "fullapi-xva-launch.png"
 
+            - name: "The Full API UI app appears in the sidebar (cross-version A)"
+              action: wait_for
+              texts: ["Full API UI"]
+              timeout: 60000
+
             - name: "Open the Full API UI plugin (cross-version A)"
               action: click
               target: "Full API UI"
@@ -353,6 +365,11 @@ sections:
               texts: ["Applications", "Settings"]
               timeout: 60000
               screenshot: "fullapi-xvb-launch.png"
+
+            - name: "The Full API UI app appears in the sidebar (cross-version B)"
+              action: wait_for
+              texts: ["Full API UI"]
+              timeout: 60000
 
             - name: "Open the Full API UI plugin (cross-version B)"
               action: click

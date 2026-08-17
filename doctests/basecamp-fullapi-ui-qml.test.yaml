@@ -114,6 +114,13 @@ sections:
               text: "The bundle launches headless against the assembled user-dir."
               screenshot: "fullapi-qml-launch.png"
 
+            # The icon appears only once the UI-plugin metadata fetch
+            # succeeds, which can lag launch by a few seconds.
+            - name: "The QML-only app appears in the sidebar"
+              action: wait_for
+              texts: ["Full API UI (QML-only)"]
+              timeout: 60000
+
             - name: "Open the QML-only Full API UI plugin"
               action: click
               target: "Full API UI (QML-only)"
