@@ -37,6 +37,32 @@ PluginLoader::PluginLoader(LogosAPI* logosAPI,
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
 {
+    if (m_coreModuleManager) {
+        connect(m_coreModuleManager, &CoreModuleManager::capabilityRegistryReset,
+                this, &PluginLoader::reinformUiAuthTokens);
+    }
+}
+
+void PluginLoader::reinformUiAuthTokens()
+{
+    if (!m_logosAPI) return;
+    LogosAPIClient* cap = m_logosAPI->getClient(QStringLiteral("capability_module"));
+    if (!cap) return;
+    const QString capToken = m_logosAPI->getTokenManager()
+        ->getToken(QStringLiteral("capability_module"));
+    if (capToken.isEmpty()) return;
+
+    for (auto it = m_uiAuthTokens.begin(); it != m_uiAuthTokens.end(); ) {
+        if (!it.value().first) {
+            it = m_uiAuthTokens.erase(it);
+            continue;
+        }
+        if (!cap->informModuleToken(capToken, it.key(), it.value().second)) {
+            qWarning() << "PluginLoader: failed to re-register ui-host token for"
+                       << it.key() << "with reloaded capability_module";
+        }
+        ++it;
+    }
 }
 
 void PluginLoader::load(const PluginLoadRequest& request)
@@ -85,8 +111,27 @@ void PluginLoader::setLoading(const QString& name, bool loading)
     emit loadingChanged();
 }
 
-void PluginLoader::startLoad(const PluginLoadRequest& request)
+// capability_module is an undeclared hard dependency of every ui_qml module
+// with a backend (token registration); treat it as a core dependency so it is
+// auto-reloaded instead of blocking the GUI thread for the 20 s IPC timeout.
+static const QString kCapabilityModule = QStringLiteral("capability_module");
+
+bool PluginLoader::capabilityModuleRequired(const PluginLoadRequest& request) const
 {
+    return request.type == UIPluginType::UiQml
+        && !request.mainFilePath.isEmpty()
+        && m_coreModuleManager
+        && m_coreModuleManager->knownModules().contains(kCapabilityModule);
+}
+
+void PluginLoader::startLoad(const PluginLoadRequest& incoming)
+{
+    PluginLoadRequest request = incoming;
+    if (capabilityModuleRequired(request)
+        && !request.coreDependencies.contains(kCapabilityModule)) {
+        request.coreDependencies.prepend(kCapabilityModule);
+    }
+
     if (request.coreDependencies.isEmpty()) {
         continueLoad(request);
         return;
@@ -243,9 +288,21 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     // capability_module would race those first calls — capability_module
     // would reject them with "auth token not recognized" because the
     // token hadn't been registered yet, leaving the plugin's first
-    // refresh silently empty. capability_module is fully loaded by this
-    // point (loaded during basecamp startup), so the synchronous IPC
-    // here is cheap and closes the race deterministically.
+    // refresh silently empty. capability_module is loaded by this point —
+    // startLoad routes it through loadCoreDependencies — so the synchronous
+    // IPC here is cheap and closes the race deterministically.
+    if (capabilityModuleRequired(request)
+        && !m_coreModuleManager->loadedModules().contains(kCapabilityModule)) {
+        qWarning() << "PluginLoader: capability_module is not loaded — refusing"
+                      " to load UI module" << request.name
+                   << "(its token could not be registered)";
+        delete bridge;
+        setLoading(request.name, false);
+        emit pluginLoadFailed(request.name,
+            QStringLiteral("capability_module is not loaded — cannot register ")
+            + request.name);
+        return;
+    }
     if (LogosAPIClient* cap = m_logosAPI
             ? m_logosAPI->getClient(QStringLiteral("capability_module"))
             : nullptr) {
@@ -263,7 +320,9 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
 
     // Has a backend plugin — spawn a ViewModuleHost process.
     auto* viewHost = new ViewModuleHost(this);
+    m_uiAuthTokens.insert(request.name, {QPointer<ViewModuleHost>(viewHost), uiAuthToken});
     if (!viewHost->spawn(request.name, request.mainFilePath, uiAuthToken)) {
+        m_uiAuthTokens.remove(request.name);
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
         delete viewHost;
         delete bridge;

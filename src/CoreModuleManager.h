@@ -68,6 +68,9 @@ public:
     // inspector toggles' disabled state via MainUIBackend).
     bool moduleOpsBusy() const { return m_opDraining || !m_opQueue.isEmpty(); }
 
+    // Re-register loaded modules' tokens with a restarted capability_module.
+    void reseedCapabilityRegistry();
+
     // Cached stats as of the last timer tick (may be up to ~2s stale). Empty
     // entries for modules the poller hasn't seen yet. QML renders "0.0" via
     // the caller's compose layer when absent — we return the raw map here.
@@ -88,6 +91,7 @@ public:
                                    const QString& argsJson);
 
 signals:
+    void capabilityRegistryReset();
     // Emitted by refresh(), every stats tick, and (queued) after load/unload.
     // MainUIBackend forwards it to QML; PackageCoordinator watches it to
     // re-wire package IPC.

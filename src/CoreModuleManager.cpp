@@ -9,7 +9,9 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include "logos_api.h"
 #include "logos_api_client.h"
+#include "token_manager.h"
 #include "logos_types.h"
 
 // The logos_core_* C API is forward-declared here rather than in a shared
@@ -113,11 +115,47 @@ QStringList CoreModuleManager::loadedModules() const
 // its nested event loop; the queued notify always lands outside it.
 bool CoreModuleManager::loadModule(const QString& name)
 {
+    static const QString kCapabilityModule = QStringLiteral("capability_module");
+    const bool capabilityWasDown = name == kCapabilityModule
+        && !loadedModules().contains(kCapabilityModule);
+
     ++m_moduleOpDepth;
     const bool ok = logos_core_load_module(name.toUtf8().constData(), true) == 1;
     --m_moduleOpDepth;
-    if (ok) notifyModuleSetChanged();
+    if (ok) {
+        if (capabilityWasDown) reseedCapabilityRegistry();
+        notifyModuleSetChanged();
+    }
     return ok;
+}
+
+void CoreModuleManager::reseedCapabilityRegistry()
+{
+    // A restarted capability_module has an empty token registry; liblogos
+    // doesn't repopulate it (upstream issue), so re-inform from the host tokens.
+    if (!m_logosAPI) return;
+    LogosAPIClient* cap = m_logosAPI->getClient(QStringLiteral("capability_module"));
+    TokenManager* tokens = m_logosAPI->getTokenManager();
+    if (!cap || !tokens) return;
+
+    const QString capToken = tokens->getToken(QStringLiteral("capability_module"));
+    if (capToken.isEmpty()) {
+        qWarning() << "CoreModuleManager: no capability_module token on host —"
+                      " cannot re-seed its registry after reload";
+        return;
+    }
+
+    for (const QString& mod : loadedModules()) {
+        if (mod == QLatin1String("capability_module")) continue;
+        const QString token = tokens->getToken(mod);
+        if (token.isEmpty()) continue;
+        if (!cap->informModuleToken(capToken, mod, token)) {
+            qWarning() << "CoreModuleManager: failed to re-register token for"
+                       << mod << "with reloaded capability_module";
+        }
+    }
+    qDebug() << "CoreModuleManager: re-seeded capability_module registry after reload";
+    emit capabilityRegistryReset();
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)

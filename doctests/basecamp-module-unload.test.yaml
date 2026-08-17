@@ -11,7 +11,7 @@ intro: |
   listing exactly what would be terminated with it.
 
   This doc-test builds **this** basecamp commit as the normal development app
-  (`#app`), launches it headless, and drives the three unload stories end to
+  (`#app`), launches it headless, and drives the four unload stories end to
   end:
 
   1. **Leaf unload** — unload the `package_downloader` module while nothing is
@@ -26,20 +26,32 @@ intro: |
      view renders. This is the regression guard for a real bug where a stale
      widget pointer left the Package Manager view permanently blank after an
      unload.
+  4. **Reload with the token registry gone** — unload **Capabilities**
+     (`capability_module`) first, *then* cascade-unload `package_manager`, then
+     click **Package Manager** again. `capability_module` is the auth-token
+     registry every UI plugin registers with, but no manifest declares it as a
+     dependency, so nothing stops you unloading it. The reload must bring it
+     back on its own — this is the regression guard for a real freeze where
+     the reload sat 20 s on the GUI thread waiting for a `capability_module`
+     that nobody was going to load, then hung the Package Manager backend on
+     every call.
 
   The machinery under test is `UIPluginManager`'s unload cascade
   (`loadedDependentsOf` → `unloadCascadeConfirmationRequested` →
   `confirmUnloadCascade` → `unloadModuleWithDependents` + UI teardown), the
   dependency information `PackageCoordinator` assembles from the
-  `package_manager` module's `resolveFlatDependents`, and `MainContainer`'s
-  Package-Manager-view reload path.
+  `package_manager` module's `resolveFlatDependents`, `MainContainer`'s
+  Package-Manager-view reload path, and `PluginLoader`'s implicit
+  `capability_module` dependency (auto-reload, plus the registry re-seed in
+  `CoreModuleManager::loadModule`).
 
 what_you_build: |
   This `logos-basecamp` commit built as the development app (`#app`) and the
   logos-qt-mcp UI driver, plus a headless UI run that unloads and reloads a
   leaf core module, triggers and confirms the unload-cascade dialog for a
-  module with a running dependent, and reloads the Package Manager view after
-  the cascade tore it down.
+  module with a running dependent, reloads the Package Manager view after
+  the cascade tore it down, and reloads it once more with the
+  `capability_module` token registry unloaded underneath it.
 
 what_you_learn:
   - How **Settings → Module Inspector** loads and unloads runtime modules, and how the row state (Loaded/Not loaded status badge, live stats) tracks it
@@ -47,6 +59,7 @@ what_you_learn:
   - How Basecamp detects loaded dependents and raises the **Unload Dependent Modules?** cascade dialog instead of stranding them
   - What confirming the cascade does — the core module and every loaded dependent (including UI plugins) are torn down together
   - How the Package Manager view recovers after its plugin was cascade-unloaded — clicking the sidebar entry loads the plugin and its core modules back
+  - Why `capability_module` ("Capabilities") is an *implicit* dependency of every UI plugin, and how Basecamp reloads it automatically when a UI plugin is loaded after it was unloaded — instead of freezing on the token handshake
   - How to drive per-row module actions headlessly with logos-qt-mcp (stable per-module objectNames + expect_property, not ambiguous text clicks)
 
 prerequisites:
@@ -591,12 +604,229 @@ sections:
               value: "Loaded"
               text: "The closing proof: `package_manager` is **Loaded** again — pulled back into the runtime as a dependency of the reloaded `package_manager_ui`. The Package Manager view survives a full cascade-unload/reload cycle."
               screenshot: "unload-final-state.png"
+
+            # ── Story 4: reload with capability_module unloaded ────────────
+            # capability_module is the auth-token registry: PluginLoader
+            # registers each ui-host's token with it before spawning, and the
+            # ui-host exchanges tokens through it. No manifest declares it as
+            # a dependency, so (a) the Module Inspector unloads it as a leaf
+            # with no dialog, and (b) a plain "load the declared deps" reload
+            # would leave it down. This story is the regression guard for the
+            # freeze that produced: the sidebar click sat 20 s on the GUI
+            # thread in the token handshake, and the reloaded PMUI backend
+            # then blocked 20 s on every call. The load-bearing check is the
+            # Capabilities row flipping back to Loaded — before the fix it
+            # stayed Not loaded (nothing ever reloaded it) — plus PMUI coming
+            # back as the active section within the ordinary settle.
+            #
+            # State going in (from Story 3): Module Inspector visible, PMUI
+            # loaded, all three core modules Loaded.
+            - name: "The Capabilities row is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.capability_module.status"
+              property: "text"
+              value: "Loaded"
+
+            - name: "No cascade dialog is open before unloading Capabilities"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "Unload Capabilities"
+              action: click_object
+              find_by: "objectName"
+              find_value: "coreModules.capability_module.toggleButton"
+              text: "**Capabilities** (`capability_module`) is the runtime's auth-token registry, but no module *declares* it as a dependency — so its Unload is a leaf unload: no cascade dialog, even though the Package Manager UI is running and will need it again the moment it reloads."
+
+            # Same explicit settle as the other unloads — the "Not loaded"
+            # text is no witness (see Story 1).
+            - name: "Give the Capabilities unload a moment"
+              action: sleep
+              ms: 5000
+              screenshot: "unload-capabilities-unloaded.png"
+
+            - name: "No cascade dialog was raised for Capabilities"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "The Capabilities row reports Not loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.capability_module.status"
+              property: "text"
+              value: "Not loaded"
+
+            # Now the same cascade as Story 2 — PMUI is still running on top
+            # of package_manager, so the dialog must come up.
+            - name: "Try to unload the Package Manager module with Capabilities down"
+              action: click_object
+              find_by: "objectName"
+              find_value: "coreModules.package_manager.toggleButton"
+              text: "With Capabilities gone, unload `package_manager` as well. The Package Manager UI is still running on top of it, so the cascade dialog is raised exactly as before — the registry being down changes nothing about the dependency check."
+
+            - name: "The cascade dialog lists the loaded dependent again"
+              action: wait_for
+              texts:
+                - "Unload Dependent Modules?"
+                - "The following modules are currently loaded and depend on 'Package Manager'. Unloading will terminate them:"
+                - "• Package Manager"
+              timeout: 30000
+
+            - name: "…and it is the unload-cascade dialog that is open again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: true
+
+            - name: "Confirm — Unload All, with Capabilities down"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade.confirm"
+
+            - name: "Give the second cascade a moment to complete"
+              action: sleep
+              ms: 5000
+
+            - name: "The second cascade dialog closed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "Package Manager is unloaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.package_manager.status"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…the Package Manager UI plugin is gone again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "uiModules.package_manager_ui.status"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…and Capabilities is still down"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.capability_module.status"
+              property: "text"
+              value: "Not loaded"
+              text: "Three modules down: `capability_module`, `package_manager`, and the `package_manager_ui` plugin. This is the state that used to freeze Basecamp on the next sidebar click."
+              screenshot: "unload-capabilities-cascade-done.png"
+
+            # The click that used to freeze. The reload has to bring
+            # capability_module back BEFORE the token handshake — otherwise
+            # this call blocks the GUI thread for the handshake's 20 s
+            # replica timeout, and the runner's next request would find the
+            # inspector unresponsive.
+            - name: "Open the Package Manager with Capabilities down"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
+
+            - name: "Let the view load back with Capabilities down, then capture it"
+              action: sleep
+              ms: 10000
+              text: "Clicking **Package Manager** loads `package_manager_ui` back — and because Basecamp treats `capability_module` as an implicit dependency of every UI plugin, it reloads Capabilities *first*, then `package_manager`, then registers the plugin's token and spawns its backend. No 20-second stall, no dead Package Manager backend."
+              screenshot: "unload-pm-reloaded-capabilities.png"
+
+            - name: "The Package Manager is the active section with Capabilities restored"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
+              property: "checked"
+              value: true
+
+            - name: "Back to Settings for the Capabilities check"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Settings"
+
+            - name: "Settings view loads for the Capabilities check"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            # The rail remembers Module Inspector from the closing check of
+            # Story 3 — but select it explicitly so the screenshot shows what
+            # the narrative talks about.
+            - name: "Switch to the Module Inspector for the Capabilities check"
+              action: click_object
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
+
+            - name: "…and the Module Inspector is selected for the Capabilities check"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "settings.section.moduleInspector"
+              property: "highlighted"
+              value: true
+
+            # Both statuses come straight from the runtime's C API. The
+            # Capabilities one is the regression guard proper: nothing in the
+            # declared dependency chain reloads it, so it only reads Loaded if
+            # the implicit-dependency path ran.
+            - name: "Capabilities is loaded again — reloaded implicitly"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.capability_module.status"
+              property: "text"
+              value: "Loaded"
+              text: "**Capabilities** is **Loaded** again although nobody clicked its Load button and no manifest names it — the Package Manager UI reload pulled it back in as an implicit dependency."
+
+            - name: "…and Package Manager is loaded again too"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "coreModules.package_manager.status"
+              property: "text"
+              value: "Loaded"
+              screenshot: "unload-capabilities-final-state.png"
+
+            # PMUI's row is fed by an IPC refresh through the RESTARTED
+            # capability_module registry — package_downloader stayed loaded
+            # across the restart, so its token had to be re-seeded into the
+            # fresh registry for the refresh (and PMUI's own calls) to be
+            # accepted. Same settle-then-read pattern as Story 3.
+            - name: "The Apps Inspector list has repopulated after the Capabilities reload"
+              action: wait_for
+              texts: ["Main UI"]
+              timeout: 60000
+
+            - name: "Let the post-reload refresh drain"
+              action: sleep
+              ms: 5000
+
+            - name: "The apps list is still populated after the Capabilities reload"
+              action: wait_for
+              texts: ["Main UI"]
+              timeout: 60000
+
+            - name: "The package_manager_ui row is loaded again after the Capabilities reload"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "uiModules.package_manager_ui.status"
+              property: "text"
+              value: "Loaded"
+              text: "And the Apps Inspector agrees: `package_manager_ui` is **Loaded**, its row fed by an IPC refresh that went through the *restarted* token registry."
         post_text: |
           One green run covered the full unload story: a **leaf module**
           unloaded and reloaded from the Module Inspector with no ceremony; a
           module with a running dependent raised the **Unload Dependent
           Modules?** cascade dialog naming exactly what would be terminated,
           and confirming it tore down both the core module and the
-          `package_manager_ui` plugin riding on it; and the **Package Manager**
+          `package_manager_ui` plugin riding on it; the **Package Manager**
           sidebar entry loaded everything back afterwards — the view renders
-          and both modules report **Loaded** again.
+          and both modules report **Loaded** again; and with **Capabilities**
+          unloaded on top of that cascade, the same sidebar click still
+          brought the view back promptly, reloading `capability_module` as an
+          implicit dependency instead of freezing on the token handshake.

@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QMutex>
+#include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QVariantList>
@@ -57,6 +59,7 @@ signals:
     void loadingChanged();
 
 private:
+    bool capabilityModuleRequired(const PluginLoadRequest& request) const;
     void startLoad(const PluginLoadRequest& request);
     void loadCoreDependencies(const PluginLoadRequest& request);
     void continueLoad(const PluginLoadRequest& request);
@@ -80,6 +83,11 @@ private:
     LogosAPI* m_logosAPI;
     CoreModuleManager* m_coreModuleManager;   // not owned
 
+    void reinformUiAuthTokens();
+
     mutable QMutex m_mutex;
     QSet<QString> m_loading;
+
+    // Per-spawn ui-host auth tokens; entry retires when the host is deleted.
+    QHash<QString, QPair<QPointer<ViewModuleHost>, QString>> m_uiAuthTokens;
 };
