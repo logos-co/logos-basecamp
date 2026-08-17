@@ -38,7 +38,7 @@ pipeline {
       parallel {
         stage('Linux/x86_64') { steps { script {
           linux_x86_64 = getArtifacts(
-            'Linux', jenkins.Build('logos-basecamp/systems/linux/x86_64/package')
+            'Linux', jenkins.Build('logos/logos-basecamp/systems/linux/x86_64/package')
           )
         } } }
         stage('Linux/aarch64') { steps { script {
@@ -48,7 +48,7 @@ pipeline {
         } } }
         stage('macOS/aarch64') { steps { script {
           macos_aarch64 = getArtifacts(
-            'macOS', jenkins.Build('logos-basecamp/systems/macos/aarch64/package')
+            'macOS', jenkins.Build('logos/logos-basecamp/systems/macos/aarch64/package')
           )
         } } }
       }
@@ -84,7 +84,7 @@ pipeline {
  * - A user explicitly specified a value
  * Since release builds create and re-create GitHub drafts every time. */
 def Boolean getPublishDefault(Boolean previousValue) {
-  if (env.JOB_NAME.startsWith('logos-basecamp/release')) { return true }
+  if (env.JOB_NAME.startsWith('logos/logos-basecamp/release')) { return true }
   if (previousValue != null) { return previousValue }
   return false
 }

@@ -35,7 +35,7 @@ pipeline {
       abortPrevious: isPRBuild
     )
     /* Allows combined build to copy */
-    copyArtifactPermission('/logos-basecamp/*')
+    copyArtifactPermission('/logos/logos-basecamp/*')
   }
 
   environment {
