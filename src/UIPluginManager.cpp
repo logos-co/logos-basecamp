@@ -13,6 +13,7 @@
 #include <QQmlContext>
 #include <QQuickWidget>
 #include <QSet>
+#include <QTimer>
 #include <QUrl>
 
 #include "LogosQmlBridge.h"
@@ -118,6 +119,18 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
     // has changed now and QML should reflect that.
     emit uiModulesChanged();
     emit launcherAppsChanged();
+
+    if (!m_loadsPendingMetadata.isEmpty() && !m_uiPluginMetadata.isEmpty()) {
+        const QStringList pending(m_loadsPendingMetadata.cbegin(),
+                                  m_loadsPendingMetadata.cend());
+        m_loadsPendingMetadata.clear();
+        QPointer<UIPluginManager> self(this);
+        QTimer::singleShot(0, this, [self, pending]() {
+            if (!self) return;
+            for (const QString& name : pending)
+                self->loadUiModule(name);
+        });
+    }
 }
 
 void UIPluginManager::reloadLoadedPluginIcon(const QString& name, QWidget* widget) const
@@ -182,6 +195,16 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
     if (m_loadedUiModules.contains(moduleName) || m_qmlPluginWidgets.contains(moduleName)) {
         qDebug() << "Module" << moduleName << "is already loaded";
         activateApp(moduleName);
+        return;
+    }
+
+    // No metadata yet — dispatching would mis-route ui_qml plugins down the
+    // legacy path. Park the load; onUiPluginsFetched replays it.
+    if (m_uiPluginMetadata.isEmpty()) {
+        qDebug() << "UI module" << moduleName << "requested before UI-plugin"
+                    " metadata arrived — deferring until the first successful"
+                    " fetch";
+        m_loadsPendingMetadata.insert(moduleName);
         return;
     }
 

@@ -222,6 +222,9 @@ private:
     // the package-state caches on PackageCoordinator directly.
     QMap<QString, QVariantMap> m_uiPluginMetadata;
 
+    // Loads requested before the first metadata fetch; replayed on arrival.
+    QSet<QString> m_loadsPendingMetadata;
+
     // Local unload-cascade pending slot.
     PendingUnload m_pendingUnload;
 

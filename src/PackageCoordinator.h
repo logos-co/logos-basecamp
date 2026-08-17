@@ -297,6 +297,9 @@ private:
     // delay backs off exponentially with m_rewireAttempts.
     void armRewireRetry();
 
+    // Backed-off refetch after an empty (= failed) getInstalledUiPlugins reply.
+    void armUiPluginMetadataRetry();
+
     // Drop the backoff / gave-up state: on a pass that leaves nothing
     // unwired, and on a loaded → not-loaded transition of either package
     // module (its successor replica deserves fresh attempts).
@@ -496,6 +499,9 @@ private:
     // loaded → not-loaded transition that resets the backoff.
     bool m_pmWasLoaded = false;
     bool m_pdWasLoaded = false;
+
+    int  m_metadataFetchAttempts = 0;
+    bool m_metadataRetryQueued   = false;
 
     // Base retry delay; doubles per failed attempt up to the shift cap
     // (250ms << 5 = 8s), then stops for good after kMaxRewireAttempts.

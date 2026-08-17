@@ -384,6 +384,28 @@ void PackageCoordinator::resetRewireBackoff()
     }
 }
 
+void PackageCoordinator::armUiPluginMetadataRetry()
+{
+    if (m_metadataRetryQueued) return;
+    if (m_metadataFetchAttempts >= kMaxRewireAttempts) {
+        qWarning() << "PackageCoordinator: giving up on the UI-plugin metadata"
+                      " fetch after" << m_metadataFetchAttempts
+                   << "empty replies — sidebar apps stay hidden until the next"
+                      " externally-triggered refresh";
+        return;
+    }
+    const int delayMs =
+        kRewireRetryMs << qMin(m_metadataFetchAttempts, kRewireBackoffMaxShift);
+    ++m_metadataFetchAttempts;
+    m_metadataRetryQueued = true;
+    QPointer<PackageCoordinator> self(this);
+    QTimer::singleShot(delayMs, this, [self]() {
+        if (!self) return;
+        self->m_metadataRetryQueued = false;
+        self->fetchUiPluginMetadata();
+    });
+}
+
 void PackageCoordinator::rewirePackageIpc()
 {
     if (!m_logosAPI || !m_coreModuleManager) return;
@@ -1306,8 +1328,10 @@ void PackageCoordinator::fetchUiPluginMetadata()
                 self->m_appsLoading = false;
                 emit self->appsLoadingChanged();
             }
+            self->armUiPluginMetadataRetry();
             return;
         }
+        self->m_metadataFetchAttempts = 0;
 
         // Seed installType for the UI-plugin subset. refreshDependencyInfo's
         // full-scan pass will overwrite this with the core-inclusive version;

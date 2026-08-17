@@ -327,8 +327,9 @@ sections:
             # while — so wait for PMU's own header text, which only exists
             # once the view is up, instead of sleeping a fixed amount.
             - name: "Open the Package Manager"
-              action: click
-              target: "Package Manager"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
 
             - name: "The Package Manager view loads"
               action: wait_for
@@ -486,8 +487,9 @@ sections:
             # Back to the Package Manager: uninstall lives there too (the
             # basecamp-side inspectors are view-only).
             - name: "Return to the Package Manager"
-              action: click
-              target: "Package Manager"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
 
             # Same missing-`uiPluginFileInstalled` workaround as above, PMU
             # side: its own post-install refresh raced the local install, so

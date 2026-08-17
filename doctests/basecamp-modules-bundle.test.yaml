@@ -271,8 +271,9 @@ sections:
             # the catalog IPC can stall a deep inspector traversal — so click,
             # let it render, and capture a screenshot.
             - name: "Open the Package Manager"
-              action: click
-              target: "Package Manager"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
 
             - name: "Let the Package Manager view render, then capture it"
               action: sleep

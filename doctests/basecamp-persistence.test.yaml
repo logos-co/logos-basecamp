@@ -321,8 +321,9 @@ sections:
             # is created lazily on first activation — wait for PMU's own
             # header text instead of sleeping a fixed amount.
             - name: "Open the Package Manager"
-              action: click
-              target: "Package Manager"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
 
             - name: "The Package Manager view loads"
               action: wait_for
@@ -396,8 +397,9 @@ sections:
             # compiled shared library, but PMU inspects and gates it exactly
             # like the QML app.
             - name: "Return to the Package Manager"
-              action: click
-              target: "Package Manager"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.section.Package Manager"
 
             - name: "Hand the core-module package to the Package Manager"
               action: call_method
