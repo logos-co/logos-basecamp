@@ -40,22 +40,11 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     m_pdEventsWired = subscribeToPackageDownloaderEvents();
 
     // Re-wire (or retry) the IPC wiring when package modules leave/rejoin
-    // the loaded set.
+    // the loaded set. This also covers a module absent at startup that is
+    // installed and loaded later in the session.
     if (m_coreModuleManager) {
         connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
                 this, &PackageCoordinator::onCoreModuleSetChanged);
-    }
-
-    // A module absent at startup may be installed and loaded later in the
-    // session. Without this the guards above would turn a 6-minute stall into a
-    // silently non-functional Modules view, which is a worse bug. Both
-    // subscribe functions are idempotent, so re-running them is free once armed.
-    if (m_coreModuleManager) {
-        connect(m_coreModuleManager, &CoreModuleManager::coreModulesChanged,
-                this, [this]() {
-                    subscribeToPackageInstallationEvents();
-                    subscribeToPackageDownloaderEvents();
-                });
     }
 
     // NB: initial metadata fetch is deferred until MainUIBackend calls
@@ -105,10 +94,8 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
     LogosAPIClient* client = m_logosAPI->getClient("package_manager");
     if (!client || !client->isConnected()) {
         return false;
-      
-    if (m_packageManagerSubscribed) {
-        return;
     }
+
     if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) {
         if (!m_warnedPackageManagerMissing) {
             m_warnedPackageManagerMissing = true;
@@ -116,9 +103,8 @@ bool PackageCoordinator::subscribeToPackageInstallationEvents()
                           "directory setup and event subscriptions. Package management is "
                           "unavailable until it loads; this will be retried automatically.";
         }
-        return;
+        return false;
     }
-    m_packageManagerSubscribed = true;
 
     LogosModules logos(m_logosAPI);
 
@@ -495,18 +481,15 @@ bool PackageCoordinator::subscribeToPackageDownloaderEvents()
 
     LogosAPIClient* client = m_logosAPI->getClient("package_downloader");
     if (!client || !client->isConnected()) return false;
-    if (m_packageDownloaderSubscribed) {
-        return;
-    }
+
     if (!moduleIsLoaded(m_coreModuleManager, "package_downloader")) {
         if (!m_warnedPackageDownloaderMissing) {
             m_warnedPackageDownloaderMissing = true;
             qWarning() << "PackageCoordinator: package_downloader is not loaded -- skipping its "
                           "event subscriptions; this will be retried automatically.";
         }
-        return;
+        return false;
     }
-    m_packageDownloaderSubscribed = true;
 
     // Same contract as the package_manager twin: report whether the
     // subscription actually landed.

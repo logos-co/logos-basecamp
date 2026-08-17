@@ -413,13 +413,10 @@ private:
     LogosAPI*          m_logosAPI;
     CoreModuleManager* m_coreModuleManager;
 
-    // Guards for the deferred event subscriptions below. A module that is not
-    // loaded at construction may be loaded later in the session, so the
-    // subscriptions are retried on coreModulesChanged(); these keep that
-    // idempotent, and keep the "not loaded" warning to one line rather than one
-    // per stats-timer tick.
-    bool m_packageManagerSubscribed = false;
-    bool m_packageDownloaderSubscribed = false;
+    // A module that is not loaded at construction may be loaded later in the
+    // session, so the subscriptions are retried on coreModulesChanged(); these
+    // keep the "not loaded" warning to one line rather than one per
+    // stats-timer tick.
     bool m_warnedPackageManagerMissing = false;
     bool m_warnedPackageDownloaderMissing = false;
     UIPluginManager*   m_uiPluginManager;
