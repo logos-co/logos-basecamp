@@ -22,10 +22,12 @@
     };
     # The Qt HOST RUNTIME — LogosAPI, LogosAPIProvider, the LogosProviderBase
     # macros and the legacy QMetaObject adapter — that LogosBasecamp links. It
-    # lived in logos-qt-sdk until the host split moved it here; the runtime was
-    # the only thing basecamp ever took from logos-qt-sdk, so that input is gone
-    # rather than kept alongside this one.
-    # Keeping both would put two copies of the same 392 symbols on the link.
+    # lived in logos-qt-sdk until the host split moved it here.
+    #
+    # NOTE: the runtime is no longer the only thing basecamp takes from
+    # logos-qt-sdk — see the logos-qt-sdk input below. Taking the runtime from
+    # BOTH would put two copies of the same 392 symbols on the link, which is
+    # why that input is headers-only and links nothing.
     #
     # Rev-pinned because logos-qt-host does not exist on logos-plugin-qt's
     # master yet (8846fc5); an unpinned url resolves there and the
@@ -44,7 +46,39 @@
       inputs.logos-protocol.follows = "logos-protocol";
       inputs.logos-module.follows = "logos-module";
     };
-    logos-module.url = "github:logos-co/logos-module";
+    # logos-qt-sdk, HEADERS ONLY. It owns the Qt<->lp SEAM HEADERS
+    # (logos_qt_lp_bridge.h, logos_qt_wire.h) that are NOT part of the host
+    # runtime, and basecamp compiles a wrapper that opens with
+    # `#include "logos_qt_lp_bridge.h"`:
+    #
+    #   nix/app.nix copies ${logosPackageManagerModule}/include/* into
+    #   app/generated/, and since B5 the builder emits that Qt-typed dependency
+    #   wrapper as a VENEER over the lp path. app/generated/package_manager_api.cpp
+    #   therefore needs the seam header, and logos-qt-host does not ship it.
+    #
+    # This is the same reason logos-test-modules and logos-test-framework keep
+    # the input; only pure HOSTS (logos-standalone-app, logos-view-module-runtime)
+    # can drop it, because they load module plugins rather than compiling a
+    # module's dependency wrapper.
+    #
+    # Nothing links a logos-qt-sdk archive here — after B2a it is an INTERFACE
+    # library, and app/CMakeLists.txt consumes only its include directory.
+    #
+    # 8a06b870 is the tip of feat/sdk-codegen-b3-d11 and is the same rev
+    # logos-test-framework and the workspace pin; a different rev would put a
+    # second logos-qt-sdk in the closure.
+    logos-qt-sdk = {
+      url = "github:logos-co/logos-qt-sdk/8a06b870e59afca3392de2bddf8eec5fe3b85225";
+      inputs.logos-nix.follows = "logos-nix";
+      inputs.logos-protocol.follows = "logos-protocol";
+      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
+      inputs.logos-plugin-qt.follows = "logos-plugin-qt";
+    };
+    # win_dll_search.h (included unconditionally by app/PluginLoader.cpp) arrives
+    # in logos-module's MODULE_LIB_HEADERS from fcaaf78 "fix(windows): resolve a
+    # plugin's private DLLs from its own directory". An older rev fails the build
+    # on EVERY platform, not just Windows — the header is installed unguarded.
+    logos-module.url = "github:logos-co/logos-module/9812dc8c69cfbfed3eea06510a5c1ff33c1fcf7f";
     # The Qt-plugin module loader: the QtPluginFormatLoader that liblogos_core
     # links AND the logos_host binary this app ships (nix/app.nix copies it out
     # of ${logosLiblogos}/bin, which is just liblogos re-exporting this
@@ -138,7 +172,7 @@
   # declared input to this function and this set has no ellipsis. Nothing here
   # uses it directly — it exists so logos-liblogos.inputs.default-module-loader
   # has a top-level input to follow.
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -201,6 +235,9 @@
         logosSdkBuild = logos-cpp-sdk.packages.${buildSystem}.default;
         logosProtocolPkg = logos-protocol.packages.${system}.default;
         logosQtHost = logos-plugin-qt.packages.${system}.logos-qt-host;
+        # HEADERS ONLY -- the Qt<->lp seam headers the generated dependency
+        # wrapper in app/generated/ includes. Nothing links this.
+        logosQtSdk = logos-qt-sdk.packages.${system}.default;
         logosModule = logos-module.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManagerLibrary = logos-package-manager.packages.${system}.lib;
@@ -249,7 +286,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -294,7 +331,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp;
             installedModules = installedDev;
           };
@@ -302,7 +339,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -311,7 +348,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;

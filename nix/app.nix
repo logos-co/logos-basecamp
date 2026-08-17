@@ -5,7 +5,7 @@
 # build-info header, the package_manager / package_downloader generated API
 # headers, the shared semver headers, and logos-cpp-generator's --general-only
 # output) is staged here instead, into the single app/generated directory.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -618,6 +618,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
       -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
+      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
       -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \

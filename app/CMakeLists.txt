@@ -93,6 +93,40 @@ else()
     include_directories(${LOGOS_MODULE_ROOT}/include/module_lib)
 endif()
 
+# ── logos-qt-sdk — the Qt<->lp SEAM HEADERS, headers only ─────────────────────
+# app/generated/ holds the dependency wrappers nix/app.nix copies out of the
+# module outputs (package_manager, package_downloader). Since B5 the builder
+# emits the Qt-typed wrapper as a VENEER over the lp path, so
+# package_manager_api.cpp opens with `#include "logos_qt_lp_bridge.h"`.
+#
+# That header is NOT part of the host runtime: logos-qt-host does not ship it,
+# and logos-qt-sdk is where it stayed after the B1/B2a split. Nothing is LINKED
+# from here — after B2a logos-qt-sdk is an INTERFACE library and this is purely
+# an include directory.
+#
+# Probed in both layouts, like every other root above: the source checkout has
+# cpp/, the nix install has include/cpp/.
+if(NOT DEFINED LOGOS_QT_SDK_ROOT)
+    set(LOGOS_QT_SDK_ROOT "${REAL_SOURCE_DIR}/../../logos-qt-sdk")
+endif()
+
+if(EXISTS "${LOGOS_QT_SDK_ROOT}/cpp/logos_qt_lp_bridge.h")
+    include_directories(${LOGOS_QT_SDK_ROOT}/cpp)
+elseif(EXISTS "${LOGOS_QT_SDK_ROOT}/include/cpp/logos_qt_lp_bridge.h")
+    include_directories(${LOGOS_QT_SDK_ROOT}/include/cpp)
+else()
+    # Deliberately fatal rather than a silent skip. A missing seam header does
+    # not fail here, it fails 250 objects later as
+    # "logos_qt_lp_bridge.h: No such file or directory" while compiling a
+    # GENERATED file, which reads as a codegen bug rather than a missing input.
+    message(FATAL_ERROR
+        "logos_qt_lp_bridge.h not found under ${LOGOS_QT_SDK_ROOT} (tried "
+        "cpp/ and include/cpp/). The generated dependency wrappers in "
+        "app/generated/ include it by name. Set LOGOS_QT_SDK_ROOT.")
+endif()
+
+message(STATUS "Using logos-qt-sdk (seam headers) at: ${LOGOS_QT_SDK_ROOT}")
+
 # ── logos-liblogos (provides liblogos_core library and logos_host binary) ─────
 if(NOT DEFINED LOGOS_LIBLOGOS_ROOT)
     set(LOGOS_LIBLOGOS_ROOT "${REAL_SOURCE_DIR}/../../logos-liblogos")
