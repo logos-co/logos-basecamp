@@ -1,0 +1,165 @@
+name: Windows cache prime
+
+# Fills the Logos Attic cache with the mingw closure every Windows CI job needs.
+# THIS IS A PREREQUISITE, NOT AN OPTIMISATION, and the numbers say so.
+#
+# MEASURED 2026-08-13, all four caches, six load-bearing paths:
+#
+#   pkgsWindows.{qt6.qtbase,qt6.qtdeclarative,qt6.qtsvg,qt6.qtremoteobjects,icu,boost}
+#     attic/public 404   attic/ci 404   cache.nixos.org 404   logos-co.cachix.org 404
+#
+# nixpkgs' Hydra does not build cross Qt, so nobody upstream will ever fill it.
+# Until this runs, every Windows job in every repo would build that stack from
+# source, concurrently, none able to help the others -- which is exactly why
+# logos-windows-ci REFUSES to start a build over its derivation budget instead
+# of timing out after four hours in a way nobody can read.
+#
+# WHY IT LIVES IN logos-basecamp: this repo already has ATTIC_ENDPOINT and
+# ATTIC_TOKEN_CI as repo secrets and a public-cache environment for
+# ATTIC_TOKEN_PUBLIC. The builds below are plain flakerefs and depend on nothing
+# in this repo, so it is the host, not the subject.
+#
+# WHY IT IS STAGED, and this is the important part: ryanccn/attic-action pushes
+# in a POST step. A job killed by GitHub's 6 h ceiling never runs its post step,
+# so a timed-out single job pushes NOTHING and the hours are lost. Each stage
+# below finishes and pushes what it built, and the next stage substitutes it.
+# Stage 1 is the long pole and the one genuine unknown -- qtbase has never been
+# built to completion in this project.
+
+on:
+  # workflow_dispatch is the intended trigger, but GitHub only exposes it once
+  # the file is on the DEFAULT branch -- dispatching from a topic branch is a
+  # hard 404, verified against this repo. So until this merges, the trigger is
+  # the push itself and the stage is read from a committed file. That is also
+  # the more honest record: which stage a run was for is then visible in git
+  # history rather than in a dispatch form nobody can see afterwards.
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'validate | 1 | 2 | 3'
+        required: true
+        default: validate
+        type: choice
+        options: [validate, '1', '2', '3']
+  push:
+    branches: [ 'ci/windows-cache-prime' ]
+
+# Which cache is written is the org action's rule, not this file's: master/main
+# pushes to `public`, every other ref to `ci`. Both are substituters everywhere,
+# so priming `ci` from a branch serves every consumer just as `public` would.
+
+jobs:
+  prime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # REUSE, rather than a fourth hand-rolled Nix preamble in this org.
+      # logos-windows-ci's nix-setup is a thin wrapper over
+      # logos-co/setup-nix-cache-action -- the org's sanctioned Attic setup --
+      # and adds the two things that action deliberately does not do: reclaiming
+      # disk before a large closure (ubuntu-latest ships ~14 GiB free and this
+      # closure is ~9 GiB, so it is load-bearing, not housekeeping), and saying
+      # out loud when the cache is read-only.
+      #
+      # It also settles a question this file used to hedge around. An earlier
+      # draft installed Nix itself and trusted BOTH candidate public keys,
+      # because build.yml in this repo trusts public:Z1wyVBEx... while
+      # setup-nix-cache-action configures public:l4HrXgL4... for the same cache
+      # name, and I could not tell from outside which is current. Delegating
+      # means this job simply uses whatever the org action configures. If that
+      # key is wrong it is one bug in one place, not something every consumer
+      # hedges against -- but the discrepancy with build.yml is real and worth
+      # resolving separately.
+      - uses: logos-co/logos-windows-ci/.github/actions/nix-setup@v1
+        with:
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+          github-token: ${{ github.token }}
+          free-disk-space: 'true'
+
+      # A priming job that cannot push is hours of compute producing no cache
+      # entries, and it would report success. nix-setup warns; here it is fatal,
+      # because for THIS job the push is the entire point.
+      - name: Refuse to run with no push token
+        env:
+          TOK: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOK" ]; then
+            echo "::error::no Attic push token for this ref, so nothing built here would"
+            echo "::error::be pushed. On master the token lives in the public-cache"
+            echo "::error::environment; on a branch it is ATTIC_TOKEN_CI. Refusing rather"
+            echo "::error::than burning the build and reporting success."
+            exit 1
+          fi
+
+      - name: Resolve the stage
+        id: stage
+        env:
+          DISPATCH_STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DISPATCH_STAGE" ]; then
+            s=$DISPATCH_STAGE; src="workflow_dispatch input"
+          elif [ -f .github/windows-prime-stage ]; then
+            s=$(tr -d '[:space:]' < .github/windows-prime-stage); src=".github/windows-prime-stage"
+          else
+            echo "::error::no stage given and .github/windows-prime-stage is absent."
+            echo "::error::Refusing to guess: the stages differ by hours of compute."
+            exit 1
+          fi
+          case "$s" in
+            validate|1|2|3) ;;
+            *) echo "::error::unknown stage '$s' (from $src). Expected validate|1|2|3."; exit 1 ;;
+          esac
+          echo "stage=$s" >> "$GITHUB_OUTPUT"
+          echo "stage '$s', from $src"
+
+      - name: Build
+        env:
+          STAGE: ${{ steps.stage.outputs.stage }}
+        run: |
+          set -euo pipefail
+          W='github:logos-co/logos-nix#legacyPackages.x86_64-linux.pkgsWindows'
+          case "$STAGE" in
+            validate)
+              # Minutes, not hours. Proves the whole mechanism -- runner builds a
+              # mingw target, attic-action pushes it, the path becomes fetchable
+              # -- before anyone spends six hours finding out the push was
+              # misconfigured. lidl is Qt-free and small.
+              nix build -L --no-link 'github:logos-co/logos-lidl#packages.x86_64-windows.default' ;;
+            1) nix build -L --no-link "$W.icu" "$W.boost" "$W.qt6.qtbase" ;;
+            2) nix build -L --no-link "$W.qt6.qtdeclarative" "$W.qt6.qtsvg" "$W.qt6.qtremoteobjects" ;;
+            3) nix build -L --no-link 'github:logos-co/logos-basecamp#packages.x86_64-windows.default' ;;
+            *) echo "::error::unknown stage '$STAGE'"; exit 1 ;;
+          esac
+
+      - name: Record what this stage built
+        env:
+          STAGE: ${{ steps.stage.outputs.stage }}
+        run: |
+          set -euo pipefail
+          W='github:logos-co/logos-nix#legacyPackages.x86_64-linux.pkgsWindows'
+          case "$STAGE" in
+            validate) ATTRS=('github:logos-co/logos-lidl#packages.x86_64-windows.default') ;;
+            1) ATTRS=("$W.icu" "$W.boost" "$W.qt6.qtbase") ;;
+            2) ATTRS=("$W.qt6.qtdeclarative" "$W.qt6.qtsvg" "$W.qt6.qtremoteobjects") ;;
+            3) ATTRS=('github:logos-co/logos-basecamp#packages.x86_64-windows.default') ;;
+          esac
+          {
+            echo "### stage $STAGE"
+            echo
+            echo "| attribute | store hash |"
+            echo "|---|---|"
+            for a in "${ATTRS[@]}"; do
+              p=$(nix eval --raw "$a.outPath")
+              echo "| \`${a##*#}\` | \`$(basename "$p" | cut -d- -f1)\` |"
+            done
+            echo
+            echo "The push happens in attic-action's POST step, AFTER this summary."
+            echo "Re-probe the cache from outside the run to confirm it landed --"
+            echo "a green job here is not by itself evidence that anything was pushed."
+          } >> "$GITHUB_STEP_SUMMARY"
