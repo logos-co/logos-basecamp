@@ -61,6 +61,76 @@ jobs:
           name: appimage-${{ matrix.arch }}
           path: logos-basecamp-*.AppImage
 
+  # ────────────────────────────────────────────────────────────────────────
+  # Windows. A CROSS build on an ordinary Linux runner -- nix does not run on
+  # Windows, so there is no Windows runner in this workflow; the executing of
+  # the result is covered separately by logos-windows-ci.
+  #
+  # bin-bundle-dir rather than `default`: it is the same portable directory the
+  # AppImage and .app jobs above package, laid out the way the app expects
+  # (bin/ + lib/qt-6/{plugins,qml} + an explicit qt.conf). A PE records no
+  # rpath, so this layout IS the deployment contract -- see nix-bundle-dir's PE
+  # path.
+  build-windows:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: logos-co/setup-nix-cache-action@v1
+        with:
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      # ubuntu-latest ships ~14 GiB free and the mingw Qt closure is ~9 GiB.
+      # Load-bearing, not housekeeping.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}" || true
+          df -h /
+
+      - name: Build the Windows bundle
+        run: nix build .#packages.x86_64-windows.bin-bundle-dir -L
+
+      # `zip`, not tar.gz: this is the one artifact here whose users are on
+      # Windows, where Explorer opens a .zip and nothing opens a .tar.gz.
+      #
+      # -r through `result/` DEREFERENCES: the bundle's DLLs are symlinks into
+      # the nix store, and an archive of dangling links extracts to a tree that
+      # cannot start. nix-bundle-lgx shipped exactly that bug -- `cp -a` implied
+      # --no-dereference, the payload lost 75% of its files, and the step exited
+      # 0. The count assertion below is why it cannot recur silently.
+      - name: Package the bundle as a zip
+        run: |
+          set -euo pipefail
+          src=$(readlink -f result)
+          staged=$(find -L "$src" -type f | wc -l | tr -d ' ')
+          [ "$staged" -gt 0 ] || { echo "::error::the bundle is empty"; exit 1; }
+          mkdir -p pkg/logos-basecamp
+          cp -rL "$src"/. pkg/logos-basecamp/
+          ( cd pkg && zip -qr ../logos-basecamp-x86_64-windows.zip logos-basecamp )
+          zipped=$(unzip -l logos-basecamp-x86_64-windows.zip | tail -1 | awk '{print $2}')
+          echo "bundle $staged file(s) -> zip $zipped entr(ies)"
+          # A dropped symlink is invisible in an exit code. Compare the counts.
+          if [ "$zipped" -lt "$staged" ]; then
+            echo "::error::the zip holds $zipped entries but the bundle has $staged files."
+            echo "::error::Something was not dereferenced; the extracted tree would be"
+            echo "::error::missing DLLs and could not start."
+            exit 1
+          fi
+          # A PE with no .exe is a bundle nobody can run.
+          n_exe=$(find pkg -name '*.exe' | wc -l | tr -d ' ')
+          [ "$n_exe" -gt 0 ] || { echo "::error::no .exe in the bundle"; exit 1; }
+          echo "exe(s): $n_exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: logos-basecamp-x86_64-windows.zip
+
   build-macos-app:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
     runs-on: macos-latest
@@ -168,7 +238,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [build-appimage, build-macos-app]
+    needs: [build-appimage, build-macos-app, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -189,6 +259,11 @@ jobs:
           name: macos-app-aarch64-darwin
           path: artifacts/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x86_64
+          path: artifacts/
+
       - name: Generate tag
         id: tag
         run: echo "tag=pre-release-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -201,3 +276,4 @@ jobs:
           files: |
             artifacts/*.AppImage
             artifacts/*.app.tar.gz
+            artifacts/*-windows.zip
