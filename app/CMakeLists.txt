@@ -229,10 +229,11 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     #
     # Retargeted from logos-qt-sdk::logos_qt_sdk to logos-qt-host::logos_qt_host
     # by the B4 host split: the archive that carries LogosAPI/TokenManager moved
-    # repos, so the archive that must be emptied moved with it. Naming the old
-    # target here would be a silent no-op (the foreach() skips targets that do
-    # not exist) and Windows would regress to the 29 "rejecting unauthorized
-    # call" lines this shim exists to prevent.
+    # repos, so the archive that must be emptied moved with it. Naming a target
+    # that does not exist is now a FATAL_ERROR rather than the silent no-op it
+    # used to be — this comment described that hazard for a while before the
+    # foreach() enforced it. Getting the name wrong would otherwise regress
+    # Windows to the 29 "rejecting unauthorized call" lines this shim prevents.
     include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
     logos_use_shared_runtime_from_dll(
         logos-qt-host::logos_qt_host
