@@ -8,10 +8,18 @@ on:
   pull_request:
     branches: [master]
 
-env:
-  ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
-  # Empty on fork PRs (secrets not available) — Attic steps skip via the if below.
-  ATTIC_ENDPOINT: ${{ secrets.ATTIC_ENDPOINT }}
+# Nix and the Logos cache come from logos-co/setup-nix-cache-action, which owns
+# the installer, the substituters, the trusted keys, which cache is written
+# (public on master/main, ci elsewhere) and the push itself. This file used to
+# own all of that four times over.
+#
+# The ATTIC_CACHE / ATTIC_ENDPOINT env pair that lived here is gone: the first is
+# the shared action's decision, and the second existed only to feed `if:` guards
+# that skipped the push on fork PRs. The shared action needs no guard -- with no
+# token it configures the substituters anyway and skips the push, which is the
+# behaviour those guards were approximating. The repo's ATTIC_ENDPOINT secret is
+# consequently unused here; the action's default endpoint is the same host this
+# file already pointed at.
 
 jobs:
   build-appimage:
@@ -28,21 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: cachix/install-nix-action@v27
+      - uses: logos-co/setup-nix-cache-action@v1
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            extra-substituters = https://cache.nix.logos.co/public
-            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
-            fallback = true
-
-      - uses: ryanccn/attic-action@v0.4.1
-        if: ${{ env.ATTIC_ENDPOINT != '' }}
-        with:
-          endpoint: ${{ env.ATTIC_ENDPOINT }}
-          cache: ${{ env.ATTIC_CACHE }}
-          inputs-from: "."
-          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
       - name: Build bin-appimage
         run: nix build .#bin-appimage
@@ -71,20 +68,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: logos-co/setup-nix-cache-action@v1
         with:
-          extra-conf: |
-            extra-substituters = https://cache.nix.logos.co/public
-            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
-            fallback = true
-
-      - uses: ryanccn/attic-action@v0.4.1
-        if: ${{ env.ATTIC_ENDPOINT != '' }}
-        with:
-          endpoint: ${{ env.ATTIC_ENDPOINT }}
-          cache: ${{ env.ATTIC_CACHE }}
-          inputs-from: "."
-          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
       - name: Build bin-macos-app
         run: nix build .#bin-macos-app
@@ -118,21 +105,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: cachix/install-nix-action@v27
+      - uses: logos-co/setup-nix-cache-action@v1
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-            extra-substituters = https://cache.nix.logos.co/public
-            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
-            fallback = true
-
-      - uses: ryanccn/attic-action@v0.4.1
-        if: ${{ env.ATTIC_ENDPOINT != '' }}
-        with:
-          endpoint: ${{ env.ATTIC_ENDPOINT }}
-          cache: ${{ env.ATTIC_CACHE }}
-          inputs-from: "."
-          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
       - name: Unit tests
         run: nix build .#unit-tests -L
@@ -173,20 +149,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: logos-co/setup-nix-cache-action@v1
         with:
-          extra-conf: |
-            extra-substituters = https://cache.nix.logos.co/public
-            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
-            fallback = true
-
-      - uses: ryanccn/attic-action@v0.4.1
-        if: ${{ env.ATTIC_ENDPOINT != '' }}
-        with:
-          endpoint: ${{ env.ATTIC_ENDPOINT }}
-          cache: ${{ env.ATTIC_CACHE }}
-          inputs-from: "."
-          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
       - name: Unit tests
         run: nix build .#unit-tests -L
