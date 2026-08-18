@@ -1,0 +1,653 @@
+name: "Unloading modules in Basecamp: protected modules, leaf unloads, dependency cascades, and reload"
+output: basecamp-module-unload.md
+release: ""
+
+intro: |
+  Basecamp's **Settings → Module Inspector** is where you manage the
+  background modules loaded into the runtime — each row carries a
+  **Load / Unload** toggle. Two rules govern that toggle. First, the modules
+  Basecamp itself runs on — the package pipeline (`package_manager`,
+  `package_downloader`) and the auth-token registry (`capability_module`) —
+  are **protected**: their toggle renders disabled, because unloading any of
+  them would take the app's own plumbing down. Second, for everything else,
+  Basecamp refuses to silently strand a running module's dependents:
+  unloading a module that others are running on top of raises a **cascade
+  confirmation** listing exactly what would be terminated with it.
+
+  This doc-test builds **this** basecamp commit as the portable bundle,
+  stages the `logos-test-modules` full-API chain into a `--user-dir` (a real
+  three-level dependency graph that is *not* protected), launches the app
+  headless, and drives five stories end to end:
+
+  1. **Protected modules** — the three baked-in core modules report
+     **Loaded**, and their Load/Unload toggle is disabled.
+  2. **Leaf load + unload** — load `test_fullapi_cpp` while nothing runs on
+     top of it, then unload it again: the row flips with no dialog.
+  3. **Cascade unload** — open the **Full API UI** app (which loads
+     `test_fullapi_ui` on top of `test_fullapi_proxy`, which in turn pulls in
+     both providers), then unload `test_fullapi_cpp` from the Module
+     Inspector: the cascade dialog appears, lists the loaded dependents, and
+     confirming it unloads the whole chain — while the unrelated
+     `test_fullapi_rust` stays loaded.
+  4. **Reload after cascade** — click the **Full API UI** sidebar entry
+     again: the plugin and the core modules underneath it load back.
+  5. **Cascade goes up, not down** — with the chain loaded again, unload
+     `test_fullapi_proxy` directly: the dialog lists only the **Full API
+     UI**, confirming tears down the proxy and the plugin — and the proxy's
+     own dependencies (`test_fullapi_cpp`, `test_fullapi_rust`) stay loaded.
+
+  Everything is driven through the QML inspector with
+  [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp): per-row buttons
+  are clicked by their stable `objectName`s, row and dialog state is asserted
+  with `expect_property`, and a screenshot is captured at each step.
+
+what_you_build: |
+  This `logos-basecamp` commit built as the portable bundle
+  (`#bin-bundle-dir-inspector`), the logos-qt-mcp UI driver, and a staged
+  `--user-dir` carrying the `test_fullapi_*` module chain — plus a headless UI
+  run that verifies the protected core modules cannot be unloaded, loads and
+  unloads a leaf core module, triggers and confirms the unload-cascade dialog
+  for a module with running dependents, reloads the app the cascade tore
+  down, and confirms that a cascade only ever takes dependents with it — never
+  the target's own dependencies.
+
+what_you_learn:
+  - Which core modules Basecamp protects from Load/Unload in the **Module Inspector**, and why (`package_manager`, `package_downloader`, `capability_module`)
+  - Why unloading a *leaf* module (no loaded dependents) needs no confirmation
+  - How Basecamp detects loaded dependents and raises the **Unload Dependent Modules?** cascade dialog instead of stranding them
+  - What confirming the cascade does — the core module and every loaded dependent (core modules and UI plugins alike) are torn down together, and nothing else is
+  - How a UI plugin recovers after it was cascade-unloaded — clicking its sidebar entry loads the plugin and its core modules back
+  - That a cascade only walks *up* the dependency graph (dependents), never *down* — unloading a module leaves the modules it depends on loaded
+  - How to drive per-row module actions headlessly with logos-qt-mcp (stable per-module objectNames + expect_property, not ambiguous text clicks)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+
+sections:
+  - title: "Who depends on whom"
+    text: |
+      The bundle carries three core modules, all of them protected, and the
+      staged user-dir adds a three-level chain from
+      [`logos-test-modules`](https://github.com/logos-co/logos-test-modules)
+      with every edge declared in the modules' `metadata.json`:
+
+      ```
+      Bundle (protected — Load/Unload disabled):
+      package_manager, package_downloader, capability_module
+
+      User-dir (unprotected):
+      test_fullapi_ui   (UI plugin, "Full API UI")
+          └─► test_fullapi_proxy   (core)
+                  ├─► test_fullapi_cpp   (core)
+                  └─► test_fullapi_rust  (core)
+      ```
+
+      The protected modules auto-load at startup. Nothing in the user-dir
+      does — `test_fullapi_ui` loads the first time its sidebar entry is
+      clicked, and pulls `test_fullapi_proxy` and both providers in as
+      dependencies. That gives us both unload flavours from one launch:
+
+      - Before the Full API UI has been opened, `test_fullapi_cpp` is a leaf —
+        loading and unloading it needs no confirmation, because the only
+        modules that depend on it aren't running.
+      - Once the Full API UI is open, `test_fullapi_cpp` has *loaded*
+        dependents (`test_fullapi_proxy` and `test_fullapi_ui`) — unloading it
+        must go through the cascade dialog. `test_fullapi_rust` does not
+        depend on it and must survive the cascade untouched.
+      - Unloading `test_fullapi_proxy` while the Full API UI is open has one
+        loaded dependent (the UI) and two loaded *dependencies* (`cpp`,
+        `rust`) — the cascade must take the former and leave the latter.
+
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the inspector-enabled portable bundle
+      and link it as `./result-bundle`.
+
+      > The `{release}` in the URL pins the build to a specific commit: the
+      > doc-test runner expands it to a concrete ref. Locally that is this
+      > checkout's `HEAD` (see `run.sh`); in CI it is the commit being tested.
+      > With no pin it falls back to the latest `master`.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+      - title: "Confirm the bundled (protected) core modules"
+        text: |
+          The three protected modules are carried inside the bundle under
+          `modules/`:
+        run: "ls result-bundle/modules"
+        expect_contains:
+          - "package_manager"
+          - "package_downloader"
+          - "capability_module"
+
+  - title: "Stage the full-API module chain into a user-dir"
+    step: true
+    text: |
+      Build the two providers, the proxy, and the UI plugin from
+      `logos-test-modules` as **portable** install outputs, then assemble a
+      `--user-dir` by plain copy: core modules under `modules/`, the UI plugin
+      under `plugins/`. No catalog, no network at runtime.
+    steps:
+      - title: "Build and stage the modules"
+        run: |
+          set -e
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          chmod -R u+w testdata/module-unload 2>/dev/null || true
+          rm -rf testdata/module-unload
+          mkdir -p testdata/module-unload/modules testdata/module-unload/plugins
+          for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy; do
+            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "result-port-$m"
+            cp -RL "result-port-$m/modules/." testdata/module-unload/modules/
+          done
+          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" --out-link result-port-ui
+          cp -RL result-port-ui/plugins/. testdata/module-unload/plugins/
+          chmod -R u+w testdata/module-unload
+          echo "modules:"; ls testdata/module-unload/modules
+          echo "plugins:"; ls testdata/module-unload/plugins
+        expect_contains:
+          - "test_fullapi_cpp"
+          - "test_fullapi_rust"
+          - "test_fullapi_proxy"
+          - "test_fullapi_ui"
+
+  - title: "Protected, leaf, cascade, and reload — one narrative"
+    step: true
+    text: |
+      Launch the bundle headless against the staged user-dir and drive all
+      five stories in one session. Per-row toggles are clicked by their stable
+      `objectName`s (`moduleRow.loadToggle.<name>`) rather than by visible
+      text — every loaded row carries an identical "Unload" label, so text
+      clicks would be ambiguous. Row state is asserted the same way, via each
+      row's `moduleInspector.status.<name>` status badge, and the sidebar app
+      tile via `sidebar.app.<name>`.
+
+      Text polls here are only ever a **settle** (wait for a model to
+      populate); the load-bearing checks are `expect_property` against a
+      property that genuinely tracks state: `enabled` on the toggle, `text` on
+      the status badge, `loaded` on the sidebar tile, `visible` on the dialog.
+    steps:
+      - title: "Drive the unload flows"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/module-unload"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the staged user-dir. The three protected core modules auto-loaded during startup; nothing from the user-dir is loaded yet."
+              screenshot: "unload-launch.png"
+
+            # The icon appears only once the UI-plugin metadata fetch
+            # succeeds, which can lag launch by a few seconds.
+            - name: "The Full API UI app appears in the sidebar"
+              action: wait_for
+              texts: ["Full API UI"]
+              timeout: 60000
+
+            # ── Story 1: protected modules ─────────────────────────────────
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings view loads"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Open Settings → Module Inspector"
+              action: click
+              target: "Module Inspector"
+
+            - name: "Module Inspector lists the modules"
+              action: wait_for
+              texts: ["Module Inspector", "Package Downloader", "test_fullapi_cpp"]
+              timeout: 30000
+              text: "The Module Inspector lists the three protected modules (all **Loaded** from startup) next to the three user-dir core modules (all **Not loaded**)."
+              screenshot: "unload-module-inspector.png"
+
+            - name: "package_manager is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.package_manager"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and its toggle is disabled"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.package_manager"
+              property: "enabled"
+              value: false
+              text: "The protected rows keep their **Unload** button, but it is disabled: `package_manager`, `package_downloader` and `capability_module` are what Basecamp itself runs on, so the inspector never lets you unload them."
+
+            - name: "package_downloader is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.package_downloader"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and its toggle is disabled"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.package_downloader"
+              property: "enabled"
+              value: false
+
+            - name: "capability_module is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.capability_module"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and its toggle is disabled"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.capability_module"
+              property: "enabled"
+              value: false
+
+            # ── Story 2: leaf load + unload ────────────────────────────────
+            - name: "test_fullapi_cpp is not loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…and its toggle is enabled"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              property: "enabled"
+              value: true
+
+            - name: "Load test_fullapi_cpp"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              text: "Clicking **Load** on the `test_fullapi_cpp` row loads it into the runtime."
+
+            # The load/unload is deferred (a QueuedConnection hop, then a
+            # nested event loop inside logos core), and expect_property is
+            # one-shot — so give it an explicit settle.
+            - name: "Give the module load a moment"
+              action: sleep
+              ms: 5000
+
+            - name: "test_fullapi_cpp is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+              text: "The row flips to **Loaded**, stats start ticking, and the button becomes **Unload**."
+              screenshot: "unload-leaf-loaded.png"
+
+            # Nothing that depends on test_fullapi_cpp is running, so this is
+            # a leaf unload: no dialog is raised.
+            - name: "Unload test_fullapi_cpp"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              text: "Clicking **Unload** unloads it directly — Basecamp checks for *loaded* dependents, finds none (the proxy and the Full API UI aren't running), and skips the confirmation."
+
+            - name: "Give the unload a moment"
+              action: sleep
+              ms: 5000
+
+            - name: "No cascade dialog was raised"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "test_fullapi_cpp is not loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Not loaded"
+              text: "The row is back to **Not loaded** — no dialog, no dependents touched."
+              screenshot: "unload-leaf-unloaded.png"
+
+            # ── Story 3: cascade unload ────────────────────────────────────
+            # Load the whole chain by opening the Full API UI app: the plugin
+            # depends on test_fullapi_proxy, which depends on both providers.
+            - name: "Open the Full API UI app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              text: "Clicking the **Full API UI** sidebar entry loads `test_fullapi_ui` — and, as its dependencies, `test_fullapi_proxy`, `test_fullapi_cpp` and `test_fullapi_rust`. From here on `test_fullapi_cpp` has running dependents."
+
+            - name: "The Full API UI view renders"
+              action: wait_for
+              texts: ["Full API UI"]
+              timeout: 60000
+
+            - name: "Let the chain finish loading, then capture it"
+              action: sleep
+              ms: 5000
+              screenshot: "unload-fullapi-open.png"
+
+            - name: "The Full API UI app is loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              property: "loaded"
+              value: true
+
+            - name: "Back to Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings view loads again"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Switch to the Module Inspector"
+              action: click
+              target: "Module Inspector"
+
+            - name: "Module Inspector is up"
+              action: wait_for
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
+              timeout: 30000
+
+            - name: "The whole chain is loaded: test_fullapi_cpp"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…test_fullapi_rust"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_rust"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and test_fullapi_proxy"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_proxy"
+              property: "text"
+              value: "Loaded"
+              text: "All three user-dir core modules are **Loaded** now — pulled in as dependencies of the Full API UI."
+              screenshot: "unload-chain-loaded.png"
+
+            - name: "No cascade dialog is open yet"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "Try to unload test_fullapi_cpp"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_cpp"
+              text: "Same button, different outcome: `test_fullapi_proxy` and `test_fullapi_ui` are running on top of `test_fullapi_cpp`, so instead of unloading, Basecamp raises the cascade confirmation."
+
+            # Text alone can't prove WHICH dialog is up: OverlayDialogs keeps
+            # every ConfirmationDialog instance in the object tree while
+            # closed. The text poll is the settle; the `visible` assertion
+            # against the per-mode objectName is the proof.
+            - name: "The cascade dialog lists the loaded dependents"
+              action: wait_for
+              texts:
+                - "Unload Dependent Modules?"
+                - "The following modules are currently loaded and depend on 'test_fullapi_cpp'. Unloading will terminate them:"
+                - "• test_fullapi_proxy"
+                - "• Full API UI"
+              timeout: 30000
+
+            - name: "…and it is the unload-cascade dialog that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: true
+
+            - name: "Let the dialog finish opening, then capture it"
+              action: sleep
+              ms: 1000
+              text: "The **Unload Dependent Modules?** dialog spells out the blast radius before anything happens: the proxy and the Full API UI are currently loaded, depend on this module, and will be terminated by the unload."
+              screenshot: "unload-cascade-dialog.png"
+
+            - name: "Confirm — Unload All"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade.confirm"
+              text: "**Unload All** runs the cascade: the runtime unloads `test_fullapi_cpp` together with its dependents, and Basecamp tears down the `test_fullapi_ui` widget it was hosting."
+
+            - name: "Give the cascade a moment to complete"
+              action: sleep
+              ms: 8000
+
+            - name: "The cascade dialog closed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "test_fullapi_cpp is unloaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…test_fullapi_proxy went with it"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_proxy"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…the Full API UI app is gone too"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              property: "loaded"
+              value: false
+
+            - name: "…and test_fullapi_rust is untouched"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_rust"
+              property: "text"
+              value: "Loaded"
+              text: "Every side of the cascade landed, and only those: `test_fullapi_cpp` and `test_fullapi_proxy` report **Not loaded**, the Full API UI tile reports not-loaded — while `test_fullapi_rust`, which never depended on the target, is still **Loaded**."
+              screenshot: "unload-cascade-done.png"
+
+            # ── Story 4: reload after cascade ──────────────────────────────
+            - name: "Open the Full API UI app again"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              text: "The sidebar entry works again immediately: Basecamp notices the plugin is gone and loads `test_fullapi_ui` — pulling `test_fullapi_proxy` and `test_fullapi_cpp` back into the runtime as its dependencies."
+
+            - name: "Let the chain load back, then capture it"
+              action: sleep
+              ms: 8000
+              screenshot: "unload-fullapi-reopened.png"
+
+            - name: "The Full API UI app is loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              property: "loaded"
+              value: true
+
+            - name: "Back to Settings one last time"
+              action: click
+              target: "Settings"
+
+            - name: "Settings view loads once more"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards.", "Sections"]
+              timeout: 30000
+
+            - name: "Switch to the Module Inspector for the closing check"
+              action: click
+              target: "Module Inspector"
+
+            - name: "Module Inspector is up for the closing check"
+              action: wait_for
+              texts: ["Module Inspector", "Core modules known to the runtime, with live resource usage."]
+              timeout: 30000
+
+            - name: "test_fullapi_cpp is loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and test_fullapi_proxy is loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_proxy"
+              property: "text"
+              value: "Loaded"
+              text: "The closing proof: `test_fullapi_cpp` and `test_fullapi_proxy` are **Loaded** again — pulled back into the runtime as dependencies of the reloaded Full API UI. The app survives a full cascade-unload/reload cycle."
+              screenshot: "unload-chain-reloaded.png"
+
+            # ── Story 5: cascade goes up, not down ────────────────────────
+            # The chain is fully loaded again. Unload the proxy directly: its
+            # only loaded dependent is the UI plugin; its two dependencies
+            # (cpp, rust) must NOT be touched by the cascade.
+            - name: "No cascade dialog is open before unloading the proxy"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "Try to unload test_fullapi_proxy"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.test_fullapi_proxy"
+              text: "This time the target is `test_fullapi_proxy` — the module the Full API UI depends on *directly*. Its only running dependent is the UI plugin, so that is all the dialog lists; the providers underneath it are dependencies, not dependents, and don't appear."
+
+            - name: "The cascade dialog lists only the Full API UI"
+              action: wait_for
+              texts:
+                - "Unload Dependent Modules?"
+                - "The following modules are currently loaded and depend on 'test_fullapi_proxy'. Unloading will terminate them:"
+                - "• Full API UI"
+              timeout: 30000
+
+            - name: "…and it is the unload-cascade dialog that is open, again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: true
+
+            - name: "Let the proxy dialog finish opening, then capture it"
+              action: sleep
+              ms: 1000
+              screenshot: "unload-proxy-cascade-dialog.png"
+
+            - name: "Confirm — Unload All, for the proxy"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade.confirm"
+              text: "**Unload All** unloads `test_fullapi_proxy` and tears down the Full API UI on top of it."
+
+            - name: "Give the proxy cascade a moment to complete"
+              action: sleep
+              ms: 8000
+
+            - name: "The proxy cascade dialog closed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.unloadCascade"
+              property: "visible"
+              value: false
+
+            - name: "test_fullapi_proxy is unloaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_proxy"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "…the Full API UI app went with it"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.test_fullapi_ui"
+              property: "loaded"
+              value: false
+
+            - name: "…but test_fullapi_cpp is still loaded"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_cpp"
+              property: "text"
+              value: "Loaded"
+
+            - name: "…and so is test_fullapi_rust"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.test_fullapi_rust"
+              property: "text"
+              value: "Loaded"
+              text: "The cascade walked *up* the graph only: the proxy and the UI plugin that depended on it are gone, while both providers the proxy itself depended on — `test_fullapi_cpp` and `test_fullapi_rust` — are still **Loaded**. Unloading a module never drags its own dependencies down with it."
+              screenshot: "unload-proxy-cascade-done.png"
+
+            - name: "…while the protected modules never moved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.package_manager"
+              property: "enabled"
+              value: false
+        post_text: |
+          One green run proved all five stories against this commit: the
+          three core modules Basecamp runs on (`package_manager`,
+          `package_downloader`, `capability_module`) are **Loaded** and their
+          Load/Unload toggle is **disabled**; a leaf core module
+          (`test_fullapi_cpp`) loads and unloads with no confirmation; once
+          the Full API UI is running on top of it, unloading it raises the
+          **Unload Dependent Modules?** dialog listing `test_fullapi_proxy`
+          and the Full API UI, and **Unload All** tears down exactly those —
+          leaving `test_fullapi_rust` loaded; clicking the Full API UI entry
+          again brings the plugin and its core modules back; and unloading
+          `test_fullapi_proxy` directly cascades to the Full API UI alone,
+          leaving the providers it depends on loaded. The captured
+          screenshots are embedded above and in the CI report.
