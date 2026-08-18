@@ -39,6 +39,12 @@ Item {
     property string selectedPlugin: ""
     property bool showingInterface: false
 
+    // Core modules Basecamp itself runs on: the package pipeline
+    // (package_manager, package_downloader) and the auth-token registry
+    // (capability_module). Their Load/Unload toggle renders disabled — unloading
+    // any of them from the inspector would take the app's own plumbing down.
+    readonly property var protectedModules: ["package_manager", "package_downloader", "capability_module"]
+
     // Open a specific module's Interface screen (methods + events) by name.
     // Equivalent to clicking that module's "Interface" button — exposed for UI
     // automation/tests, which can't disambiguate the per-row buttons by their
@@ -241,6 +247,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             row: rowItem
                             busy: root.loading
+                            locked: !!rowItem && root.protectedModules.indexOf(rowItem.name) !== -1
                             interfaceEnabled: true
 
                             onLoadToggleRequested: {
