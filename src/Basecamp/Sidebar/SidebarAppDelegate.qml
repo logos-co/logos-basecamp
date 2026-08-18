@@ -5,8 +5,18 @@ import Logos.Theme
 import Logos.Controls
 import Basecamp.AppManager
 
+// AbstractButton so the whole 50px row is one mouse, keyboard and
+// accessibility control — matching the grid and list delegates, and avoiding
+// two focus stops per app from a nested interactive tile.
+//
+// `iconSource` is a custom property rather than AbstractButton's
+// `icon.source` group property, whose sub-property assignments do not
+// reliably re-fire bindings in Qt 6.
 AbstractButton {
     id: root
+
+    property url iconSource: ""
+    property bool fullBleedIcon: false
 
     property bool loaded: false
     property bool loading: false
@@ -15,15 +25,14 @@ AbstractButton {
     // `clicked`, and the backend decides whether to load or show the popup.
     property bool hasMissingDeps: false
     property string appName: ""
-    property string packageColor: ""
 
     implicitHeight: 50
+    hoverEnabled: true
 
     QtObject {
         id: d
 
         readonly property int tileSize: 38
-        readonly property int iconSize: 19
     }
 
     signal tooltipRequested(string text, real y)
@@ -45,16 +54,17 @@ AbstractButton {
     }
 
     contentItem: Item {
-        AppTile {
+        LogosTile {
             id: tile
             anchors.centerIn: parent
-            appName: root.appName
-            packageColor: root.packageColor
-            iconSource: root.icon.source
+            label: root.appName
+            source: root.iconSource
+            fallbackColor: Theme.palette.surfaceRaised
+            highlighted: root.checked
+            insetArtwork: !root.fullBleedIcon
+            // Presentational — the row owns activation.
+            interactive: false
             tileSize: d.tileSize
-            iconSize: d.iconSize
-            borderOnHover: true
-            borderEmphasized: root.hovered || root.checked
             dimOpacity: root.loaded ? 1.0 : 0.55
             visible: !root.loading
         }

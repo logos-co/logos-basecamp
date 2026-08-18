@@ -68,8 +68,6 @@ Dialog {
             if (raw.indexOf("://") < 0) return ""
             return raw
         }
-        readonly property string packageColor: root.metadata.color || ""
-
         readonly property int tileSize: 64
 
         readonly property bool   installed:        root.metadata.isInstalled === true
@@ -315,14 +313,15 @@ Dialog {
                 anchors.centerIn: parent
                 spacing: Theme.spacing.small
 
-                AppTile {
+                LogosTile {
                     Layout.alignment: Qt.AlignHCenter
-                    appName: d.targetName
-                    monogramLabel: d.targetDisplayName
-                    packageColor: d.packageColor
-                    iconSource: d.targetIcon
+                    label: d.targetDisplayName || d.targetName
+                    source: d.targetIcon
+                    fallbackColor: d.installed
+                                   ? Theme.palette.surfaceRaised
+                                   : AppColors.colorForApp(d.targetName)
                     tileSize: d.tileSize
-                    iconSize: 32
+                    interactive: false
                 }
 
                 LogosText {
