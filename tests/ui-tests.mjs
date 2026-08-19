@@ -48,6 +48,66 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
   );
 }
 
+// --- Welcome page (A1) ---
+//
+// Must run FIRST: it asserts the pre-interaction state of the shared app
+// instance (welcome page up, nothing clicked yet). Read-only — no clicks,
+// no state left behind.
+async function findWelcomePage(app) {
+  // Prefer a framework findByType wrapper if one exists (mirrors
+  // app.findByProperty); otherwise talk to the inspector protocol directly.
+  const res = typeof app.findByType === "function"
+    ? await app.findByType("WelcomePage")
+    : await app.inspector.send("findByType", { type: "WelcomePage" });
+  if (res.error) throw new Error(`findByType(WelcomePage) failed: ${res.error}`);
+  return (res.matches ?? [])[0] || null;
+}
+
+test("welcome: first launch shows the welcome page", async (app) => {
+  // A WelcomePage instance exists (it is WorkspaceArea's central widget
+  // whenever no docks are open) and is visible.
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  const visRes = await app.inspector.send("evaluate", {
+    objectId: welcome.id, expression: "visible",
+  });
+  if (visRes.error) throw new Error(`evaluate(visible) failed: ${visRes.error}`);
+  if (visRes.result !== true) {
+    throw new Error(`WelcomePage visible=${visRes.result} (expected true)`);
+  }
+
+  // Greeting follows backend.launcherApps.length: 0 ⇒ first-launch wording,
+  // otherwise "Welcome back". backend is a global context property, so the
+  // welcome page itself serves as the evaluate anchor.
+  const lenRes = await app.inspector.send("evaluate", {
+    objectId: welcome.id, expression: "backend.launcherApps.length",
+  });
+  if (lenRes.error) {
+    throw new Error(`evaluate(backend.launcherApps.length) failed: ${lenRes.error}`);
+  }
+  if (typeof lenRes.result !== "number") {
+    throw new Error(
+      `backend.launcherApps.length=${JSON.stringify(lenRes.result)} (expected number)`);
+  }
+  const expected = lenRes.result === 0 ? "Welcome to Basecamp!" : "Welcome back";
+  await app.expectTexts([expected]);
+
+  // Exactly one of the two greetings is present — the title is a single
+  // ternary Text, so both appearing (or neither) means a rendering bug.
+  const tree = JSON.stringify(await app.getTree({ depth: 50 }));
+  const hasFirstLaunch = tree.includes("Welcome to Basecamp!");
+  const hasWelcomeBack = tree.includes("Welcome back");
+  if (hasFirstLaunch === hasWelcomeBack) {
+    throw new Error(
+      `greeting texts present: "Welcome to Basecamp!"=${hasFirstLaunch}, ` +
+      `"Welcome back"=${hasWelcomeBack} (expected exactly one)`);
+  }
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
