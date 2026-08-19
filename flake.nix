@@ -5,19 +5,16 @@
     logos-nix.url = "github:logos-co/logos-nix";
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
-    # Rev-pinned: the B3/B4 SDK split has not reached logos-cpp-sdk's master, and
-    # the generator entry points the module inputs below call only exist on that
-    # branch. a04b278 is the tip of feat/sdk-codegen-b3-d11. Drop the rev once it
-    # merges.
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/a04b27888e1d126578f639ed46dae0c777990a10";
+    # Unpinned: feat/sdk-codegen-b3-d11 merged (logos-cpp-sdk#138), so the B3/B4
+    # SDK split and the generator entry points the module inputs below call are
+    # on master.
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
     logos-cpp-sdk.inputs.logos-protocol.follows = "logos-protocol";
-    # Rev-pinned: logos-qt-host (in logos-plugin-qt, below) calls
-    # TokenManager::forIdentity/isolateIdentity, which live on
-    # feat/per-client-token-store and NOT on logos-protocol's master. The lock
-    # already carried c8bab12, but the url did not — so any `nix flake lock`
-    # silently walked it back to master. The rev belongs in the url.
+    # Unpinned: feat/per-client-token-store merged (logos-protocol#59), so
+    # TokenManager::forIdentity/isolateIdentity — which logos-qt-host calls — are
+    # on master, along with the host-services C ABI.
     logos-protocol = {
-      url = "github:logos-co/logos-protocol/c8bab12834dbf92155b483546875e6078d17c74e";
+      url = "github:logos-co/logos-protocol";
       inputs.logos-nix.follows = "logos-nix";
     };
     # The Qt HOST RUNTIME — LogosAPI, LogosAPIProvider, the LogosProviderBase
@@ -29,19 +26,11 @@
     # BOTH would put two copies of the same 392 symbols on the link, which is
     # why that input is headers-only and links nothing.
     #
-    # Rev-pinned because logos-qt-host does not exist on logos-plugin-qt's
-    # master yet (8846fc5); an unpinned url resolves there and the
-    # find_package(logos-qt-host) in app/CMakeLists.txt fails outright.
-    # Raised 8ccb1fc -> cc24fa1c: cc24fa1c is the tip of
-    # feat/b4-qt-host-windows-target and is exactly what logos-liblogos
-    # f2a15ef3, logos-standalone-app and logos-module-builder all pin. The
-    # sibling feat/b4-qt-host-windows-target-8ccb1fc (989f6ae) is a REDUCED
-    # re-baselining of the same work and is NOT an ancestor of cc24fa1c —
-    # taking it here would put a second logos-qt-host build in the closure,
-    # i.e. two LogosAPI/TokenManager copies in one process, which is the exact
-    # failure this app's Windows DLL shim exists to prevent.
+    # Unpinned: feat/b4-qt-host-windows-target merged (logos-plugin-qt#19), so
+    #  logos-qt-host is on master for every target. One master rev means one
+    # logos-qt-host in the closure, which is what the rev pin was protecting.
     logos-plugin-qt = {
-      url = "github:logos-co/logos-plugin-qt/cc24fa1c0c43b2d96c1dc165ee545a0321318b59";
+      url = "github:logos-co/logos-plugin-qt";
       inputs.logos-nix.follows = "logos-nix";
       inputs.logos-protocol.follows = "logos-protocol";
       inputs.logos-module.follows = "logos-module";
@@ -67,8 +56,14 @@
     # 8a06b870 is the tip of feat/sdk-codegen-b3-d11 and is the same rev
     # logos-test-framework and the workspace pin; a different rev would put a
     # second logos-qt-sdk in the closure.
+    # Unpinned: feat/sdk-codegen-b3-d11 merged (logos-qt-sdk#33). This pin was
+    # kept byte-identical to logos-test-framework's and the workspace's by hand,
+    # because NOTHING here makes logos-qt-sdk follow — and the convention had
+    # already drifted (logos-module-builder pinned aca2951, not 8a06b870), which
+    # is exactly the second-logos-qt-sdk-in-the-closure this guarded against.
+    # Tracking master puts every consumer on one rev structurally.
     logos-qt-sdk = {
-      url = "github:logos-co/logos-qt-sdk/8a06b870e59afca3392de2bddf8eec5fe3b85225";
+      url = "github:logos-co/logos-qt-sdk";
       inputs.logos-nix.follows = "logos-nix";
       inputs.logos-protocol.follows = "logos-protocol";
       inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
@@ -145,10 +140,12 @@
     # come from the same generation as the host runtime above.
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/c932e1c4bfb5e5e2e04abfb7e561ed19ba18ffca";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    # Rev-pinned: 5510acd is the tip of feat/sdk-codegen-b4-qt-host, the view
-    # runtime moved onto the split host. Same rev logos-module-builder pins.
+    # Rev-pinned: 3ef779c is the tip of feat/sdk-codegen-b4-qt-host WITH master
+    # merged in, so it carries the hot-reload fix (#24) as well as the move onto
+    # the split host. Same rev logos-module-builder and logos-standalone-app pin —
+    # 5510acd, the previous value here, is no longer what they use.
     logos-view-module-runtime = {
-      url = "github:logos-co/logos-view-module-runtime/5510acd9eb7fcd49e420c9e530679edfa8f315ab";
+      url = "github:logos-co/logos-view-module-runtime/3ef779c11120c74bed3f7aea92551ccc3daffd73";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
     };
