@@ -285,6 +285,7 @@ sections:
               texts:
                 - "Install Failed"
                 - "'test_failpath_qml-truncated.lgx' could not be installed. The package manager reported:"
+                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
               timeout: 30000
 
             # Dialog identity, not just text: the per-mode instances keep
@@ -296,6 +297,14 @@ sections:
               find_value: "confirmationDialog.installError"
               property: "visible"
               value: true
+
+            # Pin the bound property too, not just its rendered text.
+            - name: "…and it carries the package manager's error"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "errorMessage"
+              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
 
             # Keep the screenshot on its own settle step: these failures are
             # near-instant, so a text match can land before the overlay
@@ -344,12 +353,28 @@ sections:
               texts:
                 - "Install Failed"
                 - "'not-a-package.lgx' could not be installed. The package manager reported:"
+                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
               timeout: 30000
+
+            - name: "It is the Install Failed notice that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "visible"
+              value: true
+
+            - name: "…and it carries this file's error, not a stale one"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "errorMessage"
+              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
+              text: "The property assertion also rules out a leftover from the first failure: the notice was re-opened with *this* file's message, not merely re-shown with the previous one."
 
             - name: "Let the notice paint"
               action: sleep
               ms: 1000
-              text: "Different corruption, same surfacing: whatever the reason an archive can't be read, the user learns which file failed. The quoted error is the same one the truncated file produced — the LGX loader reports *that* it couldn't read the package, not which byte offended it — so the file name in the heading is what tells the two apart."
+              text: "Different corruption, same surfacing: whatever the reason an archive can't be read, the user learns which file failed. The quoted error has the same shape as the truncated file's — the LGX loader reports *that* it couldn't read the package, naming the path, not which byte offended it — so the file name is what tells the two apart."
               screenshot: "failpath-notapackage-dialog.png"
 
             - name: "Dismiss it"
