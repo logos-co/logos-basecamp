@@ -24,8 +24,9 @@ public:
         DescriptionRole,
         CategoryRole,
         TypeRole,                // "ui_qml" | "core" 
-        ColorRole,               // manifest/catalog accent color; "" → AppColors hash
-        IconUrlRole,             // file:// URL when installed; "" otherwise
+        IconUrlRole,             // resolved icon URL; "" → monogram fallback
+        SupportsFullBleedIconRole, // manifest >= 0.4.0: icon is a validated
+                                   // 256x256 asset, safe to render edge-to-edge
         VersionsRole,            // QVariantList — all known catalog versions
         DependenciesRole,        // QVariantList — direct deps of versions[0]'s manifest,
                                  //   normalized to [{name, version}, ...]. version "" = no constraint.
@@ -63,6 +64,12 @@ signals:
     void categoriesChanged();
 
 public:
+
+    // True once the manifest guarantees a conforming icon (>= 0.4.0). Static
+    // and public so UIPluginManager's sidebar path uses the SAME rule — this
+    // comparison must exist once. Mirrors Manifest::requiresIconContract().
+    static bool supportsFullBleedIcon(const QString& manifestVersion);
+
 
     void replaceCatalog(const QVariantList& catalogRows);
 
@@ -113,8 +120,8 @@ private:
         QString description;
         QString category;
         QString type;
-        QString color;
         QString iconUrl;
+        bool supportsFullBleedIcon = false;
         QVariantList versions;
         QString latestVersion;       // computed from versions[0].version
         QVariantList dependencies;
@@ -136,6 +143,7 @@ private:
     };
 
     static QString key(const QString& repo, const QString& name);
+
 
     void recomputeVersionDerivedFields(Row& r);
     void recomputeInstallStatus(Row& r);

@@ -38,8 +38,11 @@ ItemDelegate {
         readonly property string displayName:   root.appData ? (root.appData.displayName || root.appData.name || "") : ""
         readonly property string iconUrl:      root.appData ? (root.appData.iconUrl || "") : ""
         readonly property string description:   root.appData ? (root.appData.description || "") : ""
+        // 0.4.0+ guarantees a validated 256x256 icon, so it can fill the
+        // tile. Older packages ship a small glyph that must stay inset.
+        readonly property bool fullBleedIcon:
+            !!root.appData && root.appData.supportsFullBleedIcon === true
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
-        readonly property string packageColor: root.appData ? (root.appData.color || "") : ""
         readonly property string installType:   root.appData ? (root.appData.installType || "") : ""
         readonly property real tileOpacity:
             (d.isInstalled || root.hovered) ? 1.0 : 0.55
@@ -98,16 +101,19 @@ ItemDelegate {
         anchors.rightMargin: Theme.spacing.medium
         spacing: Theme.spacing.medium
 
-        AppTile {
+        LogosTile {
             Layout.preferredWidth: d.tileSize
             Layout.preferredHeight: d.tileSize
             Layout.alignment: Qt.AlignVCenter
-            appName: d.nameText
-            packageColor: d.packageColor
-            iconSource: d.iconUrl
+            label: d.nameText
+            source: d.iconUrl
+            fallbackColor: d.isInstalled
+                           ? Theme.palette.surfaceRaised
+                           : AppColors.colorForApp(d.nameText)
             tileSize: d.tileSize
-            iconSize: 24
             dimOpacity: d.tileOpacity
+            insetArtwork: !d.fullBleedIcon
+            interactive: false
         }
 
         // Name + (optional) description.

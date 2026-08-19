@@ -138,6 +138,32 @@ InstallStatus::Value statusOf(const AppsModel& model,
     return InstallStatus::NotInstalled;
 }
 
+// Read iconUrl for a (name, repo) row through the public role API.
+QString iconUrlOf(const AppsModel& model,
+                  const QString& name,
+                  const QString& repo)
+{
+    int iconRole = -1, nameRole = -1, repoRole = -1;
+    const auto& roles = model.roleNames();
+    for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
+        if      (it.value() == "iconUrl")        iconRole = it.key();
+        else if (it.value() == "name")           nameRole = it.key();
+        else if (it.value() == "repositoryUrl")  repoRole = it.key();
+    }
+    Q_ASSERT(iconRole >= 0 && nameRole >= 0 && repoRole >= 0);
+
+    const int n = model.rowCount();
+    for (int i = 0; i < n; ++i) {
+        const QModelIndex idx = model.index(i);
+        if (model.data(idx, nameRole).toString() != name) continue;
+        if (model.data(idx, repoRole).toString() != repo) continue;
+        return model.data(idx, iconRole).toString();
+    }
+    qFatal("iconUrlOf: row not found for (%s, %s)",
+           qPrintable(name), qPrintable(repo));
+    return {};
+}
+
 } // namespace
 
 class AppsModelTest : public QObject {
@@ -564,6 +590,129 @@ private slots:
         QCOMPARE(actionFor("wallet_module", "repo1"), QString());
     }
 
+    // ── Catalog icon: only resolvable URLs are accepted ─────────────────
+    // The catalog's `icon` is historically a bare filename relative to the
+    // installed package root ("modules.png"), which QML cannot load. Letting
+    // it through would flip AppTile.hasIcon true, suppress the monogram, and
+    // render an empty Image over the backplate — worse than no icon. Only
+    // values that are already URLs may reach the model.
+    void catalogIconRejectsBareFilename()
+    {
+        AppsModel model;
+        QVariantMap row = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        row.insert(QStringLiteral("icon"), QStringLiteral("modules.png"));
+        model.replaceCatalog({row});
+        QCOMPARE(iconUrlOf(model, "wallet_ui", "repo1"), QString());
+    }
+
+    void catalogIconAcceptsResolvedUrl()
+    {
+        AppsModel model;
+        QVariantMap row = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        row.insert(QStringLiteral("icon"),
+                   QStringLiteral("file:///cache/logos/icons/abc123.png"));
+        model.replaceCatalog({row});
+        QCOMPARE(iconUrlOf(model, "wallet_ui", "repo1"),
+                 QStringLiteral("file:///cache/logos/icons/abc123.png"));
+    }
+
+    // An installed row's resolved file:// icon comes from the binary on disk
+    // via setIconUrl(). A later catalog refresh carrying no usable icon must
+    // not wipe it.
+    void catalogRefreshDoesNotClobberResolvedIcon()
+    {
+        AppsModel model;
+        model.replaceCatalog({makeCatalogRow("repo1", "wallet_ui", "1.0", "H")});
+        model.markInstalled("wallet_ui", "1.0", "H");
+        model.setIconUrl("wallet_ui", "file:///installed/assets/icon.png");
+        // Refresh with a bare-filename icon, as today's downloader emits.
+        QVariantMap row = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        row.insert(QStringLiteral("icon"), QStringLiteral("modules.png"));
+        model.replaceCatalog({row});
+        QCOMPARE(iconUrlOf(model, "wallet_ui", "repo1"),
+                 QStringLiteral("file:///installed/assets/icon.png"));
+    }
+
+    void catalogRefreshClearsStaleIconWhenNotInstalled()
+    {
+        AppsModel model;
+        QVariantMap withIcon = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        withIcon.insert(QStringLiteral("icon"),
+                        QStringLiteral("file:///cache/abc.png"));
+        model.replaceCatalog({withIcon});
+        QCOMPARE(iconUrlOf(model, "wallet_ui", "repo1"),
+                 QStringLiteral("file:///cache/abc.png"));
+
+        // Refresh with a bare filename — no longer a usable URL.
+        QVariantMap bare = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        bare.insert(QStringLiteral("icon"), QStringLiteral("modules.png"));
+        model.replaceCatalog({bare});
+        QCOMPARE(iconUrlOf(model, "wallet_ui", "repo1"), QString());
+    }
+
+    // ── Full-bleed icon gate ────────────────────────────────────────────
+    // The bundler refuses to emit a 0.4.0 package whose icon is not a
+    // validated 256x256 assets/icon.png, so the version is a guarantee the
+    // artwork is safe to render edge-to-edge. UIPluginManager's sidebar path
+    // calls this same static, so the rule exists once.
+    void supportsFullBleedIcon_versionGate()
+    {
+        QVERIFY(AppsModel::supportsFullBleedIcon("0.4.0"));
+        QVERIFY(AppsModel::supportsFullBleedIcon("0.4.1"));
+        QVERIFY(AppsModel::supportsFullBleedIcon("1.0.0"));
+
+        QVERIFY(!AppsModel::supportsFullBleedIcon("0.3.0"));
+        QVERIFY(!AppsModel::supportsFullBleedIcon("0.2.9"));
+        // Unparseable fails CLOSED — an unknown manifest has promised
+        // nothing, so it gets the safe inset rendering.
+        QVERIFY(!AppsModel::supportsFullBleedIcon(""));
+        QVERIFY(!AppsModel::supportsFullBleedIcon("0.bad"));
+        QVERIFY(!AppsModel::supportsFullBleedIcon("garbage"));
+    }
+
+    void catalogRowCarriesFullBleedFlag()
+    {
+        AppsModel model;
+        QVariantMap legacy = makeCatalogRow("repo1", "legacy_ui", "1.0", "H1");
+        legacy.insert(QStringLiteral("manifestVersion"), QStringLiteral("0.3.0"));
+        QVariantMap modern = makeCatalogRow("repo1", "modern_ui", "1.0", "H2");
+        modern.insert(QStringLiteral("manifestVersion"), QStringLiteral("0.4.0"));
+        model.replaceCatalog({legacy, modern});
+
+        int flagRole = -1, nameRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
+            if      (it.value() == "supportsFullBleedIcon") flagRole = it.key();
+            else if (it.value() == "name")                  nameRole = it.key();
+        }
+        QVERIFY(flagRole >= 0 && nameRole >= 0);
+
+        auto flagFor = [&](const QString& name) {
+            for (int i = 0; i < model.rowCount(); ++i) {
+                const QModelIndex idx = model.index(i);
+                if (model.data(idx, nameRole).toString() == name)
+                    return model.data(idx, flagRole).toBool();
+            }
+            return false;
+        };
+        QCOMPARE(flagFor("legacy_ui"), false);
+        QCOMPARE(flagFor("modern_ui"), true);
+    }
+
+    // A row with no manifestVersion (older producer, or a repo predating the
+    // field) must not claim full-bleed support — inset is the safe default.
+    void missingManifestVersionDefaultsToInset()
+    {
+        AppsModel model;
+        model.replaceCatalog({makeCatalogRow("repo1", "wallet_ui", "1.0", "H")});
+        int flagRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+            if (it.value() == "supportsFullBleedIcon") flagRole = it.key();
+        QVERIFY(flagRole >= 0);
+        QCOMPARE(model.data(model.index(0), flagRole).toBool(), false);
+    }
+
     // ── Regression: multi-repo setInstallType / setIconUrl ─────────────
     // installType and iconUrl come from the installed binary, not the
     // catalog row. Every (repo, name) tile must show them; previously
@@ -576,7 +725,7 @@ private slots:
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H"),
         });
         model.setInstallType("wallet_ui", "user");
-        model.setIconUrl("wallet_ui", "file:///path/to/icon.svg");
+        model.setIconUrl("wallet_ui", "file:///path/to/icon.png");
 
         int typeRole = -1, iconRole = -1, nameRole = -1, repoRole = -1;
         const auto& roles = model.roleNames();
@@ -602,9 +751,9 @@ private slots:
         QCOMPARE(fieldFor(typeRole, "wallet_ui", "repo1"), QStringLiteral("user"));
         QCOMPARE(fieldFor(typeRole, "wallet_ui", "repo2"), QStringLiteral("user"));
         QCOMPARE(fieldFor(iconRole, "wallet_ui", "repo1"),
-                 QStringLiteral("file:///path/to/icon.svg"));
+                 QStringLiteral("file:///path/to/icon.png"));
         QCOMPARE(fieldFor(iconRole, "wallet_ui", "repo2"),
-                 QStringLiteral("file:///path/to/icon.svg"));
+                 QStringLiteral("file:///path/to/icon.png"));
     }
 
     // ── Regression: per-row install stage isolation on partial failure ─
@@ -935,7 +1084,7 @@ private slots:
         for (auto it = roles.cbegin(); it != roles.cend(); ++it) seen.insert(it.value(), true);
         const QList<QByteArray> required{
             "name", "repositoryUrl", "displayName", "description", "category",
-            "type", "color", "iconUrl", "versions", "dependencies", "installedVersion",
+            "type", "iconUrl", "supportsFullBleedIcon", "versions", "dependencies", "installedVersion",
             "latestVersion", "hasUpdate", "isInstalled", "missingDeps",
             "installStatus", "installType", "action", "toVersion",
             "isTopLevel", "resolverError", "installStage", "installError",
@@ -1231,26 +1380,22 @@ private slots:
         QCOMPARE(model.data(idx, repoRole).toString(), QStringLiteral("repo1"));
     }
 
-    void replaceCatalog_preserves_color_field()
+    // The `color` role is deliberately gone. It was read by AppsModel and
+    // rendered by AppTile, but no producer anywhere in the stack ever emitted
+    // it — not the LGX manifest, not the downloader's catalog synthesis. With
+    // full-bleed icons on a fixed theme-grey plate there is no author-
+    // controlled tile colour to carry, so the role was removed rather than
+    // left as a permanently-empty field. The hash-derived monogram colour
+    // (AppColors.colorForApp) is computed in QML and needs no model role.
+    void replaceCatalog_hasNoColorRole()
     {
         AppsModel model;
-        QVariantMap row;
-        row.insert("name", "storage_ui");
-        row.insert("repositoryUrl", "https://example/repo.json");
-        row.insert("color", "#4a90d9");
-        row.insert("versions", QVariantList{ QVariantMap{
-            {"manifest", QVariantMap{ {"version", "1.0.0"} }}
-        }});
-        model.replaceCatalog({ row });
+        model.replaceCatalog({makeCatalogRow("repo1", "storage_ui", "1.0", "H")});
 
-        int colorRole = -1;
         const auto& roles = model.roleNames();
-        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
-            if (it.value() == "color") { colorRole = it.key(); break; }
-        }
-        QVERIFY(colorRole >= 0);
-        QCOMPARE(model.data(model.index(0), colorRole).toString(),
-                 QStringLiteral("#4a90d9"));
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+            QVERIFY2(it.value() != "color",
+                     "AppsModel must not expose a `color` role");
     }
 };
 

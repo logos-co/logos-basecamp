@@ -1,4 +1,5 @@
 #include "UIPluginManager.h"
+#include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
@@ -553,9 +554,12 @@ QVariantList UIPluginManager::launcherApps() const
         app["displayName"] = metaDn;
         app["isLoaded"] = m_loadedApps.contains(pluginName);
         app["iconPath"] = pluginIconUrl(pluginName);
-        app["color"] = m_packageCoordinator
-            ? m_packageCoordinator->colorFor(pluginName)
-            : QString();
+        // Manifest >= 0.4.0 guarantees a validated 256x256 icon, so the
+        // sidebar tile can render it edge-to-edge; older packages ship a
+        // small glyph that must stay inset.
+        app["supportsFullBleedIcon"] = AppsModel::supportsFullBleedIcon(
+            m_uiPluginMetadata.value(pluginName)
+                .value("manifestVersion").toString());
         // Sidebar red-cross marker source. The SidebarAppDelegate reads
         // this field directly; we don't ship the full missingDeps list
         // here because the sidebar only draws an indicator — the detailed
