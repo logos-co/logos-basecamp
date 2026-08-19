@@ -138,7 +138,18 @@
     # Rev-pinned: c932e1c is the tip of feat/universal-view-plugin — the
     # generated view plugin. This UI is loaded in-process by the app, so it must
     # come from the same generation as the host runtime above.
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/c932e1c4bfb5e5e2e04abfb7e561ed19ba18ffca";
+    # Rev-pinned: f135195 is the tip of feat/universal-view-plugin — the
+    # generated view plugin. This UI is loaded in-process by the app, so it must
+    # come from the same generation as the host runtime above.
+    #
+    # f135195 is that branch WITH master merged in. The previous value, c932e1c,
+    # published packages for the four native systems only, so the cross build
+    # failed with "logos-module-builder: dependency 'package_manager' publishes
+    # no packages for x86_64-windows". Master fixed that (#68, a pure lock bump)
+    # but does not carry the view plugin, so tracking master here would trade a
+    # build failure for a runtime mismatch that still looks green. The merge
+    # gives both.
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/f1351952919b622f3d1e67c78ef3823e52c309cb";
     logos-design-system.url = "github:logos-co/logos-design-system";
     # Unpinned: logos-view-module-runtime#25 merged, so master carries the move
     # onto the split host and no longer rev-pins logos-plugin-qt itself. That
