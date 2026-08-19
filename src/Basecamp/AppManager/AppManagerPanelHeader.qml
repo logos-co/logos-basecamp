@@ -78,11 +78,11 @@ Item {
             LogosButton {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 100
-                Layout.preferredWidth: 130
-                Layout.maximumWidth: 130
+                Layout.preferredWidth: implicitWidth
+                Layout.maximumWidth: implicitWidth
                 Layout.preferredHeight: 40
                 radius: Theme.spacing.radiusLarge
-                text: qsTr("Repositories")
+                text: qsTr("Manage Repositories")
                 onClicked: root.repositoriesClicked()
             }
 
