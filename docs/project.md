@@ -621,13 +621,20 @@ Development tool for inspecting the running QML tree over TCP:
 
 ## Continuous Integration
 
-GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR to `master`:
+Two GitHub Actions workflows run on every push/PR to `master`:
 
-1. Checkout code
-2. Install Nix with flakes enabled
-3. Use cachix cache
-4. Build the application
-5. Run smoke tests
+- **`.github/workflows/build.yml`** ("Build & Release") — builds and smoke-tests
+  the distributable artifacts: an AppImage per Linux architecture and a macOS
+  app bundle. A separate job runs the unit tests, the QML tests, the sandbox
+  test, the integration (UI) tests, the host-services grant guard, and a
+  coverage report.
+- **`.github/workflows/doctests.yml`** — runs the repo's doc-tests across an OS
+  matrix and publishes the execution reports.
+
+Both get Nix and the shared binary cache from
+[`logos-co/setup-nix-cache-action`](https://github.com/logos-co/setup-nix-cache-action),
+which installs Nix with flakes enabled and configures the Attic cache in one
+step. (This replaced a hand-rolled install-Nix + cachix pair.)
 
 ## Supported Platforms
 
