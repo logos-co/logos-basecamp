@@ -230,6 +230,10 @@ signals:
     void navigateToApps();
     void navigateToRepositoriesRequested();
 
+    // `packageName` falls back to the file name if the manifest was unreadable.
+    void installFailureNoticeRequested(const QString& packageName,
+                                       const QString& errorMessage);
+
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.

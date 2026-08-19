@@ -37,6 +37,7 @@ Item {
                                   || uninstallDialog.visible
                                   || upgradeCascadeDialog.visible
                                   || installGateDialog.visible
+                                  || installErrorDialog.visible
                                   || addApplicationDialog.visible
     property string sidebarTooltipText: ""
     property real   sidebarTooltipY:    0
@@ -122,6 +123,14 @@ Item {
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
+    // Informational — no confirm/cancel wiring, OK just closes.
+    ConfirmationDialog {
+        id: installErrorDialog
+        objectName: "confirmationDialog.installError"
+        mode: "installError"
+        displayNameLookup: _dialogDeps.displayNameLookup
+    }
+
     // App-Manager "Add Application" dialog.
     AddApplicationDialog {
         id: addApplicationDialog
@@ -190,6 +199,10 @@ Item {
         // target version; depChanges is the resolved transitive set.
         function onInstallGateConfirmationRequested(name, releaseTag, depChanges) {
             installGateDialog.openWithInstallGate(name, releaseTag, depChanges);
+        }
+
+        function onInstallFailureNoticeRequested(name, errorMessage) {
+            installErrorDialog.openWithInstallError(name, errorMessage);
         }
 
         function onLaunchAppRequested(name) {
