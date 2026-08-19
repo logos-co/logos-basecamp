@@ -165,6 +165,7 @@ async function trayIsAvailable(inspector) {
 // Tests
 // ---------------------------------------------------------------------------
 console.log(`\nlogos-basecamp shutdown tests (${process.platform})\n`);
+const suiteStart = Date.now();
 const results = [];
 
 results.push(await runTest("SIGTERM triggers graceful shutdown", async (child) => {
@@ -291,4 +292,5 @@ const passed = results.filter((r) => r === "pass").length;
 const skipped = results.filter((r) => r === "skip").length;
 const failed = results.filter((r) => r === "fail").length;
 console.log(`\n${passed} passed, ${skipped} skipped, ${failed} failed`);
+console.log(`Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s`);
 process.exit(failed > 0 ? 1 : 0);

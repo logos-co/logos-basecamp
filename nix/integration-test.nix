@@ -3,9 +3,15 @@
 # and runs UI tests (click buttons, verify text, etc.).
 #
 # Requires Node.js for the test runner and the Qt offscreen platform plugin.
-{ pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120 }:
+{ pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
+# PR-gate wall-clock budget for BOTH suites (ui-tests + shutdown-tests)
+# combined. This derivation records its elapsed time in $out/elapsed-seconds
+# and can only fail early when its own run alone busts the budget; the
+# combined check lives in nix/shutdown-test.nix, which reads that file.
+, budgetSec ? 600 }:
 
 pkgs.runCommand "logos-basecamp-integration-test" {
+  MCP_TEST_BUDGET_SECONDS = toString budgetSec;
   nativeBuildInputs = [ pkgs.coreutils pkgs.nodejs ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.qt6.qtbase   # provides the offscreen platform plugin
@@ -32,8 +38,15 @@ pkgs.runCommand "logos-basecamp-integration-test" {
 
   echo "Running logos-basecamp integration tests (timeout: ${toString timeoutSec}s)..."
 
+  start=$(date +%s)
   timeout ${toString timeoutSec} \
     ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci ${appBin} --verbose
+  elapsed=$(( $(date +%s) - start ))
+  echo "$elapsed" > $out/elapsed-seconds
 
-  echo "Integration tests passed"
+  echo "Integration tests passed in ''${elapsed}s (budget: ''${MCP_TEST_BUDGET_SECONDS}s for both PR-gate suites combined)"
+  if [ "$elapsed" -gt "$MCP_TEST_BUDGET_SECONDS" ]; then
+    echo "ERROR: ui-tests alone took ''${elapsed}s, over the ''${MCP_TEST_BUDGET_SECONDS}s combined budget" >&2
+    exit 1
+  fi
 ''

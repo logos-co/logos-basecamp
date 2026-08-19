@@ -13,11 +13,22 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { writeSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp");
 const { test, run } = await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
+
+// Total-elapsed report for the PR-gate time budget (MCP_TEST_BUDGET_SECONDS,
+// enforced in nix/integration-test.nix + nix/shutdown-test.nix). The runner
+// lives in logos-qt-mcp and exits the process from inside run(), so the only
+// reliable "after the suite" hook is process exit; writeSync because async
+// stdout writes to a pipe can be dropped during exit.
+const suiteStart = Date.now();
+process.on("exit", () => {
+  writeSync(1, `Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s\n`);
+});
 
 // Helper: click a plugin's sidebar icon and wait for its UI to load.
 // Plugins load asynchronously after clicking, so we wait for expected

@@ -367,6 +367,18 @@
           #    this change and are identical with the bypass in place.
           binBundleDir = withMainProgram (dirBundler appDistributed);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
+
+          # Hoisted so shutdown-test below can read the integration test's
+          # recorded elapsed time and enforce the combined PR-gate budget
+          # (MCP_TEST_BUDGET_SECONDS). On macOS the PR gate runs the bundle
+          # variant, so that is the run the budget combines with there.
+          integrationTest = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          integrationTestBundle = import ./nix/integration-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
         in
         {
           # Individual outputs
@@ -427,11 +439,17 @@
           };
 
           # Integration test (UI tests via Qt Inspector)
-          integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          integration-test = integrationTest;
 
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
-          # app per case and asserts orderly exit (code 0).
-          shutdown-test = import ./nix/shutdown-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          # app per case and asserts orderly exit (code 0). Takes the
+          # platform's integration-test run as an input to enforce the
+          # combined PR-gate time budget.
+          shutdown-test = import ./nix/shutdown-test.nix {
+            inherit pkgs src logosQtMcp;
+            appPkg = app;
+            uiTestRun = if pkgs.stdenv.isDarwin then integrationTestBundle else integrationTest;
+          };
 
           # Default package
           default = app;
@@ -450,12 +468,7 @@
             appPkg = macosApp;
             appBin = "${macosApp}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
-          integration-test-bundle = import ./nix/integration-test.nix {
-            inherit pkgs src;
-            appPkg = macosAppTest;
-            inherit logosQtMcp;
-            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
-          };
+          integration-test-bundle = integrationTestBundle;
         }
       );
 

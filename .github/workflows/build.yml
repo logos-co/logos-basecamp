@@ -183,6 +183,9 @@ jobs:
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
+      - name: Shutdown test
+        run: nix build .#shutdown-test -L
+
       # Report-only non-blocking for now
       - name: Coverage report
         continue-on-error: true
@@ -226,6 +229,9 @@ jobs:
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L
+
+      - name: Shutdown test
+        run: nix build .#shutdown-test -L
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
