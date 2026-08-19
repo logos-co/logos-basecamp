@@ -9,6 +9,19 @@ Prebuilt binaries for Linux (AppImage) and macOS (DMG):
 
 Release candidates are marked as pre-release, so `/releases/latest` skips them. If the stable release is significantly older than the RCs on the releases page, you probably want an RC.
 
+### Updating
+
+Released builds check GitHub for a newer stable release shortly after launch. When one
+exists, an **Update** badge appears under the version in the sidebar and a marker on the
+Settings button; **Settings → Dashboard → Updates** then shows the new version, offers to
+download the right AppImage/DMG for your platform, and tells you what to do with it.
+Basecamp does not install the update itself — you replace your existing copy.
+
+The check is a single unauthenticated `GET` to the GitHub releases API. It sends no
+identifiers beyond a `LogosBasecamp/<version>` user agent, and it never runs on dev or
+pre-release builds (there is no version to compare). Set `LOGOS_DISABLE_UPDATE_CHECK=1` to
+turn it off entirely.
+
 ## How to Build
 
 ### Using Nix (Recommended)

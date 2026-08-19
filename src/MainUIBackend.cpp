@@ -5,6 +5,7 @@
 #include "ModuleInstanceModel.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
+#include "UpdateChecker.h"
 #include "BuildInfo.h"
 
 #include <QDebug>
@@ -20,6 +21,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     , m_packageCoordinator(nullptr)
     , m_uiModulesModel(new ModuleInstanceModel(this))
     , m_coreModulesModel(new ModuleInstanceModel(this))
+    , m_updateChecker(nullptr)
 {
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
@@ -58,6 +60,15 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     // metadata cache. See UIPluginManager::setPackageCoordinator for the signal
     // connections it sets up internally.
     m_uiPluginManager->setPackageCoordinator(m_packageCoordinator);
+
+    // Independent of the three managers above: no logos_core_* calls, no
+    // package_manager IPC. Kicks off its own deferred check (or skips silently
+    // on dev/pre-release builds) — see UpdateChecker's ctor.
+    m_updateChecker = new UpdateChecker(this);
+    connect(m_updateChecker, &UpdateChecker::checkStateChanged,
+            this,            &MainUIBackend::updateCheckStateChanged);
+    connect(m_updateChecker, &UpdateChecker::downloadStateChanged,
+            this,            &MainUIBackend::updateDownloadStateChanged);
 
     // Forward manager signals into our own signals of the same name. QML
     // binds to these; by funneling through the facade we keep a stable
@@ -350,4 +361,27 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
+
+// --- Host-app update check (issue #319) -----------------------------------
+//
+// Delegations to UpdateChecker. The enums cross into QML as ints; QML compares
+// against UpdateCheckState.* / UpdateDownloadStage.* from Basecamp.Backend.
+
+int     MainUIBackend::updateCheckState() const     { return static_cast<int>(m_updateChecker->checkState()); }
+bool    MainUIBackend::updateAvailable() const      { return m_updateChecker->updateAvailable(); }
+QString MainUIBackend::latestVersion() const        { return m_updateChecker->latestVersion(); }
+QString MainUIBackend::releaseUrl() const           { return m_updateChecker->releaseUrl(); }
+bool    MainUIBackend::downloadSupported() const    { return m_updateChecker->downloadSupported(); }
+int     MainUIBackend::updateDownloadStage() const  { return static_cast<int>(m_updateChecker->downloadStage()); }
+qreal   MainUIBackend::downloadProgress() const     { return m_updateChecker->downloadProgress(); }
+QString MainUIBackend::downloadProgressText() const { return m_updateChecker->progressText(); }
+QString MainUIBackend::downloadedFilePath() const   { return m_updateChecker->downloadedFilePath(); }
+QString MainUIBackend::downloadError() const        { return m_updateChecker->downloadError(); }
+QString MainUIBackend::updateInstallHint() const    { return m_updateChecker->installHint(); }
+
+void MainUIBackend::checkForUpdates()        { m_updateChecker->checkForUpdates(); }
+void MainUIBackend::startUpdateDownload()    { m_updateChecker->startDownload(); }
+void MainUIBackend::cancelUpdateDownload()   { m_updateChecker->cancelDownload(); }
+void MainUIBackend::revealUpdateDownload()   { m_updateChecker->revealDownload(); }
+void MainUIBackend::openReleasePage()        { m_updateChecker->openReleasePage(); }
 

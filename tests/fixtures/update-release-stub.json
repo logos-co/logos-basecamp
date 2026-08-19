@@ -1,0 +1,22 @@
+{
+  "tag_name": "9.9.9",
+  "name": "9.9.9",
+  "html_url": "https://github.com/logos-co/logos-basecamp/releases/tag/9.9.9",
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "LogosBasecamp-Desktop-v9.9.9-abc123-riscv64.AppImage",
+      "browser_download_url": "https://github.com/logos-co/logos-basecamp/releases/download/9.9.9/LogosBasecamp-Desktop-v9.9.9-abc123-riscv64.AppImage",
+      "size": 271104520,
+      "state": "uploaded",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "name": "LogosBasecamp-Desktop-v9.9.9-abc123-s390x.dmg",
+      "browser_download_url": "https://github.com/logos-co/logos-basecamp/releases/download/9.9.9/LogosBasecamp-Desktop-v9.9.9-abc123-s390x.dmg",
+      "size": 98701839,
+      "state": "uploaded",
+      "content_type": "application/octet-stream"
+    }
+  ]
+}

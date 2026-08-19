@@ -6,6 +6,12 @@ import Logos.Controls
 AbstractButton {
     id: root
 
+    // Corner marker for an informational, non-blocking state — currently an
+    // available host-app update on the Settings button. Same shape as
+    // SidebarAppDelegate's missing-deps marker minus the ✕ glyph, in the
+    // primary accent rather than red so it never reads as an error.
+    property bool showNotificationDot: false
+
     implicitHeight: 38
     implicitWidth: 38
 
@@ -43,6 +49,22 @@ AbstractButton {
             font.weight: Theme.typography.weightBold
             color: Theme.palette.textSecondary
             visible: !appIcon.visible
+        }
+
+        // The -2 corner margins put the dot's centre at (33, 5), which lands
+        // on the 38px pill's own 45° edge point (32.4, 5.6) — so it hugs the
+        // circle rather than floating in the empty bounding-box corner.
+        Rectangle {
+            id: notificationDot
+            visible: root.showNotificationDot
+            width: 14
+            height: 14
+            radius: 7
+            color: Theme.palette.primary
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.rightMargin: -2
+            anchors.topMargin: -2
         }
     }
 }
