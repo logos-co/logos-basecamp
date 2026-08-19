@@ -1,0 +1,449 @@
+name: "When installs go wrong: Basecamp's failure paths"
+output: basecamp-failure-paths.md
+release: ""
+
+intro: |
+  Every other doc-test in this suite ends green on purpose — install works,
+  upgrade works, the app comes back after a restart. This one asks the
+  opposite question: **what does the user see when a package is broken?**
+
+  The everyday way to get a broken package is a download cut short or a file
+  corrupted in transit: the `.lgx` on disk is not what the publisher built.
+  This doc-test manufactures exactly that — it crafts a **valid** QML-only
+  package (the same hand-built recipe the package-lifecycle doc-test
+  documents), then derives two broken files from it:
+
+  1. a **truncated** copy — the honest simulation of an interrupted download:
+     the first few hundred bytes of the real package, then nothing;
+  2. a file that is **not an archive at all** — plain text renamed to `.lgx`.
+
+  Each is handed to the bundled Package Manager the same way a real local
+  install starts. The package manager tries to read the archive, fails, and
+  reports the failure — and Basecamp surfaces it as an **Install Failed**
+  dialog naming the file and quoting the package manager's error, instead of
+  silently doing nothing. The run closes with the proof that nothing was
+  wedged along the way: the **same package, intact**, handed over one more
+  time, sails straight to the regular install gate.
+
+  The failure surfacing under test is deliberately layered the way the
+  install flow itself is layered: `package_manager_ui` initiates installs
+  and reports progress — including failures — over its module interface;
+  **Basecamp**, which owns every confirmation dialog in the app, listens to
+  those reports and raises the dialog for the failed ones. A failure that
+  aborts *before* the manifest can be read never reaches the install gate —
+  there is no name or version to confirm — so the error notice appears in
+  its place.
+
+  The run is **hermetic**: the fixture is hand-crafted in the spec, the
+  corrupt copies are derived from it locally, and everything runs against a
+  throwaway `--user-dir`. Nothing is ever actually installed — that is the
+  point.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle and the logos-qt-mcp UI driver, one
+  valid hand-crafted `.lgx` package plus two broken derivatives (a truncated
+  copy and a text file in disguise), and a headless UI run that feeds both
+  broken files to the Package Manager, asserts Basecamp's Install Failed
+  dialog surfaces each error, and then proves the intact package still
+  reaches the normal install gate.
+
+what_you_learn:
+  - What happens when the package manager is handed a truncated or invalid `.lgx` — the archive fails to load, and the error is reported rather than swallowed
+  - Where install failures surface — Basecamp's global dialog layer raises an "Install Failed" notice naming the file and quoting the package manager's error
+  - Why a corrupt file never reaches the install gate — gating needs the manifest's name and version, and a broken archive has neither
+  - That a failed install leaves no pending state behind — the very same package, intact, still gates as a fresh install afterwards
+  - How to drive and assert failure paths headlessly with logos-qt-mcp (dialog `visible` properties + stable objectNames, not just text waits)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but nothing from it is downloaded or installed here."
+
+sections:
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+      - title: "Build the lgx packaging CLI"
+        text: |
+          [`lgx`](https://github.com/logos-co/logos-package) is the packaging
+          tool — used below to add the payload to the fixture package and stamp
+          its content hashes. (Only the *valid* package needs it; breaking a
+          file requires no tooling at all.)
+        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
+        check_file: "result-lgx/bin/lgx"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle — the same
+      self-contained directory you ship, with the QML inspector compiled in so
+      the driver can attach (`#bin-bundle-dir-inspector`, the inspector-enabled
+      twin of `#bin-bundle-dir`).
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Craft one valid package — and break it twice"
+    step: true
+    text: |
+      The valid fixture is a QML-only (`ui_qml`) app, hand-built exactly the
+      way the package-lifecycle doc-test documents: a stamped `manifest.json`
+      seeded into a plain-**ustar** gzipped tar, payload injected and content
+      hashes stamped by [`lgx add`](https://github.com/logos-co/logos-package).
+      From that one good file the two broken ones are derived mechanically —
+      no packaging tool involved, because breaking things is easy.
+    steps:
+      - title: "Write the manifest"
+        file:
+          path: build/failpath/manifest.json
+          language: json
+          content: |
+            {
+              "author": "",
+              "category": "testing",
+              "dependencies": [],
+              "description": "Failure-path doc-test fixture (QML-only app)",
+              "display_name": "Failure Demo",
+              "icon": "",
+              "main": {},
+              "manifestVersion": "0.3.0",
+              "name": "test_failpath_qml",
+              "type": "ui_qml",
+              "version": "0.1.1",
+              "view": "Main.qml"
+            }
+
+      - title: "Write the module metadata"
+        file:
+          path: build/failpath/payload/metadata.json
+          language: json
+          content: |
+            {
+              "name": "test_failpath_qml",
+              "display_name": "Failure Demo",
+              "version": "0.1.1",
+              "type": "ui_qml",
+              "category": "testing",
+              "description": "Failure-path doc-test fixture (QML-only app)",
+              "view": "Main.qml",
+              "dependencies": []
+            }
+
+      - title: "Write the QML view"
+        file:
+          path: build/failpath/payload/Main.qml
+          language: qml
+          content: |
+            import QtQuick
+
+            Rectangle {
+                id: root
+                color: "#1e1e1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "Failure demo view v0.1.1"
+                    color: "#ffffff"
+                    font.pixelSize: 24
+                }
+            }
+
+      - title: "Write the qmldir"
+        file:
+          path: build/failpath/payload/qmldir
+          language: text
+          content: |
+            module com.logos.module.test_failpath_qml
+
+      - title: "Pack the valid .lgx, then derive the two broken files"
+        text: |
+          Build the valid package (`lgx verify` proves it), then break it:
+
+          - **`test_failpath_qml-truncated.lgx`** — the first 400 bytes of the
+            valid package. That's a well-formed gzip *header* followed by a
+            cliff: exactly what an interrupted download leaves behind.
+          - **`not-a-package.lgx`** — a sentence of plain text with an `.lgx`
+            extension. Not gzip, not tar, not close.
+
+          Everything lands at a **fixed absolute path**
+          (`/tmp/basecamp-failpath/`) because the UI run passes these paths
+          into the app over the inspector, where a relative path would be
+          ambiguous. A fresh, empty `--user-dir` is created alongside — and
+          since nothing in this spec ever completes an install, it is expected
+          to stay empty.
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   VARIANT=linux-x86_64 ;;
+            "Linux aarch64")  VARIANT=linux-arm64 ;;
+            "Darwin arm64")   VARIANT=darwin-arm64 ;;
+            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          chmod -R u+w /tmp/basecamp-failpath 2>/dev/null || true
+          rm -rf /tmp/basecamp-failpath
+          mkdir -p /tmp/basecamp-failpath
+          seed="build/failpath/seed"
+          rm -rf "$seed"
+          mkdir -p "$seed/variants"
+          cp build/failpath/manifest.json "$seed/manifest.json"
+          tar --format ustar -C "$seed" -czf /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx manifest.json variants
+          ./result-lgx/bin/lgx add /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx \
+            --variant "$VARIANT" --files build/failpath/payload -y
+          ./result-lgx/bin/lgx verify /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx
+          head -c 400 /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx \
+            > /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx
+          printf 'This is not an LGX package, whatever the extension claims.\n' \
+            > /tmp/basecamp-failpath/not-a-package.lgx
+          chmod -R u+w testdata/failpath-user 2>/dev/null || true
+          rm -rf testdata/failpath-user
+          mkdir -p testdata/failpath-user/modules testdata/failpath-user/plugins
+          ls /tmp/basecamp-failpath
+        expect_contains:
+          - "Package structure is valid"
+          - "test_failpath_qml-0.1.1.lgx"
+          - "test_failpath_qml-truncated.lgx"
+          - "not-a-package.lgx"
+
+  - title: "Feed the broken files to the Package Manager"
+    step: true
+    text: |
+      Launch the bundle headless against the empty user-dir and hand each
+      broken file to the bundled **Package Manager** app the way every local
+      install starts: PMU's `installLocalPackage` slot (the code path behind
+      its "Select LGX Package" file picker, which a headless driver can't
+      operate), invoked via the inspector on the `pmui.BackendStore` hook with
+      an explicit `file://` URL.
+
+      For a *valid* file this kicks off inspect → install gate → confirm →
+      install. For a broken file the very first step — reading the archive —
+      fails, and the flow is over before any gate could open. The assertions
+      are therefore dialog-identity assertions: the **Install Failed** notice
+      (and no other dialog) must become visible, carry the failing file's
+      name, and quote the package manager's error. Buttons are clicked by
+      their stable `objectName`s, and dialog identity is asserted via the
+      per-mode dialog instances' `visible` properties — the same conventions
+      the package-lifecycle doc-test established.
+    steps:
+      - title: "Drive both failures, then the intact-file counter-proof"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/failpath-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the empty user-dir. Only the baked-in apps are present."
+              screenshot: "failpath-launch.png"
+
+            # The plugin's view (and the pmui.BackendStore hook) is created
+            # lazily on first activation — wait for PMU's own header text
+            # rather than sleeping a fixed amount.
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "The Package Manager view loads"
+              action: wait_for
+              texts: ["Manage your plugins and packages."]
+              timeout: 60000
+
+            - name: "Let its backend connections settle"
+              action: sleep
+              ms: 3000
+
+            # ── Failure 1: the truncated download ──────────────────────────
+            - name: "Hand the truncated package to the Package Manager"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"]
+              text: "PMU asks the `package_manager` module to inspect the file — the step that would normally read the manifest and route to the install gate. The archive dies mid-decompression instead, the module reports the load failure, and PMU broadcasts it as a failed installation. Basecamp picks that report up and raises the failure notice."
+
+            - name: "Basecamp surfaces the failure — by name, with the error"
+              action: wait_for
+              texts:
+                - "Install Failed"
+                - "'test_failpath_qml-truncated.lgx' could not be installed. The package manager reported:"
+                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
+              timeout: 30000
+
+            # Dialog identity, not just text: the per-mode instances keep
+            # their titles in the object tree while closed, so a text wait
+            # alone can pass on a stale render.
+            - name: "It is the Install Failed notice that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "visible"
+              value: true
+
+            # Pin the bound property too, not just its rendered text.
+            - name: "…and it carries the package manager's error"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "errorMessage"
+              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
+
+            # Keep the screenshot on its own settle step: these failures are
+            # near-instant, so a text match can land before the overlay
+            # widget repaints and capture the window without the dialog.
+            - name: "Let the notice paint"
+              action: sleep
+              ms: 1000
+              text: "The dialog names the exact file that failed and quotes the package manager's own error underneath. Before this notice existed, the only trace of a corrupt-file install was a line in the log — the UI simply did nothing."
+              screenshot: "failpath-truncated-dialog.png"
+
+            - name: "…and the install gate never opened"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: false
+              text: "The gate's job is to confirm a name and a version — and a broken archive yielded neither. The failure aborted the flow before anything was worth confirming, so the only dialog raised is the error notice."
+
+            - name: "Dismiss the notice"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError.confirm"
+
+            - name: "Let the dialog close"
+              action: sleep
+              ms: 1000
+
+            - name: "The notice is closed again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "visible"
+              value: false
+
+            # ── Failure 2: not an archive at all ───────────────────────────
+            - name: "Hand over the text file wearing an .lgx extension"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-failpath/not-a-package.lgx"]
+              text: "Same entry point, different breakage: this file isn't merely cut short, it was never an archive. The extension satisfies PMU's client-side check; the package manager's reader is not so easily fooled."
+
+            - name: "The same notice fires for the impostor file"
+              action: wait_for
+              texts:
+                - "Install Failed"
+                - "'not-a-package.lgx' could not be installed. The package manager reported:"
+                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
+              timeout: 30000
+
+            - name: "It is the Install Failed notice that is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "visible"
+              value: true
+
+            - name: "…and it carries this file's error, not a stale one"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "errorMessage"
+              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
+              text: "The property assertion also rules out a leftover from the first failure: the notice was re-opened with *this* file's message, not merely re-shown with the previous one."
+
+            - name: "Let the notice paint"
+              action: sleep
+              ms: 1000
+              text: "Different corruption, same surfacing: whatever the reason an archive can't be read, the user learns which file failed. The quoted error has the same shape as the truncated file's — the LGX loader reports *that* it couldn't read the package, naming the path, not which byte offended it — so the file name is what tells the two apart."
+              screenshot: "failpath-notapackage-dialog.png"
+
+            - name: "Dismiss it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError.confirm"
+
+            - name: "Let the dialog close"
+              action: sleep
+              ms: 1000
+
+            # ── Counter-proof: the intact package still installs fine ──────
+            - name: "Hand over the same package, intact this time"
+              action: call_method
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              method: "installLocalPackage"
+              args: ["file:///tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx"]
+
+            - name: "The normal install gate opens for it"
+              action: wait_for
+              texts:
+                - "Install Package?"
+                - "Install 'test_failpath_qml' v0.1.1. No other packages need to change."
+              timeout: 30000
+
+            - name: "It is the install gate — and the error notice stayed closed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: true
+
+            - name: "Let the gate paint"
+              action: sleep
+              ms: 1000
+              text: "The counter-proof, and the contrast this doc-test exists to show: the very same package that just failed twice in broken form gates as a perfectly normal fresh install when intact. The failures were about the files, not the flow — and they left nothing behind."
+              screenshot: "failpath-valid-gate.png"
+
+            - name: "No stale failure notice alongside it"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError"
+              property: "visible"
+              value: false
+
+            - name: "Dismiss the gate without installing"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.cancel"
+              text: "Nothing gets installed in this spec — cancel flows back through the module gate and PMU drops its stashed path. The user-dir ends the run as empty as it began."
+
+            - name: "Let the dialog close"
+              action: sleep
+              ms: 1000
+
+            - name: "The gate is closed again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
+              property: "visible"
+              value: false
+        post_text: |
+          One green run pinned down what failure looks like: a truncated
+          `.lgx` and a fake `.lgx` each produced an **Install Failed** notice
+          naming the file and quoting the package manager's error — and
+          neither ever reached the install gate, because a file whose
+          manifest can't be read has nothing to confirm. The intact original
+          then gated as a completely normal fresh install, proving the
+          failures were surfaced *and* contained. What the other doc-tests
+          show working, this one shows failing loudly — which is what a
+          failure path is for.

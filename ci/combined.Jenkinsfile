@@ -1,5 +1,5 @@
 #!/usr/bin/env groovy
-library 'status-jenkins-lib@v1.9.47'
+library 'status-jenkins-lib@v1.9.48'
 
 urls = [:]
 
@@ -43,7 +43,7 @@ pipeline {
         } } }
         stage('Linux/aarch64') { steps { script {
           linux_aarch64 = getArtifacts(
-            'Linux-ARM', jenkins.Build('logos-basecamp/systems/linux/aarch64/package')
+            'Linux-ARM', jenkins.Build('logos/logos-basecamp/systems/linux/aarch64/package')
           )
         } } }
         stage('macOS/aarch64') { steps { script {

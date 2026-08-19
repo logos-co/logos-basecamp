@@ -140,12 +140,12 @@
     # come from the same generation as the host runtime above.
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/c932e1c4bfb5e5e2e04abfb7e561ed19ba18ffca";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    # Rev-pinned: 3ef779c is the tip of feat/sdk-codegen-b4-qt-host WITH master
-    # merged in, so it carries the hot-reload fix (#24) as well as the move onto
-    # the split host. Same rev logos-module-builder and logos-standalone-app pin —
-    # 5510acd, the previous value here, is no longer what they use.
+    # Unpinned: logos-view-module-runtime#25 merged, so master carries the move
+    # onto the split host and no longer rev-pins logos-plugin-qt itself. That
+    # matters here beyond tidiness: a runtime naming a different plugin-qt puts a
+    # second logos-qt-host in the closure.
     logos-view-module-runtime = {
-      url = "github:logos-co/logos-view-module-runtime/3ef779c11120c74bed3f7aea92551ccc3daffd73";
+      url = "github:logos-co/logos-view-module-runtime";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
     };

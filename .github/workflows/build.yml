@@ -8,6 +8,19 @@ on:
   pull_request:
     branches: [master]
 
+# Nix and the Logos cache come from logos-co/setup-nix-cache-action, which owns
+# the installer, the substituters, the trusted keys, which cache is written
+# (public on master/main, ci elsewhere) and the push itself. This file used to
+# own all of that four times over.
+#
+# The ATTIC_CACHE / ATTIC_ENDPOINT env pair that lived here is gone: the first is
+# the shared action's decision, and the second existed only to feed `if:` guards
+# that skipped the push on fork PRs. The shared action needs no guard -- with no
+# token it configures the substituters anyway and skips the push, which is the
+# behaviour those guards were approximating. The repo's ATTIC_ENDPOINT secret is
+# consequently unused here; the action's default endpoint is the same host this
+# file already pointed at.
+
 jobs:
   build-appimage:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
@@ -27,8 +40,6 @@ jobs:
         with:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
-          extra-nix-config: |
-            experimental-features = nix-command flakes
 
       - name: Build bin-appimage
         run: nix build .#bin-appimage
@@ -49,6 +60,67 @@ jobs:
         with:
           name: appimage-${{ matrix.arch }}
           path: logos-basecamp-*.AppImage
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Windows. A CROSS build on an ordinary Linux runner -- nix does not run on
+  # Windows, so there is no Windows runner in this workflow; the executing of
+  # the result is covered separately by logos-windows-ci.
+  #
+  # bin-bundle-dir rather than `default`: it is the same portable directory the
+  # AppImage and .app jobs above package, laid out the way the app expects
+  # (bin/ + lib/qt-6/{plugins,qml} + an explicit qt.conf). A PE records no
+  # rpath, so this layout IS the deployment contract -- see nix-bundle-dir's PE
+  # path.
+  build-windows:
+    environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: logos-co/setup-nix-cache-action@v1
+        with:
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      - name: Build the Windows bundle
+        run: nix build .#packages.x86_64-windows.bin-bundle-dir -L
+
+      # `zip`, not tar.gz: this is the one artifact here whose users are on
+      # Windows, where Explorer opens a .zip and nothing opens a .tar.gz.
+      #
+      # -r through `result/` DEREFERENCES: the bundle's DLLs are symlinks into
+      # the nix store, and an archive of dangling links extracts to a tree that
+      # cannot start. nix-bundle-lgx shipped exactly that bug -- `cp -a` implied
+      # --no-dereference, the payload lost 75% of its files, and the step exited
+      # 0. The count assertion below is why it cannot recur silently.
+      - name: Package the bundle as a zip
+        run: |
+          set -euo pipefail
+          src=$(readlink -f result)
+          staged=$(find -L "$src" -type f | wc -l | tr -d ' ')
+          [ "$staged" -gt 0 ] || { echo "::error::the bundle is empty"; exit 1; }
+          mkdir -p pkg/logos-basecamp
+          cp -rL "$src"/. pkg/logos-basecamp/
+          ( cd pkg && zip -qr ../logos-basecamp-x86_64-windows.zip logos-basecamp )
+          zipped=$(unzip -l logos-basecamp-x86_64-windows.zip | tail -1 | awk '{print $2}')
+          echo "bundle $staged file(s) -> zip $zipped entr(ies)"
+          # A dropped symlink is invisible in an exit code. Compare the counts.
+          if [ "$zipped" -lt "$staged" ]; then
+            echo "::error::the zip holds $zipped entries but the bundle has $staged files."
+            echo "::error::Something was not dereferenced; the extracted tree would be"
+            echo "::error::missing DLLs and could not start."
+            exit 1
+          fi
+          # A PE with no .exe is a bundle nobody can run.
+          n_exe=$(find pkg -name '*.exe' | wc -l | tr -d ' ')
+          [ "$n_exe" -gt 0 ] || { echo "::error::no .exe in the bundle"; exit 1; }
+          echo "exe(s): $n_exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: logos-basecamp-x86_64-windows.zip
 
   build-macos-app:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
@@ -98,8 +170,6 @@ jobs:
         with:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
-          extra-nix-config: |
-            experimental-features = nix-command flakes
 
       - name: Unit tests
         run: nix build .#unit-tests -L
@@ -173,7 +243,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [build-appimage, build-macos-app]
+    needs: [build-appimage, build-macos-app, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -194,6 +264,11 @@ jobs:
           name: macos-app-aarch64-darwin
           path: artifacts/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x86_64
+          path: artifacts/
+
       - name: Generate tag
         id: tag
         run: echo "tag=pre-release-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -206,3 +281,4 @@ jobs:
           files: |
             artifacts/*.AppImage
             artifacts/*.app.tar.gz
+            artifacts/*-windows.zip

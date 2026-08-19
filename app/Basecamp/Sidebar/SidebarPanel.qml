@@ -130,9 +130,9 @@ Control {
                             enabled: !loading
                             checked: modelData.name === (backend.currentVisibleApp || "")
                             appName: modelData.name
-                            packageColor: modelData.color || ""
                             text: modelData.displayName || modelData.name
-                            icon.source: modelData.iconPath
+                            iconSource: modelData.iconPath
+                            fullBleedIcon: modelData.supportsFullBleedIcon === true
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
                             onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
@@ -155,9 +155,9 @@ Control {
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
                             enabled: !loading
                             appName: modelData.name
-                            packageColor: modelData.color || ""
                             text: modelData.displayName || modelData.name
-                            icon.source: modelData.iconPath
+                            iconSource: modelData.iconPath
+                            fullBleedIcon: modelData.supportsFullBleedIcon === true
                             hasMissingDeps: modelData.hasMissingDeps === true
                             onClicked: root.launchUIModule(modelData.name)
                             onTooltipRequested: (text, y) => root.tooltipRequested(text, y)

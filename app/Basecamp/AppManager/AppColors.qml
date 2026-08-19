@@ -15,7 +15,12 @@ QtObject {
         return h
     }
 
-    // Muted accent for dark-theme app tiles (single solid fill).
+    // Muted accent for the monogram fallback tile (single solid fill).
+    //
+    // Used only while an app is un-installed AND has no icon — a browsing
+    // affordance that gives an otherwise-uniform grid of unknown packages
+    // some scannability. Once installed, or once a real icon resolves, the
+    // tile switches to the flat theme grey. See LogosTile in the design system.
     function colorForApp(appKey) {
         if (!appKey) return Theme.palette.surfaceRaised
         var h = hash32(appKey)
@@ -25,18 +30,4 @@ QtObject {
         return Qt.hsla(hue, sat, light, 1.0)
     }
 
-    function accentForDarkTheme(color) {
-        var c = Qt.color(color)
-        var hue = c.hsvHue
-        if (hue < 0)
-            hue = (hash32(color) / 4294967296) % 1
-        var sat = Math.max(0.30, Math.min(c.hsvSaturation > 0 ? c.hsvSaturation : 0.38, 0.50))
-        return Qt.hsva(hue, sat, 0.28, 1.0)
-    }
-
-    function tileColor(packageColor, appKey) {
-        if (packageColor && packageColor.length > 0)
-            return accentForDarkTheme(packageColor)
-        return colorForApp(appKey)
-    }
 }

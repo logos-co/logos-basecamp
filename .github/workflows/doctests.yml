@@ -140,6 +140,10 @@ jobs:
           #     core-module dependency exists nowhere, then asserts the sidebar
           #     red-cross marker and the Missing Dependencies dialog raised by
           #     the load gate (hermetic: hand-written user-dir fixture).
+          #   basecamp-failure-paths — hands a truncated .lgx and a fake .lgx
+          #     to the Package Manager and asserts Basecamp's Install Failed
+          #     notice surfaces each error (then proves the intact package
+          #     still gates normally; hermetic — nothing is installed).
           #   basecamp-persistence — installs a hand-crafted local .lgx through
           #     the install gate, then relaunches the bundle against the same
           #     user-dir and asserts the app is rediscovered from disk alone;
@@ -147,6 +151,15 @@ jobs:
           #     moved user-dir and asserts true portability (zero /nix/store
           #     refs in dynamic-link metadata, app + module still loadable)
           #     (hermetic — no catalog packages are downloaded or installed).
+          #   basecamp-module-unload — stages the logos-test-modules full-API
+          #     chain into a user-dir and drives Settings → Module Inspector:
+          #     the protected core modules (package_manager, package_downloader,
+          #     capability_module) have their Load/Unload toggle disabled; a
+          #     leaf module loads/unloads without a dialog; unloading a module
+          #     with running dependents raises the cascade dialog and Unload
+          #     All tears down exactly the chain; the app reloads afterwards;
+          #     unloading the chain's middle module cascades to its dependent
+          #     only and leaves its own dependencies loaded.
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
@@ -155,7 +168,9 @@ jobs:
             doctests/basecamp-shortcut-bridge.test.yaml \
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
+            doctests/basecamp-failure-paths.test.yaml \
             doctests/basecamp-persistence.test.yaml \
+            doctests/basecamp-module-unload.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -183,7 +198,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-persistence; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \

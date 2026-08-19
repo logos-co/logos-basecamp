@@ -11,6 +11,8 @@ import Logos.Theme
 //
 // Visibility rules:
 //   * main_ui never gets a load toggle — that module is this app.
+//   * `locked` rows keep the toggle visible but disabled — the host view sets
+//     it for modules Basecamp itself runs on (see ModuleInspectorView).
 //   * Interface only renders for loaded modules, and only where the host view
 //     has somewhere to navigate to (`interfaceEnabled`).
 RowLayout {
@@ -19,6 +21,7 @@ RowLayout {
     property var row: null
     property bool interfaceEnabled: false
     property bool busy: false
+    property bool locked: false
 
     signal loadToggleRequested()
     signal interfaceRequested()
@@ -33,7 +36,7 @@ RowLayout {
         Layout.preferredHeight: 40
         radius: Theme.spacing.radiusLarge
         visible: root.row && !root.row.isMainUi
-        enabled: !root.busy
+        enabled: !root.busy && !root.locked
         text: root.row && root.row.isLoaded ? qsTr("Unload") : qsTr("Load")
         variant: root.row && root.row.isLoaded ? LogosButton.Variant.Secondary
                                               : LogosButton.Variant.Primary

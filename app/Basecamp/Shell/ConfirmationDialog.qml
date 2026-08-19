@@ -7,7 +7,7 @@ import Logos.Theme
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
-// Five display variants, selected via `mode`:
+// Display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
 //                       dependencies aren't installed. The only action is an
 //                       "OK" that closes the dialog — Cancel is hidden, since
@@ -40,6 +40,8 @@ import Logos.Theme
 //                       Note: for a local .lgx the initiator has no catalog to
 //                       resolve against, so `depChanges` arrives empty and the
 //                       dialog is name + version only.
+//  - "installError"   — informational; an install failed. Shows the package
+//                       (or picked file) name + the reported error, OK only.
 //
 // Uninstall confirmation is NOT here — it lives in UninstallDialog.qml, which
 // renders a resolved plan (what goes, what stays and why, what breaks) rather
@@ -53,7 +55,7 @@ import Logos.Theme
 Dialog {
     id: root
 
-    // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate"
+    // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate" | "installError"
     property string mode: "missingDeps"
     property string moduleName: ""
     property var items: []
@@ -75,6 +77,8 @@ Dialog {
     //               dialog lists exactly what else will change. Empty = nothing
     //               else needs to change.
     property var depChanges: []
+
+    property string errorMessage: ""
 
     property var displayNameLookup: function(name) { return name; }
 
@@ -135,6 +139,17 @@ Dialog {
         open();
     }
 
+    function openWithInstallError(name_, errorMessage_) {
+        root.mode = "installError";
+        root.moduleName = name_ || "";
+        root.errorMessage = errorMessage_ || "";
+        root.items = [];
+        root.loadedItems = [];
+        root.depChanges = [];
+        root._explicitClose = false;
+        open();
+    }
+
     background: Rectangle {
         color: Theme.palette.surfaceRaised
         border.color: Theme.palette.border
@@ -172,6 +187,8 @@ Dialog {
                     }
                     if (root.mode === "installGate")
                         return "Install Package?";
+                    if (root.mode === "installError")
+                        return "Install Failed";
                     return "";
                 }
                 font.pixelSize: Theme.typography.panelTitleText
@@ -234,7 +251,31 @@ Dialog {
                     return iHead + " Installing it also applies the dependency "
                                  + "changes listed below:";
                 }
+                if (root.mode === "installError") {
+                    return "'" + _label + "' could not be installed. "
+                         + "The package manager reported:";
+                }
                 return "";
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            color: "#1e1e1e"
+            radius: 4
+            border.color: "#3d3d3d"
+            border.width: 1
+            implicitHeight: errorMessageText.implicitHeight + 16
+            visible: root.mode === "installError" && root.errorMessage.length > 0
+
+            LogosText {
+                id: errorMessageText
+                anchors.fill: parent
+                anchors.margins: 8
+                text: root.errorMessage
+                color: "#e0e0e0"
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
             }
         }
 
@@ -410,8 +451,8 @@ Dialog {
 
             Item { Layout.fillWidth: true }
 
-            // Cancel button — hidden in informational mode since there's
-            // only one button to press there.
+            // Cancel button — hidden in the informational modes since
+            // there's only one button to press there.
             //
             // Both buttons carry a mode-derived objectName so UI automation
             // can target them exactly. Text-based clicking is ambiguous here:
@@ -426,7 +467,7 @@ Dialog {
             LogosButton {
                 objectName: "confirmationDialog." + root.mode + ".cancel"
                 text: "Cancel"
-                visible: root.mode !== "missingDeps"
+                visible: root.mode !== "missingDeps" && root.mode !== "installError"
                 onClicked: {
                     root._explicitClose = true;
                     root.cancelClicked(root.moduleName);

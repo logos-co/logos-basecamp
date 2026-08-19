@@ -146,6 +146,9 @@ signals:
     // Settings → Repositories without touching the QtRO replica directly.
     void navigateToRepositoriesRequested();
 
+    // Failures filtered out of package_manager_ui's installationProgressUpdated.
+    void packageInstallFailedNotice(const QString& packageName, const QString& errorMessage);
+
     // Plugin-window coordination — consumed by WorkspaceArea via
     // MainUIBackend's forwarders.
     void pluginWindowRequested(QWidget* widget, const QString& title);
@@ -157,6 +160,10 @@ private slots:
                         IComponent* component, UIPluginType type,
                         ViewModuleHost* viewHost);
     void onPluginLoadFailed(const QString& name, const QString& error);
+
+    void onPmuiInstallProgress(int progressType, const QString& packageName,
+                               int completed, int total, bool success,
+                               const QString& error);
 
     // Consume the uiPluginsFetched signal from PackageCoordinator. Replaces the
     // old in-class getInstalledUiPluginsAsync call — PackageCoordinator owns the
