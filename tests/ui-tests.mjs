@@ -14,11 +14,18 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { writeSync } from "node:fs";
+import { makeTest } from "./fixtures/harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp");
-const { test, run } = await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
+const { test: frameworkTest, run } =
+  await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
+
+// Every test inherits the G-ERR/G-ALIVE epilogue (assertNoNewQmlErrors +
+// assertResponsive) and gains { xfail: "..." } support — the framework
+// itself lives in logos-qt-mcp, so the wrapper is local.
+const test = makeTest(frameworkTest);
 
 // Total-elapsed report for the PR-gate time budget (MCP_TEST_BUDGET_SECONDS,
 // enforced in nix/integration-test.nix + nix/shutdown-test.nix). The runner

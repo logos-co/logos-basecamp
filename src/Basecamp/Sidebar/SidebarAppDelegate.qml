@@ -26,6 +26,11 @@ AbstractButton {
     property bool hasMissingDeps: false
     property string appName: ""
 
+    // Read-only test hook: whether this app is the front-most visible one
+    // (the orange active marker). Lets UI automation assert the active app
+    // without decoding the background rectangle's color.
+    readonly property bool active: checked
+
     implicitHeight: 50
     hoverEnabled: true
 

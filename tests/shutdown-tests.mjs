@@ -25,6 +25,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import net from "node:net";
+import {
+  SHUTDOWN_TIER,
+  assertCleanTeardown as assertCleanTeardownImpl,
+  findByObjectName,
+  scanForQmlErrors,
+  waitForExit,
+} from "./fixtures/harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -71,31 +78,35 @@ async function waitForInspector() {
   throw new Error(`inspector never came up on ${HOST}:${PORT}`);
 }
 
-function waitForExit(child, ms) {
-  return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      return resolve({ code: child.exitCode, signal: child.signalCode });
-    }
-    const timer = setTimeout(() => resolve(null), ms);
-    child.once("exit", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code, signal });
-    });
-  });
-}
-
 // Body-return protocol: throw = FAIL; return {skip: reason} = SKIP; else PASS.
 class SkipTest {
   constructor(reason) { this.reason = reason; }
 }
 function skipTest(reason) { return new SkipTest(reason); }
 
-async function runTest(name, body) {
+// Per-test context for assertCleanTeardown: the captured app output and a
+// promise for the child's stdio-close, both owned by runTest.
+let currentRun = null;
+
+// Supported opts:
+//   { xfail: "M1" }   — report XFAIL on failure, fail LOUDLY on unexpected pass
+//   { tier: "full" }  — only runs when SHUTDOWN_TIER=full (nightly); the PR
+//                       gate runs with the default SHUTDOWN_TIER=pr
+async function runTest(name, body, opts = {}) {
   process.stdout.write(`  ${name} ... `);
+  if (opts.tier === "full" && SHUTDOWN_TIER !== "full") {
+    console.log(`\x1b[33mSKIP\x1b[0m — tier "full" test under SHUTDOWN_TIER=${SHUTDOWN_TIER}`);
+    return "skip";
+  }
   const child = spawnApp();
   const logChunks = [];
   child.stdout.on("data", (d) => logChunks.push(d));
   child.stderr.on("data", (d) => logChunks.push(d));
+  const closed = new Promise((r) => child.once("close", r));
+  currentRun = {
+    log: () => Buffer.concat(logChunks).toString("utf-8"),
+    closed,
+  };
 
   let outcome = "pass";
   let err = null;
@@ -104,19 +115,41 @@ async function runTest(name, body) {
     await waitForInspector();
     // Give plugins time to finish loading so shutdown exercises the full teardown path.
     await new Promise((r) => setTimeout(r, APP_WARMUP_MS));
+    // G-ERR scans only the startup/warmup output: quitting is this suite's
+    // whole point, and teardown legitimately emits noise a log-regex would
+    // trip on (the lesson recorded in nix/smoke-test.nix).
+    const startupChunkCount = logChunks.length;
     const ret = await body(child);
     if (ret instanceof SkipTest) {
       outcome = "skip";
       skipReason = ret.reason;
+    } else {
+      const qmlErrors = scanForQmlErrors(
+        Buffer.concat(logChunks.slice(0, startupChunkCount)).toString("utf-8"));
+      if (qmlErrors.length > 0) {
+        throw new Error(
+          `G-ERR: QML error(s) during startup:\n  ${qmlErrors.join("\n  ")}`);
+      }
     }
   } catch (e) {
     outcome = "fail";
     err = e;
   } finally {
+    currentRun = null;
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
       await waitForExit(child, 2000);
     }
+  }
+
+  if (outcome === "pass" && opts.xfail) {
+    outcome = "fail";
+    err = new Error(
+      `XPASS: test passed but is marked xfail (${opts.xfail}) — the fix ` +
+      `landed, remove the xfail marker`);
+  } else if (outcome === "fail" && opts.xfail) {
+    console.log(`\x1b[33mXFAIL\x1b[0m (${opts.xfail}) — ${err.message}`);
+    return "pass";
   }
 
   if (outcome === "pass") {
@@ -132,21 +165,17 @@ async function runTest(name, body) {
   return outcome;
 }
 
-async function assertGracefulExit(child) {
-  const exit = await waitForExit(child, SHUTDOWN_WAIT_MS);
-  if (!exit) throw new Error(`did not exit within ${SHUTDOWN_WAIT_MS}ms`);
-  if (exit.signal) throw new Error(`terminated by signal ${exit.signal} instead of orderly exit`);
-  if (exit.code !== 0) throw new Error(`exit code ${exit.code}, want 0`);
-}
-
-async function findByObjectName(inspector, name) {
-  // findByProperty on objectName reliably finds the tagged object
-  // regardless of how its other properties (QKeySequence, etc.) get
-  // JSON-serialised by the MCP server.
-  const res = await inspector.send("findByProperty", {
-    property: "objectName", value: name,
+// G-EXIT: the old assertGracefulExit (exit code 0, no killing signal),
+// extended into assertCleanTeardown — the captured log must also end on a
+// complete line once the stdio streams close. tests/fixtures/harness.mjs
+// additionally checks orphan processes / partial files when a --user-dir is
+// in play (none is here yet).
+async function assertCleanTeardown(child) {
+  await assertCleanTeardownImpl(child, {
+    waitMs: SHUTDOWN_WAIT_MS,
+    log: currentRun?.log,
+    closed: currentRun?.closed,
   });
-  return (res.matches ?? [])[0] || null;
 }
 
 // The hide-to-tray branch of Window::closeEvent only runs when a system
@@ -164,18 +193,18 @@ async function trayIsAvailable(inspector) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-console.log(`\nlogos-basecamp shutdown tests (${process.platform})\n`);
+console.log(`\nlogos-basecamp shutdown tests (${process.platform}, tier: ${SHUTDOWN_TIER})\n`);
 const suiteStart = Date.now();
 const results = [];
 
 results.push(await runTest("SIGTERM triggers graceful shutdown", async (child) => {
   child.kill("SIGTERM");
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 results.push(await runTest("SIGINT triggers graceful shutdown", async (child) => {
   child.kill("SIGINT");
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 if (process.platform === "linux") {
@@ -197,7 +226,7 @@ if (process.platform === "linux") {
     });
     inspector.disconnect();
     if (res.error) throw new Error(`callMethod(activated) failed: ${res.error}`);
-    await assertGracefulExit(child);
+    await assertCleanTeardown(child);
   }));
 }
 
@@ -219,7 +248,7 @@ if (process.platform === "darwin") {
     });
     inspector.disconnect();
     if (res.error) throw new Error(`callMethod(trigger) failed: ${res.error}`);
-    await assertGracefulExit(child);
+    await assertCleanTeardown(child);
   }));
 }
 
@@ -240,7 +269,7 @@ if (process.platform === "linux") {
     const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
     inspector.disconnect();
     if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-    await assertGracefulExit(child);
+    await assertCleanTeardown(child);
   }));
 } else {
   results.push(await runTest("macOS/Windows: Window.close() hides to tray, does not quit", async (child) => {
@@ -285,7 +314,7 @@ results.push(await runTest("Tray Quit QAction is wired and quits", async (child)
   const res = await inspector.send("callMethod", { objectId: action.id, method: "trigger" });
   inspector.disconnect();
   if (res.error) throw new Error(`callMethod(trigger) failed: ${res.error}`);
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 const passed = results.filter((r) => r === "pass").length;
