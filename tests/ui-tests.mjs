@@ -82,19 +82,25 @@ test("welcome: first launch shows the welcome page", async (app) => {
 
   // Greeting follows backend.launcherApps.length: 0 ⇒ first-launch wording,
   // otherwise "Welcome back". backend is a global context property, so the
-  // welcome page itself serves as the evaluate anchor.
-  const lenRes = await app.inspector.send("evaluate", {
-    objectId: welcome.id, expression: "backend.launcherApps.length",
-  });
-  if (lenRes.error) {
-    throw new Error(`evaluate(backend.launcherApps.length) failed: ${lenRes.error}`);
-  }
-  if (typeof lenRes.result !== "number") {
-    throw new Error(
-      `backend.launcherApps.length=${JSON.stringify(lenRes.result)} (expected number)`);
-  }
-  const expected = lenRes.result === 0 ? "Welcome to Basecamp!" : "Welcome back";
-  await app.expectTexts([expected]);
+  // welcome page itself serves as the evaluate anchor. launcherApps populates
+  // asynchronously at startup (PackageCoordinator refresh →
+  // launcherAppsChanged), so read the length and assert the matching greeting
+  // in one retried step — a fixed pre-read would race the refresh on
+  // installations that have apps.
+  await app.waitFor(async () => {
+    const lenRes = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.launcherApps.length",
+    });
+    if (lenRes.error) {
+      throw new Error(`evaluate(backend.launcherApps.length) failed: ${lenRes.error}`);
+    }
+    if (typeof lenRes.result !== "number") {
+      throw new Error(
+        `backend.launcherApps.length=${JSON.stringify(lenRes.result)} (expected number)`);
+    }
+    const expected = lenRes.result === 0 ? "Welcome to Basecamp!" : "Welcome back";
+    await app.expectTexts([expected]);
+  }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
 
   // Exactly one of the two greetings is present — the title is a single
   // ternary Text, so both appearing (or neither) means a rendering bug.
