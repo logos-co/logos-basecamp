@@ -73,7 +73,7 @@
     # in logos-module's MODULE_LIB_HEADERS from fcaaf78 "fix(windows): resolve a
     # plugin's private DLLs from its own directory". An older rev fails the build
     # on EVERY platform, not just Windows — the header is installed unguarded.
-    logos-module.url = "github:logos-co/logos-module/9812dc8c69cfbfed3eea06510a5c1ff33c1fcf7f";
+    logos-module.url = "github:logos-co/logos-module";
     # The Qt-plugin module loader: the QtPluginFormatLoader that liblogos_core
     # links AND the logos_host binary this app ships (nix/app.nix copies it out
     # of ${logosLiblogos}/bin, which is just liblogos re-exporting this
@@ -109,7 +109,7 @@
     # feat/host-services-grant. Drop the rev once that merges, at which point
     # liblogos's own lock can carry it and this input can go away.
     logos-module-loader-qt = {
-      url = "github:logos-co/logos-module-loader-qt/06134bfcb726a53b889ffa56e43b08e94938b6cf";
+      url = "github:logos-co/logos-module-loader-qt";
       inputs.logos-protocol.follows = "logos-protocol";
     };
     # Rev-pinned: f2a15ef3 is the tip of fix/b4-align-protocol-with-qt-host —
@@ -117,7 +117,7 @@
     # store. liblogos_core.dll's export list (the other half of the Windows
     # one-copy fix) lands there, not on master.
     logos-liblogos = {
-      url = "github:logos-co/logos-liblogos/f2a15ef3022d8fb71dac3d612c8edec839fc51e7";
+      url = "github:logos-co/logos-liblogos";
       inputs.default-module-loader.follows = "logos-module-loader-qt";
     };
     logos-package-manager.url = "github:logos-co/logos-package-manager";
@@ -133,7 +133,7 @@
     # not arrive, and the loader pinned here could not grant them. That is fixed
     # above, at logos-module-loader-qt — so the pin returns to the rev the
     # comment always described.
-    logos-capability-module.url = "github:logos-co/logos-capability-module/07dba1fb32ec889e28848c7730f0d5b3912a5b5b";
+    logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
     # Rev-pinned: c932e1c is the tip of feat/universal-view-plugin — the
     # generated view plugin. This UI is loaded in-process by the app, so it must
@@ -149,7 +149,7 @@
     # but does not carry the view plugin, so tracking master here would trade a
     # build failure for a runtime mismatch that still looks green. The merge
     # gives both.
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/f1351952919b622f3d1e67c78ef3823e52c309cb";
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-design-system.url = "github:logos-co/logos-design-system";
     # Unpinned: logos-view-module-runtime#25 merged, so master carries the move
     # onto the split host and no longer rev-pins logos-plugin-qt itself. That
