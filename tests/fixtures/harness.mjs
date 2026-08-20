@@ -162,10 +162,10 @@ export async function assertResponsive(app, opts = {}) {
 //   - scanForQmlErrors(text): scan a captured log chunk (shutdown suite).
 //   - file mode: when BASECAMP_APP_LOG points at the app's log file,
 //     markQmlErrorBaseline() records a byte offset at test start and
-//     assertNoNewQmlErrors() fails on error lines appended since. When the
-//     env var is unset (the default today) both are no-ops, so suites that
-//     don't capture the app's output lose nothing and gain the gate for free
-//     once the log is wired through.
+//     assertNoNewQmlErrors() fails on error lines appended since. The CI
+//     ui-tests run wires this up (nix/integration-test.nix tees the app's
+//     stdout/stderr into the file); when the env var is unset — e.g. running
+//     ui-tests by hand against an already-running app — both are no-ops.
 // ---------------------------------------------------------------------------
 const QML_ERROR_RE =
   /\.qml:\d+(?::\d+)?:?\s.*(Error|error:|is not a type|is not defined|No such file|Cannot assign|Unable to assign)/;

@@ -36,11 +36,29 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 
+  # G-ERR wiring (tests/fixtures/harness.mjs): the harness's file-mode QML
+  # error gate scans the file named by BASECAMP_APP_LOG, taking a byte-offset
+  # baseline at each test's start. The framework (logos-qt-mcp — external
+  # flake input, not editable here) launches the app itself, so interpose a
+  # wrapper "binary" that tees the app's stdout/stderr into that file while
+  # passing both streams through unchanged (exec keeps the app on the PID the
+  # framework spawned, so its kill still lands). QT_FORCE_STDERR_LOGGING
+  # (above) keeps QML engine errors on stderr even though it is now a pipe.
+  export BASECAMP_APP_LOG="$out/app.log"
+  : > "$BASECAMP_APP_LOG"
+  cat > app-with-log.sh <<'WRAPPER'
+  #!${pkgs.runtimeShell}
+  exec ${appBin} "$@" \
+    > >(tee -a "$BASECAMP_APP_LOG") \
+    2> >(tee -a "$BASECAMP_APP_LOG" >&2)
+  WRAPPER
+  chmod +x app-with-log.sh
+
   echo "Running logos-basecamp integration tests (timeout: ${toString timeoutSec}s)..."
 
   start=$(date +%s)
   timeout ${toString timeoutSec} \
-    ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci ${appBin} --verbose
+    ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci "$PWD/app-with-log.sh" --verbose
   elapsed=$(( $(date +%s) - start ))
   echo "$elapsed" > $out/elapsed-seconds
 
