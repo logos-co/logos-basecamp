@@ -178,18 +178,6 @@ async function assertCleanTeardown(child) {
   });
 }
 
-// The hide-to-tray branch of Window::closeEvent only runs when a system
-// tray is actually available. In offscreen CI (Xvfb without a tray daemon,
-// or QT_QPA_PLATFORM=offscreen) there is no tray, so closing the window
-// quits instead of hiding — that's correct behaviour, just not the branch
-// we want to exercise. The tray-Quit action isn't even constructed when
-// the tray is unavailable, so its object won't exist to find.
-async function trayIsAvailable(inspector) {
-  const trayAction = await findByObjectName(inspector, "logosTrayQuitAction");
-  return trayAction != null;
-}
-
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -252,50 +240,31 @@ if (process.platform === "darwin") {
   }));
 }
 
-// Window.close() covers Alt+F4 / window-X (all platforms) and ⌘W / red-button (macOS).
-// Behaviour is platform-dependent:
-//   - Linux: closeEvent explicitly quits (matches GNOME/KDE convention).
-//   - macOS/Windows: closeEvent hides to tray when the tray is available
-//     (Discord/Slack tray-app convention).
-if (process.platform === "linux") {
-  results.push(await runTest("Linux: Window.close() quits (Alt+F4 / X button convention)", async (child) => {
-    const inspector = new Inspector();
-    await inspector.connect();
-    const win = await findByObjectName(inspector, "logosMainWindow");
-    if (!win) {
-      inspector.disconnect();
-      throw new Error("Window objectName=logosMainWindow not found");
-    }
-    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
+// Window.close() covers Alt+F4 / window-X (all platforms) and ⌘W / red-button
+// (macOS). Since 3a73d33 ("revert x on linux closes app") the convention is
+// the same on every platform: closing the window never quits. The app keeps
+// running — hidden to the tray when one is available, otherwise windowless
+// under setQuitOnLastWindowClosed(false) — matching the macOS dock /
+// Discord/Slack tray-app convention.
+results.push(await runTest("Window.close() does not quit; app keeps running (tray/dock convention)", async (child) => {
+  const inspector = new Inspector();
+  await inspector.connect();
+  const win = await findByObjectName(inspector, "logosMainWindow");
+  if (!win) {
     inspector.disconnect();
-    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-    await assertCleanTeardown(child);
-  }));
-} else {
-  results.push(await runTest("macOS/Windows: Window.close() hides to tray, does not quit", async (child) => {
-    const inspector = new Inspector();
-    await inspector.connect();
-    if (!(await trayIsAvailable(inspector))) {
-      inspector.disconnect();
-      return skipTest("no system tray in this environment (offscreen without tray daemon)");
-    }
-    const win = await findByObjectName(inspector, "logosMainWindow");
-    if (!win) {
-      inspector.disconnect();
-      throw new Error("Window objectName=logosMainWindow not found");
-    }
-    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
-    inspector.disconnect();
-    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-    // Give the event loop time to (not) process a shutdown.
-    await new Promise((r) => setTimeout(r, 3000));
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(
-        `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closeEvent should have hidden to tray`
-      );
-    }
-  }));
-}
+    throw new Error("Window objectName=logosMainWindow not found");
+  }
+  const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
+  inspector.disconnect();
+  if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
+  // Give the event loop time to (not) process a shutdown.
+  await new Promise((r) => setTimeout(r, 3000));
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw new Error(
+      `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closing the window must not quit`
+    );
+  }
+}));
 
 // Tray "Quit" action: must terminate the process. Same wiring as ⌘Q on mac
 // / Ctrl+Q on Linux, but a distinct connection worth guarding.
