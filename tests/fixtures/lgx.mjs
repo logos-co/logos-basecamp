@@ -1,32 +1,6 @@
-// ---------------------------------------------------------------------------
-// LGX fixture generator for the basecamp test suites.
-//
-// An .lgx is a gzipped ustar tar: manifest.json at the root plus a payload
-// under variants/<platform>/. This is a port of the inline shell generator in
-// doctests/basecamp-package-lifecycle.test.yaml — hand-write the stamped
-// manifest + payload, seed a plain-ustar tar, then let the `lgx` CLI inject
-// the payload and stamp the manifest's content hashes (packages without them
-// fail validation).
-//
-// Requires the lgx CLI for valid packages:
-//   nix build 'github:logos-co/logos-package#lgx' -o result-lgx
-// Override its location with LGX_CLI (default: <repo>/result-lgx/bin/lgx).
-//
-// Named fixtures (makeFixtureSet):
-//   app_a  → depends on mod_x, mod_y   ┐  the A→X,Y / B→Y trio for
-//   app_b  → depends on mod_y          ┘  dependency-cascade flows
-//   mod_x, mod_y                       core modules the apps depend on
-//   mod_z  → depends on no_such_module (a name nothing provides)
-//   bad_app                            corrupt manifest (invalid JSON)
-//
-// plus writeLocalRepo() — a local logos-repo.json (+ file:// package URLs)
-// for repository-driven install flows.
-//
-// The core-module fixtures are manifest-level: they give the resolver a
-// package identity and dependency edges, not a loadable binary (a compiled
-// lib can't be hand-crafted here). That is all the dependency/cascade gates
-// observe.
-// ---------------------------------------------------------------------------
+// LGX fixture generator: an .lgx is a gzipped ustar tar (manifest.json + payload
+// under variants/<platform>/); the lgx CLI (LGX_CLI) stamps the required content
+// hashes. Core-module fixtures are manifest-level only, not loadable binaries.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
@@ -87,8 +61,6 @@ function metadataFor({ name, displayName, version, type, dependencies, descripti
 }
 
 function qmlViewFor({ name, displayName, version }) {
-  // The view prints its own identity + version so a test can assert which
-  // payload actually runs after an install or upgrade.
   return `import QtQuick
 
 Rectangle {
@@ -104,9 +76,6 @@ Rectangle {
 `;
 }
 
-// Write the on-disk payload files for one package version into `payloadDir`.
-// For ui_qml that is metadata.json + Main.qml + qmldir; for core modules
-// just metadata.json (manifest-level fixture — see the header).
 export function writePayload(payloadDir, spec) {
   mkdirSync(payloadDir, { recursive: true });
   writeFileSync(join(payloadDir, "metadata.json"),
@@ -118,17 +87,6 @@ export function writePayload(payloadDir, spec) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// makeLgx — build one valid .lgx at outFile.
-//
-//   makeLgx({
-//     outFile: "/tmp/fixtures/app_a-0.1.0.lgx",
-//     name: "app_a", displayName: "App A", version: "0.1.0",
-//     type: "ui_qml",              // or "core"
-//     dependencies: ["mod_x"],
-//     verify: true,                // run `lgx verify` afterwards
-//   })
-// ---------------------------------------------------------------------------
 export function makeLgx(opts) {
   const {
     outFile,
@@ -164,8 +122,6 @@ export function makeLgx(opts) {
   // Plain ustar — the LGX reader doesn't speak pax extended headers.
   execFileSync("tar",
     ["--format", "ustar", "-C", seed, "-czf", outFile, "manifest.json", "variants"]);
-  // lgx add injects the payload into the platform variant and stamps the
-  // manifest's content hashes (the Merkle root packages must carry).
   execFileSync(lgx, ["add", outFile, "--variant", variant, "--files", payload, "-y"]);
   if (verify) execFileSync(lgx, ["verify", outFile]);
 
@@ -173,9 +129,7 @@ export function makeLgx(opts) {
   return outFile;
 }
 
-// bad_app — a syntactically broken package: valid gzipped ustar tar, corrupt
-// manifest.json (truncated JSON). Exercises the reject/error paths, so it is
-// deliberately NOT run through lgx (which would refuse to touch it).
+// Valid tar, corrupt manifest — deliberately NOT run through lgx (it would refuse).
 export function makeBadApp(outDir) {
   const outFile = join(outDir, "bad_app.lgx");
   const work = join(tmpdir(), `lgx-build-${process.pid}-bad_app`);
@@ -190,28 +144,21 @@ export function makeBadApp(outDir) {
   return outFile;
 }
 
-// Read the (possibly hash-stamped) manifest back out of an .lgx.
 export function readLgxManifest(lgxPath) {
   const out = execFileSync("tar", ["-xzOf", lgxPath, "manifest.json"],
     { encoding: "utf-8" });
   return JSON.parse(out);
 }
 
-// ---------------------------------------------------------------------------
-// makeFixtureSet — build the whole named set into outDir. Returns
-// { app_a, app_b, mod_x, mod_y, mod_z, bad_app } → absolute .lgx paths.
-// ---------------------------------------------------------------------------
 export function makeFixtureSet(outDir, opts = {}) {
   mkdirSync(outDir, { recursive: true });
   const version = opts.version || "0.1.0";
   const specs = {
-    // The A→X,Y / B→Y trio: uninstalling Y cascades to both apps,
-    // uninstalling X only to A.
+    // A→X,Y / B→Y: uninstalling Y cascades to both apps, X only to A.
     mod_x: { type: "core",   displayName: "Fixture Module X", dependencies: [] },
     mod_y: { type: "core",   displayName: "Fixture Module Y", dependencies: [] },
     app_a: { type: "ui_qml", displayName: "Fixture App A",    dependencies: ["mod_x", "mod_y"] },
     app_b: { type: "ui_qml", displayName: "Fixture App B",    dependencies: ["mod_y"] },
-    // Z depends on a name no module anywhere provides.
     mod_z: { type: "core",   displayName: "Fixture Module Z", dependencies: ["no_such_module"] },
   };
   const paths = {};
@@ -225,12 +172,7 @@ export function makeFixtureSet(outDir, opts = {}) {
   return paths;
 }
 
-// ---------------------------------------------------------------------------
-// writeInstalledPlugin — seed an already-installed package directly into a
-// --user-dir (plugins/ for ui_qml, modules/ for core), the way the
-// missing-deps doctest crafts broken end states. The package scanner only
-// reads manifest.json, so this is indistinguishable from a real install.
-// ---------------------------------------------------------------------------
+// Seed an installed package into a --user-dir; the scanner only reads manifest.json.
 export function writeInstalledPlugin(userDir, spec) {
   const full = {
     version: "0.1.0",
@@ -248,15 +190,7 @@ export function writeInstalledPlugin(userDir, spec) {
   return dir;
 }
 
-// ---------------------------------------------------------------------------
-// writeLocalRepo — a local repository the app can add by file:// URL:
-// logos-repo.json (name + indexUrl) next to an index listing the given .lgx
-// files with file:// download URLs. Row shape mirrors the default repo's
-// catalog index (name / versions[] / rootHash / manifest — see
-// tests/apps_model_test.cpp makeCatalogRow).
-//
-//   const { repoUrl } = writeLocalRepo(dir, { packages: [paths.app_a] });
-// ---------------------------------------------------------------------------
+// Local file:// repo: logos-repo.json + index listing the given .lgx files.
 export function writeLocalRepo(dir, opts = {}) {
   const { name = "Local Test Repo", packages = [] } = opts;
   mkdirSync(dir, { recursive: true });

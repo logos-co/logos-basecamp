@@ -84,14 +84,9 @@ class SkipTest {
 }
 function skipTest(reason) { return new SkipTest(reason); }
 
-// Per-test context for assertCleanTeardown: the captured app output and a
-// promise for the child's stdio-close, both owned by runTest.
 let currentRun = null;
 
-// Supported opts:
-//   { xfail: "M1" }   — report XFAIL on failure, fail LOUDLY on unexpected pass
-//   { tier: "full" }  — only runs when SHUTDOWN_TIER=full (nightly); the PR
-//                       gate runs with the default SHUTDOWN_TIER=pr
+// opts: { xfail } — loud on unexpected pass; { tier: "full" } — nightly only.
 async function runTest(name, body, opts = {}) {
   process.stdout.write(`  ${name} ... `);
   if (opts.tier === "full" && SHUTDOWN_TIER !== "full") {
@@ -115,9 +110,7 @@ async function runTest(name, body, opts = {}) {
     await waitForInspector();
     // Give plugins time to finish loading so shutdown exercises the full teardown path.
     await new Promise((r) => setTimeout(r, APP_WARMUP_MS));
-    // G-ERR scans only the startup/warmup output: quitting is this suite's
-    // whole point, and teardown legitimately emits noise a log-regex would
-    // trip on (the lesson recorded in nix/smoke-test.nix).
+    // G-ERR scans only startup output — teardown legitimately emits noise.
     const startupChunkCount = logChunks.length;
     const ret = await body(child);
     if (ret instanceof SkipTest) {
@@ -165,11 +158,6 @@ async function runTest(name, body, opts = {}) {
   return outcome;
 }
 
-// G-EXIT: the old assertGracefulExit (exit code 0, no killing signal),
-// extended into assertCleanTeardown — the captured log must also end on a
-// complete line once the stdio streams close. tests/fixtures/harness.mjs
-// additionally checks orphan processes / partial files when a --user-dir is
-// in play (none is here yet).
 async function assertCleanTeardown(child) {
   await assertCleanTeardownImpl(child, {
     waitMs: SHUTDOWN_WAIT_MS,
@@ -240,12 +228,7 @@ if (process.platform === "darwin") {
   }));
 }
 
-// Window.close() covers Alt+F4 / window-X (all platforms) and ⌘W / red-button
-// (macOS). Since 3a73d33 ("revert x on linux closes app") the convention is
-// the same on every platform: closing the window never quits. The app keeps
-// running — hidden to the tray when one is available, otherwise windowless
-// under setQuitOnLastWindowClosed(false) — matching the macOS dock /
-// Discord/Slack tray-app convention.
+// Since 3a73d33 closing the window never quits on any platform (tray/dock convention).
 results.push(await runTest("Window.close() does not quit; app keeps running (tray/dock convention)", async (child) => {
   const inspector = new Inspector();
   await inspector.connect();
@@ -257,7 +240,6 @@ results.push(await runTest("Window.close() does not quit; app keeps running (tra
   const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
   inspector.disconnect();
   if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-  // Give the event loop time to (not) process a shutdown.
   await new Promise((r) => setTimeout(r, 3000));
   if (child.exitCode !== null || child.signalCode !== null) {
     throw new Error(

@@ -22,16 +22,10 @@ const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp")
 const { test: frameworkTest, run } =
   await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
 
-// Every test inherits the G-ERR/G-ALIVE epilogue (assertNoNewQmlErrors +
-// assertResponsive) and gains { xfail: "..." } support — the framework
-// itself lives in logos-qt-mcp, so the wrapper is local.
+// Adds the G-ERR/G-ALIVE epilogue and { xfail } support to every test.
 const test = makeTest(frameworkTest);
 
-// Total-elapsed report for the PR-gate time budget (MCP_TEST_BUDGET_SECONDS,
-// enforced in nix/integration-test.nix + nix/shutdown-test.nix). The runner
-// lives in logos-qt-mcp and exits the process from inside run(), so the only
-// reliable "after the suite" hook is process exit; writeSync because async
-// stdout writes to a pipe can be dropped during exit.
+// run() exits the process itself; writeSync so the line isn't dropped at exit.
 const suiteStart = Date.now();
 process.on("exit", () => {
   writeSync(1, `Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s\n`);
@@ -48,14 +42,8 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
   );
 }
 
-// --- Welcome page (A1) ---
-//
-// Must run FIRST: it asserts the pre-interaction state of the shared app
-// instance (welcome page up, nothing clicked yet). Read-only — no clicks,
-// no state left behind.
+// --- Welcome page (A1) — must run FIRST: asserts the pre-interaction state ---
 async function findWelcomePage(app) {
-  // Prefer a framework findByType wrapper if one exists (mirrors
-  // app.findByProperty); otherwise talk to the inspector protocol directly.
   const res = typeof app.findByType === "function"
     ? await app.findByType("WelcomePage")
     : await app.inspector.send("findByType", { typeName: "WelcomePage" });
@@ -64,8 +52,6 @@ async function findWelcomePage(app) {
 }
 
 test("welcome: first launch shows the welcome page", async (app) => {
-  // A WelcomePage instance exists (it is WorkspaceArea's central widget
-  // whenever no docks are open) and is visible.
   let welcome = null;
   await app.waitFor(async () => {
     welcome = await findWelcomePage(app);
@@ -80,13 +66,7 @@ test("welcome: first launch shows the welcome page", async (app) => {
     throw new Error(`WelcomePage visible=${visRes.result} (expected true)`);
   }
 
-  // Greeting follows backend.launcherApps.length: 0 ⇒ first-launch wording,
-  // otherwise "Welcome back". backend is a global context property, so the
-  // welcome page itself serves as the evaluate anchor. launcherApps populates
-  // asynchronously at startup (PackageCoordinator refresh →
-  // launcherAppsChanged), so read the length and assert the matching greeting
-  // in one retried step — a fixed pre-read would race the refresh on
-  // installations that have apps.
+  // launcherApps populates asynchronously — check length + greeting in one retried step.
   await app.waitFor(async () => {
     const lenRes = await app.inspector.send("evaluate", {
       objectId: welcome.id, expression: "backend.launcherApps.length",
@@ -102,8 +82,6 @@ test("welcome: first launch shows the welcome page", async (app) => {
     await app.expectTexts([expected]);
   }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
 
-  // Exactly one of the two greetings is present — the title is a single
-  // ternary Text, so both appearing (or neither) means a rendering bug.
   const tree = JSON.stringify(await app.getTree({ depth: 50 }));
   const hasFirstLaunch = tree.includes("Welcome to Basecamp!");
   const hasWelcomeBack = tree.includes("Welcome back");

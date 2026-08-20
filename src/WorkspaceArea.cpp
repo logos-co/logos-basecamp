@@ -169,8 +169,6 @@ constexpr int kTabBarInsetPx = 24;
 WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
     : QMainWindow(parent)
 {
-    // Stable handle for UI automation — the dockCount/dockOrder/layoutMode
-    // test hooks are read via inspector evaluate on this objectName.
     setObjectName(QStringLiteral("workspace"));
     setWindowFlags(Qt::Widget);
 
@@ -477,8 +475,6 @@ void WorkspaceArea::removePluginDock(const QString& name)
 void WorkspaceArea::closeDock(const QString& moduleName)
 {
     if (!m_docks.contains(moduleName)) return;
-    // Same path as the tab close button — UIPluginManager owns the
-    // actual teardown and calls back into removePluginDock.
     emit pluginClosed(moduleName);
 }
 

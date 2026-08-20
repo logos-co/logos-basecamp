@@ -501,10 +501,7 @@ void Window::closeEvent(QCloseEvent *event)
             );
         }
     } else {
-        // No tray available: accept the close. This only closes the window —
-        // the app keeps running because of setQuitOnLastWindowClosed(false)
-        // (window close never quits, on any platform; quit goes through
-        // Ctrl+Q/⌘Q, the tray Quit action, or a signal).
+        // No tray: close only hides — setQuitOnLastWindowClosed(false) keeps the app running.
         event->accept();
     }
 }

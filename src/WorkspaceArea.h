@@ -18,8 +18,7 @@ class WorkspaceArea : public QMainWindow
 {
     Q_OBJECT
 
-    // Read-only test hooks: non-textual dock state for UI automation
-    // (reached via the QML inspector's evaluate on objectName "workspace").
+    // Read-only test hooks, read via inspector evaluate on objectName "workspace".
     Q_PROPERTY(int dockCount READ dockCount NOTIFY dockLayoutChanged)
     Q_PROPERTY(QStringList dockOrder READ dockOrder NOTIFY dockLayoutChanged)
     Q_PROPERTY(QString layoutMode READ layoutMode NOTIFY dockLayoutChanged)
@@ -34,8 +33,6 @@ public:
         return m_sideBySide ? QStringLiteral("sideBySide")
                             : QStringLiteral("tabbed");
     }
-    // Test hook: close a dock by module name through the same pluginClosed
-    // path the tab close button takes. No-op for unknown names.
     Q_INVOKABLE void closeDock(const QString& moduleName);
 
     void addPluginDock(QWidget* pluginWidget,
@@ -55,8 +52,6 @@ public:
 
 signals:
     void pluginClosed(const QString& moduleName);
-    // Fires when dockCount / dockOrder / layoutMode change (add, remove,
-    // layout toggle). Observability only — nothing in the app binds to it.
     void dockLayoutChanged();
     void installClicked();
     // Emitted when the front-most dock changes (tab click, close, activate).

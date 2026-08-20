@@ -5,10 +5,7 @@
 #
 # Requires Node.js, the Qt offscreen platform, and the MCP inspector.
 { pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 180
-# PR-gate wall-clock budget for BOTH suites (ui-tests + shutdown-tests)
-# combined. `uiTestRun` is the platform's integration-test derivation; its
-# $out/elapsed-seconds is added to this suite's elapsed time and the build
-# fails when the combined total exceeds the budget.
+# Adds uiTestRun's elapsed-seconds; fails when the combined total exceeds budgetSec.
 , budgetSec ? 600, uiTestRun ? null }:
 
 pkgs.runCommand "logos-basecamp-shutdown-test" {

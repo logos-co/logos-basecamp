@@ -368,10 +368,7 @@
           binBundleDir = withMainProgram (dirBundler appDistributed);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
 
-          # Hoisted so shutdown-test below can read the integration test's
-          # recorded elapsed time and enforce the combined PR-gate budget
-          # (MCP_TEST_BUDGET_SECONDS). On macOS the PR gate runs the bundle
-          # variant, so that is the run the budget combines with there.
+          # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
           integrationTest = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
           integrationTestBundle = import ./nix/integration-test.nix {
             inherit pkgs src;
@@ -442,9 +439,7 @@
           integration-test = integrationTest;
 
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
-          # app per case and asserts orderly exit (code 0). Takes the
-          # platform's integration-test run as an input to enforce the
-          # combined PR-gate time budget.
+          # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {
             inherit pkgs src logosQtMcp;
             appPkg = app;

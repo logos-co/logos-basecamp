@@ -1,28 +1,4 @@
-// ---------------------------------------------------------------------------
-// Shared test-harness helpers for the basecamp UI/shutdown/lifecycle suites.
-//
-// The test framework itself (test-framework/framework.mjs) belongs to
-// logos-qt-mcp — an external flake input we cannot edit — so everything the
-// suites need on top of it lives here:
-//
-//   - expectAbsent(app, target, ms)      negative wait (text or objectName)
-//   - pollProperty(app, id, prop, ms)    sample a property over a window
-//   - assertResponsive(app)              G-ALIVE: inspector round-trip
-//   - scanForQmlErrors(text) /           G-ERR: QML engine error scan
-//     markQmlErrorBaseline() /
-//     assertNoNewQmlErrors()
-//   - makeTest(frameworkTest)            xfail-capable wrapper around the
-//                                        framework's test() that appends the
-//                                        G-ERR/G-ALIVE epilogue to every test
-//   - assertCleanTeardown(child, opts)   G-EXIT: exit code + log closed +
-//                                        no orphans / partial files
-//   - SHUTDOWN_TIER                      "pr" (default) or "full"
-//   - makeUserDir / snapshotPartialFiles --user-dir plumbing for suites that
-//                                        spawn the app themselves
-//   - findByObjectName / installViaPmu   PMU-driven install for lifecycle
-//                                        flows (see the package-lifecycle
-//                                        doctest for the reference walk)
-// ---------------------------------------------------------------------------
+// Shared suite helpers — the framework itself lives in logos-qt-mcp (not editable here).
 
 import { execFileSync } from "node:child_process";
 import {
@@ -31,16 +7,9 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-// ---------------------------------------------------------------------------
-// SHUTDOWN_TIER — "pr" runs the fast PR-gate subset, "full" the nightly set.
-// Suites gate tier-specific tests on this; nothing in the pr tier changes.
-// ---------------------------------------------------------------------------
 export const SHUTDOWN_TIER =
   (process.env.SHUTDOWN_TIER || "pr").trim().toLowerCase();
 
-// ---------------------------------------------------------------------------
-// Small utilities
-// ---------------------------------------------------------------------------
 export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -73,20 +42,12 @@ export function waitForExit(child, ms) {
 }
 
 export async function findByObjectName(inspector, name) {
-  // findByProperty on objectName reliably finds the tagged object
-  // regardless of how its other properties get JSON-serialised.
   const res = await inspector.send("findByProperty", {
     property: "objectName", value: name,
   });
   return (res.matches ?? [])[0] || null;
 }
 
-// ---------------------------------------------------------------------------
-// expectAbsent — negative wait. Fails if `target` (a visible text fragment or
-// an objectName) shows up in the QML tree at any point during the window.
-// Positive waits already exist in the framework; this is the "the dialog must
-// NOT appear" half.
-// ---------------------------------------------------------------------------
 export async function expectAbsent(app, target, ms = 3000, opts = {}) {
   const { intervalMs = 400, treeDepth = 50 } = opts;
   const deadline = Date.now() + ms;
@@ -108,13 +69,7 @@ export async function expectAbsent(app, target, ms = 3000, opts = {}) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// pollProperty — sample `prop` on the object with inspector id `objectId`
-// every `intervalMs` for up to `ms`. Returns the sequence of DISTINCT
-// consecutive values observed (with timestamps), so a test can assert on
-// transient stages (installStage, loadingRow, ...) it would otherwise race.
-// Stops early when `until(value)` returns true.
-// ---------------------------------------------------------------------------
+// Returns distinct consecutive values so tests can assert transient stages.
 export async function pollProperty(app, objectId, prop, ms, opts = {}) {
   const { intervalMs = 100, until = null } = opts;
   const start = Date.now();
@@ -136,11 +91,6 @@ export async function pollProperty(app, objectId, prop, ms, opts = {}) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// G-ALIVE — the app still answers the inspector. A hung event loop makes the
-// round-trip time out; a dead process makes it error. Cheap enough to run
-// after every test.
-// ---------------------------------------------------------------------------
 export async function assertResponsive(app, opts = {}) {
   const { timeoutMs = 5000 } = opts;
   try {
@@ -150,23 +100,8 @@ export async function assertResponsive(app, opts = {}) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// G-ERR — QML engine errors.
-//
-// Matches only genuine QML engine error lines (a *.qml:line: location plus an
-// error keyword), NOT generic stderr noise: the old smoke-test log-regex was
-// removed for tripping on unrelated output (see nix/smoke-test.nix), so this
-// stays deliberately narrow.
-//
-// Two sources:
-//   - scanForQmlErrors(text): scan a captured log chunk (shutdown suite).
-//   - file mode: when BASECAMP_APP_LOG points at the app's log file,
-//     markQmlErrorBaseline() records a byte offset at test start and
-//     assertNoNewQmlErrors() fails on error lines appended since. The CI
-//     ui-tests run wires this up (nix/integration-test.nix tees the app's
-//     stdout/stderr into the file); when the env var is unset — e.g. running
-//     ui-tests by hand against an already-running app — both are no-ops.
-// ---------------------------------------------------------------------------
+// G-ERR: deliberately narrow — a broad log-regex tripped on unrelated stderr
+// noise (nix/smoke-test.nix). File mode (BASECAMP_APP_LOG) no-ops when unset.
 const QML_ERROR_RE =
   /\.qml:\d+(?::\d+)?:?\s.*(Error|error:|is not a type|is not defined|No such file|Cannot assign|Unable to assign)/;
 
@@ -206,18 +141,7 @@ export function assertNoNewQmlErrors(text = null) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// makeTest — wraps logos-qt-mcp's test() so every test in the suite inherits
-// the G-ERR/G-ALIVE epilogue and gains xfail support without per-test
-// boilerplate:
-//
-//   const test = makeTest(frameworkTest);
-//   test("name", body);                     // body + epilogue
-//   test("name", body, { xfail: "M1" });    // XFAIL on failure,
-//                                           // fails LOUDLY on unexpected pass
-//
-// Any extra opts (e.g. { skip: ["offscreen"] }) pass through to the framework.
-// ---------------------------------------------------------------------------
+// Adds the G-ERR/G-ALIVE epilogue and { xfail } support (loud on unexpected pass).
 export function makeTest(frameworkTest) {
   return function test(name, body, opts = {}) {
     const { xfail, ...frameworkOpts } = opts;
@@ -229,8 +153,6 @@ export function makeTest(frameworkTest) {
       } catch (e) {
         bodyError = e;
       }
-      // Epilogue runs regardless of the body outcome so a hung or
-      // error-spewing app is caught even when the body "passed".
       let epilogueError = null;
       try {
         await assertResponsive(app);
@@ -256,19 +178,7 @@ export function makeTest(frameworkTest) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// G-EXIT — assertCleanTeardown. Extends the old assertGracefulExit (exit code
-// 0, no killing signal) with: stdio closed on a complete line, no orphan
-// process still on the user-dir, no new temp/partial files under it.
-//
-//   await assertCleanTeardown(child, {
-//     waitMs:  10000,
-//     log:     () => capturedOutput,     // optional
-//     closed:  promiseOfChildClose,      // optional, gates the log check
-//     userDir: "/tmp/...",               // optional
-//     partialBaseline: snapshotPartialFiles(userDir),  // taken pre-launch
-//   });
-// ---------------------------------------------------------------------------
+// G-EXIT: exit 0, no signal, complete final log line, no orphans or partial files.
 export async function assertCleanTeardown(child, opts = {}) {
   const {
     waitMs = 10000, log = null, closed = null,
@@ -284,8 +194,7 @@ export async function assertCleanTeardown(child, opts = {}) {
   if (exit.code !== 0) throw new Error(`G-EXIT: exit code ${exit.code}, want 0`);
 
   if (log) {
-    // Wait for the stdio streams to actually close so the captured log is
-    // complete — 'exit' can fire with data still in flight.
+    // 'exit' can fire with data still in flight — wait for the streams to close.
     if (closed) await withTimeout(closed, 3000, "stdio streams to close");
     const text = log();
     if (text.length > 0 && !text.endsWith("\n")) {
@@ -324,8 +233,6 @@ export function assertNoOrphanProcesses(userDir, excludePids = []) {
 
 const PARTIAL_FILE_RE = /\.(tmp|temp|part|partial|download)$|(^|\/)\.#/;
 
-// Snapshot the temp/partial files currently under a user dir. Take one
-// before launching the app, hand it to assertCleanTeardown afterwards.
 export function snapshotPartialFiles(userDir) {
   const found = new Set();
   if (!existsSync(userDir)) return found;
@@ -349,11 +256,6 @@ export function assertNoNewPartialFiles(userDir, baseline) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// --user-dir helper — a throwaway user dir shaped like the app expects
-// (modules/ + plugins/, see the missing-deps doctest). Suites that spawn the
-// app themselves pass it via `--user-dir <dir>`.
-// ---------------------------------------------------------------------------
 let userDirCounter = 0;
 
 export function makeUserDir(prefix = "basecamp-test-user") {
@@ -364,18 +266,8 @@ export function makeUserDir(prefix = "basecamp-test-user") {
   return dir;
 }
 
-// ---------------------------------------------------------------------------
-// installViaPmu — drive a local .lgx through the only install path the app
-// has: package_manager_ui's installLocalPackage slot, then Basecamp's install
-// gate. Mirrors the reference walk in
-// doctests/basecamp-package-lifecycle.test.yaml.
-//
-//   await installViaPmu(app, "/abs/path/pkg.lgx");                // confirm
-//   await installViaPmu(app, path, { confirm: false });           // cancel
-//
-// Preconditions: the Package Manager view has been opened at least once (the
-// pmui.BackendStore hook is created lazily on first activation).
-// ---------------------------------------------------------------------------
+// Install a local .lgx via PMU's installLocalPackage + Basecamp's install gate.
+// Requires the Package Manager view opened once (pmui.BackendStore is lazy).
 export async function installViaPmu(app, lgxPath, opts = {}) {
   const { confirm = true, timeoutMs = 30000, intervalMs = 300 } = opts;
   const inspector = app.inspector;
@@ -396,9 +288,7 @@ export async function installViaPmu(app, lgxPath, opts = {}) {
     throw new Error(`installViaPmu: installLocalPackage failed: ${call.error}`);
   }
 
-  // Wait for the install gate to open (visible === true — the per-mode
-  // dialog instances keep stale texts in the tree while closed, so texts
-  // alone would false-positive).
+  // Gate open = visible; closed dialog instances keep stale texts in the tree.
   const gate = await findByObjectName(inspector, "confirmationDialog.installGate");
   if (!gate) throw new Error("installViaPmu: installGate dialog object not found");
   const deadline = Date.now() + timeoutMs;
@@ -418,8 +308,6 @@ export async function installViaPmu(app, lgxPath, opts = {}) {
     : "confirmationDialog.installGate.cancel";
   const button = await findByObjectName(inspector, buttonName);
   if (!button) throw new Error(`installViaPmu: ${buttonName} not found`);
-  // Emitting clicked() runs the onClicked handler — same trick the
-  // shortcut-bridge test uses with QShortcut::activated.
   const clicked = await inspector.send("callMethod", {
     objectId: button.id, method: "clicked",
   });

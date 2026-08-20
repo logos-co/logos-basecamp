@@ -4,10 +4,7 @@
 #
 # Requires Node.js for the test runner and the Qt offscreen platform plugin.
 { pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
-# PR-gate wall-clock budget for BOTH suites (ui-tests + shutdown-tests)
-# combined. This derivation records its elapsed time in $out/elapsed-seconds
-# and can only fail early when its own run alone busts the budget; the
-# combined check lives in nix/shutdown-test.nix, which reads that file.
+# Combined PR-gate budget; elapsed goes to $out/elapsed-seconds, combined check in shutdown-test.nix.
 , budgetSec ? 600 }:
 
 pkgs.runCommand "logos-basecamp-integration-test" {
@@ -36,14 +33,7 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 
-  # G-ERR wiring (tests/fixtures/harness.mjs): the harness's file-mode QML
-  # error gate scans the file named by BASECAMP_APP_LOG, taking a byte-offset
-  # baseline at each test's start. The framework (logos-qt-mcp — external
-  # flake input, not editable here) launches the app itself, so interpose a
-  # wrapper "binary" that tees the app's stdout/stderr into that file while
-  # passing both streams through unchanged (exec keeps the app on the PID the
-  # framework spawned, so its kill still lands). QT_FORCE_STDERR_LOGGING
-  # (above) keeps QML engine errors on stderr even though it is now a pipe.
+  # Tee output into BASECAMP_APP_LOG for the G-ERR gate; exec keeps the framework-spawned PID.
   export BASECAMP_APP_LOG="$out/app.log"
   : > "$BASECAMP_APP_LOG"
   cat > app-with-log.sh <<'WRAPPER'
