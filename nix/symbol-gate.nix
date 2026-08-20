@@ -56,16 +56,25 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   note() { printf '  %-56s %s\n' "$1" "$2"; }
   bad()  { FAIL=1; printf '  %-56s %s\n' "$1" "$2"; }
 
-  # A dev build installs bin/<name> as a shell wrapper that execs bin/.<name>
-  # (nix/app.nix's QT_PLUGIN_PATH wrapper). Measuring the wrapper reads ZERO
-  # symbols and makes every assertion below vacuously true.
+  # nix wraps binaries TWO ways and both defeat a naive measurement:
+  #   * a shell wrapper that execs bin/.<name>   (nix/app.nix's QT_PLUGIN_PATH
+  #     wrapper) -- nm reads ZERO symbols from it
+  #   * makeBinaryWrapper's COMPILED stub beside bin/.<name>-wrapped -- nm reads
+  #     ~10 symbols from it, so the "did nm read anything" guard below does NOT
+  #     catch this one. Measured in logos-logoscore-cli: bin/logoscore is such a
+  #     stub, and measuring it reports 0 runtime symbols for a binary that in
+  #     fact imports 12.
+  # So the rule is deterministic rather than heuristic: if a hidden sibling
+  # exists, it IS the image, and we never measure bin/<name>.
   resolve_image() {
     local f="$1" d b real
     d=$(dirname "$f"); b=$(basename "$f")
+    for cand in "$d/.$b-wrapped" "$d/.$b"; do
+      [ -e "$cand" ] && { printf '%s\n' "$cand"; return; }
+    done
     if head -c2 "$f" 2>/dev/null | grep -q '#!'; then
       real=$(sed -nE 's/^exec "\$BINDIR\/([^"]+)".*/\1/p' "$f" | tail -1)
       [ -n "$real" ] && [ -e "$d/$real" ] && { printf '%s\n' "$d/$real"; return; }
-      [ -e "$d/.$b" ] && { printf '%s\n' "$d/.$b"; return; }
     fi
     printf '%s\n' "$f"
   }
