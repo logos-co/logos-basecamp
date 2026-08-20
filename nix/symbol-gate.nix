@@ -106,8 +106,13 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   for e in "$ROOT/bin/LogosBasecamp" "$ROOT/bin/LogosBasecamp.exe"; do
     [ -e "$e" ] && CONSUMERS+=("$(resolve_image "$e")")
   done
+  # -L is load-bearing: a nix output can stage plugins as SYMLINKS into the
+  # store, and `find -type f` does NOT match a symlink -- it would return
+  # nothing and the gate would assert over an empty consumer set. Measured in
+  # logos-logoscore-cli, where `find` saw 0 of 2 real libraries. `[ -f ]`
+  # elsewhere is fine, because test(1) follows symlinks and find does not.
   while IFS= read -r p; do [ -n "$p" ] && CONSUMERS+=("$(resolve_image "$p")"); done < <(
-    find "$ROOT/plugins" -type f \( -name '*_replica_factory.*' -o -name 'main_ui.*' \) 2>/dev/null \
+    find -L "$ROOT/plugins" -type f \( -name '*_replica_factory.*' -o -name 'main_ui.*' \) 2>/dev/null \
       | grep -Ev '\.(txt|json)$' || true)
 
   echo "provider  = ''${PROVIDER#$ROOT/}"
