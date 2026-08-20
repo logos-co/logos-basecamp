@@ -58,7 +58,7 @@ async function findWelcomePage(app) {
   // app.findByProperty); otherwise talk to the inspector protocol directly.
   const res = typeof app.findByType === "function"
     ? await app.findByType("WelcomePage")
-    : await app.inspector.send("findByType", { type: "WelcomePage" });
+    : await app.inspector.send("findByType", { typeName: "WelcomePage" });
   if (res.error) throw new Error(`findByType(WelcomePage) failed: ${res.error}`);
   return (res.matches ?? [])[0] || null;
 }
