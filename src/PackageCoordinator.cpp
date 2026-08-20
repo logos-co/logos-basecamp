@@ -604,30 +604,8 @@ QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
 // Cascade confirmation — triggered from QML once the user OKs the dialog.
 // ---------------------------------------------------------------------------
 
-void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
+void PackageCoordinator::cascadeUnloadForPackage(const QString& moduleName)
 {
-    if ((m_pendingAction.op != PendingOp::UninstallCascade &&
-         m_pendingAction.op != PendingOp::UpgradeCascade)
-        || m_pendingAction.name != moduleName) {
-        qWarning() << "confirmUninstallCascade for" << moduleName
-                   << "but pending action is" << m_pendingAction.name;
-        return;
-    }
-
-    // Snapshot before clearing — the callbacks below capture by value.
-    const bool    isUpgrade         = (m_pendingAction.op == PendingOp::UpgradeCascade);
-    const QString releaseTag        = m_pendingAction.releaseTag;
-    m_pendingAction = {};
-
-    // Defer the cascade body off the QML click stack: unloadModuleWithDependents
-    // spins a nested event loop, and running that under the dialog's onClicked
-    // handler trips a QQmlData::destroyed qFatal. Pending state is cleared above;
-    // queue the rest so the click handler unwinds first.
-    QPointer<PackageCoordinator> selfDefer(this);
-    QMetaObject::invokeMethod(this,
-        [this, selfDefer, moduleName, isUpgrade, releaseTag]() {
-        if (!selfDefer) return;
-
     // Snapshot the loaded-dependents list BEFORE the cascade — once
     // unloadModuleWithDependents returns, the target is off the loaded-
     // modules list and the filter would come up empty. UI-plugin dependents
@@ -670,6 +648,29 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
         }
         m_uiPluginManager->teardownUiPluginWidget(moduleName);
     }
+}
+
+void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
+{
+    if ((m_pendingAction.op != PendingOp::UninstallCascade &&
+         m_pendingAction.op != PendingOp::UpgradeCascade)
+        || m_pendingAction.name != moduleName) {
+        qWarning() << "confirmUninstallCascade for" << moduleName
+                   << "but pending action is" << m_pendingAction.name;
+        return;
+    }
+
+    // Snapshot before clearing — the callbacks below capture by value.
+    const bool    isUpgrade         = (m_pendingAction.op == PendingOp::UpgradeCascade);
+    const QString releaseTag        = m_pendingAction.releaseTag;
+    m_pendingAction = {};
+
+    QPointer<PackageCoordinator> selfDefer(this);
+    QMetaObject::invokeMethod(this,
+        [this, selfDefer, moduleName, isUpgrade, releaseTag]() {
+        if (!selfDefer) return;
+
+    cascadeUnloadForPackage(moduleName);
 
     // Hand the actual package-lifecycle work back to the module.
     if (!m_logosAPI) return;
@@ -1927,6 +1928,59 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
                                        : downloadError);
         return;
     }
+
+    if (!m_logosAPI) {
+        if (onDone) onDone(false, QStringLiteral("package_manager not connected"));
+        return;
+    }
+
+    const bool alreadyInstalled = m_installedNameSet.contains(packageName);
+    const bool isEmbedded =
+        m_installTypeByModule.value(packageName) == QLatin1String("embedded");
+
+    // Never tear down or remove our own UI — same guard uninstallUiModule
+    // carries, for the same reason: it would brick Basecamp mid-install.
+    // AppsFilterProxy::excludeMainUi only hides it from the list; it is not a
+    // safety gate, and a resolver result can name it as a transitive entry.
+    // Falling through installs over it, which is the old merge behaviour —
+    // strictly better than deleting the running UI.
+    const bool isSelf = (packageName == QStringLiteral("main_ui"));
+    if (isSelf && alreadyInstalled) {
+        qWarning() << "Refusing to remove main_ui before install; "
+                      "installing over it instead";
+    }
+
+    if (alreadyInstalled && !isEmbedded && !isSelf) {
+        cascadeUnloadForPackage(packageName);
+
+        LogosModules logos(m_logosAPI);
+        QPointer<PackageCoordinator> self(this);
+        logos.package_manager.uninstallPackageAsync(packageName,
+            [self, dl, packageName, onDone](QVariantMap uninstallResult) {
+                if (!self) return;
+                if (!uninstallResult.value("success", false).toBool()) {
+                    const QString err = uninstallResult.value("error").toString();
+                    qWarning() << "Pre-install removal of" << packageName
+                               << "failed, aborting install:" << err;
+                    if (onDone)
+                        onDone(false, err.isEmpty()
+                                   ? QStringLiteral("Could not remove the installed version")
+                                   : err);
+                    return;
+                }
+                self->installDownloadedFile(dl, onDone);
+            });
+        return;
+    }
+
+    installDownloadedFile(dl, onDone);
+}
+
+void PackageCoordinator::installDownloadedFile(const QVariantMap& dl,
+    std::function<void(bool, const QString&)> onDone)
+{
+    const QString packageName = dl.value("name").toString();
+    const QString filePath    = dl.value("path").toString();
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);

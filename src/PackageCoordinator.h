@@ -370,8 +370,18 @@ private:
                                   const QString& topLevelName,
                                   int index,
                                   QStringList failures = QStringList{});
+    // Unload/tear down a package and its loaded dependents ahead of any
+    // destructive package-lifecycle work. Shared by confirmUninstallCascade
+    // (the gated uninstall/upgrade flow) and by the App Manager's
+    // replace-before-install step, so both run identical teardown.
+    void cascadeUnloadForPackage(const QString& moduleName);
+
+    // installOnePackage tears down + removes an already-installed package
+    // before handing off to installDownloadedFile, the bare installPlugin call.
     void installOnePackage(const QVariantMap& downloadResult,
                            std::function<void(bool, const QString&)> onDone);
+    void installDownloadedFile(const QVariantMap& downloadResult,
+                               std::function<void(bool, const QString&)> onDone);
 
     // Drive the in-flight registry. setOpStage updates the InstallRegistry entry
     // and emits catalogInstallStageChanged.
