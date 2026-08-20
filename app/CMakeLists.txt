@@ -221,11 +221,18 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
             "logos-qt-host::logos_qt_host. LOGOS_QT_HOST_ROOT="
             "${LOGOS_QT_HOST_ROOT}")
     endif()
-    # Windows: the host is the image that WRITES the capability token, so if it
-    # keeps a static copy of TokenManager the plugin never sees the token no
-    # matter what the plugin links. Empty out the archives here too and let
-    # liblogos_core.dll be the one provider — cmake/LogosSharedFromDll.cmake.
-    # The link interface above is deliberately left intact.
+    # The host is the image that WRITES the capability token, so if it keeps a
+    # static copy of TokenManager the plugin never sees the token no matter what
+    # the plugin links. Empty out the archives and let liblogos_core be the one
+    # provider — cmake/LogosSharedFromDll.cmake. The link interface above is
+    # deliberately left intact.
+    #
+    # This runs on EVERY platform, not just Windows. Mach-O's two-level
+    # namespace gives no interposition either: the main_ui fold measured ONE
+    # reference to LogosAPI::forIdentity dragging logos_api.cpp.o into the exe
+    # and producing 31 refusals against a pre-fold baseline of 0. ELF does
+    # collapse duplicates, but we empty it there too so the invariant is one
+    # rule everywhere and nix/symbol-gate can assert it uniformly.
     #
     # Retargeted from logos-qt-sdk::logos_qt_sdk to logos-qt-host::logos_qt_host
     # by the B4 host split: the archive that carries LogosAPI/TokenManager moved
