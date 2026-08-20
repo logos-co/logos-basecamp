@@ -535,6 +535,23 @@
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
 
+          # One-runtime symbol gate. Asserts the logos C++ runtime (TokenManager,
+          # StoreRegistry, LogosAPI, LogosAPIClient) is DEFINED exactly once across
+          # the images that share one process — in liblogos_core, the single
+          # provider. A second definition is a second TokenManager and every
+          # cross-module call is refused at runtime with no build diagnostic.
+          # Build: nix build .#symbol-gate
+          symbol-gate = import ./nix/symbol-gate.nix { inherit pkgs; appPkg = app; };
+
+          # Negative control for the above. Plants a REAL duplicate runtime where
+          # an in-process consumer goes and asserts the gate REJECTS it. Ship both
+          # or neither: an absence assertion that has never been seen to fail is
+          # indistinguishable from a broken one.
+          # Build: nix build .#symbol-gate-negative
+          symbol-gate-negative = import ./nix/symbol-gate.nix {
+            inherit pkgs; appPkg = app; negativeControl = true;
+          };
+
           # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
           # builds a real malicious QML plugin and asserts the production sandbox
           # refuses to load it. Build: nix build .#sandbox-test
@@ -631,6 +648,8 @@
         integration-test = self.packages.${system}.integration-test;
         shutdown-test = self.packages.${system}.shutdown-test;
         host-services-test = self.packages.${system}.host-services-test;
+        symbol-gate = self.packages.${system}.symbol-gate;
+        symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
