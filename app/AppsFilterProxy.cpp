@@ -261,6 +261,13 @@ QStringList AppsFilterProxy::requiredPackages() const
 
 void AppsFilterProxy::setRequiredPackages(const QVariantList& entries)
 {
+    // Bound from QML, so this runs on every notify — including the re-set of an
+    // identical list. Bail early to avoid an invalidate()/notify loop.
+    if (m_requiredPackagesActive && m_requiredPackageEntries == entries) {
+        return;
+    }
+
+    m_requiredPackageEntries = entries;
     m_requiredPackagesActive = true;
     m_requiredPackagesByName.clear();
     m_requiredPackagesOrder.clear();

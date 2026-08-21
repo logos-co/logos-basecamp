@@ -1,9 +1,9 @@
 #pragma once
 
 #include "InstallEnums.h"
-#include "AppsFilterProxy.h"
 #include "ModuleInstanceModel.h"
 
+#include <QAbstractItemModel>
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
@@ -63,20 +63,27 @@ class MainUIBackend : public QObject {
     // ModulesFilterProxy. The QVariantList uiModules()/coreModules() shape
     // used to be a Q_PROPERTY too; it now lives on this class only as a
     // private helper feeding the models on each *Changed tick.
-    Q_PROPERTY(ModuleInstanceModel* uiModulesModel   READ uiModulesModel   CONSTANT)
-    Q_PROPERTY(ModuleInstanceModel* coreModulesModel READ coreModulesModel CONSTANT)
+    //
+    // Declared as QAbstractItemModel*, not ModuleInstanceModel*. The shell's
+    // QML only ever uses them as models, and typing them as the Qt base is
+    // what keeps the concrete class from having to be nameable — and
+    // therefore present — on the shell's side of the boundary.
+    Q_PROPERTY(QAbstractItemModel* uiModulesModel   READ uiModulesModel   CONSTANT)
+    Q_PROPERTY(QAbstractItemModel* coreModulesModel READ coreModulesModel CONSTANT)
     // AppsModel — the single source of truth for catalog rows + installed
     // state + live install pipeline. QML views bind directly. Lifetime is
     // tied to MainUIBackend; the pointer is stable across the app's life.
-    Q_PROPERTY(AppsModel* appsModel READ appsModel CONSTANT)
-    // Prebuilt filter proxy over appsModel, pre-configured with
-    // type="ui_qml" and excludeMainUi=true
-    Q_PROPERTY(AppsFilterProxy* uiAppsProxy READ uiAppsProxy CONSTANT)
-    // Prebuilt filter proxy used exclusively by AddApplicationDialog's
-    // "Required Packages" list. PackageCoordinator sets its
-    // requiredPackages per resolver call so the ListView shows only the
-    // resolver's tree in install order.
-    Q_PROPERTY(AppsFilterProxy* requiredPackagesModel READ requiredPackagesModel CONSTANT)
+    // Same reasoning as the two above: crosses as QAbstractItemModel*.
+    Q_PROPERTY(QAbstractItemModel* appsModel READ appsModel CONSTANT)
+    // The resolver's required-package entries, in install order, for
+    // AddApplicationDialog's "Required Packages" list.
+    //
+    // This used to be two prebuilt AppsFilterProxy instances owned here and
+    // handed to QML. Both are declared in QML now: a proxy is a VIEW
+    // configuration, it belongs to whoever draws the view, and the host has no
+    // business owning — or being able to name — a shell-side type. What
+    // crosses is the data.
+    Q_PROPERTY(QVariantList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
 
     // App Launcher
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
@@ -144,11 +151,16 @@ public:
     CoreModuleManager* coreModuleManager() const { return m_coreModuleManager; }
     UIPluginManager*   uiPluginManager()   const { return m_uiPluginManager; }
     PackageCoordinator*    packageCoordinator()    const { return m_packageCoordinator; }
-    AppsModel*         appsModel()         const { return m_appsModel; }
-    AppsFilterProxy*   uiAppsProxy()           const { return m_uiAppsProxy; }
-    AppsFilterProxy*   requiredPackagesModel() const { return m_requiredPackagesModel; }
-    ModuleInstanceModel* uiModulesModel()   const { return m_uiModulesModel; }
-    ModuleInstanceModel* coreModulesModel() const { return m_coreModulesModel; }
+    // Base-typed on purpose — see the Q_PROPERTY comments above. Internal
+    // code uses the concrete members directly and does not go through these.
+    //
+    // Defined out of line: AppsModel is only forward-declared here, so the
+    // derived-to-base conversion needs the definition, and pulling AppsModel.h
+    // into this header would push it into every TU that includes it.
+    QAbstractItemModel* appsModel() const;
+    QVariantList       requiredPackages()      const { return m_requiredPackages; }
+    QAbstractItemModel* uiModulesModel()   const { return m_uiModulesModel; }
+    QAbstractItemModel* coreModulesModel() const { return m_coreModulesModel; }
 
 public slots:
     // Navigation
@@ -233,7 +245,12 @@ signals:
     void requestOpenAddApplicationDialog(const QVariantMap& metadata);
     void addApplicationDataUpdated(const QVariantMap& metadata);
     void launchAppRequested(const QString& name);
-    void catalogInstallStageChanged(const QString& name, InstallStage::Value stage);
+    // `stage` is an int, not InstallStage::Value. QML already declares
+    // installStage as an int and compares against the QML_ELEMENT-registered
+    // InstallStage.* values, so nothing changes for the consumer — but the
+    // signal signature stops naming a type that would otherwise have to exist
+    // in both images once the shell splits out.
+    void catalogInstallStageChanged(const QString& name, int stage);
     void catalogInstallFinished(const QString& name);
     void catalogInstallFailed(const QString& name, const QString& error);
     void launcherAppsChanged();
@@ -257,6 +274,7 @@ signals:
     void uninstallPlanRequested(const QVariantMap& plan);
 
     void dependencyDataReadyChanged();
+    void requiredPackagesChanged();
     // Distinct signal for upgrade/downgrade/reinstall — see
     // PackageCoordinator::upgradeCascadeConfirmationRequested for why we
     // can't reuse the uninstall variant (the dialog needs the target
@@ -321,8 +339,7 @@ private:
     // uiPluginManager second, packageCoordinator third. See class comment for
     // lifetime reasoning.
     AppsModel*         m_appsModel;
-    AppsFilterProxy*   m_uiAppsProxy;
-    AppsFilterProxy*   m_requiredPackagesModel;
+    QVariantList       m_requiredPackages;
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;

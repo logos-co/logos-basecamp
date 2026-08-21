@@ -21,6 +21,10 @@ class AppsFilterProxy : public QSortFilterProxyModel {
     Q_PROPERTY(bool    matchLocalOnly    READ matchLocalOnly     WRITE setMatchLocalOnly     NOTIFY matchLocalOnlyChanged)
     Q_PROPERTY(bool    excludeMainUi      READ excludeMainUi      WRITE setExcludeMainUi      NOTIFY excludeMainUiChanged)
     Q_PROPERTY(QStringList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
+    // The resolver's entries, in install order. Writable so QML can BIND it to
+    // the backend rather than have the host reach in and call the setter — the
+    // host must not hold a pointer to a shell-side proxy.
+    Q_PROPERTY(QVariantList requiredPackageEntries READ requiredPackageEntries WRITE setRequiredPackages NOTIFY requiredPackagesChanged)
     Q_PROPERTY(int  installedCount       READ installedCount NOTIFY installedCountChanged)
     Q_PROPERTY(int  installFreshCount      READ installFreshCount      NOTIFY breakdownChanged)
     Q_PROPERTY(int  upgradeCount           READ upgradeCount           NOTIFY breakdownChanged)
@@ -51,6 +55,7 @@ public:
     void setMatchLocalOnly(bool v);
     void setExcludeMainUi(bool e);
     QStringList requiredPackages() const;
+    QVariantList requiredPackageEntries() const { return m_requiredPackageEntries; }
     Q_INVOKABLE void setRequiredPackages(const QVariantList& entries);
 
     int  installedCount() const;
@@ -97,6 +102,7 @@ private:
     QString m_repositoryUrlFilter;
     bool    m_matchLocalOnly     = false;
     bool    m_excludeMainUi      = true;
+    QVariantList            m_requiredPackageEntries;
     QHash<QString, QString> m_requiredPackagesByName;
     QHash<QString, int>     m_requiredPackagesOrder;
     bool m_requiredPackagesActive = false;
