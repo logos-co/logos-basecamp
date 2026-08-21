@@ -167,15 +167,21 @@ int main(int argc, char *argv[])
     // to the right location. Terminal output is preserved by mirroring to the
     // original stdout.
     //
-    // Retention: keep the newest kKeepSessionsEnvVar sessions (default
-    // kDefaultKeepSessions; 0 keeps everything). Without a bound the directory
-    // grew by at least one file per launch forever.
+    // Retention: oldest sessions are deleted until at most kKeepSessionsEnvVar
+    // sessions remain and they total at most kMaxLogMbEnvVar. 0 disables a
+    // limit. Without a bound the directory grew by at least one file per
+    // launch forever, and one chatty session can run to gigabytes.
     const QString logsDir = LogosBasecampPaths::logsDirectory();
     bool keepOk = false;
     int keepSessions = qEnvironmentVariableIntValue(LogosBasecampPaths::kKeepSessionsEnvVar, &keepOk);
     if (!keepOk || keepSessions < 0)
         keepSessions = LogosBasecampPaths::kDefaultKeepSessions;
-    if (!LogosBasecampLog::LogRedirector::instance().start(logsDir, 10000, keepSessions)) {
+    bool mbOk = false;
+    int maxMb = qEnvironmentVariableIntValue(LogosBasecampPaths::kMaxLogMbEnvVar, &mbOk);
+    if (!mbOk || maxMb < 0)
+        maxMb = LogosBasecampPaths::kDefaultMaxLogMb;
+    const qint64 maxBytes = static_cast<qint64>(maxMb) * 1024 * 1024;
+    if (!LogosBasecampLog::LogRedirector::instance().start(logsDir, 10000, keepSessions, maxBytes)) {
         qWarning() << "Failed to start log redirection; continuing without file logs."
                    << "Logs directory:" << logsDir;
     } else {

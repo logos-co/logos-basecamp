@@ -30,6 +30,9 @@ class LogManager : public QObject {
     Q_PROPERTY(QString logsDirectory READ logsDirectory CONSTANT)
     Q_PROPERTY(QString sessionStamp  READ sessionStamp  CONSTANT)
     Q_PROPERTY(QString monospaceFamily READ monospaceFamily CONSTANT)
+    // Sessions the launch-time retention keeps; the page's manual "Delete
+    // old" uses the same number.
+    Q_PROPERTY(int defaultKeepSessions READ defaultKeepSessions CONSTANT)
 
     // Directory listing, newest session first (see LogFilesModel roles).
     // sessionCount/totalBytes summarise the same listing.
@@ -60,6 +63,7 @@ public:
     QString logsDirectory() const { return m_logsDirectory; }
     QString sessionStamp() const  { return m_sessionStamp; }
     QString monospaceFamily() const { return m_monospaceFamily; }
+    int defaultKeepSessions() const;
 
     LogFilesModel* files() const { return m_files; }
     int    sessionCount() const { return m_sessionCount; }

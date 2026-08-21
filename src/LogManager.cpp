@@ -62,6 +62,11 @@ LogManager::~LogManager()
     m_thread.wait();
 }
 
+int LogManager::defaultKeepSessions() const
+{
+    return LogosBasecampPaths::kDefaultKeepSessions;
+}
+
 QString LogManager::currentFileName() const
 {
     return m_currentFile.isEmpty() ? QString() : QFileInfo(m_currentFile).fileName();

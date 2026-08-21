@@ -13,10 +13,10 @@ namespace LogosBasecampLog {
 // maxLinesPerFile, a suffixed rotation file is opened. Names come from
 // LogosBasecampPaths::sessionLogFileName(), which the readers share.
 //
-// Before the session's first file is opened, sessions older than the newest
-// `keepSessions - 1` are deleted (every rotation of them), so the directory
-// settles at keepSessions sessions once this one is added. Pass 0 to keep
-// everything.
+// Before the session's first file is opened, the oldest sessions are deleted
+// (every rotation of them) until at most `keepSessions - 1` remain and their
+// total size is under `maxBytes`, so the directory settles at keepSessions
+// sessions once this one is added. 0 disables either limit.
 //
 // Implementation: replaces stdout/stderr with the write-end of a pipe via
 // dup2(); a background reader thread reads from the pipe, writes to the
@@ -33,7 +33,8 @@ public:
 
     // Start capture. Safe to call once; subsequent calls are no-ops.
     // Returns false if redirection could not be set up.
-    bool start(const QString& logsDir, int maxLinesPerFile = 10000, int keepSessions = 10);
+    bool start(const QString& logsDir, int maxLinesPerFile = 10000, int keepSessions = 30,
+               qint64 maxBytes = 0);
 
     // Flush, restore original stdout/stderr, join reader thread, close files.
     void stop();
@@ -43,10 +44,11 @@ public:
     QString filePath() const { return m_filePath; }
     QString sessionStamp() const { return m_sessionStamp; }
 
-    // Delete every session under `logsDir` except the newest `keep` (0 deletes
-    // all, negative deletes nothing). Shared by start() and exposed for
-    // tests. Returns the number of files removed.
-    static int pruneSessions(const QString& logsDir, int keep);
+    // Delete the oldest sessions under `logsDir` until at most `keep` remain
+    // (negative: no count limit; 0 deletes all) and their files total at
+    // most `maxBytes` (<= 0: no size limit). Shared by start() and exposed
+    // for tests. Returns the number of files removed.
+    static int pruneSessions(const QString& logsDir, int keep, qint64 maxBytes = 0);
 
     LogRedirector(const LogRedirector&) = delete;
     LogRedirector& operator=(const LogRedirector&) = delete;

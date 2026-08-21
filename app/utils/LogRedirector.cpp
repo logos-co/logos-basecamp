@@ -5,10 +5,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
-#include <QSet>
-#include <QStringList>
+#include <QMap>
 
-#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 
@@ -30,51 +28,55 @@ LogRedirector::~LogRedirector()
     stop();
 }
 
-int LogRedirector::pruneSessions(const QString& logsDir, int keep)
+int LogRedirector::pruneSessions(const QString& logsDir, int keep, qint64 maxBytes)
 {
-    // keep == 0 deletes every session present (start() calls this with
-    // keepSessions - 1 before opening its own file). Negative is "no pruning".
-    if (keep < 0) return 0;
+    const bool limitCount = keep >= 0;
+    const bool limitSize = maxBytes > 0;
+    if (!limitCount && !limitSize) return 0;
 
-    // A session is one stamp however many rotations it produced: the newest
-    // stamps stay whole, older ones go with all their rotations.
+    // A session is one stamp however many rotations it produced: it stays
+    // whole or goes whole. QMap keeps stamps sorted, i.e. oldest first.
     const QFileInfoList files = QDir(logsDir).entryInfoList(
         { QLatin1String(LogosBasecampPaths::kSessionLogGlob) },
         QDir::Files | QDir::NoSymLinks, QDir::Name);
 
-    QSet<QString> stamps;
+    QMap<QString, QFileInfoList> byStamp;
+    QMap<QString, qint64> bytesByStamp;
+    qint64 total = 0;
     for (const QFileInfo& fi : files) {
         QString stamp;
-        if (LogosBasecampPaths::parseSessionLogFileName(fi.fileName(), &stamp, nullptr))
-            stamps.insert(stamp);
+        if (!LogosBasecampPaths::parseSessionLogFileName(fi.fileName(), &stamp, nullptr)) continue;
+        byStamp[stamp].append(fi);
+        bytesByStamp[stamp] += fi.size();
+        total += fi.size();
     }
-    if (stamps.size() <= keep) return 0;
 
-    QStringList ordered(stamps.cbegin(), stamps.cend());
-    std::sort(ordered.begin(), ordered.end());
-    const QStringList doomedList = ordered.mid(0, ordered.size() - keep);
-    const QSet<QString> doomed(doomedList.cbegin(), doomedList.cend());
-
+    int sessions = byStamp.size();
     int removed = 0;
-    for (const QFileInfo& fi : files) {
-        QString stamp;
-        if (LogosBasecampPaths::parseSessionLogFileName(fi.fileName(), &stamp, nullptr)
-            && doomed.contains(stamp) && QFile::remove(fi.absoluteFilePath()))
-            ++removed;
+    for (auto it = byStamp.cbegin(); it != byStamp.cend(); ++it) {
+        const bool tooMany = limitCount && sessions > keep;
+        const bool tooBig = limitSize && total > maxBytes;
+        if (!tooMany && !tooBig) break;
+        for (const QFileInfo& fi : it.value()) {
+            if (QFile::remove(fi.absoluteFilePath())) ++removed;
+        }
+        total -= bytesByStamp.value(it.key());
+        --sessions;
     }
     return removed;
 }
 
 #if defined(Q_OS_WIN)
 
-bool LogRedirector::start(const QString&, int, int) { return false; }
+bool LogRedirector::start(const QString&, int, int, qint64) { return false; }
 void LogRedirector::stop() {}
 void LogRedirector::readerLoop() {}
 void LogRedirector::openNewFile() {}
 
 #else
 
-bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile, int keepSessions)
+bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile, int keepSessions,
+                          qint64 maxBytes)
 {
     if (m_started)
         return true;
@@ -88,9 +90,8 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile, int keepS
         return false;
 
     // Before this session adds its own file, so the directory settles at
-    // keepSessions rather than one more.
-    if (keepSessions > 0)
-        pruneSessions(m_logsDir, keepSessions - 1);
+    // keepSessions rather than one more. keepSessions 0 means no count limit.
+    pruneSessions(m_logsDir, keepSessions > 0 ? keepSessions - 1 : -1, maxBytes);
 
     m_sessionStamp = QDateTime::currentDateTime().toString(
         QLatin1String(LogosBasecampPaths::kSessionLogStampFormat));

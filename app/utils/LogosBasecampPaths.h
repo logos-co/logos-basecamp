@@ -87,9 +87,13 @@ inline constexpr const char* kSessionLogGlob = "basecamp_*.log";
 // Set by main.cpp to the running session's first file so the UI plugin,
 // which is loaded rather than linked, can tell which file is being written.
 inline constexpr const char* kSessionLogEnvVar = "LOGOS_SESSION_LOG";
-// Retention: sessions kept at launch. 0 keeps everything.
+// Retention at launch: oldest sessions go until both limits hold. A single
+// chatty session can run to gigabytes while a quiet one is a few KB, so a
+// session count alone is not enough. 0 disables either limit.
 inline constexpr const char* kKeepSessionsEnvVar = "LOGOS_LOG_KEEP_SESSIONS";
-inline constexpr int kDefaultKeepSessions = 10;
+inline constexpr int kDefaultKeepSessions = 30;
+inline constexpr const char* kMaxLogMbEnvVar = "LOGOS_LOG_MAX_MB";
+inline constexpr int kDefaultMaxLogMb = 1024;
 
 inline QString sessionLogFileName(const QString& stamp, int rotation)
 {

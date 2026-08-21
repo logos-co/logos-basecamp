@@ -54,7 +54,7 @@ Item {
         id: d
         property var levels: []     // empty = all
         property var sources: []    // empty = all
-        property int keepSessions: 10
+        readonly property int keepSessions: root.logs ? root.logs.defaultKeepSessions : 30
 
         // Dropdown state. `*Value` is the selected option's value; `levels` /
         // `sources` above are what the proxy actually filters on.
