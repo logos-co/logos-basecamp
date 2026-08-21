@@ -11,6 +11,9 @@
 #include <QWindow>
 
 class LogosAPI;
+class MainUIBackend;
+class ShellHostAdapter;
+class MainShellView;
 class QMenu;
 class QAction;
 class QCloseEvent;
@@ -76,6 +79,14 @@ private:
 
     LogosAPI* m_logosAPI;
     logos::qt::QtLogosCore* m_core; // not owned; owned by main()
+
+    // Ownership of the UI backend lives HERE, not in the shell. The shell
+    // borrows it through m_hostAdapter and can be torn down independently —
+    // which is what lets it become a separate image later. Destroyed
+    // explicitly and in order by ~Window; see the comment there.
+    MainUIBackend*    m_backend    = nullptr;
+    ShellHostAdapter* m_hostAdapter = nullptr;
+    MainShellView*    m_shellView  = nullptr;
     QSystemTrayIcon* m_trayIcon;
     QMenu* m_trayIconMenu;
     QAction* m_showHideAction;

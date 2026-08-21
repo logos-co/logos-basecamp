@@ -67,6 +67,12 @@ public:
     // m_uiPluginMetadata without this class having to talk to the module.
     void setPackageCoordinator(PackageCoordinator* packageCoordinator);
 
+    // Unmounts every in-process UI plugin widget. Must run WHILE the shell's
+    // widget tree is still alive — the widgets are docked inside it — which is
+    // why Window drives this explicitly before destroying the shell rather
+    // than leaving it to ~UIPluginManager. Idempotent.
+    void shutdown();
+
     // QML-bound getters (surfaced via MainUIBackend's Q_PROPERTYs).
     QVariantList uiModules() const;
     QVariantList launcherApps() const;

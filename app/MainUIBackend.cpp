@@ -166,6 +166,13 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
 
 MainUIBackend::~MainUIBackend() = default;
 
+void MainUIBackend::beginShutdown()
+{
+    if (m_uiPluginManager) {
+        m_uiPluginManager->shutdown();
+    }
+}
+
 int MainUIBackend::currentActiveSectionIndex() const
 {
     return m_currentActiveSectionIndex;

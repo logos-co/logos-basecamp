@@ -41,6 +41,20 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
 
 UIPluginManager::~UIPluginManager()
 {
+    // Safety net for the path that does not call shutdown() first. Idempotent:
+    // shutdown() returns immediately if it has already run.
+    shutdown();
+}
+
+void UIPluginManager::shutdown()
+{
+    // Idempotent — MainUIBackend::beginShutdown() normally gets here first,
+    // while the shell's widget tree is still intact, and the destructor then
+    // finds nothing left to do.
+    if (m_shuttingDown) {
+        return;
+    }
+
     // Tell unloadUiModule/unloadCoreModule to bypass the cascade-
     // confirmation fast-path — there's no user to confirm and no live
     // QML layer to drive the dialog. Otherwise the first loaded module
