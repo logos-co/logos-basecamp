@@ -1,10 +1,18 @@
 # The one-runtime symbol gate.
 #
-# INVARIANT: across the images that share ONE process, the logos C++ runtime is
-# DEFINED exactly once — in liblogos_core, the single provider. A second
-# definition is a second TokenManager: the host writes a capability token into
-# one store, another image reads an empty one, and every cross-module call is
-# refused at runtime with NO build diagnostic. See
+# INVARIANT: across the images that share ONE process, each runtime type is
+# DEFINED by exactly ONE image. A second definition is a second TokenManager:
+# the host writes a capability token into one store, another image reads an
+# empty one, and every cross-module call is refused at runtime with NO build
+# diagnostic.
+#
+# The invariant is EXACTLY-ONE, deliberately, rather than "liblogos_core is the
+# provider". It used to be the latter, because liblogos_core absorbed both
+# static archives and re-exported them. It is not the provider any more:
+# liblogos_protocol owns TokenManager/LogosAPIClient and liblogos_qt_host owns
+# LogosAPI, and liblogos_core imports both like everyone else. Naming an owner
+# here would have to be edited every time ownership moves -- and the first time
+# it moved, this check failed while every real assertion still passed. See
 # logos-protocol/cpp/logos_shared_api.h and cmake/LogosSharedFromDll.cmake.
 #
 # This gate exists because nothing else in the tree measured it. The main_ui
@@ -97,9 +105,22 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
 
   ${pkgs.lib.optionalString negativeControl ''
     # Plant a REAL second copy of the runtime where an in-process consumer goes.
+    #
+    # It plants liblogos_protocol, NOT liblogos_core. liblogos_core used to
+    # absorb both static archives and was therefore a genuine second copy of the
+    # runtime; since it started IMPORTING instead, it defines zero runtime
+    # symbols, so planting it plants NOTHING -- the gate accepted the tree and
+    # this control failed, correctly reporting itself vacuous. A negative
+    # control has to duplicate a DEFINER, so it has to track where the
+    # definitions actually live.
     mkdir -p "$ROOT/plugins/negative_control"
-    cp "$PROVIDER" "$ROOT/plugins/negative_control/main_ui''${PROVIDER##*liblogos_core}"
-    echo "NEGATIVE CONTROL: planted a duplicate runtime; the gate MUST reject this tree."
+    _definer=""
+    for c in "$ROOT/lib/liblogos_protocol.dylib" "$ROOT/lib/liblogos_protocol.so" "$ROOT/bin/liblogos_protocol.dll"; do
+      [ -e "$c" ] && _definer="$c" && break
+    done
+    [ -n "$_definer" ] || { echo "NEGATIVE CONTROL: no liblogos_protocol to plant"; exit 1; }
+    cp "$_definer" "$ROOT/plugins/negative_control/main_ui.''${_definer##*.}"
+    echo "NEGATIVE CONTROL: planted a duplicate definer; the gate MUST reject this tree."
   ''}
 
   CONSUMERS=()
@@ -118,14 +139,37 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   echo "provider  = ''${PROVIDER#$ROOT/}"
   printf 'consumers = '; for c in "''${CONSUMERS[@]}"; do printf '%s ' "''${c#$ROOT/}"; done; echo
 
-  # Positive control AND demangler validity check in one: if c++filt were absent
-  # or broken this reports 0 and the gate fails, rather than passing vacuously.
+  # Every image that shares the process, providers included: ownership is what
+  # is being asserted, so nothing may be exempt from the count.
+  ALL=("$PROVIDER" "''${CONSUMERS[@]}")
+  while IFS= read -r p; do
+    [ -n "$p" ] && [ "$p" != "$PROVIDER" ] && ALL+=("$p")
+  done < <(find -L "$ROOT/lib" -maxdepth 1 -type f \( -name 'liblogos_*.dylib' -o -name 'liblogos_*.so' \) 2>/dev/null | grep -v 'liblogos_core' || true)
+
+  # Exactly one definer per type. This doubles as the demangler validity
+  # control: if c++filt were absent or broken every family would report ZERO
+  # definers and fail, rather than every consumer reporting a reassuring zero.
   echo
-  echo "== the provider DEFINES the runtime (expect >=1) =="
+  echo "== each runtime type is defined by EXACTLY ONE image =="
   valid "$PROVIDER" || exit 1
-  n=$(names "$PROVIDER" | grep -Ec 'TokenManager::instance' || true)
-  if [ "$n" -ge 1 ]; then note "liblogos_core  TokenManager::instance" "$n  OK"
-  else bad "liblogos_core  TokenManager::instance" "$n  EXPECTED >=1 (or demangling is broken)"; fi
+  # StoreRegistry is deliberately absent from this list. It is file-local --
+  # token_manager.cpp defines `static StoreRegistry r;` inside registry(), so it
+  # has a LOCAL symbol and no external one, and is reachable only through
+  # TokenManager's accessors. Measured: 1 symbol under `nm -a`, 0 under `nm -gU`.
+  # Requiring exactly one DEFINER of something that is never exported would fail
+  # forever. It stays in the TIER 1 scan below, where the assertion is that no
+  # consumer defines it -- which is meaningful precisely because it should never
+  # become external.
+  for fam in TokenManager LogosAPI LogosAPIClient; do
+    _n=0; _owners=""
+    for img in "''${ALL[@]}"; do
+      [ -e "$img" ] || continue
+      c=$(names "$img" | grep -cE "^''${fam}::|^(vtable|typeinfo|typeinfo name|guard variable) for ''${fam}\b" || true)
+      if [ "$c" -gt 0 ]; then _n=$((_n + 1)); _owners="$_owners $(basename "$img")($c)"; fi
+    done
+    if [ "$_n" -eq 1 ]; then note "$fam" "1 definer:$_owners  OK"
+    else bad "$fam" "$_n definers:$_owners  EXPECTED exactly 1"; fi
+  done
 
   echo
   echo "== TIER 1: no in-process consumer defines TokenManager/StoreRegistry (expect 0) =="
