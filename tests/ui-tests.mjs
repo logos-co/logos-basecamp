@@ -91,9 +91,29 @@ test("welcome: first launch shows the welcome page", async (app) => {
     await app.expectTexts([expected]);
   }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
 
-  const tree = JSON.stringify(await app.getTree({ depth: 50 }));
-  const hasFirstLaunch = tree.includes("Welcome to Basecamp!");
-  const hasWelcomeBack = tree.includes("Welcome back");
+  const greetingRes = await app.inspector.send("evaluate", {
+    objectId: welcome.id,
+    expression: `(() => {
+      const hasText = (node, expected) => {
+        if (!node) return false;
+        if (typeof node.text === "string" && node.text.includes(expected)) return true;
+        if (!node.children || typeof node.children.length !== "number") return false;
+        for (let i = 0; i < node.children.length; i += 1) {
+          if (hasText(node.children[i], expected)) return true;
+        }
+        return false;
+      };
+      return {
+        hasFirstLaunch: hasText(this, "Welcome to Basecamp!"),
+        hasWelcomeBack: hasText(this, "Welcome back"),
+      };
+    })()`,
+  });
+  if (greetingRes.error) {
+    throw new Error(`evaluate(greeting presence) failed: ${greetingRes.error}`);
+  }
+  const hasFirstLaunch = greetingRes.result?.hasFirstLaunch === true;
+  const hasWelcomeBack = greetingRes.result?.hasWelcomeBack === true;
   if (hasFirstLaunch === hasWelcomeBack) {
     throw new Error(
       `greeting texts present: "Welcome to Basecamp!"=${hasFirstLaunch}, ` +
