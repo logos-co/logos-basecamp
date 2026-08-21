@@ -2,6 +2,7 @@
 #include "AppsFilterProxy.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
+#include "LogManager.h"
 #include "ModuleInstanceModel.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
@@ -20,6 +21,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     , m_packageCoordinator(nullptr)
     , m_uiModulesModel(new ModuleInstanceModel(this))
     , m_coreModulesModel(new ModuleInstanceModel(this))
+    , m_logManager(new LogManager(this))
 {
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);

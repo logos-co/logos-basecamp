@@ -15,6 +15,8 @@ Rectangle {
     property var    uiModulesModel:      null
     property var    coreModulesModel:    null
     property bool   modulesLoading:      false
+    // LogManager (backend.logs) — the Logs section drives it directly.
+    property var    logs:                null
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -46,23 +48,32 @@ Rectangle {
         readonly property int sectionAppsInspector:   1
         readonly property int sectionModuleInspector: 2
         readonly property int sectionRepositories:    3
+        readonly property int sectionLogs:            4
 
         readonly property var sections: [
             { label: qsTr("Dashboard") },
             { label: qsTr("Apps Inspector") },
             { label: qsTr("Module Inspector") },
-            { label: qsTr("Package Repositories") }
+            { label: qsTr("Package Repositories") },
+            { label: qsTr("Logs") }
         ]
 
         property int selectedIndex: 0
 
-        // Search text is shared by the two inspectors. Reset whenever the
-        // user switches away so stale queries don't leak between panels.
+        // Search text is shared by the two inspectors and the log viewer.
+        // Reset whenever the user switches away so stale queries don't leak
+        // between panels.
         property string searchText: ""
 
         readonly property bool searchable:
             selectedIndex === sectionAppsInspector ||
-            selectedIndex === sectionModuleInspector
+            selectedIndex === sectionModuleInspector ||
+            selectedIndex === sectionLogs
+
+        readonly property string searchPlaceholder:
+            selectedIndex === sectionAppsInspector   ? qsTr("Search apps…")
+          : selectedIndex === sectionModuleInspector ? qsTr("Search modules…")
+          :                                            qsTr("Search log lines…")
 
         onSelectedIndexChanged: searchText = ""
     }
@@ -109,9 +120,7 @@ Rectangle {
                 Layout.preferredWidth: 605
                 Layout.minimumWidth: 200
                 text: d.searchText
-                placeholderText: d.selectedIndex === d.sectionAppsInspector
-                                 ? qsTr("Search apps…")
-                                 : qsTr("Search modules…")
+                placeholderText: d.searchPlaceholder
                 shortcutHint: "⌘K"
                 onTextChanged: {
                     if (text !== d.searchText)
@@ -225,6 +234,12 @@ Rectangle {
                                                    root.repositoryEnabledRequested(url, enabled)
                         onVisibleChanged:      if (visible)
                                                    root.repositoriesBecameVisible()
+                    }
+
+                    // 4 — Logs.
+                    LogsView {
+                        logs:       root.logs
+                        searchText: d.searchText
                     }
                 }
             }

@@ -12,6 +12,7 @@
 
 class AppsModel;
 class CoreModuleManager;
+class LogManager;
 class PackageCoordinator;
 class QWidget;
 class UIPluginManager;
@@ -103,6 +104,11 @@ class MainUIBackend : public QObject {
     // kicked together (e.g. on tab show) share one spinner.
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
+    // Settings → Logs. Exposed whole rather than re-emitted slot by slot: the
+    // log viewer is self-contained (its own models, polling and actions) and
+    // shares nothing with the module managers — see LogManager.
+    Q_PROPERTY(LogManager* logs READ logManager CONSTANT)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~MainUIBackend() override;
@@ -137,6 +143,7 @@ public:
     AppsFilterProxy*   requiredPackagesModel() const { return m_requiredPackagesModel; }
     ModuleInstanceModel* uiModulesModel()   const { return m_uiModulesModel; }
     ModuleInstanceModel* coreModulesModel() const { return m_coreModulesModel; }
+    LogManager*          logManager()       const { return m_logManager; }
 
 public slots:
     // Navigation
@@ -315,6 +322,7 @@ private:
     PackageCoordinator*    m_packageCoordinator;
     ModuleInstanceModel* m_uiModulesModel;
     ModuleInstanceModel* m_coreModulesModel;
+    LogManager*          m_logManager;
 
     // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
     int  m_modulesLoadingCount = 0;

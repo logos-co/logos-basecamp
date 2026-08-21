@@ -129,6 +129,11 @@ set(SOURCES
     InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
+    LogLineParser.cpp
+    LogLinesModel.cpp
+    LogFilesModel.cpp
+    LogReaderWorker.cpp
+    LogManager.cpp
     PluginLoader.cpp
     WorkspaceArea.cpp
     ShortcutBridge.cpp
@@ -229,6 +234,8 @@ qt_add_qml_module(basecamp_backend_qml
         AppsFilterProxy.cpp
         ModulesFilterProxy.h
         ModulesFilterProxy.cpp
+        LogFilterProxy.h
+        LogFilterProxy.cpp
 )
 
 qt_add_qml_module(basecamp_common_qml
@@ -290,6 +297,7 @@ qt_add_qml_module(basecamp_settings_qml
         Basecamp/Settings/ModuleRowActions.qml
         Basecamp/Settings/PluginInterfaceView.qml
         Basecamp/Settings/RepositoriesView.qml
+        Basecamp/Settings/LogsView.qml
 )
 
 qt_add_qml_module(basecamp_shell_qml
