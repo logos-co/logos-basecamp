@@ -377,6 +377,133 @@ test("workspace: opening an app replaces the welcome page with a dock", async (a
 //   -> Successfully loaded UI module: "package_manager_ui"
 const sidebarSection = { exact: true, type: "SidebarCircleButton" };
 
+// --- Workspace (A4) — closing the last dock brings the welcome page back ---
+//
+// Spec §2.A A4: from A3 state, close fixture A's dock. Closing the last dock
+// also unloads the module by design (WorkspaceArea::pluginClosed →
+// unloadUiModule), so the gates double as a regression guard for the
+// currentVisibleApp clear on unload of the visible app.
+//
+// closeDock is invoked through the inspector's evaluate, NOT callMethod:
+// callMethod does not marshal the QString argument correctly (logos-qt-mcp
+// limitation), while the evaluate path's JS engine converts it fine.
+
+test("workspace: closing the last dock brings the welcome page back", async (app) => {
+  // Same stable evaluate anchor as A3 — has `backend` in context and
+  // survives the dock teardown.
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  const workspace = await findByObjectName(app.inspector, "workspace");
+  if (!workspace) {
+    throw new Error('WorkspaceArea (objectName "workspace") not found');
+  }
+
+  // Establish the A3 end state without assuming A3 left it: fixture A's
+  // dock must be open before we can close it.
+  const preCount = await app.inspector.send("evaluate", {
+    objectId: workspace.id, expression: "dockCount",
+  });
+  if (preCount.error) throw new Error(`evaluate(dockCount) failed: ${preCount.error}`);
+  if (preCount.result !== 1) {
+    let tile = null;
+    try {
+      await app.waitFor(async () => {
+        tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+        if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+      }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
+    } catch (e) {
+      if (!CI_MODE) {
+        console.log(
+          `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
+          `app instance (spec §0.A: skip, not fail, outside --ci)`);
+        return;
+      }
+      throw new Error(
+        `no dock open and fixture A sidebar tile never appeared — ` +
+        `integration-test pre-seeds ${FIXTURE_A.name} at boot, so this is ` +
+        `a real failure: ${e.message}`);
+    }
+    const clicked = await app.inspector.send("callMethod", {
+      objectId: tile.id, method: "clicked",
+    });
+    if (clicked.error) {
+      throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
+    }
+  }
+  await app.waitFor(async () => {
+    const count = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
+    if (count.result !== 1) {
+      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
+    }
+    const visibleApp = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.currentVisibleApp",
+    });
+    if (visibleApp.error) {
+      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
+    }
+    if (visibleApp.result !== FIXTURE_A.name) {
+      throw new Error(
+        `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
+        `(expected "${FIXTURE_A.name}")`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: `fixture A dock to be open and front-most` });
+
+  // Close the dock.
+  const closed = await app.inspector.send("evaluate", {
+    objectId: workspace.id,
+    expression: `closeDock(${JSON.stringify(FIXTURE_A.name)})`,
+  });
+  if (closed.error) throw new Error(`evaluate(closeDock) failed: ${closed.error}`);
+
+  // Gate: dock count reaches 0 within 5 s.
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
+    if (res.result !== 0) {
+      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 0)`);
+    }
+  }, { timeout: 5000, interval: 250, description: "workspace dockCount to reach 0" });
+
+  // Gate: the welcome page is visible again…
+  await app.waitFor(async () => {
+    if ((await welcomePageHidden(app, welcome.id)) !== false) {
+      throw new Error("welcome page is still hidden after closing the last dock");
+    }
+  }, { timeout: 5000, interval: 250, description: "welcome page to reappear" });
+
+  // …with the installed-apps greeting — closing unloads fixture A but does
+  // not uninstall it, so launcherApps stays non-empty and the greeting is
+  // "Welcome back", not the first-launch text.
+  await app.waitFor(
+    async () => { await app.expectTexts(["Welcome back"]); },
+    { timeout: 5000, interval: 250, description: '"Welcome back" greeting to render' }
+  );
+
+  // Gate: the backend no longer reports a front-most app.
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.currentVisibleApp",
+    });
+    if (res.error) {
+      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${res.error}`);
+    }
+    if (res.result !== "") {
+      throw new Error(
+        `backend.currentVisibleApp=${JSON.stringify(res.result)} (expected "")`);
+    }
+  }, { timeout: 5000, interval: 250, description: "currentVisibleApp to clear" });
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
