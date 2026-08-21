@@ -59,9 +59,10 @@ void applyDevQmlImportPath(QQmlEngine* engine) {
 }
 } // namespace
 
-MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
+MainContainer::MainContainer(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QWidget* parent)
     : QWidget(parent)
     , m_logosAPI(logosAPI)
+    , m_core(core)
     , m_backend(nullptr)
     , m_sidebarWidget(nullptr)
     , m_contentStack(nullptr)
@@ -73,7 +74,7 @@ MainContainer::MainContainer(LogosAPI* logosAPI, QWidget* parent)
     QQuickStyle::setStyle("Basic");
 
     // Create backend
-    m_backend = new MainUIBackend(m_logosAPI, this);
+    m_backend = new MainUIBackend(m_logosAPI, m_core, this);
     
     setupUi();
 

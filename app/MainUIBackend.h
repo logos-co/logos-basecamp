@@ -16,6 +16,11 @@ class PackageCoordinator;
 class QWidget;
 class UIPluginManager;
 
+// The process-wide core facade, created and owned by main(). Threaded down to
+// CoreModuleManager, which is the only thing here that calls it.
+namespace logos { namespace qt { class QtLogosCore; } }
+
+
 // MainUIBackend — thin QML-facing facade.
 //
 // Owns three managers as Qt children:
@@ -104,7 +109,9 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
 public:
-    explicit MainUIBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
+    explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
+                           logos::qt::QtLogosCore* core = nullptr,
+                           QObject* parent = nullptr);
     ~MainUIBackend() override;
 
     // Navigation — lives on this class.
@@ -302,6 +309,7 @@ private:
 
     // LogosAPI — shared with all three managers.
     LogosAPI* m_logosAPI;
+    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
     bool m_ownsLogosAPI;
 
     // Owned children (parent=this). Order matters: coreModuleManager first,
