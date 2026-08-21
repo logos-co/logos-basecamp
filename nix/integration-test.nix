@@ -37,7 +37,9 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   export BASECAMP_APP_LOG="$out/app.log"
   : > "$BASECAMP_APP_LOG"
   cat > app-with-log.sh <<'WRAPPER'
-  #!${pkgs.runtimeShell}
+  #!${pkgs.bash}/bin/bash
+  # Process substitution below is a bashism; keep the shebang explicitly bash.
+  set -euo pipefail
   exec ${appBin} "$@" \
     > >(tee -a "$BASECAMP_APP_LOG") \
     2> >(tee -a "$BASECAMP_APP_LOG" >&2)
