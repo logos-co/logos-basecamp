@@ -172,6 +172,24 @@ export function makeFixtureSet(outDir, opts = {}) {
   return paths;
 }
 
+// Fixture A (spec §0.A/§4.7): the standing launcher app pre-seeded at boot —
+// the target for app-tile/dock/context-menu tests.
+export const FIXTURE_A = {
+  name: "test_qml_only",
+  version: "0.1.1",
+  displayName: "Test QML Only",
+  type: "ui_qml",
+  dependencies: [],
+};
+
+// Pre-boot seeding (spec §4.7): getInstalledUiPlugins/getInstalledPackages are
+// live directory scans for <name>/manifest.json — no install registry — so a
+// fixture extracted into <user-dir>/plugins/ is indistinguishable from an
+// installed one, at boot and on every refresh().
+export function seedPlugin(userDir, fixture) {
+  return writeInstalledPlugin(userDir, fixture);
+}
+
 // Seed an installed package into a --user-dir; the scanner only reads manifest.json.
 export function writeInstalledPlugin(userDir, spec) {
   const full = {
