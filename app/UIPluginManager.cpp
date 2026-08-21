@@ -254,7 +254,7 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     // it may not yet be Valid, but Qt signal/slot connections work regardless
     // of replica state — the connection will fire when the source emits.
     if (type == UIPluginType::UiQml) {
-        auto* qw = m_qmlPluginWidgets.value(name);
+        QQuickWidget* qw = m_qmlPluginWidgets.value(name);
         if (qw) {
             auto* bridge = qobject_cast<LogosQmlBridge*>(
                 qw->rootContext()->contextProperty(QStringLiteral("logos"))
