@@ -9,14 +9,21 @@
 namespace LogosBasecampLog {
 
 // Captures the process stdout/stderr into rotating log files under a given
-// directory. One file per session (named basecamp_YYYYMMDD_HHMMSS.log); when
-// the current file hits maxLinesPerFile, a suffixed rotation file is opened
-// (basecamp_YYYYMMDD_HHMMSS.001.log, .002.log, ...).
+// directory. One file per session; when the current file hits
+// maxLinesPerFile, a suffixed rotation file is opened. Names come from
+// LogosBasecampPaths::sessionLogFileName(), which the readers share.
+//
+// Before the session's first file is opened, sessions older than the newest
+// `keepSessions - 1` are deleted (every rotation of them), so the directory
+// settles at keepSessions sessions once this one is added. Pass 0 to keep
+// everything.
 //
 // Implementation: replaces stdout/stderr with the write-end of a pipe via
 // dup2(); a background reader thread reads from the pipe, writes to the
-// current log file (counting newlines for rotation) and mirrors bytes to the
-// original stdout so a terminal attached at launch still sees output.
+// current log file (counting newlines for rotation), flushes after every
+// chunk so the file can be tailed while the session runs (Settings → Logs
+// does exactly that), and mirrors bytes to the original stdout so a terminal
+// attached at launch still sees output.
 //
 // POSIX-only (macOS/Linux). On other platforms start() is a no-op.
 class LogRedirector
@@ -26,10 +33,20 @@ public:
 
     // Start capture. Safe to call once; subsequent calls are no-ops.
     // Returns false if redirection could not be set up.
-    bool start(const QString& logsDir, int maxLinesPerFile = 10000);
+    bool start(const QString& logsDir, int maxLinesPerFile = 10000, int keepSessions = 10);
 
     // Flush, restore original stdout/stderr, join reader thread, close files.
     void stop();
+
+    // The session's first file (basecamp_<stamp>.log), empty until start()
+    // succeeded. Rotations share the stamp, so a reader can find them all.
+    QString filePath() const { return m_filePath; }
+    QString sessionStamp() const { return m_sessionStamp; }
+
+    // Delete every session under `logsDir` except the newest `keep` (0 deletes
+    // all, negative deletes nothing). Shared by start() and exposed for
+    // tests. Returns the number of files removed.
+    static int pruneSessions(const QString& logsDir, int keep);
 
     LogRedirector(const LogRedirector&) = delete;
     LogRedirector& operator=(const LogRedirector&) = delete;
@@ -43,6 +60,7 @@ private:
 
     QString m_logsDir;
     QString m_sessionStamp;
+    QString m_filePath;
     int m_maxLinesPerFile = 10000;
     int m_rotationIndex = 0;
     int m_linesInCurrentFile = 0;

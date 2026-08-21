@@ -40,6 +40,8 @@ foreach(test_src IN LISTS TEST_SOURCES)
     add_executable(${test_name} ${test_src} ${_extra_srcs})
     target_include_directories(${test_name} PRIVATE
         ${BASECAMP_SRC}
+        # Header-only app utilities shared with the plugin (LogosBasecampPaths).
+        ${BASECAMP_SRC}/../app/utils
         ${LOGOS_PACKAGE_HEADERS_INCLUDE}
     )
     target_link_libraries(${test_name} PRIVATE

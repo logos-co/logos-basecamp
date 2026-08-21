@@ -107,6 +107,9 @@ Owns every interaction with the `package_manager` LogosAPI module. (Named `Packa
 - **Cascade confirmation**: `confirmUninstallCascade`, `cancelPendingAction` — drives cascade unload via CoreModuleManager + UIPluginManager, then hands back to the module
 - **Metadata refresh**: `refresh()` triggers the full `getInstalledUiPlugins` + `getInstalledPackages` + per-package `resolveFlatDependencies/Dependents` chain; pushes UI metadata to UIPluginManager via `uiPluginsFetched` signal
 
+### LogManager (`src/LogManager.h/.cpp`)
+Backend for Settings → Logs, exposed whole as `backend.logs`. Lists the per-session files `app/utils/LogRedirector` writes under `<baseDirectory>/logs` into `LogFilesModel` (patched in place on each listing), parses the open one into `LogLinesModel` (roles: timestamp/level/source/message/raw) via `LogLineParser`, and tails the live file (published by `main.cpp` as `LOGOS_SESSION_LOG`) on a 1 s poll while the page is visible and Follow is on. All file I/O runs on `LogReaderWorker` in its own QThread. `LogFilterProxy` (Basecamp.Backend) does level/source/text filtering in QML and produces copy text. File naming, env var names and the retention default are defined once in `app/utils/LogosBasecampPaths.h` (session-log section) and shared by writer and readers. Retention lives on the writer side: `LogRedirector::start(..., keepSessions)` prunes older sessions at launch (`LOGOS_LOG_KEEP_SESSIONS`, default 10).
+
 ### Construction & Destruction Order
 CoreModuleManager is constructed first, UIPluginManager second (receives CoreModuleManager), PackageCoordinator third (receives both). UIPluginManager's `setPackageCoordinator` is called after all three exist, closing the cycle and wiring the `uiPluginsFetched`/`uiModulesChanged`/`launcherAppsChanged`/`coreModulesChanged` signal flow. Qt's reverse-order child destruction tears PackageCoordinator down first (stops emitting), then UIPluginManager (tears down widgets while the C API handle is still valid), then CoreModuleManager.
 
@@ -119,6 +122,7 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 | `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
 | `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
 | `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
+| `src/Basecamp/Settings/LogsView.qml` | Logs — session log files, parsed lines with level/source chips + search, Follow for the live file, delete-older-sessions |
 | `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
 
 ## QML Inspector (MCP)

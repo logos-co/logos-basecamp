@@ -661,6 +661,132 @@ test("window: tray toggle hides a shown window", async (app) => {
   }
 });
 
+// --- Logs ---
+//
+// Settings → Logs reads the per-session files LogRedirector writes and tails
+// the one this very session is writing, so the app under test is also the
+// fixture: its own startup banner and module chatter are the lines we expect.
+
+async function openLogsView(app) {
+  await app.click("Settings");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Sections", "Logs"]); },
+    { timeout: 10000, interval: 500, description: "Settings sections" }
+  );
+  await app.click("Logs", { exact: true });
+  await app.waitFor(
+    async () => { await app.expectTexts(["Files", "Level", "Source"]); },
+    { timeout: 10000, interval: 500, description: "Logs view content" }
+  );
+  const anchor = await app.findByProperty("objectName", "logsView");
+  if (!anchor.matches || anchor.matches.length === 0) {
+    throw new Error("logsView not found in QML tree");
+  }
+  return anchor.matches[0].id;
+}
+
+async function waitForLiveLog(app, anchorId) {
+  await app.waitFor(async () => {
+    const live = await evalOn(app, anchorId, "backend.logs.currentIsLive");
+    if (live !== true) throw new Error(`currentIsLive=${live}`);
+    const count = await evalOn(app, anchorId, "backend.logs.lines.count");
+    if (typeof count !== "number" || count < 10) throw new Error(`lines.count=${count}`);
+  }, { timeout: 15000, interval: 500, description: "live session log to load" });
+}
+
+test("logs: live session file opens with parsed lines and source chips", async (app) => {
+  const anchorId = await openLogsView(app);
+  await waitForLiveLog(app, anchorId);
+
+  // The startup banner is Basecamp's own output, and the core modules loaded
+  // at launch log through logos_host with their own tag — so "basecamp" plus
+  // at least one module name must be tallied. Which module gets there first
+  // varies with timing, so don't pin the name.
+  const sources = (await evalOn(app, anchorId,
+    "backend.logs.sourceCounts.map(function(s) { return s.name }).join(',')")).split(",");
+  if (!sources.includes("basecamp")) {
+    throw new Error(`source "basecamp" missing from ${sources}`);
+  }
+  if (!sources.some(s => s !== "basecamp" && s !== "liblogos")) {
+    throw new Error(`no module source tallied, only ${sources}`);
+  }
+  const levels = await evalOn(app, anchorId,
+    "backend.logs.levelCounts.map(function(l) { return l.name }).join(',')");
+  for (const expected of ["plain", "info"]) {
+    if (!levels.split(",").includes(expected)) {
+      throw new Error(`level "${expected}" missing from ${levels}`);
+    }
+  }
+
+  // Live badge on the open file; Follow switch only shows for the live file.
+  await app.expectTexts(["Live", "Follow"]);
+});
+
+test("logs: source filter narrows the visible lines to that source", async (app) => {
+  const anchorId = await openLogsView(app);
+  await waitForLiveLog(app, anchorId);
+
+  const list = await app.findByProperty("objectName", "logs.linesList");
+  if (!list.matches || list.matches.length === 0) {
+    throw new Error("logs.linesList not found in QML tree");
+  }
+  const listId = list.matches[0].id;
+  const box = await app.findByProperty("objectName", "logs.sourceBox");
+  if (!box.matches || box.matches.length === 0) {
+    throw new Error("logs.sourceBox not found in QML tree");
+  }
+  const boxId = box.matches[0].id;
+
+  const total = await evalOn(app, listId, "model.totalCount");
+  const before = await evalOn(app, listId, "model.visibleCount");
+  if (before !== total || total < 10) {
+    throw new Error(`unfiltered: visible=${before} total=${total}`);
+  }
+
+  // Pick a module source that is present (sourceCounts pins "basecamp"
+  // first, so index 1 is the busiest module). Popup list clicks are
+  // unreliable offscreen, so drive the view's own entry point — the same
+  // function the dropdown's onActivated reaches.
+  const source = await evalOn(app, anchorId, "backend.logs.sourceCounts[1].name");
+  if (typeof source !== "string" || source.length === 0) {
+    throw new Error(`no second source to filter on (got ${JSON.stringify(source)})`);
+  }
+  await evalOn(app, anchorId, `setSourceFilter(${JSON.stringify(source)})`);
+
+  await app.waitFor(async () => {
+    const visible = await evalOn(app, listId, "model.visibleCount");
+    if (!(visible > 0 && visible < total)) {
+      throw new Error(`filtered: visible=${visible} total=${total}`);
+    }
+    const allMatch = await evalOn(app, listId, `(function() {
+      for (var i = 0; i < model.visibleCount; ++i) {
+        if (backend.logs.lines.lineAt(model.sourceRow(i)).source !== ${JSON.stringify(source)}) return false;
+      }
+      return true;
+    })()`);
+    if (allMatch !== true) throw new Error(`a visible row is not from ${source}`);
+    // The dropdown reflects the filter.
+    const shown = await evalOn(app, boxId, "currentValue");
+    const label = await evalOn(app, boxId, "displayText");
+    if (shown !== source || label !== source) {
+      throw new Error(`sourceBox shows value=${shown} label="${label}"`);
+    }
+  }, { timeout: 5000, interval: 300, description: "source filter to apply" });
+
+  // "All sources" restores the full file. The file is live and keeps
+  // growing, so compare against the model's own total.
+  await evalOn(app, anchorId, `setSourceFilter("")`);
+  await app.waitFor(async () => {
+    const active = await evalOn(app, listId, "model.sources.join(',')");
+    const visible = await evalOn(app, listId, "model.visibleCount");
+    const now = await evalOn(app, listId, "model.totalCount");
+    const label = await evalOn(app, boxId, "displayText");
+    if (active !== "" || visible !== now || label !== "All sources") {
+      throw new Error(`after clear: sources=[${active}] visible=${visible} total=${now} label="${label}"`);
+    }
+  }, { timeout: 5000, interval: 300, description: "source filter to clear" });
+});
+
 // --- Run ---
 
 run();

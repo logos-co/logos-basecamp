@@ -166,10 +166,24 @@ int main(int argc, char *argv[])
     // and after the --user-dir override is applied so baseDirectory() resolves
     // to the right location. Terminal output is preserved by mirroring to the
     // original stdout.
+    //
+    // Retention: keep the newest kKeepSessionsEnvVar sessions (default
+    // kDefaultKeepSessions; 0 keeps everything). Without a bound the directory
+    // grew by at least one file per launch forever.
     const QString logsDir = LogosBasecampPaths::logsDirectory();
-    if (!LogosBasecampLog::LogRedirector::instance().start(logsDir)) {
+    bool keepOk = false;
+    int keepSessions = qEnvironmentVariableIntValue(LogosBasecampPaths::kKeepSessionsEnvVar, &keepOk);
+    if (!keepOk || keepSessions < 0)
+        keepSessions = LogosBasecampPaths::kDefaultKeepSessions;
+    if (!LogosBasecampLog::LogRedirector::instance().start(logsDir, 10000, keepSessions)) {
         qWarning() << "Failed to start log redirection; continuing without file logs."
                    << "Logs directory:" << logsDir;
+    } else {
+        // Published for the UI library, which is loaded rather than linked and
+        // so cannot ask LogRedirector which file this session writes. Settings
+        // → Logs follows it live.
+        qputenv(LogosBasecampPaths::kSessionLogEnvVar,
+                LogosBasecampLog::LogRedirector::instance().filePath().toUtf8());
     }
 
     // Print build metadata (version, dev/portable, commit hashes) so the

@@ -1,8 +1,14 @@
 #include "LogRedirector.h"
 
+#include "LogosBasecampPaths.h"
+
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
+#include <QSet>
+#include <QStringList>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 
@@ -24,16 +30,51 @@ LogRedirector::~LogRedirector()
     stop();
 }
 
+int LogRedirector::pruneSessions(const QString& logsDir, int keep)
+{
+    // keep == 0 deletes every session present (start() calls this with
+    // keepSessions - 1 before opening its own file). Negative is "no pruning".
+    if (keep < 0) return 0;
+
+    // A session is one stamp however many rotations it produced: the newest
+    // stamps stay whole, older ones go with all their rotations.
+    const QFileInfoList files = QDir(logsDir).entryInfoList(
+        { QLatin1String(LogosBasecampPaths::kSessionLogGlob) },
+        QDir::Files | QDir::NoSymLinks, QDir::Name);
+
+    QSet<QString> stamps;
+    for (const QFileInfo& fi : files) {
+        QString stamp;
+        if (LogosBasecampPaths::parseSessionLogFileName(fi.fileName(), &stamp, nullptr))
+            stamps.insert(stamp);
+    }
+    if (stamps.size() <= keep) return 0;
+
+    QStringList ordered(stamps.cbegin(), stamps.cend());
+    std::sort(ordered.begin(), ordered.end());
+    const QStringList doomedList = ordered.mid(0, ordered.size() - keep);
+    const QSet<QString> doomed(doomedList.cbegin(), doomedList.cend());
+
+    int removed = 0;
+    for (const QFileInfo& fi : files) {
+        QString stamp;
+        if (LogosBasecampPaths::parseSessionLogFileName(fi.fileName(), &stamp, nullptr)
+            && doomed.contains(stamp) && QFile::remove(fi.absoluteFilePath()))
+            ++removed;
+    }
+    return removed;
+}
+
 #if defined(Q_OS_WIN)
 
-bool LogRedirector::start(const QString&, int) { return false; }
+bool LogRedirector::start(const QString&, int, int) { return false; }
 void LogRedirector::stop() {}
 void LogRedirector::readerLoop() {}
 void LogRedirector::openNewFile() {}
 
 #else
 
-bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
+bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile, int keepSessions)
 {
     if (m_started)
         return true;
@@ -46,7 +87,13 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
     if (!QDir().mkpath(m_logsDir))
         return false;
 
-    m_sessionStamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    // Before this session adds its own file, so the directory settles at
+    // keepSessions rather than one more.
+    if (keepSessions > 0)
+        pruneSessions(m_logsDir, keepSessions - 1);
+
+    m_sessionStamp = QDateTime::currentDateTime().toString(
+        QLatin1String(LogosBasecampPaths::kSessionLogStampFormat));
     m_rotationIndex = 0;
     m_linesInCurrentFile = 0;
 
@@ -57,6 +104,7 @@ bool LogRedirector::start(const QString& logsDir, int maxLinesPerFile)
             m_currentFile->close();
             m_currentFile.reset();
         }
+        m_filePath.clear();
     };
 
     openNewFile();
@@ -143,20 +191,15 @@ void LogRedirector::stop()
 
 void LogRedirector::openNewFile()
 {
-    QString name;
-    if (m_rotationIndex == 0) {
-        name = QStringLiteral("basecamp_%1.log").arg(m_sessionStamp);
-    } else {
-        name = QStringLiteral("basecamp_%1.%2.log")
-                   .arg(m_sessionStamp)
-                   .arg(m_rotationIndex, 3, 10, QChar('0'));
-    }
+    const QString name = LogosBasecampPaths::sessionLogFileName(m_sessionStamp, m_rotationIndex);
 
     auto f = std::make_unique<QFile>(m_logsDir + QStringLiteral("/") + name);
     if (!f->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         m_currentFile.reset();
         return;
     }
+    if (m_rotationIndex == 0)
+        m_filePath = f->fileName();
     m_currentFile = std::move(f);
     m_linesInCurrentFile = 0;
     ++m_rotationIndex;
@@ -210,6 +253,10 @@ void LogRedirector::readerLoop()
         }
         if (start < n && m_currentFile)
             m_currentFile->write(buf + start, n - start);
+        // Per-chunk flush: QFile buffers otherwise, and a reader tailing the
+        // file (Settings → Logs) would see lines seconds late.
+        if (m_currentFile)
+            m_currentFile->flush();
     }
 
     if (m_currentFile)

@@ -5,6 +5,7 @@
 #include <QString>
 #include <QDir>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 
 namespace LogosBasecampPaths {
 
@@ -70,6 +71,44 @@ inline QString moduleDataDirectory()
 inline QString logsDirectory()
 {
     return baseDirectory() + "/logs";
+}
+
+// ── Session log files ────────────────────────────────────────────────────────
+// The one place that knows how LogRedirector names its files. The writer
+// (app/utils/LogRedirector) and the readers (main_ui's Settings → Logs,
+// retention) both go through these, so the pattern is never spelled out
+// twice. A session is basecamp_<stamp>.log followed by rotations
+// basecamp_<stamp>.001.log, .002.log, … (three digits minimum, more when a
+// long session needs them).
+
+inline constexpr const char* kSessionLogStampFormat = "yyyyMMdd_HHmmss";
+inline constexpr const char* kSessionLogGlob = "basecamp_*.log";
+
+// Set by main.cpp to the running session's first file so the UI plugin,
+// which is loaded rather than linked, can tell which file is being written.
+inline constexpr const char* kSessionLogEnvVar = "LOGOS_SESSION_LOG";
+// Retention: sessions kept at launch. 0 keeps everything.
+inline constexpr const char* kKeepSessionsEnvVar = "LOGOS_LOG_KEEP_SESSIONS";
+inline constexpr int kDefaultKeepSessions = 10;
+
+inline QString sessionLogFileName(const QString& stamp, int rotation)
+{
+    if (rotation <= 0)
+        return QStringLiteral("basecamp_%1.log").arg(stamp);
+    return QStringLiteral("basecamp_%1.%2.log").arg(stamp).arg(rotation, 3, 10, QChar('0'));
+}
+
+// Decompose a file name produced by sessionLogFileName(). Returns false for
+// anything else found in the directory.
+inline bool parseSessionLogFileName(const QString& fileName, QString* stamp, int* rotation)
+{
+    static const QRegularExpression re(
+        QStringLiteral("^basecamp_(\\d{8}_\\d{6})(?:\\.(\\d{3,}))?\\.log$"));
+    const QRegularExpressionMatch m = re.match(fileName);
+    if (!m.hasMatch()) return false;
+    if (stamp) *stamp = m.captured(1);
+    if (rotation) *rotation = m.captured(2).isEmpty() ? 0 : m.captured(2).toInt();
+    return true;
 }
 
 // Embedded directories — read-only, pre-installed at build time alongside the binary.
