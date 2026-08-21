@@ -14,7 +14,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { writeSync } from "node:fs";
-import { findByObjectName, makeTest } from "./fixtures/harness.mjs";
+import { findByObjectName, makeTest, sleep } from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -381,6 +381,185 @@ test("workspace: closing the last dock brings the welcome page back", async (app
         `backend.currentVisibleApp=${JSON.stringify(res.result)} (expected "")`);
     }
   }, { timeout: 5000, interval: 250, description: "currentVisibleApp to clear" });
+});
+
+// --- Workspace (A5) — re-clicking an open app does not create a second dock ---
+//
+// Spec §2.A A5: click sidebar.app.test_qml_only twice, 500 ms apart. The
+// first click opens the dock (A4 left the workspace empty); the second must
+// activate the existing dock, not spawn another.
+//
+// "Exactly one instance of fixture A's root item type in the tree" cannot be
+// checked literally on this branch: the fixture's root is a plain Rectangle
+// (qmlViewFor in tests/fixtures/lgx.mjs), a type the shell instantiates all
+// over. Each instantiation of the fixture's root document lives in exactly
+// one host QQuickWidget whose source is <installDir>/Main.qml
+// (PluginLoader.cpp:367) and renders exactly one Text with the unique
+// payload string — so those two counts stand in for the root-type count.
+
+test("workspace: re-clicking an open app does not create a second dock", async (app) => {
+  // Same stable evaluate anchor as A3/A4 — has `backend` in context and
+  // survives sidebar delegate churn.
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  const workspace = await findByObjectName(app.inspector, "workspace");
+  if (!workspace) {
+    throw new Error('WorkspaceArea (objectName "workspace") not found');
+  }
+
+  // Click #1 — opens the dock.
+  let tile = null;
+  try {
+    await app.waitFor(async () => {
+      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
+        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
+      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
+  }
+  const firstClick = await app.inspector.send("callMethod", {
+    objectId: tile.id, method: "clicked",
+  });
+  if (firstClick.error) {
+    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${firstClick.error}`);
+  }
+
+  // Wait until the app is actually open — the spec's 500 ms spacing assumes
+  // the first click's dock exists before the re-click; on a slow-loading run
+  // a blind 500 ms click would test click-while-loading instead.
+  await app.waitFor(async () => {
+    const count = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
+    if (count.result !== 1) {
+      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
+    }
+    const visibleApp = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.currentVisibleApp",
+    });
+    if (visibleApp.error) {
+      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
+    }
+    if (visibleApp.result !== FIXTURE_A.name) {
+      throw new Error(
+        `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
+        `(expected "${FIXTURE_A.name}")`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "fixture A dock to open after the first click" });
+
+  // Click #2, 500 ms later. Loading moved the delegate from the unloaded to
+  // the loaded Repeater (same objectName, new object), so re-find inside the
+  // retry loop — a delegate mid-churn just retries, and a duplicate
+  // activation click is harmless (activation is what A5 exercises).
+  await sleep(500);
+  await app.waitFor(async () => {
+    const loadedTile =
+      await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+    if (!loadedTile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    const clicked = await app.inspector.send("callMethod", {
+      objectId: loadedTile.id, method: "clicked",
+    });
+    if (clicked.error) {
+      throw new Error(`re-clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
+    }
+  }, { timeout: 10000, interval: 500, description: "second click on fixture A tile" });
+
+  // Gate: dock count STAYS 1 — poll across a settle window rather than one
+  // instant-passing read, so an asynchronously created second dock (the
+  // load path defers through singleShot timers) cannot slip in unseen.
+  const settleDeadline = Date.now() + 2000;
+  for (;;) {
+    const count = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
+    if (count.result !== 1) {
+      throw new Error(
+        `WorkspaceArea.dockCount=${count.result} after re-click ` +
+        `(expected it to stay 1)`);
+    }
+    if (Date.now() >= settleDeadline) break;
+    await sleep(250);
+  }
+
+  // Gate: fixture A is still the front-most app.
+  const visibleApp = await app.inspector.send("evaluate", {
+    objectId: welcome.id, expression: "backend.currentVisibleApp",
+  });
+  if (visibleApp.error) {
+    throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
+  }
+  if (visibleApp.result !== FIXTURE_A.name) {
+    throw new Error(
+      `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
+      `(expected "${FIXTURE_A.name}")`);
+  }
+
+  // Gate: exactly one instantiation of fixture A's root document — one host
+  // QQuickWidget sourced from the fixture's Main.qml…
+  const byType = await app.inspector.send("findByType", { typeName: "QQuickWidget" });
+  if (byType.error) throw new Error(`findByType(QQuickWidget) failed: ${byType.error}`);
+  const fixtureHosts = [];
+  for (const m of byType.matches ?? []) {
+    const props = await app.inspector.send("getProperties", { objectId: m.id });
+    const source = props.properties?.find((p) => p.name === "source")?.value;
+    if (typeof source === "string"
+        && source.includes(`/${FIXTURE_A.name}/`)
+        && source.endsWith("Main.qml")) {
+      fixtureHosts.push(source);
+    }
+  }
+  if (fixtureHosts.length !== 1) {
+    throw new Error(
+      `${fixtureHosts.length} QQuickWidget(s) sourced from fixture A's ` +
+      `Main.qml (expected exactly 1): ${JSON.stringify(fixtureHosts)}`);
+  }
+
+  // …and exactly one render of its unique payload text.
+  const textHits = await app.inspector.send("findByProperty", {
+    property: "text", value: FIXTURE_A_TEXT,
+  });
+  if (textHits.error) {
+    throw new Error(`findByProperty(text=payload) failed: ${textHits.error}`);
+  }
+  const payloadCount = (textHits.matches ?? []).length;
+  if (payloadCount !== 1) {
+    throw new Error(
+      `${payloadCount} instance(s) of fixture A's payload text in the tree ` +
+      `(expected exactly 1)`);
+  }
+
+  // Cleanup: close the dock so the rest of the suite starts from the same
+  // no-docks baseline A4 established (close also unloads the module —
+  // same evaluate path as A4; callMethod can't marshal the QString arg).
+  const closed = await app.inspector.send("evaluate", {
+    objectId: workspace.id,
+    expression: `closeDock(${JSON.stringify(FIXTURE_A.name)})`,
+  });
+  if (closed.error) throw new Error(`evaluate(closeDock) failed: ${closed.error}`);
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
+    if (res.result !== 0) {
+      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 0)`);
+    }
+  }, { timeout: 5000, interval: 250, description: "cleanup: fixture A dock to close" });
 });
 
 // --- Package Manager ---
