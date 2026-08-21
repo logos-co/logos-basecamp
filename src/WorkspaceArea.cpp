@@ -169,6 +169,7 @@ constexpr int kTabBarInsetPx = 24;
 WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
     : QMainWindow(parent)
 {
+    setObjectName(QStringLiteral("workspace"));
     setWindowFlags(Qt::Widget);
 
     setDockOptions(QMainWindow::AllowNestedDocks
@@ -298,6 +299,7 @@ void WorkspaceArea::toggleLayoutModeForTesting()
         }
 
         QTimer::singleShot(0, this, [this]() { styleAllTabBars(); });
+        emit dockLayoutChanged();
     });
 }
 
@@ -442,6 +444,7 @@ void WorkspaceArea::addPluginDock(QWidget* pluginWidget,
     ensurePhantomTab();
     updateQmlPluginActiveStates();
     updateWelcomeVisibility();
+    emit dockLayoutChanged();
 }
 
 void WorkspaceArea::removePluginDock(const QString& name)
@@ -466,6 +469,13 @@ void WorkspaceArea::removePluginDock(const QString& name)
     else ensurePhantomTab();
     updateQmlPluginActiveStates();
     updateWelcomeVisibility();
+    emit dockLayoutChanged();
+}
+
+void WorkspaceArea::closeDock(const QString& moduleName)
+{
+    if (!m_docks.contains(moduleName)) return;
+    emit pluginClosed(moduleName);
 }
 
 void WorkspaceArea::activatePluginDock(const QString& moduleName)

@@ -25,6 +25,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import net from "node:net";
+import {
+  SHUTDOWN_TIER,
+  assertCleanTeardown as assertCleanTeardownImpl,
+  findByObjectName,
+  scanForQmlErrors,
+  waitForExit,
+} from "./fixtures/harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -71,31 +78,30 @@ async function waitForInspector() {
   throw new Error(`inspector never came up on ${HOST}:${PORT}`);
 }
 
-function waitForExit(child, ms) {
-  return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      return resolve({ code: child.exitCode, signal: child.signalCode });
-    }
-    const timer = setTimeout(() => resolve(null), ms);
-    child.once("exit", (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code, signal });
-    });
-  });
-}
-
 // Body-return protocol: throw = FAIL; return {skip: reason} = SKIP; else PASS.
 class SkipTest {
   constructor(reason) { this.reason = reason; }
 }
 function skipTest(reason) { return new SkipTest(reason); }
 
-async function runTest(name, body) {
+let currentRun = null;
+
+// opts: { xfail } — loud on unexpected pass; { tier: "full" } — nightly only.
+async function runTest(name, body, opts = {}) {
   process.stdout.write(`  ${name} ... `);
+  if (opts.tier === "full" && SHUTDOWN_TIER !== "full") {
+    console.log(`\x1b[33mSKIP\x1b[0m — tier "full" test under SHUTDOWN_TIER=${SHUTDOWN_TIER}`);
+    return "skip";
+  }
   const child = spawnApp();
   const logChunks = [];
   child.stdout.on("data", (d) => logChunks.push(d));
   child.stderr.on("data", (d) => logChunks.push(d));
+  const closed = new Promise((r) => child.once("close", r));
+  currentRun = {
+    log: () => Buffer.concat(logChunks).toString("utf-8"),
+    closed,
+  };
 
   let outcome = "pass";
   let err = null;
@@ -104,19 +110,39 @@ async function runTest(name, body) {
     await waitForInspector();
     // Give plugins time to finish loading so shutdown exercises the full teardown path.
     await new Promise((r) => setTimeout(r, APP_WARMUP_MS));
+    // G-ERR scans only startup output — teardown legitimately emits noise.
+    const startupChunkCount = logChunks.length;
     const ret = await body(child);
     if (ret instanceof SkipTest) {
       outcome = "skip";
       skipReason = ret.reason;
+    } else {
+      const qmlErrors = scanForQmlErrors(
+        Buffer.concat(logChunks.slice(0, startupChunkCount)).toString("utf-8"));
+      if (qmlErrors.length > 0) {
+        throw new Error(
+          `G-ERR: QML error(s) during startup:\n  ${qmlErrors.join("\n  ")}`);
+      }
     }
   } catch (e) {
     outcome = "fail";
     err = e;
   } finally {
+    currentRun = null;
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
       await waitForExit(child, 2000);
     }
+  }
+
+  if (outcome === "pass" && opts.xfail) {
+    outcome = "fail";
+    err = new Error(
+      `XPASS: test passed but is marked xfail (${opts.xfail}) — the fix ` +
+      `landed, remove the xfail marker`);
+  } else if (outcome === "fail" && opts.xfail) {
+    console.log(`\x1b[33mXFAIL\x1b[0m (${opts.xfail}) — ${err.message}`);
+    return "pass";
   }
 
   if (outcome === "pass") {
@@ -132,49 +158,29 @@ async function runTest(name, body) {
   return outcome;
 }
 
-async function assertGracefulExit(child) {
-  const exit = await waitForExit(child, SHUTDOWN_WAIT_MS);
-  if (!exit) throw new Error(`did not exit within ${SHUTDOWN_WAIT_MS}ms`);
-  if (exit.signal) throw new Error(`terminated by signal ${exit.signal} instead of orderly exit`);
-  if (exit.code !== 0) throw new Error(`exit code ${exit.code}, want 0`);
-}
-
-async function findByObjectName(inspector, name) {
-  // findByProperty on objectName reliably finds the tagged object
-  // regardless of how its other properties (QKeySequence, etc.) get
-  // JSON-serialised by the MCP server.
-  const res = await inspector.send("findByProperty", {
-    property: "objectName", value: name,
+async function assertCleanTeardown(child) {
+  await assertCleanTeardownImpl(child, {
+    waitMs: SHUTDOWN_WAIT_MS,
+    log: currentRun?.log,
+    closed: currentRun?.closed,
   });
-  return (res.matches ?? [])[0] || null;
 }
-
-// The hide-to-tray branch of Window::closeEvent only runs when a system
-// tray is actually available. In offscreen CI (Xvfb without a tray daemon,
-// or QT_QPA_PLATFORM=offscreen) there is no tray, so closing the window
-// quits instead of hiding — that's correct behaviour, just not the branch
-// we want to exercise. The tray-Quit action isn't even constructed when
-// the tray is unavailable, so its object won't exist to find.
-async function trayIsAvailable(inspector) {
-  const trayAction = await findByObjectName(inspector, "logosTrayQuitAction");
-  return trayAction != null;
-}
-
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-console.log(`\nlogos-basecamp shutdown tests (${process.platform})\n`);
+console.log(`\nlogos-basecamp shutdown tests (${process.platform}, tier: ${SHUTDOWN_TIER})\n`);
+const suiteStart = Date.now();
 const results = [];
 
 results.push(await runTest("SIGTERM triggers graceful shutdown", async (child) => {
   child.kill("SIGTERM");
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 results.push(await runTest("SIGINT triggers graceful shutdown", async (child) => {
   child.kill("SIGINT");
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 if (process.platform === "linux") {
@@ -196,7 +202,7 @@ if (process.platform === "linux") {
     });
     inspector.disconnect();
     if (res.error) throw new Error(`callMethod(activated) failed: ${res.error}`);
-    await assertGracefulExit(child);
+    await assertCleanTeardown(child);
   }));
 }
 
@@ -218,54 +224,29 @@ if (process.platform === "darwin") {
     });
     inspector.disconnect();
     if (res.error) throw new Error(`callMethod(trigger) failed: ${res.error}`);
-    await assertGracefulExit(child);
+    await assertCleanTeardown(child);
   }));
 }
 
-// Window.close() covers Alt+F4 / window-X (all platforms) and ⌘W / red-button (macOS).
-// Behaviour is platform-dependent:
-//   - Linux: closeEvent explicitly quits (matches GNOME/KDE convention).
-//   - macOS/Windows: closeEvent hides to tray when the tray is available
-//     (Discord/Slack tray-app convention).
-if (process.platform === "linux") {
-  results.push(await runTest("Linux: Window.close() quits (Alt+F4 / X button convention)", async (child) => {
-    const inspector = new Inspector();
-    await inspector.connect();
-    const win = await findByObjectName(inspector, "logosMainWindow");
-    if (!win) {
-      inspector.disconnect();
-      throw new Error("Window objectName=logosMainWindow not found");
-    }
-    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
+// Since 3a73d33 closing the window never quits on any platform (tray/dock convention).
+results.push(await runTest("Window.close() does not quit; app keeps running (tray/dock convention)", async (child) => {
+  const inspector = new Inspector();
+  await inspector.connect();
+  const win = await findByObjectName(inspector, "logosMainWindow");
+  if (!win) {
     inspector.disconnect();
-    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-    await assertGracefulExit(child);
-  }));
-} else {
-  results.push(await runTest("macOS/Windows: Window.close() hides to tray, does not quit", async (child) => {
-    const inspector = new Inspector();
-    await inspector.connect();
-    if (!(await trayIsAvailable(inspector))) {
-      inspector.disconnect();
-      return skipTest("no system tray in this environment (offscreen without tray daemon)");
-    }
-    const win = await findByObjectName(inspector, "logosMainWindow");
-    if (!win) {
-      inspector.disconnect();
-      throw new Error("Window objectName=logosMainWindow not found");
-    }
-    const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
-    inspector.disconnect();
-    if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
-    // Give the event loop time to (not) process a shutdown.
-    await new Promise((r) => setTimeout(r, 3000));
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(
-        `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closeEvent should have hidden to tray`
-      );
-    }
-  }));
-}
+    throw new Error("Window objectName=logosMainWindow not found");
+  }
+  const res = await inspector.send("callMethod", { objectId: win.id, method: "close" });
+  inspector.disconnect();
+  if (res.error) throw new Error(`callMethod(close) failed: ${res.error}`);
+  await new Promise((r) => setTimeout(r, 3000));
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw new Error(
+      `app exited (code=${child.exitCode}, signal=${child.signalCode}) — closing the window must not quit`
+    );
+  }
+}));
 
 // Tray "Quit" action: must terminate the process. Same wiring as ⌘Q on mac
 // / Ctrl+Q on Linux, but a distinct connection worth guarding.
@@ -284,11 +265,12 @@ results.push(await runTest("Tray Quit QAction is wired and quits", async (child)
   const res = await inspector.send("callMethod", { objectId: action.id, method: "trigger" });
   inspector.disconnect();
   if (res.error) throw new Error(`callMethod(trigger) failed: ${res.error}`);
-  await assertGracefulExit(child);
+  await assertCleanTeardown(child);
 }));
 
 const passed = results.filter((r) => r === "pass").length;
 const skipped = results.filter((r) => r === "skip").length;
 const failed = results.filter((r) => r === "fail").length;
 console.log(`\n${passed} passed, ${skipped} skipped, ${failed} failed`);
+console.log(`Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s`);
 process.exit(failed > 0 ? 1 : 0);

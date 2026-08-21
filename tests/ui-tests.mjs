@@ -13,11 +13,32 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { writeSync } from "node:fs";
+import { makeTest } from "./fixtures/harness.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const qtMcpRoot = process.env.LOGOS_QT_MCP || resolve(projectRoot, "result-mcp");
-const { test, run } = await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
+const { test: frameworkTest, run } =
+  await import(resolve(qtMcpRoot, "test-framework/framework.mjs"));
+
+// Adds the G-ERR/G-ALIVE epilogue and { xfail } support to every test.
+const test = makeTest(frameworkTest);
+
+// run() exits the process itself; writeSync so the line isn't dropped at exit.
+const suiteStart = Date.now();
+process.on("exit", () => {
+  const elapsed = `Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s\n`;
+  try {
+    writeSync(1, elapsed);
+  } catch {
+    try {
+      writeSync(2, elapsed);
+    } catch {
+      // Best-effort shutdown logging only; never fail the suite on exit.
+    }
+  }
+});
 
 // Helper: click a plugin's sidebar icon and wait for its UI to load.
 // Plugins load asynchronously after clicking, so we wait for expected
@@ -29,6 +50,78 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
     { timeout: 10000, interval: 500, description: `"${name}" UI to load` }
   );
 }
+
+// --- Welcome page (A1) — must run FIRST: asserts the pre-interaction state ---
+async function findWelcomePage(app) {
+  const res = typeof app.findByType === "function"
+    ? await app.findByType("WelcomePage")
+    : await app.inspector.send("findByType", { typeName: "WelcomePage" });
+  if (res.error) throw new Error(`findByType(WelcomePage) failed: ${res.error}`);
+  return (res.matches ?? [])[0] || null;
+}
+
+test("welcome: first launch shows the welcome page", async (app) => {
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  const visRes = await app.inspector.send("evaluate", {
+    objectId: welcome.id, expression: "visible",
+  });
+  if (visRes.error) throw new Error(`evaluate(visible) failed: ${visRes.error}`);
+  if (visRes.result !== true) {
+    throw new Error(`WelcomePage visible=${visRes.result} (expected true)`);
+  }
+
+  // launcherApps populates asynchronously — check length + greeting in one retried step.
+  await app.waitFor(async () => {
+    const lenRes = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.launcherApps.length",
+    });
+    if (lenRes.error) {
+      throw new Error(`evaluate(backend.launcherApps.length) failed: ${lenRes.error}`);
+    }
+    if (typeof lenRes.result !== "number") {
+      throw new Error(
+        `backend.launcherApps.length=${JSON.stringify(lenRes.result)} (expected number)`);
+    }
+    const expected = lenRes.result === 0 ? "Welcome to Basecamp!" : "Welcome back";
+    await app.expectTexts([expected]);
+  }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
+
+  const greetingRes = await app.inspector.send("evaluate", {
+    objectId: welcome.id,
+    expression: `(() => {
+      const hasText = (node, expected) => {
+        if (!node) return false;
+        if (typeof node.text === "string" && node.text.includes(expected)) return true;
+        if (!node.children || typeof node.children.length !== "number") return false;
+        for (let i = 0; i < node.children.length; i += 1) {
+          if (hasText(node.children[i], expected)) return true;
+        }
+        return false;
+      };
+      // The inspector serializes object results as "<QJSValue>" — return JSON.
+      return JSON.stringify({
+        hasFirstLaunch: hasText(this, "Welcome to Basecamp!"),
+        hasWelcomeBack: hasText(this, "Welcome back"),
+      });
+    })()`,
+  });
+  if (greetingRes.error) {
+    throw new Error(`evaluate(greeting presence) failed: ${greetingRes.error}`);
+  }
+  const greeting = JSON.parse(greetingRes.result);
+  const hasFirstLaunch = greeting?.hasFirstLaunch === true;
+  const hasWelcomeBack = greeting?.hasWelcomeBack === true;
+  if (hasFirstLaunch === hasWelcomeBack) {
+    throw new Error(
+      `greeting texts present: "Welcome to Basecamp!"=${hasFirstLaunch}, ` +
+      `"Welcome back"=${hasWelcomeBack} (expected exactly one)`);
+  }
+});
 
 // --- Package Manager ---
 //

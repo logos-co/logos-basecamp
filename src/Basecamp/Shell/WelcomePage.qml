@@ -46,6 +46,7 @@ Item {
         }
 
         LogosButton {
+            objectName: "welcomePage.installNow"
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: Theme.spacing.medium
             Layout.preferredWidth: 200

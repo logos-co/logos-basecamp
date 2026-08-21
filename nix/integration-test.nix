@@ -3,9 +3,12 @@
 # and runs UI tests (click buttons, verify text, etc.).
 #
 # Requires Node.js for the test runner and the Qt offscreen platform plugin.
-{ pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120 }:
+{ pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
+# Combined PR-gate budget; elapsed goes to $out/elapsed-seconds, combined check in shutdown-test.nix.
+, budgetSec ? 600 }:
 
 pkgs.runCommand "logos-basecamp-integration-test" {
+  MCP_TEST_BUDGET_SECONDS = toString budgetSec;
   nativeBuildInputs = [ pkgs.coreutils pkgs.nodejs ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.qt6.qtbase   # provides the offscreen platform plugin
@@ -30,10 +33,30 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 
+  # Tee output into BASECAMP_APP_LOG for the G-ERR gate; exec keeps the framework-spawned PID.
+  export BASECAMP_APP_LOG="$out/app.log"
+  : > "$BASECAMP_APP_LOG"
+  cat > app-with-log.sh <<'WRAPPER'
+  #!${pkgs.bash}/bin/bash
+  # Process substitution below is a bashism; keep the shebang explicitly bash.
+  set -euo pipefail
+  exec ${appBin} "$@" \
+    > >(tee -a "$BASECAMP_APP_LOG") \
+    2> >(tee -a "$BASECAMP_APP_LOG" >&2)
+  WRAPPER
+  chmod +x app-with-log.sh
+
   echo "Running logos-basecamp integration tests (timeout: ${toString timeoutSec}s)..."
 
+  start=$(date +%s)
   timeout ${toString timeoutSec} \
-    ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci ${appBin} --verbose
+    ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci "$PWD/app-with-log.sh" --verbose
+  elapsed=$(( $(date +%s) - start ))
+  echo "$elapsed" > $out/elapsed-seconds
 
-  echo "Integration tests passed"
+  echo "Integration tests passed in ''${elapsed}s (budget: ''${MCP_TEST_BUDGET_SECONDS}s for both PR-gate suites combined)"
+  if [ "$elapsed" -gt "$MCP_TEST_BUDGET_SECONDS" ]; then
+    echo "ERROR: ui-tests alone took ''${elapsed}s, over the ''${MCP_TEST_BUDGET_SECONDS}s combined budget" >&2
+    exit 1
+  fi
 ''
