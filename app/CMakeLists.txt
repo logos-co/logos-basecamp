@@ -215,36 +215,19 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
         NO_DEFAULT_PATH)
     # Fail loudly rather than silently dropping the host runtime off the link
     # line: the app's LogosAPI/LogosProviderObject symbols all come from here.
-    if(NOT TARGET logos-qt-host::logos_qt_host)
+    if(NOT TARGET logos-qt-host::logos_qt_host_shared)
         message(FATAL_ERROR
             "find_package(logos-qt-host) succeeded but did not define "
-            "logos-qt-host::logos_qt_host. LOGOS_QT_HOST_ROOT="
-            "${LOGOS_QT_HOST_ROOT}")
+            "logos-qt-host::logos_qt_host_shared. That target arrives with "
+            "logos-plugin-qt#22; a build against an older Qt host runtime would "
+            "silently fall back to the static archive and give this image its "
+            "own TokenManager. LOGOS_QT_HOST_ROOT=${LOGOS_QT_HOST_ROOT}")
     endif()
-    # The host is the image that WRITES the capability token, so if it keeps a
-    # static copy of TokenManager the plugin never sees the token no matter what
-    # the plugin links. Empty out the archives and let liblogos_core be the one
-    # provider — cmake/LogosSharedFromDll.cmake. The link interface above is
-    # deliberately left intact.
-    #
-    # This runs on EVERY platform, not just Windows. Mach-O's two-level
-    # namespace gives no interposition either: the main_ui fold measured ONE
-    # reference to LogosAPI::forIdentity dragging logos_api.cpp.o into the exe
-    # and producing 31 refusals against a pre-fold baseline of 0. ELF does
-    # collapse duplicates, but we empty it there too so the invariant is one
-    # rule everywhere and nix/symbol-gate can assert it uniformly.
-    #
-    # Retargeted from logos-qt-sdk::logos_qt_sdk to logos-qt-host::logos_qt_host
-    # by the B4 host split: the archive that carries LogosAPI/TokenManager moved
-    # repos, so the archive that must be emptied moved with it. Naming a target
-    # that does not exist is now a FATAL_ERROR rather than the silent no-op it
-    # used to be — this comment described that hazard for a while before the
-    # foreach() enforced it. Getting the name wrong would otherwise regress
-    # Windows to the 29 "rejecting unauthorized call" lines this shim prevents.
-    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
-    logos_use_shared_runtime_from_dll(
-        logos-qt-host::logos_qt_host
-        logos-protocol::logos_protocol)
+    # No shim any more. This image used to empty the static archives and take the
+    # shared runtime from liblogos_core, which had absorbed both of them; it now
+    # links the shared libraries that OWN those types directly
+    # (logos-protocol#65, logos-plugin-qt#22, logos-liblogos#182), so there is no
+    # second static copy for a shim to suppress.
 endif()
 
 set(PROJECT_SOURCES
@@ -469,7 +452,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     Qt6::Network
-    logos-qt-host::logos_qt_host
+    logos-qt-host::logos_qt_host_shared
     ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
     Logos::DesignSystem
     basecamp_backend_qml
@@ -517,18 +500,17 @@ if(APPLE)
     target_link_libraries(LogosBasecamp PRIVATE "-framework Cocoa" "-framework QuartzCore")
 endif()
 
-# Windows: import the shared runtime types from liblogos_core instead of taking
-# a second static copy from liblogos_qt_host.a. This image WRITES the capability
-# token (module_manager.cpp calls TokenManager::instance().saveToken), and PE has
-# no symbol interposition, so a second static copy here would be a second token
-# store — the failure this whole scheme exists to prevent.
+# LOGOS_SHARED_USE_DLL is gone with the shim. It made this image declare the
+# runtime types __declspec(dllimport) so ld would not pull the archive member
+# that redefines them — necessary while the types lived in a static archive that
+# this image also linked. They now come from liblogos_protocol.dll and
+# liblogos_qt_host.dll, which are the only definitions in the process, so the
+# import is what the link naturally produces rather than something to opt into.
 #
-# The fold makes this MORE important, not less: the UI shell used to be a second
-# image (main_ui.dll) that carried the same opt-in, and now compiles into this
-# one. See logos-protocol/cpp/logos_shared_api.h.
-if(WIN32)
-    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_SHARED_USE_DLL)
-endif()
+# This image still WRITES the capability token (module_manager.cpp calls
+# TokenManager::instance().saveToken), so the invariant it protected is
+# unchanged — see nix/symbol-gate.nix, which asserts it directly rather than
+# trusting a compile flag.
 
 # Copy the core library to the app's lib directory and fix its install name
 if(APPLE)
