@@ -441,6 +441,11 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
     emit uiModulesChanged();
     emit launcherAppsChanged();
 
+    if (m_currentVisibleApp == moduleName) {
+        m_currentVisibleApp.clear();
+        emit currentVisibleAppChanged();
+    }
+
     qDebug() << "Successfully unloaded UI module:" << moduleName;
 }
 
