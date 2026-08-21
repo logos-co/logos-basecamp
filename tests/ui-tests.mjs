@@ -28,7 +28,16 @@ const test = makeTest(frameworkTest);
 // run() exits the process itself; writeSync so the line isn't dropped at exit.
 const suiteStart = Date.now();
 process.on("exit", () => {
-  writeSync(1, `Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s\n`);
+  const elapsed = `Total elapsed: ${((Date.now() - suiteStart) / 1000).toFixed(1)}s\n`;
+  try {
+    writeSync(1, elapsed);
+  } catch {
+    try {
+      writeSync(2, elapsed);
+    } catch {
+      // Best-effort shutdown logging only; never fail the suite on exit.
+    }
+  }
 });
 
 // Helper: click a plugin's sidebar icon and wait for its UI to load.
