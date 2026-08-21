@@ -21,6 +21,13 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   export LOGOS_USER_DIR="$out/app-data"
   mkdir -p "$LOGOS_USER_DIR"
 
+  # Pre-seed fixture A (test_qml_only v0.1.1, spec §0.A) into <user-dir>/plugins/
+  # so sidebar/dock tests have a real launcher app from the first boot.
+  ${pkgs.nodejs}/bin/node --input-type=module -e "
+    import { seedPlugin, FIXTURE_A } from '${src}/tests/fixtures/lgx.mjs';
+    seedPlugin(process.env.LOGOS_USER_DIR, FIXTURE_A);
+  "
+
   export QT_QPA_PLATFORM=offscreen
   export QT_FORCE_STDERR_LOGGING=1
   export QT_LOGGING_RULES="qt.*.debug=false;default.debug=true"
