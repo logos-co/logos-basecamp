@@ -68,6 +68,7 @@ Item {
                 }
 
                 LogosButton {
+                    objectName: "repositories.refreshButton"
                     text: root.loading ? qsTr("Refreshing…") : qsTr("Refresh")
                     enabled: !root.loading
                     implicitWidth: 120
@@ -78,6 +79,7 @@ Item {
 
             // Error banner — shown until the next successful op.
             Rectangle {
+                objectName: "repositories.errorBanner"
                 Layout.fillWidth: true
                 visible: d.lastError.length > 0
                 radius: Theme.spacing.radiusSmall
@@ -100,6 +102,7 @@ Item {
                         wrapMode: Text.WordWrap
                     }
                     LogosIconButton {
+                        objectName: "repositories.errorDismiss"
                         iconSource: LogosIcons.close
                         size: 20
                         iconSize: 14
@@ -134,12 +137,14 @@ Item {
 
                     LogosTextField {
                         id: urlInput
+                        objectName: "repositories.urlField"
                         Layout.fillWidth: true
                         placeholderText: qsTr("https://example.com/logos-repo.json")
                         text: d.newRepoUrl
                         onTextChanged: if (text !== d.newRepoUrl) d.newRepoUrl = text
                     }
                     LogosButton {
+                        objectName: "repositories.addButton"
                         text: qsTr("Add")
                         enabled: d.newRepoUrl.trim().length > 0
                         implicitWidth: 100
@@ -170,6 +175,7 @@ Item {
                     readonly property bool   isDefault:    modelData.isDefault === true
                     readonly property bool   isEnabled:    modelData.enabled !== false
 
+                    objectName: "repositories.row." + url
                     Layout.fillWidth: true
                     implicitHeight: rowCol.implicitHeight + Theme.spacing.large * 2
                     radius: Theme.spacing.radiusLarge
@@ -310,6 +316,7 @@ Item {
 
         leftActions: [
             LogosButton {
+                objectName: "repositories.removeConfirm.cancel"
                 text: qsTr("Cancel")
                 onClicked: {
                     d.pendingRemoveUrl = ""
@@ -320,6 +327,7 @@ Item {
 
         rightActions: [
             LogosButton {
+                objectName: "repositories.removeConfirm.confirm"
                 text: qsTr("Remove")
                 variant: LogosButton.Variant.Primary
                 onClicked: {

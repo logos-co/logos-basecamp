@@ -104,6 +104,7 @@ Rectangle {
 
             LogosSearchBar {
                 id: searchBar
+                objectName: "settings.searchField"
                 visible: d.searchable
                 Layout.alignment: Qt.AlignRight
                 Layout.preferredWidth: 605
