@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -197,8 +197,8 @@ export function writeLocalRepo(dir, opts = {}) {
 
   const indexPath = join(dir, "index.json");
   const repoPath = join(dir, "logos-repo.json");
-  const indexUrl = `file://${indexPath}`;
-  const repoUrl = `file://${repoPath}`;
+  const indexUrl = pathToFileURL(indexPath).href;
+  const repoUrl = pathToFileURL(repoPath).href;
 
   const rows = packages.map((lgxPath) => {
     const manifest = readLgxManifest(lgxPath);
@@ -207,7 +207,7 @@ export function writeLocalRepo(dir, opts = {}) {
       repositoryUrl: repoUrl,
       versions: [{
         rootHash: manifest.hashes?.root ?? "",
-        url: `file://${resolve(lgxPath)}`,
+        url: pathToFileURL(resolve(lgxPath)).href,
         manifest,
       }],
     };

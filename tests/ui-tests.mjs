@@ -103,17 +103,19 @@ test("welcome: first launch shows the welcome page", async (app) => {
         }
         return false;
       };
-      return {
+      // The inspector serializes object results as "<QJSValue>" — return JSON.
+      return JSON.stringify({
         hasFirstLaunch: hasText(this, "Welcome to Basecamp!"),
         hasWelcomeBack: hasText(this, "Welcome back"),
-      };
+      });
     })()`,
   });
   if (greetingRes.error) {
     throw new Error(`evaluate(greeting presence) failed: ${greetingRes.error}`);
   }
-  const hasFirstLaunch = greetingRes.result?.hasFirstLaunch === true;
-  const hasWelcomeBack = greetingRes.result?.hasWelcomeBack === true;
+  const greeting = JSON.parse(greetingRes.result);
+  const hasFirstLaunch = greeting?.hasFirstLaunch === true;
+  const hasWelcomeBack = greeting?.hasWelcomeBack === true;
   if (hasFirstLaunch === hasWelcomeBack) {
     throw new Error(
       `greeting texts present: "Welcome to Basecamp!"=${hasFirstLaunch}, ` +
