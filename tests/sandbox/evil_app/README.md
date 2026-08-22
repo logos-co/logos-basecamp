@@ -6,7 +6,7 @@ app fires every escape vector **automatically on load** and tallies how many got
 headless test can assert the result.
 
 It is consumed by the C++ regression test `tests/sandbox/tst_qml_sandbox.cpp`, which loads `Main.qml`
-through the real production sandbox (`src/restricted/QmlSandbox.cpp`, the same code path
+through the real production sandbox (`app/restricted/QmlSandbox.cpp`, the same code path
 `PluginLoader::loadQmlView` runs) and asserts `escapes === 0`. This mirrors how
 [`tests/sandbox/evil_plugin`](../evil_plugin) is a fixture for the native-plugin escape — except this
 one is **QML-only** (no compiled `.so`).

@@ -50,9 +50,14 @@ function(logos_use_shared_runtime_from_dll)
     endif()
 
     foreach(_tgt IN LISTS ARGN)
-        if(TARGET ${_tgt})
-            set_target_properties(${_tgt} PROPERTIES IMPORTED_LOCATION "${_stub}")
-            message(STATUS "Windows: ${_tgt} provided by liblogos_core.dll, static archive suppressed")
+        if(NOT TARGET ${_tgt})
+            message(FATAL_ERROR
+                "logos_use_shared_runtime_from_dll: ${_tgt} is not a target. It must be "
+                "an IMPORTED target whose archive can be replaced by the empty stand-in; "
+                "skipping it would leave a static copy of the shared runtime in this "
+                "image alongside liblogos_core.dll's exported one.")
         endif()
+        set_target_properties(${_tgt} PROPERTIES IMPORTED_LOCATION "${_stub}")
+        message(STATUS "Windows: ${_tgt} provided by liblogos_core.dll, static archive suppressed")
     endforeach()
 endfunction()

@@ -1,5 +1,11 @@
-# Builds the logos-basecamp standalone application
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+# Builds the logos-basecamp standalone application.
+#
+# Since the main_ui fold this is the ONLY derivation that compiles basecamp's
+# own UI: nix/main-ui.nix is gone, and everything its preConfigure staged (the
+# build-info header, the package_manager / package_downloader generated API
+# headers, the shared semver headers, and logos-cpp-generator's --general-only
+# output) is staged here instead, into the single app/generated directory.
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -59,7 +65,7 @@ let
     rootPaths = common.buildInputs ++ [
       pkgs.qt6.qtdeclarative
       logosProtocolPkg
-      logosQtSdk
+      logosQtHost
       logosLiblogos
       logosModule
       logosSdk
@@ -76,10 +82,13 @@ pkgs.stdenv.mkDerivation rec {
   # Platform-specific build inputs for system webviews
   buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
-    # Qt split: the app links logos-qt-sdk::logos_qt_sdk, which carries the
-    # logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
+    # Qt host split: the app links logos-qt-host::logos_qt_host, which carries
+    # the logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
     logosProtocolPkg
-    logosQtSdk
+    logosQtHost
+    # main_ui fold: Logos.Theme / .Icons / .Controls are STATIC qt_add_qml_module
+    # targets behind the Logos::DesignSystem umbrella, now linked by the app.
+    logosDesignSystem
   ] ++ (
     if pkgs.stdenv.isLinux then
       # Linux: WebKitGTK as backend + Wayland platform plugin
@@ -105,7 +114,7 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.stdenv.cc.cc
       pkgs.freetype
       pkgs.fontconfig
-      # Qt split: the app links logos-qt-sdk → logos-protocol, whose shared
+      # Qt host split: the app links logos-qt-host → logos-protocol, whose shared
       # runtime deps (Boost.System, OpenSSL) must be reachable now that the
       # binary's RPATH is stripped for bundling.
       pkgs.boost
@@ -155,8 +164,9 @@ pkgs.stdenv.mkDerivation rec {
     mkdir -p ./logos-cpp-sdk/include/cpp
     cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
 
-    # core/interface.h moved to logos-qt-sdk in the qt split; the app finds it
-    # via LOGOS_QT_SDK_ROOT, so nothing to stage here anymore.
+    # core/interface.h ships with logos-qt-host (it moved to logos-qt-sdk in
+    # the qt split, and on to the host runtime in the host split); the app
+    # finds it via LOGOS_QT_HOST_ROOT, so nothing to stage here anymore.
 
     # Copy SDK library files to lib directory (no-op since the qt split — the
     # base SDK is header-only; kept for older layouts)
@@ -170,11 +180,51 @@ pkgs.stdenv.mkDerivation rec {
       cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
     fi
 
-    # Drop the auto-generated build info header (version + commit hashes) so
-    # main.cpp can log it at startup.
+    # ── app/generated: the ONE generated-header directory ──────────────────
+    #
+    # Merged here from the deleted nix/main-ui.nix, which staged the same set
+    # into a SECOND directory (src/generated_code). Both ended up on one
+    # target's include path the moment the UI shell folded into the exe, and
+    # app/utils/BuildInfo.h resolves logos_build_info.h with __has_include —
+    # so with two candidate directories the -I ORDER, not the build, would
+    # decide which header won. One directory removes the question.
     mkdir -p ./app/generated
+
+    # Auto-generated build info header (version + commit hashes): main.cpp logs
+    # it at startup and MainUIBackend exposes it to the Dashboard.
     cp ${buildInfoHeader} ./app/generated/logos_build_info.h
     chmod +w ./app/generated/logos_build_info.h
+
+    # Module-generated API headers. PackageCoordinator includes "logos_sdk.h",
+    # whose umbrella pulls these in by bare name.
+    echo "Copying include files from logos-package-manager-module..."
+    if [ -d "${logosPackageManagerModule}/include" ]; then
+      cp -r "${logosPackageManagerModule}/include"/* ./app/generated/
+    else
+      echo "Warning: No include directory found in logos-package-manager-module"
+    fi
+
+    echo "Copying include files from logos-package-downloader-module..."
+    if [ -d "${logosPackageDownloaderModule}/include" ]; then
+      cp -r "${logosPackageDownloaderModule}/include"/* ./app/generated/
+    else
+      echo "Warning: No include directory found in logos-package-downloader-module"
+    fi
+
+    # Shared semver headers (logos/semver.hpp + its <semver/semver.hpp>) so
+    # AppsModel can use logos::semver::compare. Headers only — nothing here
+    # links liblgx.
+    cp -r "${logosPackageHeaders}/include/logos"  ./app/generated/
+    cp -r "${logosPackageHeaders}/include/semver" ./app/generated/
+
+    # logos-cpp-generator's general wrappers (logos_sdk.h / logos_sdk.cpp).
+    # --general-only: the per-module wrappers come from the module outputs
+    # copied above. metadata.json is the repo-root one, unchanged by the fold.
+    echo "Running logos-cpp-generator (general-only)..."
+    logos-cpp-generator --metadata ${src}/metadata.json --general-only --output-dir ./app/generated
+
+    echo "Files in app/generated:"
+    ls -la ./app/generated/
 
     runHook postPreConfigure
   '';
@@ -363,8 +413,10 @@ pkgs.stdenv.mkDerivation rec {
     #     from .lgx payloads and UI-plugin outputs -- i.e. AFTER that hook has
     #     run, and in directories it never looks at. Nothing ever read their
     #     import tables. Measured here before this block existed: main_ui.dll
-    #     imports Qt6Qml.dll, Qt6QuickControls2.dll and Qt6QuickWidgets.dll and
-    #     not one of them was in plugins/main_ui/ or in bin/.
+    #     imported Qt6Qml.dll, Qt6QuickControls2.dll and Qt6QuickWidgets.dll and
+    #     not one of them was in plugins/main_ui/ or in bin/. (main_ui itself is
+    #     folded into the exe now and no longer ships; the mechanism is unchanged
+    #     for package_manager_ui and every module payload.)
     #
     #  2. A DLL that is itself absent cannot have ITS imports read, so one pass
     #     over a tree is never enough. package_downloader needs three rounds:
@@ -565,9 +617,12 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_MODULE_ROOT=${logosModule} \
       -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
+      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
       -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
+      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
+      -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
       -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
       ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
@@ -723,9 +778,9 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
-    # Logos.Theme / .Icons / .Controls are STATIC-linked into main_ui.dylib
-    # via find_package(LogosDesignSystem CONFIG) — the modules register into
-    # the process qrc at load time. Nothing to copy to $out/lib/Logos.
+    # Logos.Theme / .Icons / .Controls are STATIC-linked into the LogosBasecamp
+    # binary via find_package(LogosDesignSystem CONFIG) — the modules register
+    # into the process qrc at startup. Nothing to copy to $out/lib/Logos.
 
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then

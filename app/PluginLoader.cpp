@@ -78,6 +78,58 @@ void PluginLoader::setLoading(const QString& name, bool loading)
     emit loadingChanged();
 }
 
+LogosAPI* PluginLoader::apiForPlugin(const QString& name)
+{
+    if (name.isEmpty()) {
+        qWarning() << "PluginLoader: refusing to build an identity for an unnamed plugin";
+        return nullptr;
+    }
+
+    auto it = m_pluginApis.constFind(name);
+    if (it != m_pluginApis.constEnd())
+        return it.value();
+
+    // LogosAPI::forIdentity isolates the store first and only then constructs,
+    // which is the required order: LogosAPIClient captures its store as a raw
+    // pointer at construction, so a client built before isolation would stay on
+    // the ambient ring forever.
+    LogosAPI* api = LogosAPI::forIdentity(name, this);
+    if (!api) {
+        qWarning() << "PluginLoader: could not give" << name
+                   << "its own token store - refusing to load it with the host's authority";
+        return nullptr;
+    }
+    m_pluginApis.insert(name, api);
+    return api;
+}
+
+void PluginLoader::registerPluginIdentity(const QString& name, const QString& authToken)
+{
+    // Deliberately over the HOST's client: informModuleToken is accepted only
+    // from the trusted core/capability channel, and the host is that channel.
+    LogosAPIClient* cap = m_logosAPI
+        ? m_logosAPI->getClient(QStringLiteral("capability_module"))
+        : nullptr;
+    if (!cap) {
+        qWarning() << "PluginLoader: no capability_module client - identity" << name
+                   << "will not be registered (its calls will be refused)";
+        return;
+    }
+
+    const QString capToken = m_logosAPI->getTokenManager()
+        ->getToken(QStringLiteral("capability_module"));
+    if (capToken.isEmpty()) {
+        qWarning() << "PluginLoader: no capability_module token on host —"
+                      "plugin" << name
+                   << "will not be registered (calls will be rejected)";
+        return;
+    }
+    if (!cap->informModuleToken(capToken, name, authToken)) {
+        qWarning() << "PluginLoader: capability_module.informModuleToken"
+                      "failed for plugin" << name;
+    }
+}
+
 void PluginLoader::startLoad(const PluginLoadRequest& request)
 {
     if (request.coreDependencies.isEmpty()) {
@@ -190,7 +242,20 @@ void PluginLoader::finishCppPluginLoad(const PluginLoadRequest& request)
         return;
     }
 
-    QWidget* widget = component->createWidget(m_logosAPI);
+    // The plugin's own identity, not the host's. A legacy widget plugin calls
+    // modules through whatever LogosAPI it is handed, so handing it m_logosAPI
+    // handed it the host's ambient token ring.
+    LogosAPI* pluginApi = apiForPlugin(request.name);
+    if (!pluginApi) {
+        loader.unload();
+        setLoading(request.name, false);
+        emit pluginLoadFailed(request.name,
+            QStringLiteral("Could not establish an isolated identity for ") + request.name);
+        return;
+    }
+    registerPluginIdentity(request.name, QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    QWidget* widget = component->createWidget(pluginApi);
     if (!widget) {
         qWarning() << "Component returned null widget:" << request.name;
         loader.unload();
@@ -218,14 +283,35 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
         return;
     }
 
-    auto* bridge = new LogosQmlBridge(m_logosAPI, this);
-
-    if (request.mainFilePath.isEmpty()) {
-        loadQmlView(request, bridge, nullptr);
+    // The bridge the QML gets speaks AS this module, from this module's own
+    // token store — not as basecamp. Built via forIdentity so the store is
+    // isolated BEFORE any client for the name exists.
+    LogosAPI* pluginApi = apiForPlugin(request.name);
+    if (!pluginApi) {
+        setLoading(request.name, false);
+        emit pluginLoadFailed(request.name,
+            QStringLiteral("Could not establish an isolated identity for ") + request.name);
         return;
     }
+    auto* bridge = new LogosQmlBridge(pluginApi, this);
 
     // Mint a per-spawn UUID.
+    //
+    // EVERY ui_qml module gets one, backend or not. Two separate things used to
+    // be conflated here, and only the second one needs a ui-host:
+    //
+    //   1. Making `request.name` a KNOWN CALLER. capability_module's
+    //      known-caller gate refuses requestModule from a name it has no token
+    //      for, so without this registration an isolated identity can never
+    //      obtain a token for anything. This is needed by the pure-QML path
+    //      too — in fact especially there, since the QML is the only thing
+    //      calling out.
+    //   2. Giving ui-host the token its backend accepts inbound calls with.
+    //
+    // The old code did both inside the has-a-backend branch, below an early
+    // return, so the pure-QML path registered nothing. It got away with it
+    // because it was calling with the host's ambient ring, where every target's
+    // token was already present and no handshake ever happened.
     const QString uiAuthToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     // Register the UI module's auth token with capability_module BEFORE
@@ -239,19 +325,11 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     // refresh silently empty. capability_module is fully loaded by this
     // point (loaded during basecamp startup), so the synchronous IPC
     // here is cheap and closes the race deterministically.
-    if (LogosAPIClient* cap = m_logosAPI
-            ? m_logosAPI->getClient(QStringLiteral("capability_module"))
-            : nullptr) {
-        const QString capToken = m_logosAPI->getTokenManager()
-            ->getToken(QStringLiteral("capability_module"));
-        if (capToken.isEmpty()) {
-            qWarning() << "PluginLoader: no capability_module token on host —"
-                          "UI module" << request.name
-                       << "will not be registered (calls will be rejected)";
-        } else if (!cap->informModuleToken(capToken, request.name, uiAuthToken)) {
-            qWarning() << "PluginLoader: capability_module.informModuleToken"
-                          "failed for UI module" << request.name;
-        }
+    registerPluginIdentity(request.name, uiAuthToken);
+
+    if (request.mainFilePath.isEmpty()) {
+        loadQmlView(request, bridge, nullptr);
+        return;
     }
 
     // Has a backend plugin — spawn a ViewModuleHost process.
