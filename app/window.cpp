@@ -26,9 +26,10 @@
     #include "macWindowStyle.h"
 #endif
 
-Window::Window(LogosAPI* logosAPI, QWidget *parent)
+Window::Window(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QWidget *parent)
     : QMainWindow(parent)
     , m_logosAPI(logosAPI)
+    , m_core(core)
     , m_trayIcon(nullptr)
     , m_trayIconMenu(nullptr)
     , m_showHideAction(nullptr)
@@ -69,7 +70,7 @@ void Window::setupUi()
     // There is deliberately no "No main UI module found" fallback any more:
     // failure to construct the shell is no longer a runtime resolution that can
     // miss, it is a link error.
-    setCentralWidget(new MainContainer(m_logosAPI));
+    setCentralWidget(new MainContainer(m_logosAPI, m_core));
 
     // Set window title and size. The default launch width is wide enough for
     // the Package Manager's full table (category sidebar + columns through

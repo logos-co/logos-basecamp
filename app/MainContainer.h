@@ -10,12 +10,19 @@ class WorkspaceArea;
 class LogosAPI;
 class ShortcutBridge;
 
+// The process-wide core facade, created and owned by main(). Threaded down to
+// CoreModuleManager, which is the only thing here that calls it.
+namespace logos { namespace qt { class QtLogosCore; } }
+
+
 class MainContainer : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MainContainer(LogosAPI* logosAPI = nullptr, QWidget* parent = nullptr);
+    explicit MainContainer(LogosAPI* logosAPI = nullptr,
+                           logos::qt::QtLogosCore* core = nullptr,
+                           QWidget* parent = nullptr);
     ~MainContainer();
 
     // Get the workspace area
@@ -82,6 +89,7 @@ private:
 
     // LogosAPI instance
     LogosAPI* m_logosAPI;
+    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
     ShortcutBridge* m_shortcutBridge = nullptr;
 };
 
