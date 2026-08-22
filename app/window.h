@@ -18,12 +18,18 @@ class QResizeEvent;
 class QShowEvent;
 class QWidget;
 
+// The process-wide core facade, created and owned by main(). Threaded down to
+// CoreModuleManager, which is the only thing here that calls it.
+namespace logos { namespace qt { class QtLogosCore; } }
+
 class Window : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit Window(LogosAPI* logosAPI, QWidget *parent = nullptr);
+    explicit Window(LogosAPI* logosAPI,
+                    logos::qt::QtLogosCore* core,
+                    QWidget *parent = nullptr);
     ~Window();
 
 protected:
@@ -69,6 +75,7 @@ private:
 #endif
 
     LogosAPI* m_logosAPI;
+    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
     QSystemTrayIcon* m_trayIcon;
     QMenu* m_trayIconMenu;
     QAction* m_showHideAction;

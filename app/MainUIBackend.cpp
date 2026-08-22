@@ -10,10 +10,11 @@
 #include <QDebug>
 #include <QTimer>
 
-MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
+MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QObject* parent)
     : QObject(parent)
     , m_currentActiveSectionIndex(0)
     , m_logosAPI(logosAPI)
+    , m_core(core)
     , m_ownsLogosAPI(false)
     , m_coreModuleManager(nullptr)
     , m_uiPluginManager(nullptr)
@@ -46,7 +47,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, QObject* parent)
     m_requiredPackagesModel->setExcludeMainUi(false);
     m_requiredPackagesModel->setInstallStateFilter(QString());
 
-    m_coreModuleManager = new CoreModuleManager(m_logosAPI, this);
+    m_coreModuleManager = new CoreModuleManager(m_logosAPI, m_core, this);
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
     m_packageCoordinator->setRequiredPackagesModel(m_requiredPackagesModel);
