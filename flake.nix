@@ -537,10 +537,14 @@
 
           # One-runtime symbol gate. Asserts the logos C++ runtime (TokenManager,
           # StoreRegistry, LogosAPI, LogosAPIClient) is DEFINED exactly once across
-          # the images that share one process — in liblogos_core, the single
-          # provider. A second definition is a second TokenManager and every
-          # cross-module call is refused at runtime with no build diagnostic.
-          # Build: nix build .#symbol-gate
+          # the images that share one process. The assertion is exactly-one and
+          # deliberately does NOT name an owner: liblogos_core stopped being the
+          # provider when the runtime became real shared libraries, and it is
+          # liblogos_protocol and liblogos_qt_host that define these types today.
+          # A second definition is a second TokenManager and every cross-module
+          # call is refused at runtime with no build diagnostic.
+          # Build: nix build .#symbol-gate  (CI: the "One-runtime symbol gate"
+          # step in test-linux and test-macos runs this and its negative control)
           symbol-gate = import ./nix/symbol-gate.nix { inherit pkgs; appPkg = app; };
 
           # Negative control for the above. Plants a REAL duplicate runtime where

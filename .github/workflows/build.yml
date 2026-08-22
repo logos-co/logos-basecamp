@@ -192,6 +192,30 @@ jobs:
       - name: Host-services grant guard
         run: nix build .#host-services-test -L
 
+      # The one control that mechanically enforces the one-runtime invariant:
+      # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is
+      # DEFINED by exactly one image among those sharing a process, and the
+      # main_ui plugin defines none of them. Until this step existed the gate
+      # was exposed in flake.nix `checks` and built by nothing -- no job
+      # enumerated it and no `nix flake check` runs in this repo -- so a PR that
+      # linked the logos runtime back into main_ui would merge green.
+      #
+      # The negative control is not optional. It plants a REAL duplicate definer
+      # where an in-process consumer goes and asserts the gate REJECTS that tree.
+      # An absence assertion that has never been seen to fail is indistinguish-
+      # able from a broken one, so the two ship together or not at all.
+      #
+      # Not yet run for x86_64-windows -- the platform where this matters most,
+      # since PE has no symbol interposition to collapse a duplicate. That
+      # attribute cannot be evaluated at all as pinned (see flake.nix, the
+      # `binBundleDir` note), which is a pre-existing blocker. The gate itself
+      # now understands the Windows layout, so wiring it is a one-line follow-up
+      # once the attribute evaluates.
+      - name: One-runtime symbol gate
+        run: |
+          nix build .#symbol-gate -L
+          nix build .#symbol-gate-negative -L
+
       # Report-only non-blocking for now
       - name: Coverage report
         continue-on-error: true
@@ -240,6 +264,30 @@ jobs:
       # real .app bundle (same pairing as integration-test-bundle above).
       - name: Host-services grant guard
         run: nix build .#host-services-test-bundle -L
+
+      # The one control that mechanically enforces the one-runtime invariant:
+      # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is
+      # DEFINED by exactly one image among those sharing a process, and the
+      # main_ui plugin defines none of them. Until this step existed the gate
+      # was exposed in flake.nix `checks` and built by nothing -- no job
+      # enumerated it and no `nix flake check` runs in this repo -- so a PR that
+      # linked the logos runtime back into main_ui would merge green.
+      #
+      # The negative control is not optional. It plants a REAL duplicate definer
+      # where an in-process consumer goes and asserts the gate REJECTS that tree.
+      # An absence assertion that has never been seen to fail is indistinguish-
+      # able from a broken one, so the two ship together or not at all.
+      #
+      # Not yet run for x86_64-windows -- the platform where this matters most,
+      # since PE has no symbol interposition to collapse a duplicate. That
+      # attribute cannot be evaluated at all as pinned (see flake.nix, the
+      # `binBundleDir` note), which is a pre-existing blocker. The gate itself
+      # now understands the Windows layout, so wiring it is a one-line follow-up
+      # once the attribute evaluates.
+      - name: One-runtime symbol gate
+        run: |
+          nix build .#symbol-gate -L
+          nix build .#symbol-gate-negative -L
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')

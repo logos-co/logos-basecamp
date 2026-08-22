@@ -12,8 +12,11 @@
 # liblogos_protocol owns TokenManager/LogosAPIClient and liblogos_qt_host owns
 # LogosAPI, and liblogos_core imports both like everyone else. Naming an owner
 # here would have to be edited every time ownership moves -- and the first time
-# it moved, this check failed while every real assertion still passed. See
-# logos-protocol/cpp/logos_shared_api.h and cmake/LogosSharedFromDll.cmake.
+# it moved, this check failed while every real assertion still passed. Ownership
+# is declared in logos-protocol/cpp/logos_shared_api.h. (Earlier revisions of
+# this comment also pointed at cmake/LogosSharedFromDll.cmake; that file was the
+# single-provider shim and was deleted in #348 once the runtime became real
+# shared libraries, so there is nothing to follow there any more.)
 #
 # Nothing else in the tree measures this, and it has no build diagnostic: it
 # surfaces at runtime as "ModuleProxy: rejecting unauthorized call" and
@@ -36,12 +39,27 @@
 { pkgs, appPkg, negativeControl ? false }:
 
 let
-  isDarwin = pkgs.stdenv.isDarwin;
-  # Mach-O: -gU is defined externals. ELF: -D --defined-only. mingw nm reads PE.
-  definedCmd = if isDarwin then "nm -gU" else "nm -D --defined-only";
-  # A count over a tool that read nothing is not evidence of absence. The same
-  # defence is written at nix/app.nix:382.
-  totalCmd   = if isDarwin then "nm -a" else "nm -D";
+  isDarwin  = pkgs.stdenv.isDarwin;
+  isWindows = pkgs.stdenv.hostPlatform.isWindows;
+  # Mach-O: -gU is defined externals. ELF: -D --defined-only.
+  #
+  # PE gets NEITHER, because a PE has no ELF dynamic symbol table and `nm -D`
+  # therefore reads nothing at all from a .dll. Measured against a real mingw
+  # PE (libffi-8.dll, binutils 2.46): `nm -D` -> 0 lines and an error on stderr,
+  # `nm` -> 687, `nm --defined-only` -> 686. Left as -D, valid() below would see
+  # zero symbols and abort the whole gate as vacuous before it asserted
+  # anything -- loud rather than silent, but the gate would never once have run
+  # on the platform it matters most on. PE has no symbol interposition, so a
+  # duplicate runtime that Linux and macOS quietly collapse to one is fatal
+  # there and only there.
+  definedCmd = if isDarwin then "nm -gU"
+               else if isWindows then "nm --defined-only"
+               else "nm -D --defined-only";
+  # A count over a tool that read nothing is not evidence of absence. nix/app.nix
+  # writes the same defence over its Qt DLL closure.
+  totalCmd   = if isDarwin then "nm -a"
+               else if isWindows then "nm"
+               else "nm -D";
 in
 pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeControl "-negative"}" {
   nativeBuildInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused ]
@@ -142,7 +160,16 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   ALL=("$PROVIDER" "''${CONSUMERS[@]}")
   while IFS= read -r p; do
     [ -n "$p" ] && [ "$p" != "$PROVIDER" ] && ALL+=("$p")
-  done < <(find -L "$ROOT/lib" -maxdepth 1 -type f \( -name 'liblogos_*.dylib' -o -name 'liblogos_*.so' \) 2>/dev/null | grep -v 'liblogos_core' || true)
+  # bin/ is searched too, and .dll is matched: on Windows every liblogos_* shared
+  # image is staged into bin/, NOT lib/ (nix/app.nix flips _libdest for exactly
+  # that reason -- the PE loader searches the executable's directory). Globbing
+  # lib/*.{dylib,so} alone found ZERO definers on Windows, so the exactly-one
+  # assertion below reported "0 definers" for every family and could not pass on
+  # a correct tree. The three sibling probes above -- provider, negative control,
+  # consumer -- each learned this layout; this one had not.
+  done < <(find -L "$ROOT/lib" "$ROOT/bin" -maxdepth 1 -type f \
+    \( -name 'liblogos_*.dylib' -o -name 'liblogos_*.so' -o -name 'liblogos_*.dll' \) 2>/dev/null \
+    | grep -v 'liblogos_core' || true)
 
   # Exactly one definer per type. This doubles as the demangler validity
   # control: if c++filt were absent or broken every family would report ZERO
