@@ -4,6 +4,7 @@
 
 #include <QWidget>
 #include <QHBoxLayout>
+#include <QPointer>
 #include <QStackedWidget>
 
 class QQuickWidget;
@@ -64,7 +65,13 @@ private:
     // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
     WorkspaceArea* m_workspaceArea;
 
-    QWidget* m_pmuiWidget = nullptr;
+    // QPointer, not a raw pointer: this widget is owned by the HOST side, which
+    // deleteLater()s it on unload (UIPluginManager::unloadUiModuleImpl and
+    // ::teardownUiPluginWidget both do). As a raw pointer it was read at four
+    // sites after the widget had been freed, and `!m_pmuiWidget` stayed false
+    // forever, so the Package Manager section could never reload. Same guard the
+    // host applies to its own widget maps.
+    QPointer<QWidget> m_pmuiWidget;
     bool m_suppressNextNavToApps = false;
 
     // Content views (QML for Dashboard, Modules, PackageManager, Settings)
