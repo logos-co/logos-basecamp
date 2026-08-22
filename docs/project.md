@@ -18,30 +18,18 @@ logos-basecamp/
 │   ├── CMakeLists.txt                    # App build configuration
 │   ├── main.cpp                          # Entry point
 │   ├── window.h/cpp                      # Main window (QMainWindow)
-│   ├── interfaces/                       # Component interfaces (IComponent)
+│   ├── interfaces/                       # IShellHost/IShellObserver, IShellView, IComponent
 │   ├── utils/                            # Utility classes (paths, file helpers)
 │   ├── macos/                            # macOS-specific code (titlebar styling)
 │   ├── icons/                            # Application icons
 │   ├── MainUIBackend.h/cpp               # Core logic (module state, stats, navigation)
 │   ├── ShellHostAdapter.h/cpp            # IShellHost over MainUIBackend
-│   ├── LogosQmlBridge.h/cpp              # QML-to-C++ module call bridge
-│   ├── mdiview.h/cpp                     # MDI tab workspace
-│   ├── mdichild.h/cpp                    # Individual plugin tab window
-│   ├── qml/                              # QML UI files
-│   │   ├── panels/
-│   │   │   ├── SidebarPanel.qml          # Sidebar navigation
-│   │   │   └── UiModulesTab.qml          # Module management tab
-│   │   ├── views/
-│   │   │   ├── ContentViews.qml          # Content area stack layout
-│   │   │   ├── DashboardView.qml         # Dashboard screen
-│   │   │   ├── ModulesView.qml           # Modules management screen
-│   │   │   ├── CoreModulesView.qml       # Core modules list
-│   │   │   ├── PluginInterfaceView.qml   # Interface inspection (methods + events)
-│   │   │   └── SettingsView.qml          # Settings screen
-│   │   └── controls/                     # Reusable QML controls
-│   │       ├── SidebarIconButton.qml
-│   │       ├── SidebarAppDelegate.qml
-│   │       └── SidebarCircleButton.qml
+│   ├── CoreModuleManager.h/cpp           # Core-module lifecycle over the SDK facade
+│   ├── UIPluginManager.h/cpp             # UI-plugin load/unload, widget ownership
+│   ├── PluginLoader.h/cpp                # Per-plugin identities, ui-host spawning
+│   ├── PackageCoordinator.h/cpp          # Install/uninstall flows
+│   ├── AppsModel.h/cpp                   # App list model
+│   ├── ModuleInstanceModel.h/cpp         # Module list model
 │   └── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
 │   │   ├── QmlSandbox.h/cpp               # applies the sandbox policy to a QML engine
 │   │   ├── DenyAllNetworkAccessManager.h/cpp
@@ -65,9 +53,13 @@ logos-basecamp/
 │   ├── smoke-test.nix                    # Smoke test derivation
 │   ├── integration-test.nix              # UI integration test harness
 │   ├── host-services-test.nix            # Host-services grant guard
-│   ├── appimage.nix                      # Linux AppImage packaging
-│   ├── macos-bundle.nix                  # macOS .app bundle
-│   └── macos-dmg.nix                     # macOS DMG packaging
+│   ├── symbol-gate.nix                   # One-runtime gate + its negative control
+│   ├── unit-tests.nix                    # C++ unit tests
+│   ├── qml-tests.nix                     # QML tests
+│   ├── sandbox-test.nix                  # ui_qml sandbox-escape regression test
+│   ├── shutdown-test.nix                 # Quit-gesture teardown tests
+│   ├── coverage.nix                      # gcovr report over app/ and src/
+│   └── build-info.nix                    # Version/build metadata
 ├── qt-ios/                               # iOS build configuration (experimental)
 │   ├── CMakeLists.txt
 │   ├── Main.qml
@@ -227,13 +219,13 @@ The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named opera
 
 ### MainContainer
 
-**Files:** `app/MainContainer.h`, `app/MainContainer.cpp`
+**Files:** `src/MainContainer.h`, `src/MainContainer.cpp` — plugin side, Qt only
 
-**Purpose:** UI coordinator that creates the `MainUIBackend`, assembles the sidebar (QML `SidebarPanel`) and content area (stacked widget with MdiView + QML system views), and routes navigation signals between them.
+**Purpose:** UI coordinator that assembles the sidebar (QML `SidebarPanel`) and content area (stacked widget with `WorkspaceArea` + QML system views), and routes navigation between them. It does **not** create `MainUIBackend` any more — `Window` owns that and the shell borrows it through `IShellHost`, reaching it from QML as an opaque `QObject*` via `backendObject()`.
 
 ### LogosQmlBridge
 
-**Files:** `app/LogosQmlBridge.h`, `app/LogosQmlBridge.cpp`
+**Files:** none in this repo — `LogosQmlBridge` is an external header, included by `app/PluginLoader.cpp` from a flake input's include path (logos-view-module-runtime).
 
 **Purpose:** Bridge between QML-based UI Apps and Logos Modules. Injected into each QML UI App's context as `logos`, enabling UI Apps to call Logos Module methods via the Logos API.
 
@@ -245,17 +237,11 @@ The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named opera
 
 The bridge validates that the `LogosAPI` is available and the target Logos Module is connected before dispatching. Results are serialized to JSON (objects, arrays, primitives) for consumption by QML.
 
-### MdiView
+### WorkspaceArea
 
-**Files:** `app/mdiview.h`, `app/mdiview.cpp`
+**Files:** `src/WorkspaceArea.h`, `src/WorkspaceArea.cpp` — plugin side, Qt only
 
-**Purpose:** Multi-document interface workspace. Manages a tab bar with one tab per loaded UI App. Handles tab creation, removal, switching, and custom styling with close buttons.
-
-### MdiChild
-
-**Files:** `app/mdichild.h`, `app/mdichild.cpp`
-
-**Purpose:** Individual tab in the MDI area. Wraps a UI App's widget and manages its lifecycle within the tabbed workspace.
+**Purpose:** Dock-based app workspace, one dock per loaded UI App: `addPluginDock` / `removePluginDock` / `activatePluginDock`. It replaced the earlier `MdiView` / `MdiChild` QMdiArea tab pair, which no longer exist.
 
 ### QML Sandbox
 
@@ -515,7 +501,6 @@ nix build '.#app'                  # Standard development build
 nix build '.#bin-bundle-dir'             # Self-contained portable build
 nix build '.#bin-appimage'         # Linux AppImage
 nix build '.#bin-macos-app'        # macOS .app bundle
-nix build '.#bin-macos-dmg'        # macOS DMG
 nix build '.#logos-qt-mcp'         # QML inspector for testing
 ```
 
