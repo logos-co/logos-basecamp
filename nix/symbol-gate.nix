@@ -73,6 +73,7 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
     ++ [ pkgs.stdenv.cc.bintools ];
 } ''
   set -uo pipefail
+  export LC_ALL=C   # comm(1) below requires a byte-order sort
 
   # TIER 1 — the split-brain itself. No allowance, ever.
   TIER1_RE='^(TokenManager|StoreRegistry)::|^(vtable|typeinfo|typeinfo name|guard variable) for (TokenManager|StoreRegistry)\b'
@@ -109,7 +110,33 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
     fi
     printf '%s\n' "$f"
   }
+  ${if isWindows then ''
+  # PE reports an import THUNK as a defined text symbol. For every imported
+  # function GNU ld synthesizes a jump stub in .text AND an __imp_<mangled> slot
+  # in the import address table, and `nm --defined-only` shows the stub as `T`.
+  # Counting that alone reported liblogos_core.dll and LogosBasecamp.exe as
+  # DEFINERS of types they merely import -- measured on a real cross build: 3
+  # and 1 phantom TokenManager "definitions", against liblogos_protocol.dll's
+  # genuine 41.
+  #
+  # The paired __imp_ entry is the discriminator, and it is the RIGHT one: a
+  # genuine second copy statically linked into an image has no __imp_ slot, so
+  # it still counts as a definition. The PE export table would also hide the
+  # phantom -- liblogos_core.dll exports 0 TokenManager symbols and
+  # liblogos_protocol.dll exports 45 -- but it would hide a real private copy
+  # just as well, trading this false positive for a false NEGATIVE. That is the
+  # wrong direction for a gate whose whole job is catching a private copy.
+  names() {
+    local t; t=$(mktemp -d)
+    ${definedCmd} "$1" 2>/dev/null | awk '{print $3}' | grep -v '^$' | sort -u > "$t/all"
+    grep '^__imp_' "$t/all" | sed 's/^__imp_//' | sort -u > "$t/imp"
+    grep -v '^__imp_' "$t/all" | sort -u > "$t/def"
+    comm -23 "$t/def" "$t/imp" | ${tp}c++filt 2>/dev/null
+    rm -rf "$t"
+  }
+  '' else ''
   names() { ${definedCmd} "$1" 2>/dev/null | ${tp}c++filt 2>/dev/null | sed -E 's/^[0-9a-fA-F]+ [A-Za-z] //'; }
+  ''}
   valid() {
     local t; t=$(${totalCmd} "$1" 2>/dev/null | wc -l | tr -d ' ')
     [ "''${t:-0}" -gt 0 ] || { bad "$(basename "$1")" "ERROR: nm read 0 symbols — vacuous"; return 1; }
