@@ -25,6 +25,23 @@ constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
 constexpr int kContentStackIndex  = 1;  // ContentViews.qml (App Manager + Settings)
 constexpr int kModulesStackIndex  = 2;  // package_manager_ui (sandboxed QQuickWidget)
 
+// The Package Manager page before package_manager_ui arrives -- and again after
+// it goes away. Built in two places, so it lives here: the stack must keep all
+// three pages at all times, because every section switch below indexes into it
+// by constant.
+QWidget* makePmuiPlaceholder(QWidget* parent)
+{
+    QWidget* ph = new QWidget(parent);
+    ph->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    QVBoxLayout* phLayout = new QVBoxLayout(ph);
+    phLayout->setAlignment(Qt::AlignCenter);
+    QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"), ph);
+    loadingLabel->setAlignment(Qt::AlignCenter);
+    loadingLabel->setStyleSheet(QStringLiteral("color: #a0a0a0; font-size: 14px;"));
+    phLayout->addWidget(loadingLabel);
+    return ph;
+}
+
 // DEV_QML_PATH: when set, load QML view entry files from the filesystem source
 // tree instead of the embedded qrc resource
 QString devQmlRoot() {
@@ -219,19 +236,7 @@ void MainContainer::setupUi()
     // Index 2: placeholder for package_manager_ui — shows a centered
     // "Loading…" label until PMUI's QQuickWidget arrives via the
     // pluginWindowRequested intercept
-    QWidget* pmuiPlaceholder = new QWidget(m_contentStack);
-    pmuiPlaceholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    {
-        QVBoxLayout* phLayout = new QVBoxLayout(pmuiPlaceholder);
-        phLayout->setAlignment(Qt::AlignCenter);
-        QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"),
-                                          pmuiPlaceholder);
-        loadingLabel->setAlignment(Qt::AlignCenter);
-        loadingLabel->setStyleSheet(QStringLiteral(
-            "color: #a0a0a0; font-size: 14px;"));
-        phLayout->addWidget(loadingLabel);
-    }
-    m_contentStack->addWidget(pmuiPlaceholder);
+    m_contentStack->addWidget(makePmuiPlaceholder(m_contentStack));
 
     // Content stack fills the content area — the version footer that
     // used to live in a QML bottom toolbar is now inside SidebarPanel.qml.
@@ -402,7 +407,19 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
-    if (widget && widget == m_pmuiWidget) return;
+    if (widget && widget == m_pmuiWidget) {
+        // package_manager_ui is the Package Manager PAGE, not a dock, so it must
+        // not reach removePluginDock() -- but it cannot simply be left in the
+        // stack either: the host deleteLater()s it the moment this returns.
+        // Taking a page out without putting one back leaves a two-page stack
+        // that every `setCurrentIndex(kModulesStackIndex)` then indexes past the
+        // end of, and the section is dead for the rest of the session.
+        m_contentStack->removeWidget(widget);
+        m_contentStack->insertWidget(kModulesStackIndex,
+                                     makePmuiPlaceholder(m_contentStack));
+        m_pmuiWidget = nullptr;
+        return;
+    }
     if (m_workspaceArea && widget)
         m_workspaceArea->removePluginDock(widget);
 }
