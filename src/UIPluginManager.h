@@ -1,16 +1,20 @@
 #pragma once
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
+#include <QHash>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include "logos_api.h"
 #include "logos_api_client.h"
 #include "IComponent.h"
 
 class QQuickWidget;
+class QTimer;
 class PluginLoader;
 class ViewModuleHost;
 class CoreModuleManager;
@@ -84,6 +88,16 @@ public:
     // Idempotent widget teardown. PackageCoordinator calls this during the
     // uninstall/upgrade cascade so UI-plugin dependents whose backing core
     // module just died don't outlive it as orphaned widgets.
+    //
+    // Usually completes before it returns. The exception is an in-process
+    // (type: ui) plugin that answers Asynchronous to the aboutToUnload() hook:
+    // that buys a bounded grace period during which the widget stays up and
+    // the destruction runs from a continuation instead. Callers that need the
+    // widget gone before they proceed cannot get that guarantee from this
+    // function — see the comment on the definition for why blocking here is
+    // not an option. Idempotence holds either way: a second call while a
+    // deferral is in flight neither starts a second teardown nor tears down
+    // underneath the one already running.
     void teardownUiPluginWidget(const QString& moduleName);
 
     // Resolve an installed UI plugin's icon from its manifest entry
@@ -171,6 +185,12 @@ private slots:
     // needed for widget loading.
     void onUiPluginsFetched(const QVariantList& uiPlugins);
 
+    // Landing slot for a deferred-teardown plugin's unloadFinished() signal.
+    // Reached through the string-based connect() in beginDeferredTeardown --
+    // that overload needs a real slot on the receiving side, which a lambda is
+    // not -- so the deferral it belongs to is found by sender().
+    void onUiPluginUnloadFinished();
+
 private:
     // Local unload-cascade pending slot. Set when unloadUiModule /
     // unloadCoreModule detects a loaded dependent and asks the user to
@@ -202,6 +222,53 @@ private:
     // path and from the QueuedConnection lambda in unloadUiModule. Never call
     // this from a live QML signal handler; use unloadUiModule() instead.
     void unloadUiModuleImpl(const QString& moduleName);
+
+    // --- aboutToUnload() teardown hook -------------------------------------
+
+    // The in-process QObject that could carry the aboutToUnload() hook for
+    // `moduleName`, or nullptr when there is none. Only legacy (type: ui)
+    // plugins have one; see the definition for why ui_qml structurally
+    // cannot.
+    QObject* unloadHookTarget(const QString& moduleName) const;
+
+    // One entry per teardown currently waiting on a plugin's unloadFinished().
+    // Membership is the "a deferral is in flight for this name" flag, and
+    // removing an entry is the one-shot guard that keeps the continuation from
+    // running twice.
+    struct DeferredTeardown {
+        // The widget observed when the deferral was armed, used purely as a
+        // staleness token: if the map no longer maps `moduleName` to this
+        // exact widget when the continuation runs, something else already
+        // tore the module down (or reloaded it) and the continuation must
+        // not touch it. Never dereferenced — QPointer so a destroyed widget
+        // reads as null rather than as a stale address that could compare
+        // equal to a freshly allocated one.
+        QPointer<QWidget>       widget;
+        QObject*                plugin = nullptr;   // sender() we match on
+        QTimer*                 deadline = nullptr; // owned (parent=this)
+        QMetaObject::Connection finished;
+        QElapsedTimer           elapsed;
+    };
+    QHash<QString, DeferredTeardown> m_deferredTeardowns;
+
+    // Arm the unloadFinished()/deadline race for a plugin that answered
+    // Asynchronous. Returns false if the deferral could not be set up, in
+    // which case the caller must tear down immediately.
+    bool beginDeferredTeardown(const QString& moduleName, QObject* plugin);
+
+    // Remove and disarm the deferral for `moduleName`, returning what it held
+    // (`plugin == nullptr` when there was none).
+    DeferredTeardown takeDeferredTeardown(const QString& moduleName);
+
+    // Continuation for a deferral, entered exactly once — from
+    // onUiPluginUnloadFinished (finishedInTime=true) or from the deadline
+    // timer (false). Whichever arrives first disarms the other.
+    void resumeDeferredTeardown(const QString& moduleName, bool finishedInTime);
+
+    // The destruction half of teardownUiPluginWidget: everything that runs
+    // once the plugin has had its say. Called directly on the synchronous
+    // path and from resumeDeferredTeardown on the asynchronous one.
+    void teardownUiPluginWidgetNow(const QString& moduleName);
 
     // Wiring
     LogosAPI*          m_logosAPI;          // not owned
