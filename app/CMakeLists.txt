@@ -337,9 +337,13 @@ target_link_libraries(LogosBasecamp PRIVATE
     ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
     # logos_core is LAST, and that position is load-bearing on Windows: it is the
-    # IMPORT LIBRARY for liblogos_core.dll, the single provider of the shared C++
-    # runtime (LogosSharedFromDll.cmake empties the static archives defining those
-    # types). GNU ld takes only archive members satisfying references already
+    # IMPORT LIBRARY for liblogos_core.dll, which re-exports the shared C++
+    # runtime defined by liblogos_protocol.dll and liblogos_qt_host.dll. (This
+    # comment used to explain the ordering by LogosSharedFromDll.cmake emptying
+    # the static archives; that shim was deleted in #348 when the runtime became
+    # real shared libraries. The ordering rule below still holds -- only that
+    # justification is gone, so do not read its absence as licence to reorder.)
+    # GNU ld takes only archive members satisfying references already
     # undefined when it reaches them, so placing it ahead of
     # LOGOS_VIEW_MODULE_RUNTIME_LIB fails the mingw link with four undefined
     # references — LogosAPIClient::whenObjectAvailable / ::eventSubscriptionState

@@ -105,17 +105,17 @@
     # leaving them alone keeps this build byte-identical to liblogos's own
     # except for the loader rev itself.
     #
-    # Rev-pinned rather than tracking the branch: 06134bfc is the tip of
-    # feat/host-services-grant. Drop the rev once that merges, at which point
-    # liblogos's own lock can carry it and this input can go away.
+    # The rev pin is gone -- feat/host-services-grant merged and this input now
+    # follows master. It is still declared rather than removed because the
+    # `follows` below is load-bearing; once liblogos's own lock carries the same
+    # resolution, the input itself can go away.
     logos-module-loader-qt = {
       url = "github:logos-co/logos-module-loader-qt";
       inputs.logos-protocol.follows = "logos-protocol";
     };
-    # Rev-pinned: f2a15ef3 is the tip of fix/b4-align-protocol-with-qt-host —
-    # the liblogos aligned with the split host runtime and the per-client token
-    # store. liblogos_core.dll's export list (the other half of the Windows
-    # one-copy fix) lands there, not on master.
+    # Follows master. (This input used to be rev-pinned to a branch carrying the
+    # split host runtime and liblogos_core.dll's export list; that landed on
+    # master and the pin was retired, but the comment explaining it outlived it.)
     logos-liblogos = {
       url = "github:logos-co/logos-liblogos";
       inputs.default-module-loader.follows = "logos-module-loader-qt";
@@ -123,32 +123,24 @@
     logos-package-manager.url = "github:logos-co/logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
-    # Rev-pinned: 07dba1f is the tip of feat/universal-capability, built against
-    # the new module-builder. Master's capability_module targets the pre-split
-    # runtime and would load a second host copy into this process.
-    #
-    # This was walked back to 0cb33fb (the legacy hand-written Qt plugin) for one
-    # reason: 07dba1f is a UNIVERSAL module that asks the host for the
-    # `token_registry` / `token_delivery` services and fails CLOSED when they do
-    # not arrive, and the loader pinned here could not grant them. That is fixed
-    # above, at logos-module-loader-qt — so the pin returns to the rev the
-    # comment always described.
+    # Follows master. (This input carried a rev pin through the universal-module
+    # transition, walked between 07dba1f and 0cb33fb depending on whether the
+    # loader of the day could grant `token_registry` / `token_delivery` to a
+    # module that fails CLOSED without them. Both sides of that landed on master
+    # and the pin was retired; the history is kept here only because the
+    # fail-closed handshake is the thing to remember if this ever regresses.)
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
-    # Rev-pinned: c932e1c is the tip of feat/universal-view-plugin — the
-    # generated view plugin. This UI is loaded in-process by the app, so it must
-    # come from the same generation as the host runtime above.
-    # Rev-pinned: f135195 is the tip of feat/universal-view-plugin — the
-    # generated view plugin. This UI is loaded in-process by the app, so it must
-    # come from the same generation as the host runtime above.
-    #
-    # f135195 is that branch WITH master merged in. The previous value, c932e1c,
+    # Follows master. (Rev-pinned through the universal-view-plugin transition,
+    # and the pin had to be a merge of that branch with master: the branch alone
     # published packages for the four native systems only, so the cross build
     # failed with "logos-module-builder: dependency 'package_manager' publishes
-    # no packages for x86_64-windows". Master fixed that (#68, a pure lock bump)
-    # but does not carry the view plugin, so tracking master here would trade a
-    # build failure for a runtime mismatch that still looks green. The merge
-    # gives both.
+    # no packages for x86_64-windows", while master alone did not carry the view
+    # plugin and would have traded a build failure for a runtime mismatch that
+    # still looked green. Both landed and the pin was retired. The constraint
+    # that outlives it: this UI is loaded IN-PROCESS by the app, so it must come
+    # from the same generation as the host runtime above.)
+    #
     # `package_manager` and `package_downloader` are the SAME flakes as this
     # root's logos-package-manager-module / logos-package-downloader-module
     # inputs, at the same revs, with identical resolved subtrees -- they are
@@ -396,14 +388,11 @@
             }
           else null;
 
-          # Linux AppImage (only for Linux)
-          appImage = if pkgs.stdenv.isLinux then
-            import ./nix/appimage.nix {
-              inherit pkgs src;
-              app = appDistributed;
-              version = common.version;
-            }
-          else null;
+          # (There is no ./nix/appimage.nix binding here. The shipped AppImage is
+          # the `bin-appimage` output further down, built by nix-bundle-appimage.
+          # A dead `appImage = import ./nix/appimage.nix ...` binding survived
+          # here long after that file was removed, evaluating only because
+          # nothing ever forced it.)
 
           # Self-contained directory bundle: appDistributed modules expect host Qt
           # via @rpath; qtApp copies Qt frameworks into lib/ and rewrites the binary.
@@ -554,7 +543,9 @@
           # A second definition is a second TokenManager and every cross-module
           # call is refused at runtime with no build diagnostic.
           # Build: nix build .#symbol-gate  (CI: the "One-runtime symbol gate"
-          # step in test-linux and test-macos runs this and its negative control)
+          # step in test-linux, test-macos AND build-windows runs this and its
+          # negative control -- Windows being the one where a duplicate is fatal,
+          # since PE has no symbol interposition to collapse it)
           symbol-gate = import ./nix/symbol-gate.nix { inherit pkgs; appPkg = app; };
 
           # Negative control for the above. Plants a REAL duplicate runtime where
