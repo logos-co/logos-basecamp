@@ -41,6 +41,13 @@
 let
   isDarwin  = pkgs.stdenv.isDarwin;
   isWindows = pkgs.stdenv.hostPlatform.isWindows;
+  # "" natively, "x86_64-w64-mingw32-" for the Windows cross. The cross bintools
+  # installs ONLY the prefixed names, so a bare `nm` / `c++filt` is not on PATH
+  # in that derivation at all -- every measurement silently produced nothing and
+  # valid() below refused to assert over it. Fail-closed, but the gate could
+  # never run. (The HOST's own nm reads these PEs fine: 7350 symbols out of
+  # liblogos_core.dll. The tool was missing, not incapable.)
+  tp = pkgs.stdenv.cc.targetPrefix;
   # Mach-O: -gU is defined externals. ELF: -D --defined-only.
   #
   # PE gets NEITHER, because a PE has no ELF dynamic symbol table and `nm -D`
@@ -52,14 +59,14 @@ let
   # on the platform it matters most on. PE has no symbol interposition, so a
   # duplicate runtime that Linux and macOS quietly collapse to one is fatal
   # there and only there.
-  definedCmd = if isDarwin then "nm -gU"
-               else if isWindows then "nm --defined-only"
-               else "nm -D --defined-only";
+  definedCmd = if isDarwin then "${tp}nm -gU"
+               else if isWindows then "${tp}nm --defined-only"
+               else "${tp}nm -D --defined-only";
   # A count over a tool that read nothing is not evidence of absence. nix/app.nix
   # writes the same defence over its Qt DLL closure.
-  totalCmd   = if isDarwin then "nm -a"
-               else if isWindows then "nm"
-               else "nm -D";
+  totalCmd   = if isDarwin then "${tp}nm -a"
+               else if isWindows then "${tp}nm"
+               else "${tp}nm -D";
 in
 pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeControl "-negative"}" {
   nativeBuildInputs = [ pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused ]
@@ -102,7 +109,7 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
     fi
     printf '%s\n' "$f"
   }
-  names() { ${definedCmd} "$1" 2>/dev/null | c++filt 2>/dev/null | sed -E 's/^[0-9a-fA-F]+ [A-Za-z] //'; }
+  names() { ${definedCmd} "$1" 2>/dev/null | ${tp}c++filt 2>/dev/null | sed -E 's/^[0-9a-fA-F]+ [A-Za-z] //'; }
   valid() {
     local t; t=$(${totalCmd} "$1" 2>/dev/null | wc -l | tr -d ' ')
     [ "''${t:-0}" -gt 0 ] || { bad "$(basename "$1")" "ERROR: nm read 0 symbols — vacuous"; return 1; }
@@ -218,7 +225,7 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
     G=$TMPDIR/guards; rm -rf "$G"; mkdir -p "$G"
     for img in "$PROVIDER" "''${CONSUMERS[@]}"; do
       [ -e "$img" ] || continue
-      nm -m "$img" 2>/dev/null | c++filt 2>/dev/null | grep 'guard variable for' \
+      ${tp}nm -m "$img" 2>/dev/null | ${tp}c++filt 2>/dev/null | grep 'guard variable for' \
         | grep -v 'weak external' | sed -E 's/.*guard variable for /guard variable for /' \
         | sort -u > "$G/$(basename "$img").g" || true
     done
