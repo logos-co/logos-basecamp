@@ -206,12 +206,17 @@ sections:
       - title: "Confirm the bundled UI plugins"
         text: |
           The UI plugins **Settings → Apps Inspector** will list are carried
-          under `plugins/` — confirm the main UI and the package manager UI
-          shipped in the bundle:
+          under `plugins/` — confirm the package manager UI shipped in the
+          bundle. Basecamp's *own* shell is deliberately NOT here: it is
+          compiled into `bin/LogosBasecamp`, not carried as a `main_ui` plugin,
+          so the assertion below is that `main_ui` is ABSENT.
         run: "ls result-bundle/plugins"
         expect_contains:
-          - "main_ui"
           - "package_manager_ui"
+        extra_run:
+          run: "ls result-bundle/plugins | grep -qx main_ui && echo 'main_ui STILL SHIPPED' || echo 'main_ui absent (folded into the executable)'"
+          expect_contains:
+            - "main_ui absent (folded into the executable)"
 
       - title: "Confirm the bundled core modules"
         text: |
@@ -305,13 +310,15 @@ sections:
               text: "The **Settings → Apps Inspector** section lists the UI plugins installed in the app, with the same page-level search + Reload controls as the App Manager panel."
               screenshot: "bundle-apps-inspector.png"
 
-            # Module rows render `displayName || name`. main_ui's display_name
-            # is "Main UI"; package_manager_ui's is "Package Manager".
+            # Module rows render `displayName || name`; package_manager_ui's
+            # display_name is "Package Manager". Basecamp's own shell is no
+            # longer an installed app -- it is compiled into the executable --
+            # so there is no "Main UI" row to wait for.
             - name: "Installed apps are listed"
               action: wait_for
-              texts: ["Main UI", "Package Manager"]
+              texts: ["Package Manager"]
               timeout: 30000
-              text: "The installed apps appear as rows — the main UI and the package manager UI."
+              text: "The installed apps appear as rows — here, the package manager UI."
               screenshot: "bundle-apps-inspector-list.png"
 
             # Switch to Module Inspector — the background modules loaded into
@@ -355,8 +362,8 @@ sections:
           catalog; clicking **Package Manager** opens the bundled
           `package_manager_ui` plugin in-place (captured as a screenshot, since
           its sandboxed QML can't be safely walked by the inspector);
-          **Settings → Apps Inspector** lists the installed apps (`main_ui`,
-          `package_manager_ui`), and **Settings → Module Inspector** reports
+          **Settings → Apps Inspector** lists the installed apps
+          (`package_manager_ui`), and **Settings → Module Inspector** reports
           the bundled runtime modules (`package_manager`, `package_downloader`,
           `capability_module`) as **Loaded** with live CPU/memory stats. A
           green run is end-to-end proof that this commit builds a launchable,
