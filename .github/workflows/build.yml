@@ -83,6 +83,15 @@ jobs:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
+      # This is the platform the gate exists for. PE has no symbol
+      # interposition, so a duplicate runtime that Linux and macOS silently
+      # collapse to one is FATAL here -- and CI cross-builds this bundle and
+      # never runs it, so a build-time assertion is the only signal there is.
+      - name: One-runtime symbol gate
+        run: |
+          nix build .#packages.x86_64-windows.symbol-gate -L
+          nix build .#packages.x86_64-windows.symbol-gate-negative -L
+
       - name: Build the Windows bundle
         run: nix build .#packages.x86_64-windows.bin-bundle-dir -L
 
@@ -205,12 +214,9 @@ jobs:
       # An absence assertion that has never been seen to fail is indistinguish-
       # able from a broken one, so the two ship together or not at all.
       #
-      # Not yet run for x86_64-windows -- the platform where this matters most,
-      # since PE has no symbol interposition to collapse a duplicate. That
-      # attribute cannot be evaluated at all as pinned (see flake.nix, the
-      # `binBundleDir` note), which is a pre-existing blocker. The gate itself
-      # now understands the Windows layout, so wiring it is a one-line follow-up
-      # once the attribute evaluates.
+      # Also wired into build-windows, which is where it matters most: PE has
+      # no symbol interposition to collapse a duplicate, and CI cross-builds
+      # that bundle without ever running it.
       - name: One-runtime symbol gate
         run: |
           nix build .#symbol-gate -L
@@ -278,12 +284,9 @@ jobs:
       # An absence assertion that has never been seen to fail is indistinguish-
       # able from a broken one, so the two ship together or not at all.
       #
-      # Not yet run for x86_64-windows -- the platform where this matters most,
-      # since PE has no symbol interposition to collapse a duplicate. That
-      # attribute cannot be evaluated at all as pinned (see flake.nix, the
-      # `binBundleDir` note), which is a pre-existing blocker. The gate itself
-      # now understands the Windows layout, so wiring it is a one-line follow-up
-      # once the attribute evaluates.
+      # Also wired into build-windows, which is where it matters most: PE has
+      # no symbol interposition to collapse a duplicate, and CI cross-builds
+      # that bundle without ever running it.
       - name: One-runtime symbol gate
         run: |
           nix build .#symbol-gate -L

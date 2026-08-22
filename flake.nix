@@ -483,22 +483,23 @@
           #  * None of this has been RUN on Windows, by this change or by CI,
           #    which has never executed a Windows binary. Every claim above is
           #    build-time and tree-shape only.
-          #  * The two trees measured came from a harness that drops ONE entry
-          #    from installedDistributed -- packageManagerUIPlugin -- because
-          #    logos-package-manager-ui does not cross-compile at the rev this
-          #    flake pins: its generated logos_sdk.h includes
-          #    package_manager_api.h, which is not produced for the Windows
-          #    target. That is pre-existing and independent of this change; the
-          #    identical derivation fails when built straight from the pinned
-          #    rev with no basecamp involved. Everything above concerns Qt
-          #    staging and the DLL closure, which that one plugin does not
-          #    participate in -- but the numbers are from a bundle missing it.
-          #  * For the same reason `nix build .#packages.x86_64-windows.*`
-          #    cannot succeed on this branch as pinned. A second, unrelated
-          #    blocker sits in front of it at EVAL time: line ~119's
-          #    logos-package-downloader-module has no x86_64-windows target, so
-          #    the attribute cannot even be evaluated. Both blockers predate
-          #    this change and are identical with the bypass in place.
+          #  * The two trees measured came from a harness that dropped ONE
+          #    entry from installedDistributed -- packageManagerUIPlugin --
+          #    because logos-package-manager-ui did not cross-compile at the rev
+          #    this flake pinned then: its generated logos_sdk.h included
+          #    package_manager_api.h, which was not produced for the Windows
+          #    target. There was also a separate EVAL-time blocker, a
+          #    logos-package-downloader-module with no x86_64-windows target.
+          #
+          #    BOTH have since been fixed upstream. `.#packages.x86_64-windows.*`
+          #    now evaluates AND builds, and the resulting bundle DOES include
+          #    package_manager_ui -- so the numbers above describe a tree that
+          #    was missing a plugin which is no longer missing. Re-measure
+          #    before quoting them.
+          #
+          #    (The cross build needs an x86_64-linux builder: logos_build_info.h
+          #    is an x86_64-linux derivation, so it cannot run on an
+          #    aarch64-darwin host without one.)
           binBundleDir = withMainProgram (dirBundler appDistributed);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
         in
