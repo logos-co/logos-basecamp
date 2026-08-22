@@ -1,11 +1,5 @@
 # Builds the logos-basecamp standalone application.
-#
-# Since the main_ui fold this is the ONLY derivation that compiles basecamp's
-# own UI: nix/main-ui.nix is gone, and everything its preConfigure staged (the
-# build-info header, the package_manager / package_downloader generated API
-# headers, the shared semver headers, and logos-cpp-generator's --general-only
-# output) is staged here instead, into the single app/generated directory.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -86,8 +80,7 @@ pkgs.stdenv.mkDerivation rec {
     # the logos-protocol link interface (OpenSSL, Boost::system, nlohmann_json).
     logosProtocolPkg
     logosQtHost
-    # main_ui fold: Logos.Theme / .Icons / .Controls are STATIC qt_add_qml_module
-    # targets behind the Logos::DesignSystem umbrella, now linked by the app.
+    # app/CMakeLists.txt does find_package(LogosDesignSystem CONFIG REQUIRED).
     logosDesignSystem
   ] ++ (
     if pkgs.stdenv.isLinux then
@@ -182,12 +175,9 @@ pkgs.stdenv.mkDerivation rec {
 
     # ── app/generated: the ONE generated-header directory ──────────────────
     #
-    # Merged here from the deleted nix/main-ui.nix, which staged the same set
-    # into a SECOND directory (src/generated_code). Both ended up on one
-    # target's include path the moment the UI shell folded into the exe, and
-    # app/utils/BuildInfo.h resolves logos_build_info.h with __has_include —
-    # so with two candidate directories the -I ORDER, not the build, would
-    # decide which header won. One directory removes the question.
+    # Keep it the only one: app/utils/BuildInfo.h resolves logos_build_info.h
+    # with __has_include, so a second staged directory on the same include path
+    # would leave -I ORDER deciding which header wins.
     mkdir -p ./app/generated
 
     # Auto-generated build info header (version + commit hashes): main.cpp logs
@@ -219,7 +209,7 @@ pkgs.stdenv.mkDerivation rec {
 
     # logos-cpp-generator's general wrappers (logos_sdk.h / logos_sdk.cpp).
     # --general-only: the per-module wrappers come from the module outputs
-    # copied above. metadata.json is the repo-root one, unchanged by the fold.
+    # copied above.
     echo "Running logos-cpp-generator (general-only)..."
     logos-cpp-generator --metadata ${src}/metadata.json --general-only --output-dir ./app/generated
 
@@ -412,11 +402,9 @@ pkgs.stdenv.mkDerivation rec {
     #  1. $out/modules/<m>/ and $out/plugins/<p>/ are populated in installPhase
     #     from .lgx payloads and UI-plugin outputs -- i.e. AFTER that hook has
     #     run, and in directories it never looks at. Nothing ever read their
-    #     import tables. Measured here before this block existed: main_ui.dll
+    #     import tables. Measured before this block existed: main_ui.dll
     #     imported Qt6Qml.dll, Qt6QuickControls2.dll and Qt6QuickWidgets.dll and
-    #     not one of them was in plugins/main_ui/ or in bin/. (main_ui itself is
-    #     folded into the exe now and no longer ships; the mechanism is unchanged
-    #     for package_manager_ui and every module payload.)
+    #     not one of them was in plugins/main_ui/ or in bin/.
     #
     #  2. A DLL that is itself absent cannot have ITS imports read, so one pass
     #     over a tree is never enough. package_downloader needs three rounds:
@@ -766,6 +754,17 @@ WRAPPER_EOF
       cp -L "$_sdklib" "$out/lib/"
     done
 
+    # The UI shell. Staged from its own derivation into plugins/main_ui/, which
+    # is where app/window.cpp resolves it and where the PE import sweep above
+    # already walks ("$out"/plugins/*).
+    if [ -d "${mainUIPlugin}/plugins" ]; then
+      cp -r "${mainUIPlugin}/plugins/." "$out/plugins/"
+      echo "Installed the main_ui shell plugin"
+    else
+      echo "error: mainUIPlugin produced no plugins/ directory"
+      exit 1
+    fi
+
     # Copy pre-installed modules and plugins from bundled install outputs.
     # Each entry in installedModules has modules/ and/or plugins/ subdirectories.
     for installed in ${pkgs.lib.concatStringsSep " " (map toString installedModules)}; do
@@ -778,9 +777,13 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
-    # Logos.Theme / .Icons / .Controls are STATIC-linked into the LogosBasecamp
-    # binary via find_package(LogosDesignSystem CONFIG) — the modules register
-    # into the process qrc at startup. Nothing to copy to $out/lib/Logos.
+    # Logos.Theme / .Icons / .Controls are STATIC-linked into the main_ui PLUGIN,
+    # not into this binary, and register into the process-wide QML registry when
+    # Window loads the plugin at startup — before any UI plugin can import them.
+    # Exactly one image may link them: a STATIC qt_add_qml_module registers from
+    # a static initializer and QML registration is process-global, so a second
+    # image aborts startup with "Cannot add multiple registrations for
+    # Logos.Icons". Nothing to copy to $out/lib/Logos.
 
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then

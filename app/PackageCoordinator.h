@@ -11,7 +11,6 @@
 #include <QSet>
 #include "logos_api.h"
 
-class AppsFilterProxy;
 class AppsModel;
 class InstallRegistry;
 class CoreModuleManager;
@@ -57,7 +56,7 @@ public:
                             QObject* parent = nullptr);
     ~PackageCoordinator() override;
 
-    void setRequiredPackagesModel(AppsFilterProxy* proxy) { m_requiredPackagesModel = proxy; }
+
 
     // Read-only accessors over the package-state caches. Empty when the
     // async refresh chain hasn't completed yet; QML and UIPluginManager
@@ -185,6 +184,12 @@ signals:
     void catalogInstallFailed(const QString& name, const QString& error);
     void launchAppRequested(const QString& name);
     void uninstallPlanRequested(const QVariantMap& plan);
+
+    // The resolver's required-package entries, in install order. Published
+    // rather than written: this used to call setRequiredPackages() on an
+    // AppsFilterProxy the host held a pointer to, which is a host reaching
+    // across into a shell-owned object. QML binds to it now.
+    void requiredPackagesResolved(const QVariantList& entries);
     void dependencyDataReadyChanged();
 
     // Upgrade/Downgrade/Reinstall cascade dialog trigger. Same dependent-
@@ -402,7 +407,6 @@ private:
     bool m_warnedPackageDownloaderMissing = false;
     UIPluginManager*   m_uiPluginManager;
     AppsModel*         m_appsModel;
-    AppsFilterProxy*   m_requiredPackagesModel = nullptr;
 
     // Package-state caches sourced from the package_manager module.
     QMap<QString, QString>     m_installTypeByModule;

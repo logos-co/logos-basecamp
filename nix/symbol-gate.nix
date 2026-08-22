@@ -15,16 +15,15 @@
 # it moved, this check failed while every real assertion still passed. See
 # logos-protocol/cpp/logos_shared_api.h and cmake/LogosSharedFromDll.cmake.
 #
-# This gate exists because nothing else in the tree measured it. The main_ui
-# fold shipped an executable that defined nine runtime entry points
-# liblogos_core.dylib did not export, and it was caught by hand, after the fact,
-# from 31 "ModuleProxy: rejecting unauthorized call" lines at runtime.
+# Nothing else in the tree measures this, and it has no build diagnostic: it
+# surfaces at runtime as "ModuleProxy: rejecting unauthorized call" and
+# "LogosAPIClient: No token found for module".
 #
 # THE IN-PROCESS IMAGE SET — this scoping IS the correctness of the gate:
 #   IN   bin/LogosBasecamp                the app
 #   IN   lib/liblogos_core.*              the single provider
 #   IN   plugins/*/*_replica_factory.*    QPluginLoader'd by LogosQmlBridge
-#   IN   plugins/main_ui/main_ui.*        QPluginLoader'd by Window, when split out
+#   IN   plugins/main_ui/main_ui.*        QPluginLoader'd by Window
 #   OUT  bin/logos_host, bin/ui-host      SEPARATE PROCESSES; they correctly keep
 #                                         their own statics
 #   OUT  plugins/*/*_plugin.*             a ui_qml backend is loaded by ui-host,
@@ -69,11 +68,10 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   #     wrapper) -- nm reads ZERO symbols from it
   #   * makeBinaryWrapper's COMPILED stub beside bin/.<name>-wrapped -- nm reads
   #     ~10 symbols from it, so the "did nm read anything" guard below does NOT
-  #     catch this one. Measured in logos-logoscore-cli: bin/logoscore is such a
-  #     stub, and measuring it reports 0 runtime symbols for a binary that in
-  #     fact imports 12.
-  # So the rule is deterministic rather than heuristic: if a hidden sibling
-  # exists, it IS the image, and we never measure bin/<name>.
+  #     catch this one (logos-logoscore-cli's bin/logoscore is such a stub: it
+  #     measures 0 runtime symbols for a binary that in fact imports 12).
+  # Hence the deterministic rule: a hidden sibling IS the image, and we never
+  # measure bin/<name>.
   resolve_image() {
     local f="$1" d b real
     d=$(dirname "$f"); b=$(basename "$f")
@@ -152,14 +150,12 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   echo
   echo "== each runtime type is defined by EXACTLY ONE image =="
   valid "$PROVIDER" || exit 1
-  # StoreRegistry is deliberately absent from this list. It is file-local --
-  # token_manager.cpp defines `static StoreRegistry r;` inside registry(), so it
-  # has a LOCAL symbol and no external one, and is reachable only through
-  # TokenManager's accessors. Measured: 1 symbol under `nm -a`, 0 under `nm -gU`.
-  # Requiring exactly one DEFINER of something that is never exported would fail
-  # forever. It stays in the TIER 1 scan below, where the assertion is that no
-  # consumer defines it -- which is meaningful precisely because it should never
-  # become external.
+  # StoreRegistry is deliberately absent from this list: token_manager.cpp
+  # defines `static StoreRegistry r;` inside registry(), so it is file-local
+  # (1 symbol under `nm -a`, 0 under `nm -gU`) and requiring exactly one DEFINER
+  # of something never exported would fail forever. It stays in the TIER 1 scan
+  # below, where "no consumer defines it" is meaningful precisely because it
+  # should never become external.
   for fam in TokenManager LogosAPI LogosAPIClient; do
     _n=0; _owners=""
     for img in "''${ALL[@]}"; do

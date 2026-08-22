@@ -10,13 +10,10 @@ class QQuickWidget;
 class WorkspaceArea;
 class ShortcutBridge;
 
-// MainContainer — the UI shell.
-//
-// Holds exactly one host-side pointer: an IShellHost*. It has no LogosAPI*, no
-// QtLogosCore*, and no MainUIBackend*; every host operation it needs goes
-// through the eight methods on that interface, and QML reaches the backend as
-// an opaque QObject* via IShellHost::backendObject(). That is what lets this
-// class — and everything below it — compile against Qt alone.
+// MainContainer — the UI shell. Holds exactly one host-side pointer, an
+// IShellHost*: no LogosAPI*, no QtLogosCore*, no MainUIBackend*. QML reaches
+// the backend as an opaque QObject* via IShellHost::backendObject(). That is
+// what lets this class, and everything below it, compile against Qt alone.
 class MainContainer : public QWidget, public IShellObserver
 {
     Q_OBJECT
@@ -26,13 +23,12 @@ public:
     explicit MainContainer(IShellHost* host, QWidget* parent = nullptr);
     ~MainContainer();
 
-    // Get the workspace area
     WorkspaceArea* getWorkspaceArea() const { return m_workspaceArea; }
 
-    // Stops the host from calling back into this object. Idempotent, and safe
-    // to call more than once — MainShellView::destroyShell() calls it before
-    // deleting, and the destructor calls it again for the path where Qt's
-    // parent-child teardown gets here first.
+    // Stops the host from calling back into this object. Idempotent:
+    // MainShellView::destroyShell() calls it before deleting, and the
+    // destructor calls it again for the path where Qt's parent-child teardown
+    // gets here first.
     void detachFromHost();
 
     // ── IShellObserver ──────────────────────────────────────────────────────
@@ -43,31 +39,26 @@ public:
     void onPluginWindowActivateRequested(QWidget* widget) override;
 
 protected:
-    // Kept in sync with the full MainContainer geometry — the overlay
-    // widget floats over both the sidebar and the content stack, so it
-    // can't sit in the HBoxLayout.
+    // Keeps the overlay sized to the full MainContainer: it floats over both
+    // the sidebar and the content stack, so it can't sit in the HBoxLayout.
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
-    // Called from QML whenever the combined visibility of the three
-    // overlay dialogs flips. We use it to toggle mouse-event
-    // passthrough on the overlay QQuickWidget — transparent to mouse
-    // input when no dialog is open (so the sidebar / content still
-    // receive clicks), intercepting when one is.
+    // Called from QML when the combined visibility of the three overlay
+    // dialogs flips. Toggles mouse-event passthrough on the overlay
+    // QQuickWidget: transparent when no dialog is open, so the sidebar and
+    // content still receive clicks, intercepting when one is.
     void onOverlayActiveChanged(bool active);
     void onSidebarTooltipRequested(const QString& text, qreal y);
 
 private:
     void setupUi();
 
-    // Main layout
     QHBoxLayout* m_mainLayout;
 
-    // Sidebar (QML)
     QQuickWidget* m_sidebarWidget;
 
-    // Content area
     QStackedWidget* m_contentStack;
 
     // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
@@ -87,7 +78,7 @@ private:
     // Apps/MDI screen was active.
     QQuickWidget* m_overlayWidget;
 
-    // The host. Not owned — Window owns it and it outlives this widget.
+    // Not owned — Window owns it and it outlives this widget.
     IShellHost* m_host;
 
     ShortcutBridge* m_shortcutBridge = nullptr;

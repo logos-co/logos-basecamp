@@ -14,7 +14,7 @@ logos-basecamp/
 │   ├── index.md                          # Documentation index
 │   ├── spec.md                           # High-level specification
 │   └── project.md                        # This document
-├── app/                                  # Main application executable (incl. the UI shell)
+├── app/                                  # Main application executable (the host)
 │   ├── CMakeLists.txt                    # App build configuration
 │   ├── main.cpp                          # Entry point
 │   ├── window.h/cpp                      # Main window (QMainWindow)
@@ -22,12 +22,11 @@ logos-basecamp/
 │   ├── utils/                            # Utility classes (paths, file helpers)
 │   ├── macos/                            # macOS-specific code (titlebar styling)
 │   ├── icons/                            # Application icons
-│   ├── MainContainer.h/cpp               # UI coordinator (sidebar + content)
 │   ├── MainUIBackend.h/cpp               # Core logic (module state, stats, navigation)
+│   ├── ShellHostAdapter.h/cpp            # IShellHost over MainUIBackend
 │   ├── LogosQmlBridge.h/cpp              # QML-to-C++ module call bridge
 │   ├── mdiview.h/cpp                     # MDI tab workspace
 │   ├── mdichild.h/cpp                    # Individual plugin tab window
-│   ├── Basecamp/                         # QML UI files, by feature
 │   ├── qml/                              # QML UI files
 │   │   ├── panels/
 │   │   │   ├── SidebarPanel.qml          # Sidebar navigation
@@ -53,9 +52,16 @@ logos-basecamp/
 │   ├── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
 │   ├── host-services-tests.mjs           # Capability trust-root guard (spec)
 │   └── host-services-assert.mjs          # ...its assertion, shared with ui-tests
+├── src/                                  # The main_ui UI shell plugin
+│   ├── CMakeLists.txt                    # Plugin build (Qt only, no logos runtime)
+│   ├── MainShellView.h/cpp               # IShellView entry point
+│   ├── MainContainer.h/cpp               # UI coordinator (sidebar + content)
+│   ├── WorkspaceArea.h/cpp               # Dock-based app workspace
+│   ├── Basecamp/                         # QML UI files, by feature
 ├── nix/                                  # Nix build modules
 │   ├── default.nix                       # Common build settings
-│   ├── app.nix                           # Application package (UI shell included)
+│   ├── app.nix                           # Application package
+│   ├── main-ui.nix                       # main_ui UI shell plugin
 │   ├── smoke-test.nix                    # Smoke test derivation
 │   ├── integration-test.nix              # UI integration test harness
 │   ├── host-services-test.nix            # Host-services grant guard
@@ -182,7 +188,11 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 **Files:** `app/window.h`, `app/window.cpp`
 
-**Purpose:** Main `QMainWindow` derivative. Constructs the UI shell directly — `setCentralWidget(new MainContainer(m_logosAPI))` — which is compiled into this binary. (It used to be the `main_ui` Qt plugin, loaded with `QPluginLoader` and reached through `QMetaObject::invokeMethod("createWidget")`; that boundary was removed because the shell needs host privileges, not module isolation.) Manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
+**Purpose:** Main `QMainWindow` derivative. Loads the UI shell from the `main_ui` Qt plugin with `QPluginLoader`, casts it to `IShellView`, checks `hostAbiVersion()` against `IShellHost_abi`, and calls `createShell(IShellHost*)`.
+
+The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named operations in. It holds no `LogosAPI*`, no `QtLogosCore*` and no `TokenManager` access, and links no logos runtime — `nix/symbol-gate.nix` enforces that across the in-process image set rather than trusting it.
+
+`Window` also owns `MainUIBackend` and `ShellHostAdapter` (the shell only borrows them) and drives the ordered teardown described in `~Window`. It manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
 
 ### MainUIBackend
 
@@ -271,25 +281,25 @@ The escape and its fix are covered by the `sandbox-test` check (`tests/sandbox/`
 
 ### SidebarPanel
 
-**File:** `app/Basecamp/Sidebar/SidebarPanel.qml`
+**File:** `src/Basecamp/Sidebar/SidebarPanel.qml`
 
 **Purpose:** Left-hand navigation panel. Sections are filtered by type — "workspace" entries appear at the top, "view" entries at the bottom. Loaded apps appear in the middle with close/activate interactions.
 
 ### ContentViews
 
-**File:** `app/Basecamp/Shell/ContentViews.qml`
+**File:** `src/Basecamp/Shell/ContentViews.qml`
 
 **Purpose:** Content area using `StackLayout` with four indices: MDI area (index 0), Dashboard (1), Modules (2), Settings (3). The active index is controlled by the sidebar selection.
 
 ### ModulesView
 
-**File:** `app/Basecamp/Settings/ModulesView.qml`
+**File:** `src/Basecamp/Settings/ModulesView.qml`
 
 **Purpose:** Component management screen with two tabs: **UI Apps** (Qt plugins managed by Basecamp) and **Logos Modules** (process-isolated modules managed by liblogos). Lists available/loaded components with load/unload buttons, icons, and status indicators. The Logos Modules tab also shows CPU/memory stats for running modules. Includes "Install LGX Package" action.
 
 ### DashboardView / SettingsView
 
-**Files:** `app/Basecamp/Settings/DashboardView.qml`, `app/Basecamp/Settings/SettingsView.qml`
+**Files:** `src/Basecamp/Settings/DashboardView.qml`, `src/Basecamp/Settings/SettingsView.qml`
 
 **Purpose:** System views for overview information and application configuration.
 

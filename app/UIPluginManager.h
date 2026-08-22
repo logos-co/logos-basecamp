@@ -218,13 +218,10 @@ private:
 
     // Loaded-plugin state
     QMap<QString, IComponent*>   m_loadedUiModules;
-    // QPointer, not raw. These widgets are docked inside the shell, so the
-    // shell's Qt parent can destroy them without going through unloadUiModule
-    // -- and every read below then hands out a dangling pointer. Window's
-    // ordered teardown calls beginShutdown() before the shell dies, which
-    // closes that window; QPointer is what keeps it closed if some future path
-    // does not. The pre-fold MainUIPlugin carried the same guard, and the fold
-    // deleted it.
+    // QPointer, not raw: these widgets are docked inside the shell, so the
+    // shell's Qt parent can destroy them without going through unloadUiModule,
+    // leaving every read below dangling. Window's ordered teardown calls
+    // beginShutdown() first; QPointer is the backstop if some path does not.
     QMap<QString, QPointer<QWidget>>      m_uiModuleWidgets;
     QMap<QString, QPointer<QQuickWidget>> m_qmlPluginWidgets;
     QMap<QString, ViewModuleHost*> m_viewModuleHosts;
