@@ -87,7 +87,7 @@ Releases are cut from `release/**` branches by the maintainers — see [`docs/RE
 ## Style and conventions
 
 - **C++**: C++17. No formatter enforced yet (`.clang-format` planned) — match the style of files you touch.
-- **QML**: Feature-axis `qt_add_qml_module` modules under `app/Basecamp/<Feature>/`. Follow the pattern: view files under a feature emit signals; backend calls belong in `Basecamp/Shell/ContentViews.qml`. See `CLAUDE.md` for the C++ backend split (`MainUIBackend` / `CoreModuleManager` / `UIPluginManager` / `PackageCoordinator`) — respect the dependency direction.
+- **QML**: Feature-axis `qt_add_qml_module` modules under `src/Basecamp/<Feature>/`. Follow the pattern: view files under a feature emit signals; backend calls belong in `Basecamp/Shell/ContentViews.qml`. See `CLAUDE.md` for the C++ backend split (`MainUIBackend` / `CoreModuleManager` / `UIPluginManager` / `PackageCoordinator`) — respect the dependency direction.
 - **Nix**: modular files under `nix/`. `flake.nix` inputs follow `logos-cpp-sdk`'s `nixpkgs` — never pin a separate one.
 
 ## Licensing

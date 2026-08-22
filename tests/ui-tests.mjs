@@ -191,18 +191,14 @@ async function openModuleInspector(app) {
 test("apps inspector: shows installed UI plugins", async (app) => {
   await openAppsInspector(app);
   await app.waitFor(
-    // Basecamp's own shell is compiled into the executable since the main_ui
-    // fold, so it is not an installed UI plugin and has no "Main UI" row —
-    // this used to assert ["Main UI", "Package Manager"].
-    //
-    // Dropping to ["Package Manager"] alone made the test vacuous: the
-    // sidebar's own section button carries exactly that text, so the
-    // assertion held with the table completely empty. Assert the RAW module
-    // name instead — AppsInspectorView.qml:187-192 renders it in the row
+    // Asserting ["Package Manager"] alone is vacuous: the sidebar's own
+    // section button carries exactly that text, so it holds with the table
+    // completely empty. Assert the RAW module name, which
+    // AppsInspectorView.qml:187-192 renders in the row
     // (`visible: rowItem.label !== rowItem.name`). Measured on a fresh app:
     //   findByProperty(text,"Package Manager")   -> 2  (SidebarCircleButton, row)
     //   findByProperty(text,"package_manager_ui")-> 1  (the row's LogosText)
-    //   findByProperty(text,"Main UI")           -> 0  (folded into the exe)
+    //   findByProperty(text,"Main UI")           -> 0  (not an installed plugin)
     async () => { await app.expectTexts(["package_manager_ui"]); },
     { timeout: 10000, interval: 500, description: "Apps Inspector list to populate" }
   );

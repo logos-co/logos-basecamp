@@ -133,18 +133,13 @@ sections:
 
       - title: "Confirm the baked-in UI plugins"
         text: |
-          The UI plugins **Settings → Apps Inspector** will list are
-          installed under `plugins/` — confirm the package manager UI shipped
-          in the build. Basecamp's *own* shell is deliberately NOT here: it is
-          compiled into `bin/LogosBasecamp`, not shipped as a `main_ui` plugin,
-          so the assertion below is that `main_ui` is ABSENT.
+          The UI plugins ship under `plugins/`. Basecamp's own shell is one of
+          them again — `main_ui` — but a privilege-free one: it links Qt and
+          nothing else, and reaches the host only through `IShellHost`.
         run: "ls result-app/plugins"
         expect_contains:
+          - "main_ui"
           - "package_manager_ui"
-        extra_run:
-          run: "ls result-app/plugins | grep -qx main_ui && echo 'main_ui STILL SHIPPED' || echo 'main_ui absent (folded into the executable)'"
-          expect_contains:
-            - "main_ui absent (folded into the executable)"
 
       - title: "Confirm the baked-in core modules"
         text: |

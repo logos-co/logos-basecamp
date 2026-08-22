@@ -12,18 +12,18 @@ nix build
 nix build && ./result/bin/LogosBasecamp
 
 # Iterate on QML without rebuilding — relaunch to pick up edits.
-DEV_QML_PATH=$PWD/app nix build && DEV_QML_PATH=$PWD/app ./result/bin/LogosBasecamp
+DEV_QML_PATH=$PWD/src nix build && DEV_QML_PATH=$PWD/src ./result/bin/LogosBasecamp
 ```
 
 QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
 .AppManager, .Settings, .Shell, plus .Backend for C++ types) — bytecode is
-embedded in the LogosBasecamp binary. No runtime QML disk cache, so the qrc-keyed cache
+embedded in the main_ui plugin. No runtime QML disk cache, so the qrc-keyed cache
 staleness bug doesn't apply.
 
 ### `DEV_QML_PATH` — iterate on view layouts without rebuilding
 
 Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
-(typically `<repo>/app`, which contains `Basecamp/Sidebar/`,
+(typically `<repo>/src`, which contains `Basecamp/Sidebar/`,
 `Basecamp/Shell/`, etc.). MainContainer's three view-entry `setSource` calls
 will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
 embedded qrc resource. Relaunch the app to pick up edits.
@@ -66,7 +66,7 @@ nix build .#integration-test -L
 - **Sidebar** (left): Contains app plugin icons (top/middle) and system buttons at the bottom (Dashboard, Modules, Settings)
 - **Plugins** appear as sidebar icons: `package_manager_ui`
 - Plugins are loaded from `~/Library/Application Support/Logos/LogosBasecampDev/plugins/`
-- Main UI is in `app/Basecamp/`, organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
+- Main UI is in `src/Basecamp/` (the main_ui plugin), organised by feature: `Sidebar/`, `AppManager/`, `Settings/`, `Shell/`, `Icons/`
 
 ## C++ Architecture
 
@@ -114,12 +114,12 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 
 | File | Purpose |
 |------|---------|
-| `app/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate, install failure) — hosted in a transparent top-level QQuickWidget |
-| `app/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `upgradeCascade`, `installGate`, `installError` — uninstall confirmation lives in `UninstallDialog.qml` |
-| `app/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
-| `app/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
-| `app/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
-| `app/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
+| `src/Basecamp/Shell/OverlayDialogs.qml` | Global dialog layer (missing deps, cascade confirm, install gate, install failure) — hosted in a transparent top-level QQuickWidget |
+| `src/Basecamp/Shell/ConfirmationDialog.qml` | Multi-mode dialog: `missingDeps`, `unloadCascade`, `upgradeCascade`, `installGate`, `installError` — uninstall confirmation lives in `UninstallDialog.qml` |
+| `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
+| `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
+| `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
+| `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
 
 ## QML Inspector (MCP)
 
@@ -139,7 +139,7 @@ The app runs an inspector server (default: localhost:3768) that the `qml-inspect
 
 ## Key Directories
 
-- `app/Basecamp/` - QML UI source files, organised by feature (Sidebar/AppManager/Settings/Shell/Icons)
+- `src/Basecamp/` - QML UI source files, organised by feature (Sidebar/AppManager/Settings/Shell/Icons)
 - `nix/` - Nix build configurations (app.nix, smoke-test.nix, integration-test.nix)
 - `logos-qt-mcp` - QML Inspector: MCP server, test framework, Qt plugin (separate repo, flake input)
 - `tests/` - UI integration tests

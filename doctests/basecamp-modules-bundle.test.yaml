@@ -208,15 +208,15 @@ sections:
           The UI plugins **Settings → Apps Inspector** will list are carried
           under `plugins/` — confirm the package manager UI shipped in the
           bundle. Basecamp's *own* shell is deliberately NOT here: it is
-          compiled into `bin/LogosBasecamp`, not carried as a `main_ui` plugin,
-          so the assertion below is that `main_ui` is ABSENT.
+          carried as a `main_ui` plugin again — one that links Qt and nothing
+          else, so the assertion below is that `main_ui` is PRESENT.
         run: "ls result-bundle/plugins"
         expect_contains:
           - "package_manager_ui"
         extra_run:
-          run: "ls result-bundle/plugins | grep -qx main_ui && echo 'main_ui STILL SHIPPED' || echo 'main_ui absent (folded into the executable)'"
+          run: "ls result-bundle/plugins | grep -qx main_ui && echo 'main_ui present' || echo 'main_ui MISSING'"
           expect_contains:
-            - "main_ui absent (folded into the executable)"
+            - "main_ui present"
 
       - title: "Confirm the bundled core modules"
         text: |

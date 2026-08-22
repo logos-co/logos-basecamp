@@ -12,16 +12,15 @@ MainShellView::MainShellView(QObject* parent)
 
 MainShellView::~MainShellView()
 {
-    // If Window already destroyed the central widget, m_shell is null and this
-    // is a no-op; otherwise this is the last chance to detach the observer.
+    // Null if Window already destroyed the central widget; otherwise this is
+    // the last chance to detach the observer.
     destroyShell(m_shell.data());
 }
 
 QWidget* MainShellView::createShell(IShellHost* host)
 {
-    // Not a degraded mode: the shell reaches every host operation through this
-    // pointer, so a null one would surface later as a null dereference in a
-    // click handler rather than here.
+    // Every host operation goes through this pointer; a null one would surface
+    // later as a null dereference inside a click handler instead of here.
     if (!host) {
         qFatal("MainShellView::createShell requires an IShellHost");
     }
@@ -39,9 +38,8 @@ void MainShellView::destroyShell(QWidget* widget)
     }
 
     // Detach before deleting so no in-flight host callback reaches a
-    // half-destroyed observer. MainContainer also does this in its own
-    // destructor, for the path where Qt's parent-child teardown gets there
-    // first; both are idempotent.
+    // half-destroyed observer. MainContainer's destructor does the same when
+    // Qt's teardown gets there first; both are idempotent.
     if (widget == m_shell) {
         m_shell->detachFromHost();
         m_shell = nullptr;

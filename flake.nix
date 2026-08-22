@@ -302,16 +302,15 @@
           };
           src = ./.;
 
-          # Basecamp's own UI shell is NOT a plugin any more. It used to be
-          # built here as `mainUIPlugin` (nix/main-ui.nix), bundled with
-          # nix-bundle-logos-module-install and shipped as
-          # plugins/main_ui/main_ui.{so,dylib,dll}; it is now compiled straight
-          # into the LogosBasecamp binary by nix/app.nix.
-          #
-          # Deleting these bindings is the load-bearing half of that fold. With
-          # the C++ folded in but the plugin still built and installed, nothing
-          # loads it, nothing breaks, and every check still passes -- while the
-          # output ships a second, stale copy of the entire UI.
+          # Basecamp's own UI shell: a privilege-free plugin that links Qt and
+          # nothing else from this workspace, which nix/symbol-gate.nix enforces
+          # across the in-process image set. It builds from the SAME `src` as
+          # the app; its CMakeLists lives in src/ and can only see
+          # app/interfaces/, so it cannot include a host header even by accident.
+          mainUIPlugin = import ./nix/main-ui.nix {
+            inherit pkgs common src logosDesignSystem;
+          };
+
           packageManagerUIPlugin = logosPackageManagerUI;
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
@@ -340,7 +339,7 @@
           # App package (development build)
           app = import ./nix/app.nix {
             inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
-            inherit logosQtMcp;
+            inherit logosQtMcp mainUIPlugin;
             installedModules = installedDev;
           };
 
@@ -348,6 +347,7 @@
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -357,7 +357,7 @@
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
-            inherit logosQtMcp;
+            inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -503,8 +503,8 @@
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
         in
         {
-          # Individual outputs. `main-ui-plugin` is deliberately gone: the UI
-          # shell is part of `app` now, not a separately buildable plugin.
+          # Individual outputs.
+          main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
           app = app;
 

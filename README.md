@@ -144,7 +144,8 @@ nix build --extra-experimental-features 'nix-command flakes'
 
 The nix build system is organized into modular files in the `/nix` directory:
 - `nix/default.nix` - Common configuration shared by every derivation
-- `nix/app.nix` - The application build (the UI shell compiles into it)
+- `nix/app.nix` - The application build
+- `nix/main-ui.nix` - The `main_ui` UI shell plugin
 
 ## Modules
 

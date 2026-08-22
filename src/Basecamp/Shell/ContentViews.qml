@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import Basecamp.AppManager
 import Basecamp.Settings
+import Basecamp.Backend
 
 Item {
     id: root
@@ -13,6 +14,17 @@ Item {
     // 2 = Modules, 3 = Settings.
     readonly property int sidebarAppManager: 1
     readonly property int sidebarSettings:   3
+
+    // The App Manager's view of the catalog. Declared here rather than handed
+    // over by the backend: a filter proxy is view configuration, so it belongs
+    // to whoever draws the view. Only the source model crosses, as a plain
+    // QAbstractItemModel*.
+    AppsFilterProxy {
+        id: uiAppsProxy
+        sourceModel:   backend.appsModel
+        typeFilter:    "ui_qml"
+        excludeMainUi: true
+    }
 
     Connections {
         target: backend
@@ -44,7 +56,7 @@ Item {
         // App Manager (sidebar sidebarAppManager -> stack index 0)
         AppManagerView {
             id: appManagerView
-            appsProxy:      backend.uiAppsProxy
+            appsProxy:      uiAppsProxy
             repositories:   backend.repositories
             loading:        backend.appsLoading
             onAppClicked: function(name, repositoryUrl) {
