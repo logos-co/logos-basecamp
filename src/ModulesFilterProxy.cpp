@@ -1,6 +1,6 @@
 #include "ModulesFilterProxy.h"
 
-#include "ModuleInstanceModel.h"
+#include "BasecampModelRoles.h"
 
 #include <QAbstractItemModel>
 #include <QByteArray>
@@ -91,12 +91,12 @@ void ModulesFilterProxy::applySortOrder(int order)
 int ModulesFilterProxy::roleFromName(const QByteArray& name) const
 {
     QAbstractItemModel* src = sourceModel();
-    if (!src) return ModuleInstanceModel::LabelRole;
+    if (!src) return ModuleInstanceRoles::LabelRole;
     const auto roles = src->roleNames();
     for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
         if (it.value() == name) return it.key();
     }
-    return ModuleInstanceModel::LabelRole;
+    return ModuleInstanceRoles::LabelRole;
 }
 
 bool ModulesFilterProxy::filterAcceptsRow(int sourceRow,
@@ -109,9 +109,9 @@ bool ModulesFilterProxy::filterAcceptsRow(int sourceRow,
 
     // State filter.
     if (m_stateFilter == QLatin1String("loaded")
-        && !src->data(idx, ModuleInstanceModel::IsLoadedRole).toBool()) return false;
+        && !src->data(idx, ModuleInstanceRoles::IsLoadedRole).toBool()) return false;
     if (m_stateFilter == QLatin1String("notLoaded")
-        && src->data(idx, ModuleInstanceModel::IsLoadedRole).toBool()) return false;
+        && src->data(idx, ModuleInstanceRoles::IsLoadedRole).toBool()) return false;
 
     // Search filter — trimmed + lowercased against a fixed set of textual
     // roles. Empty needle accepts everything.
@@ -119,11 +119,11 @@ bool ModulesFilterProxy::filterAcceptsRow(int sourceRow,
     if (needle.isEmpty()) return true;
 
     static const int textRoles[] = {
-        ModuleInstanceModel::NameRole,
-        ModuleInstanceModel::LabelRole,
-        ModuleInstanceModel::StatusTextRole,
-        ModuleInstanceModel::DescriptionRole,
-        ModuleInstanceModel::VersionRole,
+        ModuleInstanceRoles::NameRole,
+        ModuleInstanceRoles::LabelRole,
+        ModuleInstanceRoles::StatusTextRole,
+        ModuleInstanceRoles::DescriptionRole,
+        ModuleInstanceRoles::VersionRole,
     };
     for (int role : textRoles) {
         if (src->data(idx, role).toString().toLower().contains(needle))
@@ -159,10 +159,10 @@ bool ModulesFilterProxy::lessThan(const QModelIndex& left,
 
     // Stable tie-break by name so equal-status / equal-stat rows don't shuffle
     // between refreshes (the core stats poll fires every 2s).
-    if (result == 0 && role != ModuleInstanceModel::NameRole) {
-        result = src->data(left,  ModuleInstanceModel::NameRole).toString()
+    if (result == 0 && role != ModuleInstanceRoles::NameRole) {
+        result = src->data(left,  ModuleInstanceRoles::NameRole).toString()
                     .localeAwareCompare(
-                 src->data(right, ModuleInstanceModel::NameRole).toString());
+                 src->data(right, ModuleInstanceRoles::NameRole).toString());
     }
     return result < 0;
 }

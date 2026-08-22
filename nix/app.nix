@@ -5,7 +5,7 @@
 # build-info header, the package_manager / package_downloader generated API
 # headers, the shared semver headers, and logos-cpp-generator's --general-only
 # output) is staged here instead, into the single app/generated directory.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, installedModules ? [], portable ? false, enableInspector ? true }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin ? null, installedModules ? [], portable ? false, enableInspector ? true }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -766,6 +766,19 @@ WRAPPER_EOF
       cp -L "$_sdklib" "$out/lib/"
     done
 
+    # The UI shell. Staged from its own derivation into plugins/main_ui/, which
+    # is where app/window.cpp resolves it and where the PE import sweep above
+    # already walks ("$out"/plugins/*).
+    ${pkgs.lib.optionalString (mainUIPlugin != null) ''
+      if [ -d "${mainUIPlugin}/plugins" ]; then
+        cp -r "${mainUIPlugin}/plugins/." "$out/plugins/"
+        echo "Installed the main_ui shell plugin"
+      else
+        echo "error: mainUIPlugin produced no plugins/ directory"
+        exit 1
+      fi
+    ''}
+
     # Copy pre-installed modules and plugins from bundled install outputs.
     # Each entry in installedModules has modules/ and/or plugins/ subdirectories.
     for installed in ${pkgs.lib.concatStringsSep " " (map toString installedModules)}; do
@@ -778,9 +791,16 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
-    # Logos.Theme / .Icons / .Controls are STATIC-linked into the LogosBasecamp
-    # binary via find_package(LogosDesignSystem CONFIG) — the modules register
-    # into the process qrc at startup. Nothing to copy to $out/lib/Logos.
+    # Logos.Theme / .Icons / .Controls are STATIC-linked into the main_ui PLUGIN,
+    # not into this binary, and register into the process-wide QML registry when
+    # Window loads the plugin at startup — before any UI plugin can import them.
+    #
+    # Exactly one image may link them. Both did, briefly, and the app aborted at
+    # startup with "Cannot add multiple registrations for Logos.Icons": a STATIC
+    # qt_add_qml_module registers from a static initializer, and QML module
+    # registration is process-global, not per-engine or per-image.
+    #
+    # Nothing to copy to $out/lib/Logos.
 
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then

@@ -13,7 +13,7 @@
 class LogosAPI;
 class MainUIBackend;
 class ShellHostAdapter;
-class MainShellView;
+class IShellView;
 class QMenu;
 class QAction;
 class QCloseEvent;
@@ -86,7 +86,9 @@ private:
     // explicitly and in order by ~Window; see the comment there.
     MainUIBackend*    m_backend    = nullptr;
     ShellHostAdapter* m_hostAdapter = nullptr;
-    MainShellView*    m_shellView  = nullptr;
+    // The plugin's root instance, reached only through the interface — this
+    // image never names MainShellView. Owned by QPluginLoader, not by us.
+    IShellView*       m_shellView  = nullptr;
     QSystemTrayIcon* m_trayIcon;
     QMenu* m_trayIconMenu;
     QAction* m_showHideAction;

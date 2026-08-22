@@ -10,10 +10,12 @@ class MainContainer;
 // ─────────────────────────────────────────────────────────────────────────────
 // MainShellView — the IShellView implementation for Basecamp's own UI shell.
 //
-// A QObject with Q_INTERFACES so that `qobject_cast<IShellView*>` works on it.
-// That cast is what Window will use once this class ships inside the main_ui
-// plugin again; today Window constructs it directly, and the cast path costs
-// nothing to keep working in the meantime.
+// A QObject with Q_INTERFACES + Q_PLUGIN_METADATA: this is the class
+// QPluginLoader instantiates, and `qobject_cast<IShellView*>` on the resulting
+// instance is how Window reaches it. A real cast, not
+// QMetaObject::invokeMethod("createWidget") — the pre-fold code used the string
+// form, where changing an argument type still compiles on both sides and simply
+// misses at runtime.
 //
 // Deliberately holds no state beyond the shell it built: everything the shell
 // needs arrives through the IShellHost* it is handed.
@@ -21,6 +23,7 @@ class MainContainer;
 class MainShellView : public QObject, public IShellView {
     Q_OBJECT
     Q_INTERFACES(IShellView)
+    Q_PLUGIN_METADATA(IID IShellView_iid FILE "metadata.json")
 
 public:
     explicit MainShellView(QObject* parent = nullptr);

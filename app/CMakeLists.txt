@@ -244,20 +244,14 @@ set(PROJECT_SOURCES
     interfaces/IComponent.h
     interfaces/IShellHost.h
     interfaces/IShellView.h
+    interfaces/InstallEnums.h
+    interfaces/BasecampModelRoles.h
     resources.qrc
 
-    # The host side of the shell boundary. ShellHostAdapter implements
-    # IShellHost over MainUIBackend; MainShellView is the IShellView
-    # implementation that will move into the main_ui plugin when the shell is
-    # split back out.
+    # The host side of the shell boundary. The shell itself lives in ../src and
+    # builds as the main_ui plugin; this image never compiles a line of it.
     ShellHostAdapter.cpp
-    MainShellView.cpp
 
-    # The UI shell, still compiled in. Everything from MainContainer down
-    # reaches the host only through IShellHost — no LogosAPI, no QtLogosCore,
-    # no MainUIBackend — which is what makes splitting it back into a plugin a
-    # packaging change rather than a privilege change.
-    MainContainer.cpp
     MainUIBackend.cpp
     CoreModuleManager.cpp
     UIPluginManager.cpp
@@ -267,8 +261,6 @@ set(PROJECT_SOURCES
     AppsModel.cpp
     ModuleInstanceModel.cpp
     PluginLoader.cpp
-    WorkspaceArea.cpp
-    ShortcutBridge.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp
@@ -297,125 +289,10 @@ qt_add_executable(LogosBasecamp
     ${PROJECT_SOURCES}
 )
 
-# ── QML modules (folded in verbatim from the former src/CMakeLists.txt) ──────
-# These paths are relative to CMAKE_CURRENT_SOURCE_DIR, which is why Basecamp/
-# was moved PHYSICALLY into app/ rather than referenced as ../src/Basecamp:
-# qt_add_qml_module's QML_FILES/RESOURCES are resolved against this directory
-# and a `../` prefix changes where each file lands in the resource tree.
-set_source_files_properties(Basecamp/Icons/BasecampIcons.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set_source_files_properties(Basecamp/AppManager/AppColors.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-
-qt_add_qml_module(basecamp_backend_qml
-    URI Basecamp.Backend
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Backend
-    SOURCES
-        InstallEnums.h
-        InstallEnums.cpp
-        AppsFilterProxy.h
-        AppsFilterProxy.cpp
-        ModulesFilterProxy.h
-        ModulesFilterProxy.cpp
-)
-
-qt_add_qml_module(basecamp_common_qml
-    URI Basecamp.Common
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Common
-    QML_FILES
-        Basecamp/Common/LoadingOverlay.qml
-        Basecamp/Common/EmptyView.qml
-)
-
-qt_add_qml_module(basecamp_sidebar_qml
-    URI Basecamp.Sidebar
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Sidebar
-    QML_FILES
-        Basecamp/Sidebar/SidebarPanel.qml
-        Basecamp/Sidebar/SidebarIconButton.qml
-        Basecamp/Sidebar/SidebarCircleButton.qml
-        Basecamp/Sidebar/SidebarAppDelegate.qml
-)
-
-qt_add_qml_module(basecamp_appmanager_qml
-    URI Basecamp.AppManager
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/AppManager
-    QML_FILES
-        Basecamp/AppManager/AppManagerView.qml
-        Basecamp/AppManager/AppManagerPanelHeader.qml
-        Basecamp/AppManager/AppRepoSection.qml
-        Basecamp/AppManager/AppContextMenu.qml
-        Basecamp/AppManager/AppGrid.qml
-        Basecamp/AppManager/AppGridDelegate.qml
-        Basecamp/AppManager/AppListDelegate.qml
-        Basecamp/AppManager/PackageRowDelegate.qml
-        Basecamp/AppManager/AddApplicationDialog.qml
-        Basecamp/AppManager/AppColors.qml
-)
-
-qt_add_qml_module(basecamp_settings_qml
-    URI Basecamp.Settings
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Settings
-    QML_FILES
-        Basecamp/Settings/SettingsView.qml
-        Basecamp/Settings/DashboardView.qml
-        Basecamp/Settings/AppsInspectorView.qml
-        Basecamp/Settings/ModuleInspectorView.qml
-        Basecamp/Settings/InspectorPanelHeader.qml
-        Basecamp/Settings/ModuleStatusBadge.qml
-        Basecamp/Settings/ModuleRowActions.qml
-        Basecamp/Settings/PluginInterfaceView.qml
-        Basecamp/Settings/RepositoriesView.qml
-)
-
-qt_add_qml_module(basecamp_shell_qml
-    URI Basecamp.Shell
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Shell
-    QML_FILES
-        Basecamp/Shell/ContentViews.qml
-        Basecamp/Shell/OverlayDialogs.qml
-        Basecamp/Shell/ConfirmationDialog.qml
-        Basecamp/Shell/UninstallDialog.qml
-        Basecamp/Shell/WelcomePage.qml
-)
-
-qt_add_qml_module(basecamp_icons_qml
-    URI Basecamp.Icons
-    VERSION 1.0
-    STATIC
-    RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Icons
-    QML_FILES
-        Basecamp/Icons/BasecampIcons.qml
-    RESOURCES
-        Basecamp/Icons/basecamp.svg
-        Basecamp/Icons/dashboard.svg
-        Basecamp/Icons/module.svg
-        Basecamp/Icons/settings.svg
-        Basecamp/Icons/tent.png
-        Basecamp/Icons/workspace.svg
-)
-
-qt_import_qml_plugins(LogosBasecamp)
-
+# The UI shell's seven qt_add_qml_module targets moved to ../src with the shell.
+# They are STATIC modules that register their types from a static initializer,
+# so they must be linked into the image that actually loads the QML — which is
+# now the plugin, not this executable.
 target_include_directories(LogosBasecamp PRIVATE
     ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include
     ${GENERATED_LOGOS_SDK_DIR}
@@ -449,10 +326,9 @@ endif()
 # nothing linked it: it arrived transitively through QuickWidgets/Quick, and
 # restricted/DenyAllNetworkAccessManager.cpp subclasses QNetworkAccessManager.
 #
-# The seven $<LINK_LIBRARY:WHOLE_ARCHIVE,...qmlplugin> entries are load-bearing
-# and must not be trimmed: a STATIC qt_add_qml_module registers its types from a
-# static initializer inside the *_qmlplugin archive, so dropping one lets the
-# linker garbage-collect it — no build error, blank pane at runtime.
+# Qt6::Quick / Qml / QuickWidgets / QuickControls2 stay even though this image
+# no longer owns any QML: the out-of-process UI plugins need them, and linking
+# them here is what puts them in the portable bundle.
 target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Widgets
     Qt6::RemoteObjects
@@ -463,21 +339,6 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Network
     logos-qt-host::logos_qt_host_shared
     ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
-    Logos::DesignSystem
-    basecamp_backend_qml
-    basecamp_common_qml
-    basecamp_sidebar_qml
-    basecamp_appmanager_qml
-    basecamp_settings_qml
-    basecamp_shell_qml
-    basecamp_icons_qml
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_backend_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_sidebar_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_settings_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_shell_qmlplugin>
-    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_icons_qmlplugin>
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
     # logos_core is LAST, and that position is load-bearing on Windows.
     #

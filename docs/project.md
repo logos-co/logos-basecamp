@@ -182,7 +182,11 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 **Files:** `app/window.h`, `app/window.cpp`
 
-**Purpose:** Main `QMainWindow` derivative. Constructs the UI shell directly — `setCentralWidget(new MainContainer(m_logosAPI))` — which is compiled into this binary. (It used to be the `main_ui` Qt plugin, loaded with `QPluginLoader` and reached through `QMetaObject::invokeMethod("createWidget")`; that boundary was removed because the shell needs host privileges, not module isolation.) Manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
+**Purpose:** Main `QMainWindow` derivative. Loads the UI shell from the `main_ui` Qt plugin with `QPluginLoader`, casts it to `IShellView`, checks `hostAbiVersion()` against `IShellHost_abi`, and calls `createShell(IShellHost*)`.
+
+The shell was briefly compiled into this binary, on the argument that the plugin boundary bought nothing because the shell needed host privileges rather than module isolation. `IShellHost` is what made that argument false: the shell now gets a `QWidget*` out and eight named operations in, holds no `LogosAPI*`, no `QtLogosCore*` and no `TokenManager` access, and links no logos runtime at all — which `nix/symbol-gate.nix` enforces across the in-process image set rather than trusting.
+
+`Window` also owns `MainUIBackend` and `ShellHostAdapter` (the shell only borrows them) and drives the ordered teardown described in `~Window`. It manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
 
 ### MainUIBackend
 

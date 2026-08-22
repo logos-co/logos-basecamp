@@ -19,11 +19,13 @@
 #include <QPointer>
 #include <QScopedValueRollback>
 #include "LogosBasecampPaths.h"
-#include "MainShellView.h"
 #include "MainUIBackend.h"
 #include "ShellHostAdapter.h"
 #include "IShellHost.h"
+#include "IShellView.h"
 #include "logos_api.h"
+#include "win_dll_search.h"
+#include <QPluginLoader>
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
     #include "macWindowStyle.h"
@@ -74,9 +76,13 @@ Window::~Window()
     }
 
     if (m_shellView) {
+        // Take the shell out of the central-widget slot before handing it back,
+        // so QMainWindow does not also delete it.
         QWidget* shell = takeCentralWidget();
         m_shellView->destroyShell(shell);
-        delete m_shellView;
+        // NOT deleted: m_shellView is QPluginLoader's root instance, and Qt
+        // destroys it during QLibraryStore::cleanup() at process exit. Deleting
+        // it here would double-free it there.
         m_shellView = nullptr;
     }
 
@@ -93,45 +99,73 @@ Window::~Window()
 
 void Window::setupUi()
 {
-    // The UI shell is compiled into this executable, and reached through
-    // IShellView / IShellHost.
+    // The UI shell is a Qt plugin again — plugins/main_ui/main_ui.{so,dylib,dll}
+    // — and it is reached through IShellView / IShellHost.
     //
-    // It used to be a Qt plugin, folded in here because the boundary "bought
-    // nothing": the shell needed a QWidget* handed back, the logos_core_*
-    // lifecycle, and TokenManager access, and two of those three are host
-    // privileges. That argument is what this seam dismantles — the shell now
-    // gets a QWidget* out and eight named operations in, and holds no host
-    // privilege at all. What is left to do is packaging, not privilege.
+    // It was folded into this executable because the boundary "bought nothing":
+    // the shell needed a QWidget* handed back, the logos_core_* lifecycle, and
+    // TokenManager access, and two of those three are host privileges. That is
+    // no longer true. The shell gets a QWidget* out and eight named operations
+    // in, holds no host privilege, and links no logos runtime at all — which
+    // nix/symbol-gate.nix now enforces rather than trusts.
     //
-    // Note the shape of the resolution below: a typed hostAbiVersion() check
-    // and a direct call, NOT the QMetaObject::invokeMethod("createWidget")
-    // string dispatch the pre-fold code used. That was a silent-failure path —
-    // change an argument type and both sides still compile, then miss at
-    // runtime. When this becomes a plugin again the only change here is
-    // qobject_cast<IShellView*> on the QPluginLoader instance.
-    //
-    // There is deliberately no "No main UI module found" fallback: failure to
-    // construct the shell is not a runtime resolution that can miss.
-    //
-    // Ownership inverts here: the backend and its host adapter belong to the
-    // Window, and the shell only borrows them through IShellHost. The shell
-    // holds no LogosAPI*, no QtLogosCore* and no MainUIBackend* — which is
-    // what will let it link Qt and nothing else once it is a plugin again.
-    //
-    // Deliberately NOT parented to `this`: ~Window destroys these explicitly
-    // and in order, and a Qt parent would delete them a second time.
+    // Ownership stays HERE: the backend and its adapter belong to the Window,
+    // and the shell only borrows them. Deliberately not parented to `this`;
+    // ~Window destroys them explicitly and in order.
     m_backend     = new MainUIBackend(m_logosAPI, m_core, nullptr);
     m_hostAdapter = new ShellHostAdapter(m_backend, nullptr);
-    m_shellView   = new MainShellView(nullptr);
 
-    // A real ABI check, even though both sides are in this image today. Once
-    // the shell is loaded from a plugin this is the only thing between a stale
-    // build and a jump through a mismatched vtable slot.
+    QString pluginExtension;
+    #if defined(Q_OS_WIN)
+        pluginExtension = ".dll";
+    #elif defined(Q_OS_MAC)
+        pluginExtension = ".dylib";
+    #else // Linux and other Unix-like systems
+        pluginExtension = ".so";
+    #endif
+
+    // Embedded (pre-installed at build time) first, then the user-writable dir.
+    const QString embeddedPath = LogosBasecampPaths::embeddedPluginsDirectory()
+                               + "/main_ui/main_ui" + pluginExtension;
+    const QString mainUiPluginPath =
+        QFile::exists(embeddedPath)
+            ? embeddedPath
+            : LogosBasecampPaths::pluginsDirectory() + "/main_ui/main_ui" + pluginExtension;
+
+    // main_ui lives in its own plugins/main_ui/ directory, so anything vendored
+    // beside it is invisible to Windows' loader without this. No-op elsewhere;
+    // the reference is intentionally held for the process lifetime.
+    ModuleLib::preloadPluginWithOwnDirSearch(mainUiPluginPath);
+
+    QPluginLoader loader(mainUiPluginPath);
+    if (!loader.load()) {
+        qFatal("Failed to load the main UI plugin from %s: %s",
+               qUtf8Printable(mainUiPluginPath), qUtf8Printable(loader.errorString()));
+    }
+
+    // A real cast, not QMetaObject::invokeMethod("createWidget"). The string
+    // form is a silent-failure path: change an argument type and both sides
+    // still compile, then miss at runtime — which is how the pre-fold code
+    // reached the shell.
+    m_shellView = qobject_cast<IShellView*>(loader.instance());
+    if (!m_shellView) {
+        qFatal("main_ui at %s does not implement IShellView",
+               qUtf8Printable(mainUiPluginPath));
+    }
+
+    // The only thing standing between a stale plugin build and a jump through a
+    // mismatched vtable slot. Both sides compile IShellHost_abi from the one
+    // copy in app/interfaces/, so a difference here means the plugin was built
+    // against a different revision of that header.
     if (m_shellView->hostAbiVersion() != IShellHost_abi) {
-        qFatal("main_ui shell was built against IShellHost ABI %d, host is %d",
+        qFatal("main_ui was built against IShellHost ABI %d, host is %d",
                m_shellView->hostAbiVersion(), IShellHost_abi);
     }
 
+    // There is deliberately no "No main UI module found" fallback widget. A
+    // missing or mismatched shell is a broken install, and the four qFatal
+    // paths above say which of the four it is; the old code degraded to an
+    // error-label widget that looked like a working app with an empty window.
     setCentralWidget(m_shellView->createShell(m_hostAdapter));
 
     // Set window title and size. The default launch width is wide enough for
