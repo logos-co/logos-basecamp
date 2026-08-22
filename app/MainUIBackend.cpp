@@ -1,5 +1,4 @@
 #include "MainUIBackend.h"
-#include "AppsFilterProxy.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "ModuleInstanceModel.h"
@@ -37,20 +36,9 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
 
     m_appsModel         = new AppsModel(this);
 
-    m_uiAppsProxy       = new AppsFilterProxy(this);
-    m_uiAppsProxy->setSourceModel(m_appsModel);
-    m_uiAppsProxy->setTypeFilter(QStringLiteral("ui_qml"));
-    m_uiAppsProxy->setExcludeMainUi(true);
-
-    m_requiredPackagesModel = new AppsFilterProxy(this);
-    m_requiredPackagesModel->setSourceModel(m_appsModel);
-    m_requiredPackagesModel->setExcludeMainUi(false);
-    m_requiredPackagesModel->setInstallStateFilter(QString());
-
     m_coreModuleManager = new CoreModuleManager(m_logosAPI, m_core, this);
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
-    m_packageCoordinator->setRequiredPackagesModel(m_requiredPackagesModel);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
 
     // Setter-injection closes the cycle — UIPluginManager queries
@@ -125,8 +113,23 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
             this,             &MainUIBackend::addApplicationDataUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
             this,             &MainUIBackend::launchAppRequested);
+    // The resolver's required packages are cached here and published as a
+    // property; QML binds a shell-declared AppsFilterProxy to it. Nothing on
+    // this side holds a pointer to that proxy.
+    connect(m_packageCoordinator, &PackageCoordinator::requiredPackagesResolved,
+            this, [this](const QVariantList& entries) {
+        if (m_requiredPackages == entries) return;
+        m_requiredPackages = entries;
+        emit requiredPackagesChanged();
+    });
+
+    // Widened to int at this hop rather than connected signal-to-signal, so
+    // the conversion is written down instead of relying on the implicit
+    // enum-to-int the connect check would otherwise permit silently.
     connect(m_packageCoordinator, &PackageCoordinator::catalogInstallStageChanged,
-            this,             &MainUIBackend::catalogInstallStageChanged);
+            this, [this](const QString& name, InstallStage::Value stage) {
+        emit catalogInstallStageChanged(name, static_cast<int>(stage));
+    });
     connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFinished,
             this,             &MainUIBackend::catalogInstallFinished);
     connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
@@ -165,6 +168,11 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
 }
 
 MainUIBackend::~MainUIBackend() = default;
+
+QAbstractItemModel* MainUIBackend::appsModel() const
+{
+    return m_appsModel;
+}
 
 void MainUIBackend::beginShutdown()
 {

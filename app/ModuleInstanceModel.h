@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BasecampModelRoles.h"
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
@@ -22,25 +23,9 @@
 // `replaceRows` patches in place when the row identities are unchanged, so the
 // 2-second core-stats poll doesn't reset the model (which would drop the
 // selection + flicker every delegate).
-class ModuleInstanceModel : public QAbstractListModel {
+class ModuleInstanceModel : public QAbstractListModel, public ModuleInstanceRoles {
     Q_OBJECT
 public:
-    enum Roles {
-        NameRole = Qt::UserRole + 1,
-        LabelRole,             // displayName if set, else name
-        DescriptionRole,
-        CategoryRole,
-        TypeRole,              // "ui_qml" | "core" | ""
-        VersionRole,
-        IconPathRole,
-        InstallTypeRole,       // "user" | "embedded" | ""
-        IsLoadedRole,
-        IsMainUiRole,
-        HasMissingDepsRole,
-        StatusTextRole,        // derived: Main UI / Missing deps / Loaded / Not loaded
-        CpuRole,               // core modules only; 0 when unknown
-        MemoryRole,            // core modules only; 0 when unknown
-    };
     Q_ENUM(Roles)
 
     explicit ModuleInstanceModel(QObject* parent = nullptr);

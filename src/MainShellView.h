@@ -10,17 +10,17 @@ class MainContainer;
 // ─────────────────────────────────────────────────────────────────────────────
 // MainShellView — the IShellView implementation for Basecamp's own UI shell.
 //
-// A QObject with Q_INTERFACES so that `qobject_cast<IShellView*>` works on it.
-// That cast is what Window will use once this class ships inside the main_ui
-// plugin again; today Window constructs it directly, and the cast path costs
-// nothing to keep working in the meantime.
+// Q_INTERFACES + Q_PLUGIN_METADATA: QPluginLoader instantiates this class and
+// Window reaches it with `qobject_cast<IShellView*>`. A real cast, not
+// QMetaObject::invokeMethod by name — a signature change that way still
+// compiles on both sides and misses only at runtime.
 //
-// Deliberately holds no state beyond the shell it built: everything the shell
-// needs arrives through the IShellHost* it is handed.
+// Holds no state beyond the shell it built; the rest arrives via IShellHost*.
 // ─────────────────────────────────────────────────────────────────────────────
 class MainShellView : public QObject, public IShellView {
     Q_OBJECT
     Q_INTERFACES(IShellView)
+    Q_PLUGIN_METADATA(IID IShellView_iid FILE "metadata.json")
 
 public:
     explicit MainShellView(QObject* parent = nullptr);
@@ -34,7 +34,6 @@ public:
 private:
     // QPointer auto-nulls when the widget is destroyed by its Qt parent (Window
     // owns it as the central widget), so a later destroyShell() is a no-op
-    // rather than a double delete. The pre-fold MainUIPlugin carried exactly
-    // this guard and it is the reason it survived process exit.
+    // rather than a double delete.
     QPointer<MainContainer> m_shell;
 };

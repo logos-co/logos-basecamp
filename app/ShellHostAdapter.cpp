@@ -12,10 +12,9 @@ ShellHostAdapter::ShellHostAdapter(MainUIBackend* backend, QObject* parent)
         qFatal("ShellHostAdapter requires a MainUIBackend instance");
     }
 
-    // Signal → observer translation. Every forward is guarded on m_observer:
-    // the shell detaches during destroyShell(), but PluginLoader dispatches
-    // through QTimer::singleShot(0, ...) and a 30s ViewModuleHost timeout, so
-    // a backend signal can still arrive afterwards.
+    // Signal → observer translation, guarded on m_observer: the shell detaches
+    // in destroyShell(), but PluginLoader's QTimer::singleShot(0, ...) and a 30s
+    // ViewModuleHost timeout can still deliver a backend signal afterwards.
     connect(m_backend, &MainUIBackend::currentActiveSectionIndexChanged, this, [this]() {
         if (!m_observer || !m_backend) return;
         m_observer->onSectionIndexChanged(m_backend->currentActiveSectionIndex());
@@ -79,7 +78,6 @@ void ShellHostAdapter::setCurrentVisibleApp(const QString& name)
 
 QString ShellHostAdapter::displayNameFor(const QString& name) const
 {
-    // Same fallback the shell used to apply inline when the backend was null.
     return m_backend ? m_backend->displayNameFor(name) : name;
 }
 

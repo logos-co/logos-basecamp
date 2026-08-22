@@ -1,13 +1,8 @@
 #pragma once
 
-// Single place that pulls the nix-generated logos_build_info.h and exposes
-// the values to the two consumers:
-//   * app/main.cpp       — logs a banner to the per-session log on startup.
-//   * app/MainUIBackend  — exposes Q_PROPERTYs for the Dashboard view.
-//
-// Header-only: both consumers are translation units of the same target now
-// (they were two targets before the main_ui fold), and keeping everything
-// inline means there is no separate .cpp to wire in.
+// Pulls the nix-generated logos_build_info.h for its two consumers:
+//   * app/main.cpp       — startup banner in the per-session log.
+//   * app/MainUIBackend  — Q_PROPERTYs for the Dashboard view.
 //
 // Non-nix builds see no logos_build_info.h; accessors return empty values
 // so callers can still render / log something sane.

@@ -76,7 +76,7 @@ sections:
       is that the plugin's `Shortcut { sequence: "Ctrl+K" }` silently fails
       to fire on the first press; on other platforms it may not fire at all.
 
-      `ShortcutBridge` (see `app/ShortcutBridge.h`) fixes this without asking
+      `ShortcutBridge` (see `src/ShortcutBridge.h`, in the main_ui plugin) fixes this without asking
       plugin authors to change anything. It scans the current pane's QML tree
       for `QQuickShortcut` objects and, for each one, installs a matching C++
       `QShortcut` on the host `MainContainer` with `Qt::ApplicationShortcut`
