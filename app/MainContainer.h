@@ -1,38 +1,46 @@
 #pragma once
 
+#include "IShellHost.h"
+
 #include <QWidget>
 #include <QHBoxLayout>
 #include <QStackedWidget>
 
 class QQuickWidget;
-class MainUIBackend;
 class WorkspaceArea;
-class LogosAPI;
 class ShortcutBridge;
 
-// The process-wide core facade, created and owned by main(). Threaded down to
-// CoreModuleManager, which is the only thing here that calls it.
-namespace logos { namespace qt { class QtLogosCore; } }
-
-
-class MainContainer : public QWidget
+// MainContainer — the UI shell.
+//
+// Holds exactly one host-side pointer: an IShellHost*. It has no LogosAPI*, no
+// QtLogosCore*, and no MainUIBackend*; every host operation it needs goes
+// through the eight methods on that interface, and QML reaches the backend as
+// an opaque QObject* via IShellHost::backendObject(). That is what lets this
+// class — and everything below it — compile against Qt alone.
+class MainContainer : public QWidget, public IShellObserver
 {
     Q_OBJECT
 
 public:
-    explicit MainContainer(LogosAPI* logosAPI = nullptr,
-                           logos::qt::QtLogosCore* core = nullptr,
-                           QWidget* parent = nullptr);
+    // `host` is borrowed and outlives this widget. Must not be null.
+    explicit MainContainer(IShellHost* host, QWidget* parent = nullptr);
     ~MainContainer();
 
     // Get the workspace area
     WorkspaceArea* getWorkspaceArea() const { return m_workspaceArea; }
 
-    // Get the backend
-    MainUIBackend* getBackend() const { return m_backend; }
-    
-    // Get the LogosAPI instance
-    LogosAPI* getLogosAPI() const { return m_logosAPI; }
+    // Stops the host from calling back into this object. Idempotent, and safe
+    // to call more than once — MainShellView::destroyShell() calls it before
+    // deleting, and the destructor calls it again for the path where Qt's
+    // parent-child teardown gets here first.
+    void detachFromHost();
+
+    // ── IShellObserver ──────────────────────────────────────────────────────
+    void onSectionIndexChanged(int index) override;
+    void onNavigateToApps() override;
+    void onPluginWindowRequested(QWidget* widget, const QString& title) override;
+    void onPluginWindowRemoveRequested(QWidget* widget) override;
+    void onPluginWindowActivateRequested(QWidget* widget) override;
 
 protected:
     // Kept in sync with the full MainContainer geometry — the overlay
@@ -42,11 +50,6 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
-    void onViewIndexChanged();
-    void onNavigateToApps();
-    void onPluginWindowRequested(QWidget* widget, const QString& title);
-    void onPluginWindowRemoveRequested(QWidget* widget);
-    void onPluginWindowActivateRequested(QWidget* widget);
     // Called from QML whenever the combined visibility of the three
     // overlay dialogs flips. We use it to toggle mouse-event
     // passthrough on the overlay QQuickWidget — transparent to mouse
@@ -84,12 +87,9 @@ private:
     // Apps/MDI screen was active.
     QQuickWidget* m_overlayWidget;
 
-    // Backend
-    MainUIBackend* m_backend;
+    // The host. Not owned — Window owns it and it outlives this widget.
+    IShellHost* m_host;
 
-    // LogosAPI instance
-    LogosAPI* m_logosAPI;
-    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
     ShortcutBridge* m_shortcutBridge = nullptr;
 };
 

@@ -5,6 +5,7 @@
 #include <QVariantMap>
 #include <QStringList>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include "logos_api.h"
 #include "logos_api_client.h"
@@ -66,6 +67,12 @@ public:
     // uiPluginsFetched signal so catalog refreshes flow into
     // m_uiPluginMetadata without this class having to talk to the module.
     void setPackageCoordinator(PackageCoordinator* packageCoordinator);
+
+    // Unmounts every in-process UI plugin widget. Must run WHILE the shell's
+    // widget tree is still alive — the widgets are docked inside it — which is
+    // why Window drives this explicitly before destroying the shell rather
+    // than leaving it to ~UIPluginManager. Idempotent.
+    void shutdown();
 
     // QML-bound getters (surfaced via MainUIBackend's Q_PROPERTYs).
     QVariantList uiModules() const;
@@ -211,8 +218,15 @@ private:
 
     // Loaded-plugin state
     QMap<QString, IComponent*>   m_loadedUiModules;
-    QMap<QString, QWidget*>      m_uiModuleWidgets;
-    QMap<QString, QQuickWidget*> m_qmlPluginWidgets;
+    // QPointer, not raw. These widgets are docked inside the shell, so the
+    // shell's Qt parent can destroy them without going through unloadUiModule
+    // -- and every read below then hands out a dangling pointer. Window's
+    // ordered teardown calls beginShutdown() before the shell dies, which
+    // closes that window; QPointer is what keeps it closed if some future path
+    // does not. The pre-fold MainUIPlugin carried the same guard, and the fold
+    // deleted it.
+    QMap<QString, QPointer<QWidget>>      m_uiModuleWidgets;
+    QMap<QString, QPointer<QQuickWidget>> m_qmlPluginWidgets;
     QMap<QString, ViewModuleHost*> m_viewModuleHosts;
 
     // App launcher

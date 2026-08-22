@@ -242,12 +242,21 @@ set(PROJECT_SOURCES
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
     interfaces/IComponent.h
+    interfaces/IShellHost.h
+    interfaces/IShellView.h
     resources.qrc
 
-    # The UI shell, folded in from the former main_ui plugin. It was never a
-    # module: it needs a QWidget* handoff, the logos_core_* lifecycle and
-    # TokenManager access, and two of those three are host privileges — so the
-    # plugin boundary bought nothing and cost a second image.
+    # The host side of the shell boundary. ShellHostAdapter implements
+    # IShellHost over MainUIBackend; MainShellView is the IShellView
+    # implementation that will move into the main_ui plugin when the shell is
+    # split back out.
+    ShellHostAdapter.cpp
+    MainShellView.cpp
+
+    # The UI shell, still compiled in. Everything from MainContainer down
+    # reaches the host only through IShellHost — no LogosAPI, no QtLogosCore,
+    # no MainUIBackend — which is what makes splitting it back into a plugin a
+    # packaging change rather than a privilege change.
     MainContainer.cpp
     MainUIBackend.cpp
     CoreModuleManager.cpp

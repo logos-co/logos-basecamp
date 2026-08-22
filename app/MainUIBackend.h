@@ -112,6 +112,11 @@ public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
                            logos::qt::QtLogosCore* core = nullptr,
                            QObject* parent = nullptr);
+
+    // Tears down the UI-plugin layer while the shell that hosts those widgets
+    // is still alive. Window calls this as step 1 of its ordered teardown; see
+    // ~Window. Idempotent, and safe to skip — ~UIPluginManager still covers it.
+    void beginShutdown();
     ~MainUIBackend() override;
 
     // Navigation — lives on this class.
