@@ -131,10 +131,22 @@ Item {
         displayNameLookup: _dialogDeps.displayNameLookup
     }
 
+    // The "Required Packages" view of the catalog, restricted to whatever the
+    // resolver last returned. requiredPackageEntries is BOUND to the backend
+    // property, replacing a host-side setRequiredPackages() write into an
+    // object the host should not have been holding.
+    AppsFilterProxy {
+        id: requiredPackagesProxy
+        sourceModel:            backend.appsModel
+        excludeMainUi:          false
+        installStateFilter:     ""
+        requiredPackageEntries: backend.requiredPackages
+    }
+
     // App-Manager "Add Application" dialog.
     AddApplicationDialog {
         id: addApplicationDialog
-        requiredPackagesModel: backend.requiredPackagesModel
+        requiredPackagesModel: requiredPackagesProxy
         onClosed: backend.notifyAddApplicationDialogClosed()
         onUninstallRequested: function(name, repositoryUrl) {
             backend.uninstallApp(name, repositoryUrl)

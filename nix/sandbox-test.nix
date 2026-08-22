@@ -2,7 +2,7 @@
 #
 # This is a focused C++ unit test (QtTest) — not a full app launch. It builds a
 # real malicious Qt QML plugin and asserts that the production sandbox config
-# (src/restricted/QmlSandbox.cpp, the code PluginLoader::loadQmlView runs) refuses
+# (app/restricted/QmlSandbox.cpp, the code PluginLoader::loadQmlView runs) refuses
 # to load it, while a legitimate pure-QML module still loads. See
 # tests/sandbox/tst_qml_sandbox.cpp for the full description (F-008).
 { pkgs, src }:

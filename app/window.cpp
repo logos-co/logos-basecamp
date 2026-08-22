@@ -3,12 +3,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QDebug>
-#include <QLabel>
-#include <QVBoxLayout>
-#include <QPluginLoader>
-#include "win_dll_search.h"
 #include <QDir>
-#include <QFile>
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QMenuBar>
@@ -18,44 +13,28 @@
 #include <QCloseEvent>
 #include <QIcon>
 #include <QPixmap>
-#include <IComponent.h>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
 #include <QPointer>
 #include <QScopedValueRollback>
 #include "LogosBasecampPaths.h"
+#include "MainUIBackend.h"
+#include "ShellHostAdapter.h"
+#include "IShellHost.h"
+#include "IShellView.h"
+#include "logos_api.h"
+#include "win_dll_search.h"
+#include <QPluginLoader>
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
     #include "macWindowStyle.h"
 #endif
 
-Window::Window(QWidget *parent)
-    : QMainWindow(parent)
-    , m_logosAPI(nullptr)
-    , m_trayIcon(nullptr)
-    , m_trayIconMenu(nullptr)
-    , m_showHideAction(nullptr)
-    , m_quitAction(nullptr)
-{
-    setObjectName(QStringLiteral("logosMainWindow"));
-    setupUi();
-    createTrayIcon();
-#ifdef Q_OS_MAC
-    createMenuBar();
-#endif
-#ifdef Q_OS_LINUX
-    // GNOME/KDE convention: Ctrl+Q quits. QKeySequence::Quit maps to Ctrl+Q
-    // on X11/Wayland and is empty on Windows.
-    auto* quitShortcut = new QShortcut(QKeySequence::Quit, this);
-    quitShortcut->setObjectName(QStringLiteral("logosQuitShortcut"));
-    connect(quitShortcut, &QShortcut::activated, this, &Window::quitApplication);
-#endif
-}
-
-Window::Window(LogosAPI* logosAPI, QWidget *parent)
+Window::Window(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QWidget *parent)
     : QMainWindow(parent)
     , m_logosAPI(logosAPI)
+    , m_core(core)
     , m_trayIcon(nullptr)
     , m_trayIconMenu(nullptr)
     , m_showHideAction(nullptr)
@@ -78,6 +57,36 @@ Window::Window(LogosAPI* logosAPI, QWidget *parent)
 
 Window::~Window()
 {
+    // Ordered teardown, stated as a contract instead of left to Qt's reverse
+    // child destruction:
+    //   1. beginShutdown() unmounts every in-process UI plugin widget while the
+    //      shell's widget tree is still intact — those widgets are docked in
+    //      the shell, so the shell must outlive this step.
+    //   2. destroyShell() detaches the observer before deleting the shell, so
+    //      no late host callback reaches a destroyed observer.
+    //   3. only then the backend: PackageCoordinator -> UIPluginManager ->
+    //      CoreModuleManager, the order MainUIBackend.h documents.
+    if (m_backend) {
+        m_backend->beginShutdown();
+    }
+
+    if (m_shellView) {
+        // Out of the central-widget slot before handing it back, or QMainWindow
+        // deletes it too.
+        QWidget* shell = takeCentralWidget();
+        m_shellView->destroyShell(shell);
+        // NOT deleted: m_shellView is QPluginLoader's root instance, destroyed
+        // by Qt in QLibraryStore::cleanup() at process exit — deleting it here
+        // double-frees.
+        m_shellView = nullptr;
+    }
+
+    delete m_hostAdapter;
+    m_hostAdapter = nullptr;
+
+    delete m_backend;
+    m_backend = nullptr;
+
     if (m_trayIcon) {
         delete m_trayIcon;
     }
@@ -85,7 +94,17 @@ Window::~Window()
 
 void Window::setupUi()
 {
-    // Determine the appropriate plugin extension based on the platform
+    // The UI shell is a Qt plugin — plugins/main_ui/main_ui.{so,dylib,dll} —
+    // reached through IShellView / IShellHost. It gets a QWidget* out and eight
+    // named operations in, holds no host privilege, and links no logos runtime;
+    // nix/symbol-gate.nix enforces that rather than trusting it.
+    //
+    // Ownership stays HERE: the backend and its adapter belong to the Window and
+    // the shell only borrows them. Deliberately not parented to `this`; ~Window
+    // destroys them explicitly and in order.
+    m_backend     = new MainUIBackend(m_logosAPI, m_core, nullptr);
+    m_hostAdapter = new ShellHostAdapter(m_backend, nullptr);
+
     QString pluginExtension;
     #if defined(Q_OS_WIN)
         pluginExtension = ".dll";
@@ -95,83 +114,66 @@ void Window::setupUi()
         pluginExtension = ".so";
     #endif
 
-    QString embeddedPluginsDir = LogosBasecampPaths::embeddedPluginsDirectory() + "/";
-    QString userPluginsDir = LogosBasecampPaths::pluginsDirectory() + "/";
+    // Embedded (pre-installed at build time) first, then the user-writable dir.
+    const QString embeddedPath = LogosBasecampPaths::embeddedPluginsDirectory()
+                               + "/main_ui/main_ui" + pluginExtension;
+    const QString mainUiPluginPath =
+        QFile::exists(embeddedPath)
+            ? embeddedPath
+            : LogosBasecampPaths::pluginsDirectory() + "/main_ui/main_ui" + pluginExtension;
 
-    // Search embedded (pre-installed at build time) first, then user-writable directory.
-    auto resolvePlugin = [&](const QString& subdir, const QString& name) -> QString {
-        QString embeddedPath = embeddedPluginsDir + subdir + "/" + name + pluginExtension;
-        if (QFile::exists(embeddedPath))
-            return embeddedPath;
-        return userPluginsDir + subdir + "/" + name + pluginExtension;
-    };
-
-    // Load the main_ui plugin with the appropriate extension (now in subdirectory)
-    QString mainUiPluginPath = resolvePlugin("main_ui", "main_ui");
     // main_ui lives in its own plugins/main_ui/ directory, so anything vendored
     // beside it is invisible to Windows' loader without this. No-op elsewhere;
     // the reference is intentionally held for the process lifetime.
     ModuleLib::preloadPluginWithOwnDirSearch(mainUiPluginPath);
+
     QPluginLoader loader(mainUiPluginPath);
-
-    QWidget* mainContent = nullptr;
-    QObject* mainUiPlugin = nullptr;
-
-    if (loader.load()) {
-        mainUiPlugin = loader.instance();
-        if (mainUiPlugin) {
-            // Try to create the main window using the plugin's createWidget method
-            QMetaObject::invokeMethod(mainUiPlugin, "createWidget",
-                                    Qt::DirectConnection,
-                                    Q_RETURN_ARG(QWidget*, mainContent),
-                                    Q_ARG(LogosAPI*, m_logosAPI));
-        }
+    if (!loader.load()) {
+        qFatal("Failed to load the main UI plugin from %s: %s",
+               qUtf8Printable(mainUiPluginPath), qUtf8Printable(loader.errorString()));
     }
 
-    if (mainContent) {
-        setCentralWidget(mainContent);
-    } else {
-        qWarning() << "================================================";
-        qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;
-        qWarning() << "Error:" << loader.errorString();
-        qWarning() << "================================================";
-        // Fallback: show a message when plugin is not found
-        QWidget* fallbackWidget = new QWidget(this);
-        QVBoxLayout* layout = new QVBoxLayout(fallbackWidget);
-
-        QLabel* messageLabel = new QLabel("No main UI module found", fallbackWidget);
-        QFont font = messageLabel->font();
-        font.setPointSize(14);
-        messageLabel->setFont(font);
-        messageLabel->setAlignment(Qt::AlignCenter);
-
-        layout->addWidget(messageLabel);
-        setCentralWidget(fallbackWidget);
-        qWarning() << "Failed to load main UI plugin from:" << mainUiPluginPath;
+    // A real cast, not QMetaObject::invokeMethod("createWidget"): the string
+    // form is a silent-failure path — change an argument type and both sides
+    // still compile, then miss at runtime.
+    m_shellView = qobject_cast<IShellView*>(loader.instance());
+    if (!m_shellView) {
+        qFatal("main_ui at %s does not implement IShellView",
+               qUtf8Printable(mainUiPluginPath));
     }
 
-    // Set window title and size. The default launch width is wide enough for
-    // the Package Manager's full table (category sidebar + columns through
-    // Action and Description) to be visible without horizontal scrolling; at
-    // the old 1024px those rightmost columns were clipped off-screen. The
-    // window can still be resized down to MainContainer's 800x600 minimum.
+    // All that stands between a stale plugin build and a jump through a
+    // mismatched vtable slot. Both sides take IShellHost_abi from the one copy
+    // in app/interfaces/, so a difference means the plugin was built against a
+    // different revision of that header.
+    if (m_shellView->hostAbiVersion() != IShellHost_abi) {
+        qFatal("main_ui was built against IShellHost ABI %d, host is %d",
+               m_shellView->hostAbiVersion(), IShellHost_abi);
+    }
+
+    // Deliberately no "No main UI module found" fallback widget: an error-label
+    // widget reads as a working app with an empty window. A missing or
+    // mismatched shell is a broken install, and the qFatal paths above say
+    // which.
+    setCentralWidget(m_shellView->createShell(m_hostAdapter));
+
+    // The launch width is sized for the Package Manager's full table (category
+    // sidebar through the Action and Description columns) without horizontal
+    // scrolling; below it those rightmost columns clip off-screen. Still
+    // resizable down to MainContainer's 800x600 minimum.
     setWindowTitle("Logos Basecamp");
     {
-        // ...but never larger than the screen actually offers. A window bigger
-        // than the work area opens with its right and bottom edges off-screen,
-        // and on Windows it cannot be dragged back into view, so whatever hangs
-        // off is simply unreachable -- here, the sidebar's bottom-anchored
-        // system buttons. Measured on a 1271x839-logical RDP session: the
-        // 1600x900 request overflowed right by ~342 and bottom by ~97 logical
-        // px. Nothing else in this repo consults the screen; the QScreen
-        // include at the top of this file has been unused until now.
+        // ...but never larger than the screen offers: an oversized window opens
+        // with its right and bottom edges off-screen and, on Windows, cannot be
+        // dragged back, so whatever hangs off -- here the sidebar's
+        // bottom-anchored system buttons -- is unreachable. Measured on a
+        // 1271x839-logical RDP session: 1600x900 overflowed right by ~342 and
+        // bottom by ~97 logical px.
         //
-        // Clamp to availableGeometry EXACTLY, not to a fraction of it. This has
-        // to be a no-op on every display big enough to hold the design size --
-        // which is all of them in normal use -- or it silently undoes the
-        // widening documented above. Qt raises the result back to
-        // MainContainer's 800x600 minimum on its own, so there is no second
-        // floor to keep in sync here.
+        // Clamp to availableGeometry EXACTLY, not to a fraction of it, so this
+        // is a no-op on any display big enough for the design size; otherwise it
+        // silently undoes the width above. Qt raises the result back to
+        // MainContainer's 800x600 minimum on its own.
         //
         // Skipped under the offscreen platform: QOffscreenScreen hardcodes its
         // geometry to 800x600, so clamping to it would shrink every headless UI
@@ -179,9 +181,8 @@ void Window::setupUi()
         //
         // A screen that shrinks AFTER launch -- an RDP session with
         // /dynamic-resolution -- is handled by rebindScreenWatch() +
-        // scheduleFitToScreen(), wired from showEvent once the platform window
-        // exists. It cannot be done here: the window has no screen it has
-        // actually landed on yet, and its frame margins are not yet knowable.
+        // scheduleFitToScreen() from showEvent: here the window has not landed
+        // on a screen yet and its frame margins are not knowable.
         QSize target(1600, 900);
         m_desiredSize = target;  // what to grow back to when room returns
         const QScreen* windowScreen = screen();
@@ -244,14 +245,12 @@ void Window::changeEvent(QEvent* event)
 void Window::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
-    // A resize the user performed redefines what the window is entitled to when
+    // A resize the USER performed redefines what the window is entitled to when
     // room returns; one WE performed must not, or the fit becomes
-    // min(previous, available) -- monotone non-increasing, so the window would
-    // converge on the smallest work area seen all session and never grow back.
-    // Guarded on isVisible() so Qt's own pre-show sizing does not count.
-    // Also skipped while maximized/fullscreen: that size belongs to the window
-    // manager, not to the user's intent, and recording it would make a later
-    // un-maximize try to grow the window back to full-screen size.
+    // min(previous, available) and converges on the smallest work area seen all
+    // session. isVisible() keeps Qt's own pre-show sizing out. Maximized and
+    // fullscreen sizes belong to the window manager, not to the user's intent:
+    // recording one would grow the window to full screen on un-maximize.
     if (!m_applyingFit && isVisible()
         && !(windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen)))
         m_desiredSize = size();
@@ -264,12 +263,10 @@ void Window::resizeEvent(QResizeEvent* event)
 void Window::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
-    // Both idempotent, so this runs unconditionally rather than behind a
-    // one-shot flag. That is what makes a tray restore re-fit if -- and only if
-    // -- the screen shrank while the window was hidden: the fit is skipped
-    // while !isVisible(), so a screen change during that time is picked up here
-    // instead. A process-wide `static` would also have been wrong outright,
-    // gating every Window ever constructed on the first one.
+    // Both idempotent, so no one-shot flag: that is what makes a tray restore
+    // re-fit if -- and only if -- the screen shrank while the window was hidden,
+    // since the fit is skipped while !isVisible(). A process-wide `static` would
+    // gate every Window ever constructed on the first one.
     rebindScreenWatch();
     fitFrameToAvailableGeometry();
 #ifdef Q_OS_MAC
@@ -348,38 +345,32 @@ void Window::fitFrameToAvailableGeometry()
         return;
 
     // Compare SIZES, not rectangles, and never touch the position.
-    //
-    // QRect::contains() is the obvious formulation and is wrong here on two
-    // counts. On Windows, frameGeometry() comes from GetWindowRect, which
-    // includes DWM's INVISIBLE resize border (~13px per side at 192dpi), so a
-    // perfectly placed window never reports as contained and this would run on
-    // every single launch. On macOS, Qt hands back a frame whose title bar sits
-    // above availableGeometry's origin, so containment fails there too -- and
-    // acting on it moved the window 66px down at launch, a visible change on a
-    // platform where nothing is broken. Measured both.
+    // QRect::contains() is wrong here twice over: on Windows frameGeometry()
+    // comes from GetWindowRect, which includes DWM's INVISIBLE resize border
+    // (~13px per side at 192dpi), so a perfectly placed window never reports as
+    // contained and this would run on every launch; on macOS Qt's frame title
+    // bar sits above availableGeometry's origin, and acting on that moved the
+    // window 66px down at launch. Measured both.
     const QSize avail = windowScreen->availableGeometry().size();
 
     // resize() sets the CLIENT size while availableGeometry() bounds the FRAME,
-    // so the constructor's clamp is short by the decoration margins -- and those
-    // are only knowable once the platform window exists, which is why this runs
-    // here and not there. Measured on a 3456x1826 work area: the clamped client
-    // filled the work area exactly and the frame still hung 72px below it,
+    // so the constructor's clamp is short by the decoration margins, knowable
+    // only once the platform window exists. Measured on a 3456x1826 work area:
+    // the clamped client filled it exactly and the frame still hung 72px below,
     // putting the sidebar's bottom-anchored system buttons under the taskbar.
     const QSize decoration = frameGeometry().size() - size();
 
-    // Bounded by what the window is ENTITLED to, not by its current size. Using
-    // the current size makes this min(previous, available) on every event, a
-    // monotone non-increasing map: the window would ratchet down to the smallest
-    // work area seen all session and never grow back -- so a taskbar that
-    // auto-hides and reappears, or an RDP window dragged smaller and back, would
-    // permanently shrink Basecamp. m_desiredSize is the launch design size,
-    // replaced by any resize the USER performs (see resizeEvent), so growing
-    // back can never exceed what was actually asked for.
+    // Bounded by what the window is ENTITLED to, not by its current size: the
+    // latter makes this min(previous, available) on every event, ratcheting down
+    // to the smallest work area seen all session -- an auto-hiding taskbar, or
+    // an RDP window dragged smaller and back, would shrink Basecamp for good.
+    // m_desiredSize is the launch design size, replaced by any resize the USER
+    // performs (see resizeEvent), so growing back never exceeds what was asked.
     const QSize want = m_desiredSize.isValid() ? m_desiredSize : size();
     const QSize target = (avail - decoration).boundedTo(want).expandedTo(minimumSize());
 
-    // The whole idempotence of this function. It is also why no re-entrancy flag
-    // is needed: our own resize lands here again with the same inputs and stops.
+    // The whole idempotence of this function, and why no re-entrancy flag is
+    // needed: our own resize re-enters with the same inputs and stops here.
     if (target == size())
         return;
 

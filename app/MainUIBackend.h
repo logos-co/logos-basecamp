@@ -1,0 +1,349 @@
+#pragma once
+
+#include "InstallEnums.h"
+#include "ModuleInstanceModel.h"
+
+#include <QAbstractItemModel>
+#include <QObject>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QStringList>
+#include "logos_api.h"
+
+class AppsModel;
+class CoreModuleManager;
+class PackageCoordinator;
+class QWidget;
+class UIPluginManager;
+
+// The process-wide core facade, created and owned by main(). Threaded down to
+// CoreModuleManager, which is the only thing here that calls it.
+namespace logos { namespace qt { class QtLogosCore; } }
+
+
+// MainUIBackend — thin QML-facing facade.
+//
+// Owns three managers as Qt children:
+//   * CoreModuleManager — wraps the logos_core_* C API and the stats timer.
+//   * UIPluginManager   — UI-plugin widget lifecycle, app launcher, local
+//                         unload-cascade confirmation.
+//   * PackageCoordinator    — every `package_manager` LogosAPI module interaction
+//                         (install/uninstall/upgrade flows, install-confirm
+//                         dialog, uninstall-cascade dialog, package-state
+//                         caches).
+//
+// Construction order: CoreModuleManager → UIPluginManager → PackageCoordinator.
+// CoreModuleManager must exist first because UIPluginManager's ctor takes it.
+// UIPluginManager must exist before PackageCoordinator because PackageCoordinator's
+// ctor takes it (for cascade cooperation — checking loaded state, tearing
+// down UI widgets). PackageCoordinator is then injected into UIPluginManager via
+// setPackageCoordinator so UIPluginManager can query installType / missing-deps
+// for its uiModules() / launcherApps() builders. Qt's reverse-order child
+// destruction tears PackageCoordinator → UIPluginManager → CoreModuleManager,
+// which matches the data-flow dependencies (PackageCoordinator stops emitting
+// before UIPluginManager tears down its widgets, which stop before the C
+// API handle goes away).
+//
+// Everything the QML layer calls (`backend.loadUiModule(...)`, etc.) is a
+// one-line delegation into one of the three managers. Signals from the
+// managers that QML cares about (`launcherAppsChanged`,
+// `catalogInstallStageChanged`, …) are re-emitted here via signal-to-signal
+// connects; the two module inspectors instead consume `uiModulesModel` /
+// `coreModulesModel` and read change notifications off those model
+// pointers directly. Navigation is the only behavior that lives on this
+// class itself.
+class MainUIBackend : public QObject {
+    Q_OBJECT
+
+    // Navigation
+    Q_PROPERTY(int currentActiveSectionIndex READ currentActiveSectionIndex WRITE setCurrentActiveSectionIndex NOTIFY currentActiveSectionIndexChanged)
+
+    // UI plugins + core modules — exposed to QML exclusively as real Qt
+    // models so the Settings inspectors can bind directly through a
+    // ModulesFilterProxy. The QVariantList uiModules()/coreModules() shape
+    // used to be a Q_PROPERTY too; it now lives on this class only as a
+    // private helper feeding the models on each *Changed tick.
+    //
+    // Declared as QAbstractItemModel*, not ModuleInstanceModel*. The shell's
+    // QML only ever uses them as models, and typing them as the Qt base is
+    // what keeps the concrete class from having to be nameable — and
+    // therefore present — on the shell's side of the boundary.
+    Q_PROPERTY(QAbstractItemModel* uiModulesModel   READ uiModulesModel   CONSTANT)
+    Q_PROPERTY(QAbstractItemModel* coreModulesModel READ coreModulesModel CONSTANT)
+    // AppsModel — the single source of truth for catalog rows + installed
+    // state + live install pipeline. QML views bind directly. Lifetime is
+    // tied to MainUIBackend; the pointer is stable across the app's life.
+    // Same reasoning as the two above: crosses as QAbstractItemModel*.
+    Q_PROPERTY(QAbstractItemModel* appsModel READ appsModel CONSTANT)
+    // The resolver's required-package entries, in install order. QML binds
+    // them into a shell-declared AppsFilterProxy as a filter input
+    // (requiredPackageEntries) for AddApplicationDialog's "Required Packages"
+    // list. Only the data crosses: a proxy is view configuration, and the host
+    // must not own — or be able to name — a shell-side type.
+    Q_PROPERTY(QVariantList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
+
+    // App Launcher
+    Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
+    Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
+    Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
+
+    // Build info (baked in at nix build time). See Dashboard view.
+    //   * buildVersion: VERSION file contents (empty when not baked in).
+    //   * isPortableBuild: true for distributed/release builds, false for dev.
+    //   * buildCommits: list of { name, commit } for basecamp + each flake input.
+    Q_PROPERTY(QString buildVersion READ buildVersion CONSTANT)
+    Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
+    Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
+
+    // Package repositories
+    Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
+    Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
+
+    // App Manager loading state — true until the first catalog populate,
+    // and again during a user-initiated Reload (remoteRefresh).
+    Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
+
+    // Gates every Uninstall affordance until the dependency caches have been
+    // populated once — see PackageCoordinator::dependencyDataReady.
+    Q_PROPERTY(bool dependencyDataReady READ dependencyDataReady
+               NOTIFY dependencyDataReadyChanged)
+
+    // Settings → Modules Reload overlay. Ref-counted so UI + Core refreshes
+    // kicked together (e.g. on tab show) share one spinner.
+    Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
+
+public:
+    explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
+                           logos::qt::QtLogosCore* core = nullptr,
+                           QObject* parent = nullptr);
+
+    // Tears down the UI-plugin layer while the shell that hosts those widgets
+    // is still alive. Window calls this as step 1 of its ordered teardown; see
+    // ~Window. Idempotent, and safe to skip — ~UIPluginManager still covers it.
+    void beginShutdown();
+    ~MainUIBackend() override;
+
+    // Navigation — lives on this class.
+    int currentActiveSectionIndex() const;
+
+    // Delegations to UIPluginManager.
+    QVariantList launcherApps() const;
+    QString      currentVisibleApp() const;
+    QStringList  loadingModules() const;
+
+    // Build info accessors (see Q_PROPERTY declarations above).
+    QString buildVersion() const;
+    bool isPortableBuild() const;
+    QVariantList buildCommits() const;
+
+    QVariantList repositories() const;
+    bool repositoriesLoading() const;
+    bool appsLoading() const;
+    bool dependencyDataReady() const;
+    bool modulesLoading() const;
+
+    // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
+    // a handle to the managers directly. QML goes through the delegating
+    // slots/signals.
+    CoreModuleManager* coreModuleManager() const { return m_coreModuleManager; }
+    UIPluginManager*   uiPluginManager()   const { return m_uiPluginManager; }
+    PackageCoordinator*    packageCoordinator()    const { return m_packageCoordinator; }
+    // Base-typed on purpose — see the Q_PROPERTY comments above. Internal
+    // code uses the concrete members directly and does not go through these.
+    //
+    // Defined out of line: AppsModel is only forward-declared here, so the
+    // derived-to-base conversion needs the definition, and pulling AppsModel.h
+    // into this header would push it into every TU that includes it.
+    QAbstractItemModel* appsModel() const;
+    QVariantList       requiredPackages()      const { return m_requiredPackages; }
+    QAbstractItemModel* uiModulesModel()   const { return m_uiModulesModel; }
+    QAbstractItemModel* coreModulesModel() const { return m_coreModulesModel; }
+
+public slots:
+    // Navigation
+    void setCurrentActiveSectionIndex(int index);
+
+    // UI Module operations — delegated to UIPluginManager.
+    void loadUiModule(const QString& moduleName);
+    void unloadUiModule(const QString& moduleName);
+    void activateApp(const QString& appName);
+
+    // Friendly module label, resolved from the catalog with fallback to `name`.
+    Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
+
+    // Uninstall flow — delegated to PackageCoordinator. uninstallApp is the
+    // App-Manager entry point: it composes a batch (app + orphaned deps) and
+    // goes through the multi gate, where the other two are single-package.
+    Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
+    Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
+    Q_INVOKABLE void uninstallApp(const QString& name,
+                                  const QString& repositoryUrl = QString());
+
+    // Cascade confirmation flow. Local unload cascade lives on
+    // UIPluginManager; uninstall/upgrade cascade lives on PackageCoordinator.
+    // cancelPendingAction fans out to both so the un-involved one no-ops.
+    Q_INVOKABLE void confirmUnloadCascade(const QString& moduleName);
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
+    Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
+    Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
+    Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
+    // Cancels the local "waiting for dep data" state used by uninstallApp
+    // before the first refresh completes — see
+    // PackageCoordinator::cancelPendingUninstallApp.
+    Q_INVOKABLE void cancelPendingUninstallApp(const QString& name);
+
+    // Install gate (package_manager_ui-initiated) — delegated to
+    // PackageCoordinator, which forwards the decision to the module's
+    // confirmInstall / cancelInstall gate. The app's only install
+    // confirmation; basecamp initiates no installs of its own.
+    Q_INVOKABLE void confirmInstallGate(const QString& name);
+    Q_INVOKABLE void cancelInstallGate(const QString& name);
+
+    // App-Manager catalog open — delegated to PackageCoordinator.
+    Q_INVOKABLE void openApp(const QString& name,
+                             const QString& repositoryUrl,
+                             const QVariantMap& versionPins = QVariantMap(),
+                             bool allowFastLaunch = true);
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name,
+                                           const QString& repositoryUrl,
+                                           const QVariantMap& versionPins = QVariantMap());
+    Q_INVOKABLE void notifyAddApplicationDialogClosed();
+
+    // Core Module operations — routing rule: cascade-aware (load/unload)
+    // goes through UIPluginManager so it can run the pre-flight dependent
+    // check. Pure introspection (refresh, getMethods, callMethod) goes
+    // directly to CoreModuleManager.
+    void loadCoreModule(const QString& moduleName);
+    void unloadCoreModule(const QString& moduleName);
+    Q_INVOKABLE void refreshCoreModules();
+    Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
+    Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);
+    Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
+
+    // UI Modules refresh — forwarded to UIPluginManager which in turn asks
+    // PackageCoordinator to rescan the catalog (PackageCoordinator owns the IPC).
+    Q_INVOKABLE void refreshUiModules();
+
+    // App Launcher operations — delegated to UIPluginManager.
+    void onAppLauncherClicked(const QString& appName);
+    void setCurrentVisibleApp(const QString& pluginName);
+
+    Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void refreshAppCatalog();
+    Q_INVOKABLE void addRepository(const QString& url);
+    Q_INVOKABLE void removeRepository(const QString& url);
+    Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
+
+signals:
+    void currentActiveSectionIndexChanged();
+
+    // App-Manager dialog + install lifecycle. See PackageCoordinator for
+    // the contract — these are pure re-emits.
+    void requestOpenAddApplicationDialog(const QVariantMap& metadata);
+    void addApplicationDataUpdated(const QVariantMap& metadata);
+    void launchAppRequested(const QString& name);
+    // `stage` is an int, not InstallStage::Value. QML already declares
+    // installStage as an int and compares against the QML_ELEMENT-registered
+    // InstallStage.* values, so nothing changes for the consumer — but the
+    // signal signature stops naming a type that would otherwise have to exist
+    // in both images once the shell splits out.
+    void catalogInstallStageChanged(const QString& name, int stage);
+    void catalogInstallFinished(const QString& name);
+    void catalogInstallFailed(const QString& name, const QString& error);
+    void launcherAppsChanged();
+    void currentVisibleAppChanged();
+    void loadingModulesChanged();
+    void navigateToApps();
+    void navigateToRepositoriesRequested();
+
+    // `packageName` falls back to the file name if the manifest was unreadable.
+    void installFailureNoticeRequested(const QString& packageName,
+                                       const QString& errorMessage);
+
+    // Dependency-aware UX. missingDepsPopup + unloadCascade come from
+    // UIPluginManager; installGate + uninstallPlan come from
+    // PackageCoordinator.
+    void missingDepsPopupRequested(const QString& name, const QStringList& missing);
+    void unloadCascadeConfirmationRequested(const QString& name, const QStringList& loadedDependents);
+    // Single uninstall-confirmation trigger for all four initiators — pure
+    // re-emit of PackageCoordinator::uninstallPlanRequested, whose comment
+    // documents the payload.
+    void uninstallPlanRequested(const QVariantMap& plan);
+
+    void dependencyDataReadyChanged();
+    void requiredPackagesChanged();
+    // Distinct signal for upgrade/downgrade/reinstall — see
+    // PackageCoordinator::upgradeCascadeConfirmationRequested for why we
+    // can't reuse the uninstall variant (the dialog needs the target
+    // version + UpgradeMode to label itself correctly).
+    void upgradeCascadeConfirmationRequested(const QString& name,
+                                             const QString& releaseTag,
+                                             int mode,
+                                             const QStringList& installedDependents,
+                                             const QStringList& loadedDependents,
+                                             const QVariantList& depChanges);
+
+    // Install gate (package_manager_ui-initiated) — pure re-emit
+    // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
+    // target version; depChanges is the resolved transitive set the single
+    // basecamp dialog lists.
+    void installGateConfirmationRequested(const QString& name,
+                                          const QString& releaseTag,
+                                          const QVariantList& depChanges);
+
+    // MDI coordination (re-emitted from UIPluginManager).
+    void pluginWindowRequested(QWidget* widget, const QString& title);
+    void pluginWindowRemoveRequested(QWidget* widget);
+    void pluginWindowActivateRequested(QWidget* widget);
+
+    void repositoriesChanged();
+    void repositoriesLoadingChanged();
+    void appsLoadingChanged();
+    void modulesLoadingChanged();
+    void repositoryOperationCompleted(const QString& operation,
+                                      const QString& url,
+                                      bool success,
+                                      const QString& error);
+
+private slots:
+    // Rebuild the inspectors' models from the current manager state. Each
+    // is wired to the corresponding *Changed signal on the underlying
+    // managers (see ctor) — so a load/unload/stats-tick on
+    // CoreModuleManager fans out to refreshCoreModulesModel(), which
+    // repopulates m_coreModulesModel in one shot.
+    void refreshUiModulesModel();
+    void refreshCoreModulesModel();
+
+private:
+    void beginModulesLoading();
+    void endModulesLoading();
+
+    // Snapshot builders — QVariantList so the composition code (which
+    // pulls from three managers) doesn't have to know the model's row
+    // layout. Consumed only by the refresh slots above.
+    QVariantList buildUiModulesSnapshot() const;
+    QVariantList buildCoreModulesSnapshot() const;
+
+    // Navigation state — the only state this facade class holds.
+    int m_currentActiveSectionIndex;
+
+    // LogosAPI — shared with all three managers.
+    LogosAPI* m_logosAPI;
+    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
+    bool m_ownsLogosAPI;
+
+    // Owned children (parent=this). Order matters: coreModuleManager first,
+    // uiPluginManager second, packageCoordinator third. See class comment for
+    // lifetime reasoning.
+    AppsModel*         m_appsModel;
+    QVariantList       m_requiredPackages;
+    CoreModuleManager* m_coreModuleManager;
+    UIPluginManager*   m_uiPluginManager;
+    PackageCoordinator*    m_packageCoordinator;
+    ModuleInstanceModel* m_uiModulesModel;
+    ModuleInstanceModel* m_coreModulesModel;
+
+    // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
+    int  m_modulesLoadingCount = 0;
+    bool m_pendingUiModulesRefresh = false;
+};
