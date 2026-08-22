@@ -19,7 +19,10 @@
 #include <QPointer>
 #include <QScopedValueRollback>
 #include "LogosBasecampPaths.h"
-#include "MainContainer.h"
+#include "MainShellView.h"
+#include "MainUIBackend.h"
+#include "ShellHostAdapter.h"
+#include "IShellHost.h"
 #include "logos_api.h"
 #ifdef Q_OS_MAC
     #include "trafficLightsTitleBar.h"
@@ -52,6 +55,37 @@ Window::Window(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QWidget *parent
 
 Window::~Window()
 {
+    // Explicit, ordered teardown. Qt's reverse child destruction would get
+    // most of this right by accident; doing it here makes the ordering a
+    // stated contract rather than a consequence of construction order.
+    //
+    //   1. beginShutdown() unmounts every in-process UI plugin widget WHILE
+    //      the shell's widget tree is still intact. Those widgets are docked
+    //      inside the shell, so the shell must outlive this step.
+    //   2. destroyShell() detaches the observer, then deletes the shell — so
+    //      no late host callback can reach a destroyed observer.
+    //   3. only then does the backend go, tearing down
+    //      PackageCoordinator -> UIPluginManager -> CoreModuleManager in the
+    //      order MainUIBackend.h documents.
+    //
+    // main() then destroys the core facade, which is step 4.
+    if (m_backend) {
+        m_backend->beginShutdown();
+    }
+
+    if (m_shellView) {
+        QWidget* shell = takeCentralWidget();
+        m_shellView->destroyShell(shell);
+        delete m_shellView;
+        m_shellView = nullptr;
+    }
+
+    delete m_hostAdapter;
+    m_hostAdapter = nullptr;
+
+    delete m_backend;
+    m_backend = nullptr;
+
     if (m_trayIcon) {
         delete m_trayIcon;
     }
@@ -59,18 +93,46 @@ Window::~Window()
 
 void Window::setupUi()
 {
-    // The UI shell is compiled into this executable. It used to be a Qt plugin
-    // (plugins/main_ui/main_ui.{so,dylib,dll}) loaded here through QPluginLoader
-    // and reached over QMetaObject::invokeMethod("createWidget"), which bought
-    // nothing: the shell is not a module — it needs a QWidget* handed back, the
-    // logos_core_* lifecycle, and TokenManager access, and two of those three
-    // are host privileges. The plugin boundary only added a second image, and on
-    // PE a second image means a second copy of every function-local static.
+    // The UI shell is compiled into this executable, and reached through
+    // IShellView / IShellHost.
     //
-    // There is deliberately no "No main UI module found" fallback any more:
-    // failure to construct the shell is no longer a runtime resolution that can
-    // miss, it is a link error.
-    setCentralWidget(new MainContainer(m_logosAPI, m_core));
+    // It used to be a Qt plugin, folded in here because the boundary "bought
+    // nothing": the shell needed a QWidget* handed back, the logos_core_*
+    // lifecycle, and TokenManager access, and two of those three are host
+    // privileges. That argument is what this seam dismantles — the shell now
+    // gets a QWidget* out and eight named operations in, and holds no host
+    // privilege at all. What is left to do is packaging, not privilege.
+    //
+    // Note the shape of the resolution below: a typed hostAbiVersion() check
+    // and a direct call, NOT the QMetaObject::invokeMethod("createWidget")
+    // string dispatch the pre-fold code used. That was a silent-failure path —
+    // change an argument type and both sides still compile, then miss at
+    // runtime. When this becomes a plugin again the only change here is
+    // qobject_cast<IShellView*> on the QPluginLoader instance.
+    //
+    // There is deliberately no "No main UI module found" fallback: failure to
+    // construct the shell is not a runtime resolution that can miss.
+    //
+    // Ownership inverts here: the backend and its host adapter belong to the
+    // Window, and the shell only borrows them through IShellHost. The shell
+    // holds no LogosAPI*, no QtLogosCore* and no MainUIBackend* — which is
+    // what will let it link Qt and nothing else once it is a plugin again.
+    //
+    // Deliberately NOT parented to `this`: ~Window destroys these explicitly
+    // and in order, and a Qt parent would delete them a second time.
+    m_backend     = new MainUIBackend(m_logosAPI, m_core, nullptr);
+    m_hostAdapter = new ShellHostAdapter(m_backend, nullptr);
+    m_shellView   = new MainShellView(nullptr);
+
+    // A real ABI check, even though both sides are in this image today. Once
+    // the shell is loaded from a plugin this is the only thing between a stale
+    // build and a jump through a mismatched vtable slot.
+    if (m_shellView->hostAbiVersion() != IShellHost_abi) {
+        qFatal("main_ui shell was built against IShellHost ABI %d, host is %d",
+               m_shellView->hostAbiVersion(), IShellHost_abi);
+    }
+
+    setCentralWidget(m_shellView->createShell(m_hostAdapter));
 
     // Set window title and size. The default launch width is wide enough for
     // the Package Manager's full table (category sidebar + columns through
