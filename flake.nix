@@ -149,7 +149,15 @@
     # but does not carry the view plugin, so tracking master here would trade a
     # build failure for a runtime mismatch that still looks green. The merge
     # gives both.
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    # `package_manager` and `package_downloader` are the SAME flakes as this
+    # root's logos-package-manager-module / logos-package-downloader-module
+    # inputs, at the same revs, reached under different input NAMES. Without
+    # these, Nix unrolls a private ~3,178-node copy of each.
+    logos-package-manager-ui = {
+      url = "github:logos-co/logos-package-manager-ui";
+      inputs.package_manager.follows = "logos-package-manager-module";
+      inputs.package_downloader.follows = "logos-package-downloader-module";
+    };
     logos-design-system.url = "github:logos-co/logos-design-system";
     # Unpinned: logos-view-module-runtime#25 merged, so master carries the move
     # onto the split host and no longer rev-pins logos-plugin-qt itself. That
