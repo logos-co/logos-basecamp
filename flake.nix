@@ -116,9 +116,44 @@
     # Follows master. (This input used to be rev-pinned to a branch carrying the
     # split host runtime and liblogos_core.dll's export list; that landed on
     # master and the pin was retired, but the comment explaining it outlived it.)
+    # Rev-pinned to logos-liblogos#186 (chore/protocol-0.8-plugin-qt-master),
+    # which is the liblogos half of THIS wave and is not merged yet. It must move
+    # in lockstep with logos-plugin-qt above: plugin-qt#26 made protocol 0.8 a
+    # hard floor for every consumer of logos-qt-host (cpp/logos_provider_object.cpp
+    # and cpp/qt_provider_object.cpp call TokenManager::saveInboundToken
+    # unguarded), so liblogos cannot straddle and neither can this app.
+    # Retire the pin for a plain master URL once #186 lands.
+    #
+    # logos-plugin-qt.follows was MISSING here while every sibling input
+    # (logos-qt-sdk, logos-plugin-qt itself) declared it. It is REDUNDANT TODAY,
+    # and that is written down because it was measured rather than assumed:
+    # against the pin above, liblogos#186's lock already names plugin-qt 048152f2,
+    # which is this root's rev, so adding or removing these two lines changes
+    # nothing — 6 logos-qt-host derivations either way, and exactly ONE in the
+    # built runtime closure. Today the two sides agree by coincidence of two
+    # locks, not by constraint.
+    #
+    # It is added because the NEXT step breaks that coincidence. nix/app.nix:729
+    # copies ${logosLiblogos}/lib/*.{so,dylib,dll} over this app's own lib/ while
+    # the binary links logos-qt-host directly. Retire the pin above for a plain
+    # master URL — which is what happens when #186 lands — and liblogos resolves
+    # logos-plugin-qt through its OWN lock again: liblogos master bfbb1998 pins
+    # 1aa3e31c and packages a lib/liblogos_qt_host.so that is a DIFFERENT store
+    # path from this root's (kdz79ljg… vs ka5vgzb8…) and differs byte-wise.
+    # Measured: dropping the pin back to master without these lines takes the
+    # derivation count 6 -> 7. The app would then LINK one host runtime and SHIP
+    # another in the same directory — the duplicate-TokenManager defect this fleet
+    # has hit repeatedly, which builds clean and only fails at runtime as refused
+    # calls with no build diagnostic.
+    #
+    # logos-protocol follows for the same reason one hop down: logos-qt-host is
+    # compiled against protocol's headers, so a followed plugin-qt built against
+    # an unfollowed protocol is the same skew wearing a different hat.
     logos-liblogos = {
-      url = "github:logos-co/logos-liblogos";
+      url = "github:logos-co/logos-liblogos/chore/protocol-0.8-plugin-qt-master";
       inputs.default-module-loader.follows = "logos-module-loader-qt";
+      inputs.logos-plugin-qt.follows = "logos-plugin-qt";
+      inputs.logos-protocol.follows = "logos-protocol";
     };
     logos-package-manager.url = "github:logos-co/logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
