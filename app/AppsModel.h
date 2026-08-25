@@ -94,6 +94,7 @@ private:
         QVariantList versions;
         QString latestVersion;       // computed from versions[0].version
         QVariantList dependencies;
+        QStringList provides;
 
         // On-disk state
         QString installedVersion;
