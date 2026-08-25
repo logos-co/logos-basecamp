@@ -1,0 +1,239 @@
+name: "App-to-app intents: declaring, requesting, and choosing between providers"
+output: basecamp-intents.md
+release: ""
+
+intro: |
+  `logos.callModule()` calls a module you name. An **intent** is the other
+  shape: you name a *capability* and let the shell find a provider. That is
+  what lets a second wallet be installed and picked without the calling app
+  knowing it exists.
+
+  This doc-test drives the whole path inside the real, shippable Basecamp
+  bundle:
+
+  1. An app requesting a capability it did **not** declare is refused
+     outright — `not_declared`, and no provider is ever consulted.
+  2. When two installed apps provide the same capability, the shell raises a
+     **chooser**. The requester never sees that list and cannot influence it.
+  3. Picking one delivers the request to **that provider only**. The other
+     never learns a request happened.
+
+  The machinery under test is `IntentRegistry` (which reads `provides` and
+  `uses` out of each installed app's `metadata.json`), `IntentBroker` (which
+  resolves a capability to a provider, mints a dispatch id the requester never
+  sees, and routes the answer back), and the shell's chooser dialog.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle and the logos-qt-mcp UI driver, three
+  hand-written QML-only fixture apps — one requester and two interchangeable
+  providers of the same intent — and a headless UI run that proves an
+  undeclared request is refused, the chooser appears for the ambiguous case,
+  and only the chosen provider receives the request.
+
+what_you_learn:
+  - How an app declares what it can do (`provides`) and what it may ask for (`uses`) in `metadata.json`, and why both are arrays of objects rather than plain strings
+  - Why an undeclared request fails immediately with `not_declared` while every other failure is delayed
+  - What happens when two apps provide the same capability, and why the shell — not the requester — draws the chooser
+  - How a provider answers with `logos.respond()`, and why answering later is normal
+  - How to assert cross-app isolation headlessly: the positive control and the isolation check belong in the same assertion, or the test passes when nothing works
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+sections:
+  - title: "Two files, two readers"
+    text: |
+      An installed app is a directory under the user dir's `plugins/`. Two of
+      its files matter here, and they are read by different things:
+
+      | File | Read by | For |
+      | --- | --- | --- |
+      | `manifest.json` | the package scanner | "this app exists, it is `ui_qml`, its entry is `Main.qml`" |
+      | `metadata.json` | `IntentRegistry` | `provides` and `uses` |
+
+      That split is why these fixtures need no build, no `.lgx` and no
+      catalog: the shell reads capabilities straight off disk from
+      `metadata.json`.
+
+      > **The shape catches people out.** Both keys are arrays of **objects**:
+      >
+      > ```json
+      > "uses": [{"intent": "test.echo"}]     ← right
+      > "uses": ["test.echo"]                 ← silently ignored
+      > ```
+      >
+      > A bare string array parses, is discarded, and the request then fails
+      > `not_declared` with nothing pointing at the manifest. The shell logs
+      > every skipped declaration with an `IntentRegistry:` prefix.
+
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
+      the doc-test uses to connect to the app's QML inspector and drive it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle, with the QML
+      inspector compiled in so the driver can attach.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Seed the three fixture apps"
+    step: true
+    text: |
+      The fixtures live in the repo at `tests/fixtures/intents/` and are staged
+      by a script rather than written out here, because the same three apps are
+      driven by the `ui-tests.mjs` integration suite — one definition, two
+      harnesses.
+
+      - **Intent Requester** — `uses: test.echo`, and two buttons: one asks for
+        the intent it declared, the other asks for `test.undeclared`, which it
+        did not.
+      - **Provider A** and **Provider B** — both `provides: test.echo`,
+        identical apart from a marker. Two providers of one capability is the
+        only way to reach the ambiguous branch: no two shipping apps declare
+        the same intent.
+    steps:
+      - title: "Stage the fixtures into a throwaway user dir"
+        run: |
+          chmod -R u+w testdata/intents-user 2>/dev/null || true
+          rm -rf testdata/intents-user
+          ./tests/fixtures/intents/stage.sh testdata/intents-user
+          ls testdata/intents-user/plugins
+        expect_contains:
+          - "intent_requester_demo"
+          - "intent_provider_a"
+          - "intent_provider_b"
+
+  - title: "Refusal, the chooser, and isolation"
+    step: true
+    text: |
+      Launch the bundle headless against the seeded user-dir and drive the
+      flow. Everything is addressed by stable `objectName`s rather than by
+      visible text: the chooser renders each provider's *display name*, which
+      also labels its sidebar launcher, so a text-matching click would hit the
+      sidebar and launch the app directly instead of answering the chooser.
+    steps:
+      - title: "Drive the intent flow"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/intents-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the seeded user-dir."
+
+            - name: "All three fixture apps are listed"
+              action: wait_for
+              texts: ["Intent Requester", "Provider A", "Provider B"]
+              timeout: 60000
+              text: "The package scan found all three in the user dir's `plugins/`. At this point the shell has also read their `metadata.json` files, so `IntentRegistry` knows that two of them provide `test.echo`."
+              screenshot: "intents-launch.png"
+
+            - name: "Open the requester"
+              action: click
+              text_to_click: "Intent Requester"
+              text: "Loading the app registers its QML bridge with the shell, which is what makes it able to request anything at all."
+
+            - name: "Its view is up"
+              action: wait_for
+              texts: ["RESULT"]
+              timeout: 60000
+              text: "The requester renders its result line, initially empty."
+
+            - name: "Ask for a capability it never declared"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnUndeclared"
+              text: "This button requests `test.undeclared`, which is absent from the app's own `uses`."
+
+            - name: "…and it is refused outright"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "requesterRoot"
+              property: "lastResult"
+              value: "not_declared"
+              text: "`not_declared` is the one error the shell answers immediately. Every other failure is held to a timing floor so an app cannot discover what is installed by measuring how fast it was refused — but this one is a fact about the caller's own manifest and leaks nothing about anyone else. Note also that no provider was consulted: the request never left the shell."
+              screenshot: "intents-not-declared.png"
+
+            - name: "Now ask for the capability it did declare"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnEcho"
+              text: "This one requests `test.echo`. Two installed apps provide it, so the shell has to ask."
+
+            - name: "The chooser appears"
+              action: wait_for
+              texts: ["Choose an app"]
+              timeout: 30000
+              text: "Both providers are offered, sorted by module name so the order is stable. Every string here is drawn by the shell using the same labels as the sidebar — a requesting app cannot influence how a provider is presented, and a provider cannot dress itself up."
+              screenshot: "intents-chooser.png"
+
+            - name: "Pick Provider B"
+              action: click_object
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_b"
+              text: "Clicked by `objectName`, not by its label: \"Provider B\" also names its sidebar launcher, and a text match would find that first — launching the app directly and leaving the request unanswered."
+
+            - name: "Provider B receives it and answers"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "providerRootB"
+              property: "lastHandled"
+              value: "handled"
+              timeout: 45000
+              text: "Provider B was not running: the shell loaded it, waited for its view, then delivered. The fixture answers on a short timer rather than synchronously, which is what a real provider does — show UI, let the user decide, then respond."
+
+            - name: "The requester gets its answer, naming the provider"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "requesterRoot"
+              property: "lastResult"
+              value: "ok:intent_provider_b"
+              timeout: 45000
+              text: "The payload survived the trip. This is the positive control: asserting only that Provider A stayed silent would pass trivially if nothing worked at all, so the success and the isolation check belong together."
+              screenshot: "intents-answered.png"
+
+            - name: "Provider A never learned a request happened"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "providerRootA"
+              property: "lastHandled"
+              value: ""
+              text: "The unchosen provider is not merely ignored — it is never told. The broker mints a separate dispatch id for the provider it picked, so the requester's own id never leaves its side and no other app sees the request at all."
+
+  - title: "What this proves"
+    text: |
+      - **Declaration is mandatory.** An app can only request what its own
+        `metadata.json` lists, which bounds its reachable capabilities to a set
+        fixed when the package was built.
+      - **The user chooses, not the caller.** The requester named a capability
+        and got an answer; it never learned which apps were offered, and could
+        not have preferred one.
+      - **Only the chosen provider hears.** Isolation here is structural, not
+        a matter of the other provider politely ignoring the request.
+
+      The chooser is raised on every ambiguous request. Remembering a pick is
+      deliberately not offered yet: it needs a settings screen to review and
+      revoke from, and a way to mark intents that must never be remembered.

@@ -440,10 +440,13 @@
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
             inherit pkgs src logosPackageHeaders;
+            logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
           # QML component tests (Qt Quick Test)
-          qml-tests = import ./nix/qml-tests.nix { inherit pkgs src logosPackageHeaders; };
+          qml-tests = import ./nix/qml-tests.nix {
+            inherit pkgs src logosPackageHeaders logosDesignSystem;
+          };
 
           # Coverage report for the unit-test suite: same targets as
           # .#unit-tests, compiled with --coverage and reported via gcovr.
@@ -452,6 +455,7 @@
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
             inherit pkgs src logosPackageHeaders;
+            logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };
 

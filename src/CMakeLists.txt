@@ -72,6 +72,7 @@ qt_add_qml_module(basecamp_backend_qml
     RESOURCE_PREFIX /qt/qml
     OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Backend
     SOURCES
+        ../app/interfaces/ShellSections.h
         ../app/interfaces/InstallEnums.h
         InstallEnums.cpp
         AppsFilterProxy.h
@@ -151,6 +152,9 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/ContentViews.qml
         Basecamp/Shell/OverlayDialogs.qml
         Basecamp/Shell/ConfirmationDialog.qml
+        Basecamp/Shell/IntentDialog.qml
+        Basecamp/Shell/IntentChooserDialog.qml
+        Basecamp/Shell/IntentInstallDialog.qml
         Basecamp/Shell/UninstallDialog.qml
         Basecamp/Shell/WelcomePage.qml
 )

@@ -51,6 +51,7 @@ struct AppsModelRoles {
         ResolverErrorRole,
         InstallStageRole,        // InstallStage::Value (int) — see InstallEnums.h
         InstallErrorRole,        // failure message when InstallStage == Failed
+        ProvidesRole,            // QStringList — intents this package can service
     };
 };
 

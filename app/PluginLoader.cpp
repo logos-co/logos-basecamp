@@ -22,6 +22,7 @@
 
 #include "CoreModuleManager.h"
 #include "IComponent.h"
+#include "IntentBridgeAdapter.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
 #include "logos_consumer.h"
@@ -413,6 +414,15 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
                                    ViewModuleHost* viewHost)
 {
     bridge->setParent(qmlWidget);
+
+    // Attach BEFORE setSource() below, which is where QML actually runs: an app
+    // calling logos.request() from Component.onCompleted would otherwise be an
+    // unknown bridge and get `unavailable` from its own shell.
+    // The single funnel for every ui_qml app — the QML-only and backend paths
+    // both converge here.
+    if (m_intentAdapter)
+        m_intentAdapter->attach(request.name, bridge);
+
     qmlWidget->rootContext()->setContextProperty("logos", bridge);
     qmlWidget->rootContext()->setContextProperty("isActiveTab", true);
     qmlWidget->setSource(QUrl::fromLocalFile(request.qmlViewPath));

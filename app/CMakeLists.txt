@@ -242,6 +242,7 @@ set(PROJECT_SOURCES
     interfaces/IShellHost.h
     interfaces/IShellView.h
     interfaces/InstallEnums.h
+    interfaces/ShellSections.h
     interfaces/BasecampModelRoles.h
     resources.qrc
 
@@ -250,6 +251,10 @@ set(PROJECT_SOURCES
     ShellHostAdapter.cpp
 
     MainUIBackend.cpp
+    IntentRegistry.cpp
+    IntentBroker.cpp
+    IntentBridgeAdapter.cpp
+    UIPluginPresenter.cpp
     CoreModuleManager.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp

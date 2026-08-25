@@ -1,4 +1,6 @@
 #include "UIPluginManager.h"
+
+#include "IntentBridgeAdapter.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
@@ -153,6 +155,7 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
     // has changed now and QML should reflect that.
     emit uiModulesChanged();
     emit launcherAppsChanged();
+    emit uiPluginMetadataChanged();
 }
 
 void UIPluginManager::reloadLoadedPluginIcon(const QString& name, QWidget* widget) const
@@ -286,12 +289,6 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                         // String-based connects resolve against the replica's
                         // metaobject at runtime — a signature drift in the PMU
                         // .rep would fail silently, so guard each result.
-                        if (!connect(replica, SIGNAL(navigateToRepositoriesRequested()),
-                                     this,    SIGNAL(navigateToRepositoriesRequested()))) {
-                            qCritical() << "package_manager_ui replica signal"
-                                        << "navigateToRepositoriesRequested() not found"
-                                        << "- signature drift vs package_manager_ui.rep?";
-                        }
                         if (!connect(replica,
                                      SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
                                      this,
@@ -311,6 +308,10 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     emit launcherAppsChanged();
     emit pluginWindowRequested(widget, name);
     emit navigateToApps();
+
+    // Last, and after the window exists: a broker draining its activation queue
+    // dispatches into the view immediately, so it must already be mounted.
+    emit appReady(name);
 
     qDebug() << "Successfully loaded UI module:" << name;
 }
@@ -447,10 +448,31 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
 void UIPluginManager::activateApp(const QString& appName)
 {
     QWidget* widget = m_uiModuleWidgets.value(appName);
-    if (widget) {
-        emit pluginWindowActivateRequested(widget);
-        emit navigateToApps();
-    }
+    if (!widget) return;
+
+    // Before the raise, so a synchronous receiver already sees the new app.
+    setCurrentVisibleApp(appName);
+
+    // No navigateToApps(): which section to land on is the shell's call, since
+    // only it knows whether the widget was docked or hoisted into the stack.
+    emit presentAppRequested(widget);
+}
+
+
+void UIPluginManager::setIntentAdapter(IntentBridgeAdapter* adapter)
+{
+    if (m_pluginLoader) m_pluginLoader->setIntentAdapter(adapter);
+}
+
+QMap<QString, QVariantMap> UIPluginManager::uiPluginMetadataSnapshot() const
+{
+    return m_uiPluginMetadata;
+}
+
+bool UIPluginManager::isUiAppLoaded(const QString& moduleName) const
+{
+    return m_uiModuleWidgets.contains(moduleName)
+        || m_qmlPluginWidgets.contains(moduleName);
 }
 
 void UIPluginManager::setCurrentVisibleApp(const QString& pluginName)

@@ -62,6 +62,10 @@ public:
     // async refresh chain hasn't completed yet; QML and UIPluginManager
     // are expected to treat "empty" as "not known — show safe defaults".
     QString     installType(const QString& name) const;
+
+    // The Merkle root over the CONTENTS ON DISK, as recorded at install. Not
+    // the catalog's claim about the artifact — what is actually installed.
+    QString     installedRootHash(const QString& name) const;
     QStringList missingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
     QString     displayNameFor(const QString& name) const;

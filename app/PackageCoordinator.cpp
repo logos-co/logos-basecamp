@@ -313,6 +313,11 @@ QStringList PackageCoordinator::dependentsOf(const QString& name) const
     return m_dependentsByModule.value(name);
 }
 
+QString PackageCoordinator::installedRootHash(const QString& name) const
+{
+    return m_installedHashByName.value(name);
+}
+
 QString PackageCoordinator::displayNameFor(const QString& name) const
 {
     const QString dn = m_displayNameByModule.value(name);

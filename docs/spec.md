@@ -240,6 +240,27 @@ QML-based UI Apps (`ui_qml` modules) load directly into the Basecamp process, so
 - Enabled by default in debug builds, disabled in release builds
 - Provides tools for UI testing and automation
 
+### App-to-App Intents
+
+A UI App can request a *capability* without naming, linking against, or discovering the app that provides it. The shell resolves the request, asks the user, and routes the answer back to the requester alone.
+
+- Declare intents an app can service (`provides`) and may request (`uses`) in `metadata.json`; a request for an undeclared intent is refused
+- Resolve a requested capability against installed apps that declare it
+- Ask the user to choose when more than one app qualifies — **and when exactly one does**, since the single-provider case was otherwise the silent one
+- Expand a provider's details in place — package name, version, originating repository, install type, and whether it is signed — without leaving the prompt or ending the request
+- Suggest an installable package when nothing on disk can service a request, while telling the requester only that nothing was available
+- Refuse a payload the chosen provider declared unusable, before it reaches that provider
+- Bring the chosen app to the foreground and deliver the request to it; return exactly one result to the requester
+
+Requirements that constrain the above, rather than describing it:
+
+- A requesting app must not be able to determine what is installed. "Nothing provides this" and "you were not permitted" are the same answer, delivered on the same timing floor
+- A providing app must not be able to forge, enumerate, or answer a request it was not given
+- Every string shown in a consent prompt is drawn by the shell; nothing renderable crosses from either app
+- Every request terminates exactly once, including on timeout and on app teardown
+
+**Not in scope:** Logos Modules as requester or provider (they call each other directly, with no user decision to mediate); more than one provider servicing a single request; any request without a user present.
+
 ## User Journeys & Workflows
 
 ### Application Startup

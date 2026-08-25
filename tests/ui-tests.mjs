@@ -930,6 +930,275 @@ test("window: tray toggle hides a shown window", async (app) => {
   }
 });
 
+// --- App-to-app intents -----------------------------------------------------
+//
+// These need the fixtures in tests/fixtures/intents staged into the app's
+// --user-dir (see stage.sh). They are skipped when the fixtures are absent so a
+// plain `node tests/ui-tests.mjs` against a normal install still runs green.
+
+// ALWAYS resolve an objectId from the requester's own view before evaluating.
+// The inspector falls back to the FIRST QQuickWidget's root when no objectId is
+// given, and with several apps loaded that is very likely the wrong app — the
+// assertion would then read a property that does not exist and pass vacuously.
+//
+// THROWS rather than returning null when the fixture is missing. An earlier
+// version returned null and every caller did `if (!anchor) return;`, which meant
+// that staging the fixtures but never LAUNCHING them produced three green ticks
+// that had asserted nothing. A fixture that is not there is a broken test run,
+// not a reason to skip.
+async function requesterAnchor(app) {
+  const found = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "requesterRoot",
+  });
+  if (!found.matches || !found.matches.length) {
+    throw new Error(
+      "intent fixture not loaded — expected an item with objectName " +
+      "'requesterRoot'. Stage tests/fixtures/intents via stage.sh into the " +
+      "--user-dir, and make sure the test opened the app first.");
+  }
+  return found.matches[0].id;
+}
+
+// The fixtures are staged on disk but not loaded until something opens them.
+//
+// Deliberately NOT openPlugin(): its expectTexts gate searches the shell's own
+// QML tree and does not traverse into a plugin's separate engine, so it times
+// out even after the app has loaded successfully. findByProperty does cross
+// that boundary, so wait on the anchor itself.
+async function openIntentRequester(app) {
+  await app.click("Intent Requester");
+  let anchor = null;
+  await app.waitFor(async () => {
+    const found = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "requesterRoot",
+    });
+    if (!found.matches || !found.matches.length)
+      throw new Error("requester view not up yet");
+    anchor = found.matches[0].id;
+  }, { timeout: 20000, interval: 500, description: "intent requester view" });
+  return anchor;
+}
+
+// Returns null when that provider has no view up at all, and its lastHandled
+// (possibly "") when it does. The distinction matters: "not loaded" and "loaded
+// but silent" are different failures, and the old version conflated them by
+// returning the first match's value regardless of which provider it belonged to.
+async function providerMarker(app, which) {
+  // Each provider root carries a UNIQUE objectName (providerRootA / …B) so
+  // both harnesses can address one directly. Returns null when that provider
+  // has no view up at all, and its lastHandled (possibly "") when it does —
+  // "not loaded" and "loaded but silent" are different failures.
+  const suffix = which.replace("intent_provider_", "").toUpperCase();
+  const found = await app.inspector.send("findByProperty", {
+    property: "objectName", value: `providerRoot${suffix}`,
+  });
+  if (!found.matches || !found.matches.length) return null;
+  const r = await app.inspector.send("evaluate", {
+    objectId: found.matches[0].id, expression: "root.lastHandled",
+  });
+  return typeof r.result === "string" ? r.result : "";
+}
+
+async function lastResult(app, anchorId) {
+  return (await app.inspector.send("evaluate", {
+    objectId: anchorId, expression: "root.lastResult",
+  })).result;
+}
+
+test("intents: an undeclared intent is refused without asking anyone", async (app) => {
+  const anchor = await openIntentRequester(app);
+
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.request("test.undeclared")',
+  });
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "not_declared") throw new Error(`got "${r}", expected not_declared`);
+  }, { timeout: 5000, interval: 200, description: "not_declared" });
+});
+
+test("intents: two providers raise the chooser, and only the chosen one hears", async (app) => {
+  const anchor = await openIntentRequester(app);
+
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.request("test.echo")',
+  });
+
+  // The chooser must appear — with no chooser mounted the broker fails closed,
+  // so this also covers the guard that used to be defeated by the shell's
+  // signal re-emit.
+  await app.waitFor(async () => {
+    const d = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "intentChooserDialog",
+    });
+    if (!d.matches || !d.matches.length) throw new Error("chooser did not appear");
+  }, { timeout: 8000, interval: 250, description: "intent chooser" });
+
+  // Click the delegate BY OBJECT ID, never by text.
+  //
+  // app.click() is a breadth-first substring walk that stops at the first
+  // clickable match, and "Provider B" also labels the app's SIDEBAR launcher.
+  // Clicking that launches the app directly and leaves the request unresolved —
+  // which looked exactly like a broken dispatch, and is the same trap this file
+  // already documents for "Package Manager".
+  const delegate = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "intentProvider_intent_provider_b",
+  });
+  if (!delegate.matches || !delegate.matches.length)
+    throw new Error("chooser has no delegate for intent_provider_b");
+  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+
+  // POSITIVE CONTROL AND ISOLATION IN ONE BODY. Asserting only that B stayed
+  // empty passes trivially when nothing works at all — the requester's success
+  // is what proves the path ran.
+  //
+  // The failure message names the STAGE the flow stalled at, because "got \"\""
+  // is indistinguishable between "B never loaded", "B loaded but was never
+  // dispatched to", and "B answered but the reply never arrived" — three very
+  // different bugs. Offscreen runs are also slower than a real GUI, where this
+  // path is known to work, so the budget is generous.
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r === "ok:intent_provider_b") return;
+
+    const bHandled = await providerMarker(app, "intent_provider_b");
+    if (bHandled === null)
+      throw new Error("provider_b view not up yet (still loading?)");
+    if (!bHandled)
+      throw new Error("provider_b loaded but never received the request");
+    throw new Error(`provider_b is "${bHandled}" but requester still has "${r}"`);
+  }, { timeout: 45000, interval: 500, description: "provider_b answered" });
+
+  const aMarker = await providerMarker(app, "intent_provider_a");
+  if (aMarker) throw new Error(`provider_a saw a request meant for b: "${aMarker}"`);
+});
+
+test("intents: a single provider still asks before dispatching", async (app) => {
+  const anchor = await openIntentRequester(app);
+
+  // test.solo is provided by intent_provider_a alone. One provider used to
+  // dispatch straight through, which made it the SILENT case — an app that was
+  // the only declarer of a capability got the request with no interaction at
+  // all. Now it confirms like any other.
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.request("test.solo")',
+  });
+
+  await app.waitFor(async () => {
+    const d = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "intentChooserDialog",
+    });
+    if (!d.matches || !d.matches.length)
+      throw new Error("single provider dispatched without asking");
+  }, { timeout: 8000, interval: 250, description: "confirmation for one provider" });
+
+  const delegate = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "intentProvider_intent_provider_a",
+  });
+  if (!delegate.matches || !delegate.matches.length)
+    throw new Error("the sole provider is not offered in the dialog");
+  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "ok:intent_provider_a") throw new Error(`got "${r}"`);
+  }, { timeout: 45000, interval: 500, description: "provider_a answered" });
+});
+
+test("intents: a payload the provider declared unusable never reaches it", async (app) => {
+  const anchor = await openIntentRequester(app);
+
+  // intent_provider_a's metadata.json says test.solo takes `text` as a string.
+  // This sends a number. Nothing about it is malformed as data — only the
+  // provider's own declaration makes it wrong, which is the whole point of
+  // declaring params at all.
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.requestBadParams("test.solo")',
+  });
+
+  // The user is still asked. Validation happens after a provider is settled,
+  // never at submit: at submit several providers may describe one intent
+  // differently, and testing all their specs would answer "how many providers
+  // are there".
+  await app.waitFor(async () => {
+    const d = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "intentChooserDialog",
+    });
+    if (!d.matches || !d.matches.length) throw new Error("no confirmation shown");
+  }, { timeout: 8000, interval: 250, description: "confirmation for one provider" });
+
+  const delegate = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "intentProvider_intent_provider_a",
+  });
+  if (!delegate.matches || !delegate.matches.length)
+    throw new Error("the sole provider is not offered in the dialog");
+  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "bad_request") throw new Error(`got "${r}"`);
+  }, { timeout: 20000, interval: 500, description: "bad_request reached the caller" });
+
+  // And the provider never saw it. A payload it declared unusable must not
+  // reach its handler — otherwise the declaration is documentation, not a gate.
+  const provider = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "providerRootA",
+  });
+  if (provider.matches && provider.matches.length) {
+    const handled = await app.inspector.send("evaluate", {
+      objectId: provider.matches[0].id, expression: "root.pendingParams",
+    });
+    const seen = JSON.stringify(handled && handled.result);
+    if (seen && seen.includes("42"))
+      throw new Error("the provider received a payload it declared unusable");
+  }
+});
+
+test("intents: every permitted data shape survives the round trip", async (app) => {
+  const anchor = await openIntentRequester(app);
+
+  // The transport, not the mechanism. `params` crosses from the requester's QML
+  // engine into C++, through the broker, into the PROVIDER's separate engine —
+  // and the reply makes the same trip back through `respond`'s untyped
+  // QVariant, which is where engine-bound values were previously lost silently
+  // (res.data arrived null with no error anywhere).
+  //
+  // The fixture compares structurally and reports the first differing path, so
+  // a failure names the field rather than just saying "not equal".
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: "root.requestRoundTrip()",
+  });
+
+  // test.roundtrip has one provider, and one provider still confirms.
+  await app.waitFor(async () => {
+    const d = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "intentChooserDialog",
+    });
+    if (!d.matches || !d.matches.length) throw new Error("no confirmation shown");
+  }, { timeout: 8000, interval: 250, description: "chooser for test.roundtrip" });
+
+  const delegate = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "intentProvider_intent_provider_a",
+  });
+  if (!delegate.matches || !delegate.matches.length)
+    throw new Error("provider_a not offered");
+  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r === "") throw new Error("still waiting");
+    if (r !== "roundtrip:ok") throw new Error(r);   // carries the differing path
+  }, { timeout: 30000, interval: 500, description: "payload returned intact" });
+});
+
+test("intents: the word ambiguous never reaches a requester", async (app) => {
+  const anchor = await openIntentRequester(app);
+  const r = await lastResult(app, anchor);
+  if (typeof r === "string" && r.includes("ambiguous")) {
+    throw new Error("internal resolution state leaked into an envelope");
+  }
+});
+
 // --- Run ---
 
 run();
