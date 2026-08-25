@@ -1,14 +1,8 @@
 #pragma once
 
-// Single place that pulls the nix-generated logos_build_info.h and exposes
-// the values to the two consumers:
-//   * app/main.cpp       — logs a banner to the per-session log on startup.
-//   * src/MainUIBackend  — exposes Q_PROPERTYs for the Dashboard view.
-//
-// Header-only because the generated header lands in different include dirs
-// for each CMake target (app/generated/ vs src/generated_code/), so every
-// translation unit must do its own __has_include check. Keeping everything
-// inline avoids having to wire a separate .cpp into both targets.
+// Pulls the nix-generated logos_build_info.h for its two consumers:
+//   * app/main.cpp       — startup banner in the per-session log.
+//   * app/MainUIBackend  — Q_PROPERTYs for the Dashboard view.
 //
 // Non-nix builds see no logos_build_info.h; accessors return empty values
 // so callers can still render / log something sane.
@@ -44,9 +38,7 @@ inline QString version() {
 }
 
 // True for distributed / portable builds (AppImage, DMG) — driven by the
-// LOGOS_PORTABLE_BUILD compile define set by nix/app.nix and nix/main-ui.nix.
-// Each translation unit sees its own define, so this resolves correctly in
-// both the app binary and the main_ui plugin.
+// LOGOS_PORTABLE_BUILD compile define set by nix/app.nix.
 inline bool isPortableBuild() {
 #ifdef LOGOS_PORTABLE_BUILD
     return true;

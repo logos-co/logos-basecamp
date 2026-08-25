@@ -12,7 +12,7 @@ enable_testing()
 # Path to the production basecamp sources under test. The test links the real
 # sandbox code (QmlSandbox + the restricted/ helpers) so it exercises exactly
 # what PluginLoader::loadQmlView runs — no re-implementation.
-set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
+set(BASECAMP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../../app")
 
 # ---- The "evil" Qt QML plugin (attacker payload) -------------------------
 # A genuine Qt plugin with valid metadata so Qt will dlopen() it when a qmldir

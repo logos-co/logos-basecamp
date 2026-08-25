@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)  # Enable Qt's Meta-Object Compiler
 set(CMAKE_AUTORCC ON)  # Enable automatic compilation of resource files
+set(CMAKE_AUTOUIC ON)  # Enable Qt's UI compiler
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 # RPATH settings for macOS
@@ -51,8 +52,13 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/interfaces)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macos)
-# Auto-generated build info header (dropped in by nix/app.nix); absent in
-# non-nix builds — main.cpp guards the include with __has_include.
+# The ONE generated-header directory. nix/app.nix drops all of it in here:
+# the build-info header, the module-generated *_api.h wrappers, the shared
+# semver headers and logos-cpp-generator's --general-only output. Absent in
+# non-nix builds — BuildInfo.h guards its include with __has_include.
+#
+# Keep it a SINGLE directory: a second generated dir on the include path would
+# make that __has_include depend on -I ORDER, silently.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
 
 # Allow override from environment or command line (for nix builds)
@@ -86,6 +92,40 @@ else()
     include_directories(${LOGOS_MODULE_ROOT}/include/module_lib)
 endif()
 
+# ── logos-qt-sdk — the Qt<->lp SEAM HEADERS, headers only ─────────────────────
+# app/generated/ holds the dependency wrappers nix/app.nix copies out of the
+# module outputs (package_manager, package_downloader). Since B5 the builder
+# emits the Qt-typed wrapper as a VENEER over the lp path, so
+# package_manager_api.cpp opens with `#include "logos_qt_lp_bridge.h"`.
+#
+# That header is NOT part of the host runtime: logos-qt-host does not ship it,
+# and logos-qt-sdk is where it stayed after the B1/B2a split. Nothing is LINKED
+# from here — after B2a logos-qt-sdk is an INTERFACE library and this is purely
+# an include directory.
+#
+# Probed in both layouts, like every other root above: the source checkout has
+# cpp/, the nix install has include/cpp/.
+if(NOT DEFINED LOGOS_QT_SDK_ROOT)
+    set(LOGOS_QT_SDK_ROOT "${REAL_SOURCE_DIR}/../../logos-qt-sdk")
+endif()
+
+if(EXISTS "${LOGOS_QT_SDK_ROOT}/cpp/logos_qt_lp_bridge.h")
+    include_directories(${LOGOS_QT_SDK_ROOT}/cpp)
+elseif(EXISTS "${LOGOS_QT_SDK_ROOT}/include/cpp/logos_qt_lp_bridge.h")
+    include_directories(${LOGOS_QT_SDK_ROOT}/include/cpp)
+else()
+    # Deliberately fatal rather than a silent skip. A missing seam header does
+    # not fail here, it fails 250 objects later as
+    # "logos_qt_lp_bridge.h: No such file or directory" while compiling a
+    # GENERATED file, which reads as a codegen bug rather than a missing input.
+    message(FATAL_ERROR
+        "logos_qt_lp_bridge.h not found under ${LOGOS_QT_SDK_ROOT} (tried "
+        "cpp/ and include/cpp/). The generated dependency wrappers in "
+        "app/generated/ include it by name. Set LOGOS_QT_SDK_ROOT.")
+endif()
+
+message(STATUS "Using logos-qt-sdk (seam headers) at: ${LOGOS_QT_SDK_ROOT}")
+
 # ── logos-liblogos (provides liblogos_core library and logos_host binary) ─────
 if(NOT DEFINED LOGOS_LIBLOGOS_ROOT)
     set(LOGOS_LIBLOGOS_ROOT "${REAL_SOURCE_DIR}/../../logos-liblogos")
@@ -114,37 +154,77 @@ else()
     link_directories(${LOGOS_LIBLOGOS_ROOT}/lib)
 endif()
 
+# ── logos-view-module-runtime (provides ViewModuleHost.h + the ui-host lib) ───
+# Load-bearing: UIPluginManager/PluginLoader compile into the exe.
+if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
+    set(_candidate "${REAL_SOURCE_DIR}/../../logos-view-module-runtime")
+    if(EXISTS "${_candidate}/include/ViewModuleHost.h")
+        set(LOGOS_VIEW_MODULE_RUNTIME_ROOT "${_candidate}")
+    endif()
+endif()
+if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT OR NOT EXISTS "${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include/ViewModuleHost.h")
+    message(FATAL_ERROR "LOGOS_VIEW_MODULE_RUNTIME_ROOT not found. Set it explicitly or provide logos-view-module-runtime as a sibling checkout.")
+endif()
+message(STATUS "Using logos-view-module-runtime at: ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}")
+find_library(LOGOS_VIEW_MODULE_RUNTIME_LIB
+    NAMES logos_view_module_runtime
+    PATHS ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/lib
+    NO_DEFAULT_PATH
+    REQUIRED)
+
+# ── logos-design-system ──────────────────────────────────────────────────────
+# Logos.Theme / .Icons / .Controls come from logos-design-system as STATIC
+# qt_add_qml_module targets exposed via the Logos::DesignSystem umbrella
+# INTERFACE library. Nix passes -DLogosDesignSystem_DIR=<store>/lib/cmake/
+# LogosDesignSystem so this find_package succeeds without polluting the
+# global CMAKE_PREFIX_PATH.
+find_package(LogosDesignSystem CONFIG REQUIRED)
+
+# Umbrella source that includes every generated wrapper (avoids duplicate
+# symbols). Do NOT add the individual *_api.cpp files — logos_sdk.cpp includes
+# them. Generated into ${CMAKE_CURRENT_SOURCE_DIR}/generated by nix/app.nix;
+# absent in a plain non-nix configure, hence the EXISTS guard.
+set(GENERATED_LOGOS_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/generated)
+set(GENERATED_LOGOS_SDK_CPP ${GENERATED_LOGOS_SDK_DIR}/logos_sdk.cpp)
+set(GENERATED_LOGOS_SDK_H   ${GENERATED_LOGOS_SDK_DIR}/logos_sdk.h)
+
 # Add logos-cpp-sdk include directories (for nix builds)
 if(DEFINED LOGOS_CPP_SDK_ROOT)
     include_directories(
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include
-        ${LOGOS_QT_SDK_ROOT}/include/cpp
-        ${LOGOS_QT_SDK_ROOT}/include/core
+        ${LOGOS_QT_HOST_ROOT}/include
+        ${LOGOS_QT_HOST_ROOT}/include/cpp
+        ${LOGOS_QT_HOST_ROOT}/include/core
         ${LOGOS_PROTOCOL_ROOT}/include
         ${LOGOS_PROTOCOL_ROOT}/include/cpp
     )
-    link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_SDK_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
-    # Link the Qt SDK via its exported target so the app inherits the full
-    # transitive link interface (logos-protocol, OpenSSL, Boost::system,
+    link_directories(${LOGOS_CPP_SDK_ROOT}/lib ${LOGOS_QT_HOST_ROOT}/lib ${LOGOS_PROTOCOL_ROOT}/lib)
+    # Link the Qt host runtime via its exported target so the app inherits the
+    # full transitive link interface (logos-protocol, OpenSSL, Boost::system,
     # nlohmann_json) — a bare archive on the link line would leave Boost.Asio
     # TLS symbols undefined.
     find_package(logos-protocol REQUIRED CONFIG
         PATHS ${LOGOS_PROTOCOL_ROOT}/lib/cmake/logos-protocol
         NO_DEFAULT_PATH)
-    find_package(logos-qt-sdk REQUIRED CONFIG
-        PATHS ${LOGOS_QT_SDK_ROOT}/lib/cmake/logos-qt-sdk
+    find_package(logos-qt-host REQUIRED CONFIG
+        PATHS ${LOGOS_QT_HOST_ROOT}/lib/cmake/logos-qt-host
         NO_DEFAULT_PATH)
-    # Windows: the host is the image that WRITES the capability token, so if it
-    # keeps a static copy of TokenManager the plugin never sees the token no
-    # matter what the plugin links. Empty out the archives here too and let
-    # liblogos_core.dll be the one provider — cmake/LogosSharedFromDll.cmake.
-    # The link interface above is deliberately left intact.
-    include("${CMAKE_CURRENT_LIST_DIR}/../cmake/LogosSharedFromDll.cmake")
-    logos_use_shared_runtime_from_dll(
-        logos-qt-sdk::logos_qt_sdk
-        logos-protocol::logos_protocol)
+    # Fail loudly rather than silently dropping the host runtime off the link
+    # line: the app's LogosAPI/LogosProviderObject symbols all come from here.
+    if(NOT TARGET logos-qt-host::logos_qt_host_shared)
+        message(FATAL_ERROR
+            "find_package(logos-qt-host) succeeded but did not define "
+            "logos-qt-host::logos_qt_host_shared. That target arrives with "
+            "logos-plugin-qt#22; a build against an older Qt host runtime would "
+            "silently fall back to the static archive and give this image its "
+            "own TokenManager. LOGOS_QT_HOST_ROOT=${LOGOS_QT_HOST_ROOT}")
+    endif()
+    # No shim any more. This image used to empty the static archives and take the
+    # shared runtime from liblogos_core, which had absorbed both of them; it now
+    # links the shared libraries that OWN those types directly
+    # (logos-protocol#65, logos-plugin-qt#22, logos-liblogos#182), so there is no
+    # second static copy for a shim to suppress.
 endif()
 
 set(PROJECT_SOURCES
@@ -153,12 +233,48 @@ set(PROJECT_SOURCES
     window.cpp
     utils/LogRedirector.h
     utils/LogRedirector.cpp
+    utils/AccessPolicyOption.h
+    utils/AccessPolicyOption.cpp
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
     interfaces/IComponent.h
+    interfaces/IShellHost.h
+    interfaces/IShellView.h
+    interfaces/InstallEnums.h
+    interfaces/BasecampModelRoles.h
     resources.qrc
+
+    # The host side of the shell boundary. The shell itself lives in ../src and
+    # builds as the main_ui plugin; this image never compiles a line of it.
+    ShellHostAdapter.cpp
+
+    MainUIBackend.cpp
+    CoreModuleManager.cpp
+    UIPluginManager.cpp
+    PackageCoordinator.cpp
+    UninstallPlan.cpp
+    InstallRegistry.cpp
+    AppsModel.cpp
+    ModuleInstanceModel.cpp
+    PluginLoader.cpp
+    restricted/DenyAllReply.cpp
+    restricted/DenyAllNetworkAccessManager.cpp
+    restricted/DenyAllNAMFactory.cpp
+    restricted/RestrictedUrlInterceptor.cpp
+    restricted/QmlSandbox.cpp
+    restricted/SandboxLogging.cpp
 )
+
+if(EXISTS ${GENERATED_LOGOS_SDK_CPP})
+    set_source_files_properties(${GENERATED_LOGOS_SDK_CPP} PROPERTIES
+        GENERATED TRUE
+        SKIP_AUTOMOC ON
+        SKIP_AUTOUIC ON
+        SKIP_AUTORCC ON
+    )
+    list(APPEND PROJECT_SOURCES ${GENERATED_LOGOS_SDK_CPP})
+endif()
 
 if(APPLE)
     list(APPEND PROJECT_SOURCES macos/macWindowStyle.mm)
@@ -170,9 +286,23 @@ qt_add_executable(LogosBasecamp
     ${PROJECT_SOURCES}
 )
 
+# The UI shell's seven qt_add_qml_module targets live in ../src. They are STATIC
+# modules registering their types from a static initializer, so they link into
+# the main_ui plugin — the image that loads the QML — not this executable.
+target_include_directories(LogosBasecamp PRIVATE
+    ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include
+    ${GENERATED_LOGOS_SDK_DIR}
+)
+
 if(LOGOS_PORTABLE_BUILD)
     target_compile_definitions(LogosBasecamp PRIVATE LOGOS_PORTABLE_BUILD)
     message(STATUS "Building LogosBasecamp as portable (LOGOS_PORTABLE_BUILD enabled)")
+endif()
+
+option(LOGOS_DISTRIBUTED_BUILD "Build for distribution (DMG/AppImage)" OFF)
+if(LOGOS_DISTRIBUTED_BUILD)
+    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_DISTRIBUTED_BUILD)
+    message(STATUS "Building LogosBasecamp for distribution (LOGOS_DISTRIBUTED_BUILD enabled)")
 endif()
 
 if(ENABLE_QML_INSPECTOR)
@@ -180,11 +310,21 @@ if(ENABLE_QML_INSPECTOR)
     message(STATUS "QML Inspector enabled")
 endif()
 
-# Link with logos_core, the Qt SDK, and all Qt modules needed by plugins.
-# Plugins (main_ui) are loaded at runtime and depend on
-# these Qt libraries. Linking them here ensures the portable bundler includes
-# them in the app bundle. logos-qt-sdk::logos_qt_sdk replaced logos_sdk in
-# the qt split and carries the logos-protocol library transitively.
+# Link with logos_core, the Qt host runtime, and all Qt modules the UI shell and
+# the out-of-process UI plugins need. Out-of-process UI plugins are loaded at
+# runtime and depend on these Qt libraries; linking them here ensures the
+# portable bundler includes them in the app bundle.
+# logos-qt-host::logos_qt_host is the host runtime the qt split first put in
+# logos-qt-sdk and the host split moved to logos-plugin-qt; it carries the
+# logos-protocol library transitively.
+#
+# Qt6::Network is named EXPLICITLY rather than left to arrive transitively
+# through Quick/QuickWidgets: restricted/DenyAllNetworkAccessManager.cpp
+# subclasses QNetworkAccessManager.
+#
+# This executable owns no QML. Qt6::Quick / Qml / QuickWidgets / QuickControls2
+# are linked for the out-of-process UI plugins, and so the portable bundler
+# picks them up.
 target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Widgets
     Qt6::RemoteObjects
@@ -192,24 +332,41 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::Qml
     Qt6::QuickWidgets
     Qt6::QuickControls2
-    logos_core
-    logos-qt-sdk::logos_qt_sdk
+    Qt6::Network
+    logos-qt-host::logos_qt_host_shared
+    ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
+    # logos_core is LAST, and that position is load-bearing on Windows: it is the
+    # IMPORT LIBRARY for liblogos_core.dll, which re-exports the shared C++
+    # runtime defined by liblogos_protocol.dll and liblogos_qt_host.dll. (This
+    # comment used to explain the ordering by LogosSharedFromDll.cmake emptying
+    # the static archives; that shim was deleted in #348 when the runtime became
+    # real shared libraries. The ordering rule below still holds -- only that
+    # justification is gone, so do not read its absence as licence to reorder.)
+    # GNU ld takes only archive members satisfying references already
+    # undefined when it reaches them, so placing it ahead of
+    # LOGOS_VIEW_MODULE_RUNTIME_LIB fails the mingw link with four undefined
+    # references — LogosAPIClient::whenObjectAvailable / ::eventSubscriptionState
+    # / ::pendingEventSubscriptions and logos::qvariantToNlohmann — despite all
+    # four being in liblogos_core.dll's export table and its .dll.a.
+    logos_core
 )
 
 if(APPLE)
     target_link_libraries(LogosBasecamp PRIVATE "-framework Cocoa" "-framework QuartzCore")
 endif()
 
-# Windows: import the shared runtime types from liblogos_core instead of taking
-# a second static copy from liblogos_qt_sdk.a. The host is the image that WRITES
-# the capability token (module_manager.cpp calls TokenManager::instance()
-# .saveToken), so if it keeps its own copy the token never reaches main_ui no
-# matter what the plugin does. Same opt-in, same reasoning, as main_ui in
-# src/CMakeLists.txt; see logos-protocol/cpp/logos_shared_api.h.
-if(WIN32)
-    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_SHARED_USE_DLL)
-endif()
+# LOGOS_SHARED_USE_DLL is gone with the shim. It made this image declare the
+# runtime types __declspec(dllimport) so ld would not pull the archive member
+# that redefines them — necessary while the types lived in a static archive that
+# this image also linked. They now come from liblogos_protocol.dll and
+# liblogos_qt_host.dll, which are the only definitions in the process, so the
+# import is what the link naturally produces rather than something to opt into.
+#
+# This image still WRITES the capability token (module_manager.cpp calls
+# TokenManager::instance().saveToken), so the invariant it protected is
+# unchanged — see nix/symbol-gate.nix, which asserts it directly rather than
+# trusting a compile flag.
 
 # Copy the core library to the app's lib directory and fix its install name
 if(APPLE)
@@ -285,6 +442,3 @@ add_custom_command(TARGET LogosBasecamp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/plugins
     COMMAND ${CMAKE_COMMAND} -E echo "Creating app plugins directory at ${CMAKE_CURRENT_BINARY_DIR}/bin/plugins"
 )
-
-# Add src/main_ui plugin
-# add_subdirectory(${CMAKE_SOURCE_DIR}/src/main_ui)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QMutex>
 #include <QSet>
@@ -77,8 +78,35 @@ private:
 
     void setLoading(const QString& name, bool loading);
 
+    // ── per-plugin identity ─────────────────────────────────────────────
+    //
+    // Every plugin basecamp loads into its own process gets its own LogosAPI,
+    // bound to its own isolated token store. Handing plugins m_logosAPI — the
+    // host's "core" identity — gave each of them the host's authority: the
+    // host store holds every loaded module's root auth token, and the call
+    // path reads that store before it ever considers minting, so a plugin's
+    // call to a module it never declared authorised on the first attempt with
+    // no capability_module handshake in the log at all.
+    //
+    // Returns nullptr when the identity cannot be isolated. That is fatal for
+    // the plugin: falling back to m_logosAPI would restore exactly the
+    // escalation this exists to remove, while looking fixed.
+    LogosAPI* apiForPlugin(const QString& name);
+
+    // Register `name` with capability_module as a known caller holding
+    // `authToken`. Without this the identity's very first requestModule is
+    // refused by capability_module's known-caller gate and the plugin can
+    // never obtain a token for anything.
+    void registerPluginIdentity(const QString& name, const QString& authToken);
+
     LogosAPI* m_logosAPI;
     CoreModuleManager* m_coreModuleManager;   // not owned
+
+    // name -> that plugin's LogosAPI (parented to this, so owned here).
+    // Cached because a LogosAPI captures its store by raw pointer and its
+    // clients cache minted tokens; rebuilding one per load attempt would
+    // re-run the requestModule handshake for every target, every time.
+    QHash<QString, LogosAPI*> m_pluginApis;
 
     mutable QMutex m_mutex;
     QSet<QString> m_loading;

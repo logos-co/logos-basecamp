@@ -14,56 +14,52 @@ logos-basecamp/
 │   ├── index.md                          # Documentation index
 │   ├── spec.md                           # High-level specification
 │   └── project.md                        # This document
-├── app/                                  # Main application executable
+├── app/                                  # Main application executable (the host)
 │   ├── CMakeLists.txt                    # App build configuration
 │   ├── main.cpp                          # Entry point
 │   ├── window.h/cpp                      # Main window (QMainWindow)
-│   ├── interfaces/                       # Component interfaces (IComponent)
+│   ├── interfaces/                       # IShellHost/IShellObserver, IShellView, IComponent
 │   ├── utils/                            # Utility classes (paths, file helpers)
 │   ├── macos/                            # macOS-specific code (titlebar styling)
-│   └── icons/                            # Application icons
-├── src/                                  # Main UI plugin
-│   ├── CMakeLists.txt                    # Plugin build configuration
-│   ├── main_ui_plugin.h/cpp              # Plugin entry point (IComponent impl)
-│   ├── MainContainer.h/cpp               # UI coordinator (sidebar + content)
+│   ├── icons/                            # Application icons
 │   ├── MainUIBackend.h/cpp               # Core logic (module state, stats, navigation)
-│   ├── LogosQmlBridge.h/cpp              # QML-to-C++ module call bridge
-│   ├── mdiview.h/cpp                     # MDI tab workspace
-│   ├── mdichild.h/cpp                    # Individual plugin tab window
-│   ├── metadata.json                     # Plugin metadata
-│   ├── qml/                              # QML UI files
-│   │   ├── panels/
-│   │   │   ├── SidebarPanel.qml          # Sidebar navigation
-│   │   │   └── UiModulesTab.qml          # Module management tab
-│   │   ├── views/
-│   │   │   ├── ContentViews.qml          # Content area stack layout
-│   │   │   ├── DashboardView.qml         # Dashboard screen
-│   │   │   ├── ModulesView.qml           # Modules management screen
-│   │   │   ├── CoreModulesView.qml       # Core modules list
-│   │   │   ├── PluginInterfaceView.qml   # Interface inspection (methods + events)
-│   │   │   └── SettingsView.qml          # Settings screen
-│   │   └── controls/                     # Reusable QML controls
-│   │       ├── SidebarIconButton.qml
-│   │       ├── SidebarAppDelegate.qml
-│   │       └── SidebarCircleButton.qml
-│   ├── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
+│   ├── ShellHostAdapter.h/cpp            # IShellHost over MainUIBackend
+│   ├── CoreModuleManager.h/cpp           # Core-module lifecycle over the SDK facade
+│   ├── UIPluginManager.h/cpp             # UI-plugin load/unload, widget ownership
+│   ├── PluginLoader.h/cpp                # Per-plugin identities, ui-host spawning
+│   ├── PackageCoordinator.h/cpp          # Install/uninstall flows
+│   ├── AppsModel.h/cpp                   # App list model
+│   ├── ModuleInstanceModel.h/cpp         # Module list model
+│   └── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
 │   │   ├── QmlSandbox.h/cpp               # applies the sandbox policy to a QML engine
 │   │   ├── DenyAllNetworkAccessManager.h/cpp
 │   │   ├── DenyAllNAMFactory.h/cpp
 │   │   ├── DenyAllReply.h/cpp
-│   │   └── RestrictedUrlInterceptor.h/cpp
-│   └── icons/                            # Plugin icons and QML icon resources
+│       └── RestrictedUrlInterceptor.h/cpp
 ├── tests/                                # Integration tests
-│   └── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
+│   ├── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
+│   ├── host-services-tests.mjs           # Capability trust-root guard (spec)
+│   └── host-services-assert.mjs          # ...its assertion, shared with ui-tests
+├── src/                                  # The main_ui UI shell plugin
+│   ├── CMakeLists.txt                    # Plugin build (Qt only, no logos runtime)
+│   ├── MainShellView.h/cpp               # IShellView entry point
+│   ├── MainContainer.h/cpp               # UI coordinator (sidebar + content)
+│   ├── WorkspaceArea.h/cpp               # Dock-based app workspace
+│   ├── Basecamp/                         # QML UI files, by feature
 ├── nix/                                  # Nix build modules
 │   ├── default.nix                       # Common build settings
 │   ├── app.nix                           # Application package
-│   ├── main-ui.nix                       # Main UI plugin build
+│   ├── main-ui.nix                       # main_ui UI shell plugin
 │   ├── smoke-test.nix                    # Smoke test derivation
 │   ├── integration-test.nix              # UI integration test harness
-│   ├── appimage.nix                      # Linux AppImage packaging
-│   ├── macos-bundle.nix                  # macOS .app bundle
-│   └── macos-dmg.nix                     # macOS DMG packaging
+│   ├── host-services-test.nix            # Host-services grant guard
+│   ├── symbol-gate.nix                   # One-runtime gate + its negative control
+│   ├── unit-tests.nix                    # C++ unit tests
+│   ├── qml-tests.nix                     # QML tests
+│   ├── sandbox-test.nix                  # ui_qml sandbox-escape regression test
+│   ├── shutdown-test.nix                 # Quit-gesture teardown tests
+│   ├── coverage.nix                      # gcovr report over app/ and src/
+│   └── build-info.nix                    # Version/build metadata
 ├── qt-ios/                               # iOS build configuration (experimental)
 │   ├── CMakeLists.txt
 │   ├── Main.qml
@@ -122,7 +118,7 @@ The SDK wrapper (`LogosAPI` from logos-cpp-sdk) is used on top of the C API to p
 
 ### C API Call Sites
 
-All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/shutdown) and `src/MainUIBackend.cpp` (runtime module management).
+All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/shutdown) and `app/MainUIBackend.cpp` (runtime module management).
 
 **Initialization and startup** (`app/main.cpp`):
 
@@ -134,7 +130,7 @@ All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/sh
 | `logos_core_load_module("package_manager", true)` | Auto-load the package manager module (with dependencies) at startup |
 | `logos_core_get_loaded_modules()` | Query loaded module names for initial status display |
 
-**Runtime Logos Module management** (`src/MainUIBackend.cpp`):
+**Runtime Logos Module management** (`app/MainUIBackend.cpp`):
 
 | Call | Purpose |
 |------|---------|
@@ -153,7 +149,7 @@ All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/sh
 
 ### LogosAPI Usage
 
-A single `LogosAPI` instance is created in `main()` with the module name `"core"` and passed through the component hierarchy: `main() → Window → main_ui plugin → MainContainer → MainUIBackend`.
+A single `LogosAPI` instance is created in `main()` with the module name `"core"` and passed through the component hierarchy: `main() → Window → MainContainer → MainUIBackend`.
 
 **Getting module clients:**
 ```cpp
@@ -184,11 +180,15 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 **Files:** `app/window.h`, `app/window.cpp`
 
-**Purpose:** Main `QMainWindow` derivative. Uses `QPluginLoader` to load the `main_ui` plugin from the embedded or user plugins directory (platform-specific extension: `.so`/`.dylib`/`.dll`). Invokes `createWidget(LogosAPI*)` on the plugin to obtain the main content widget. Manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
+**Purpose:** Main `QMainWindow` derivative. Loads the UI shell from the `main_ui` Qt plugin with `QPluginLoader`, casts it to `IShellView`, checks `hostAbiVersion()` against `IShellHost_abi`, and calls `createShell(IShellHost*)`.
+
+The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named operations in. It holds no `LogosAPI*`, no `QtLogosCore*` and no `TokenManager` access, and links no logos runtime — `nix/symbol-gate.nix` enforces that across the in-process image set rather than trusting it.
+
+`Window` also owns `MainUIBackend` and `ShellHostAdapter` (the shell only borrows them) and drives the ordered teardown described in `~Window`. It manages system tray integration (minimize/restore) and applies platform-specific window styling (macOS native titlebar).
 
 ### MainUIBackend
 
-**Files:** `src/MainUIBackend.h`, `src/MainUIBackend.cpp`
+**Files:** `app/MainUIBackend.h`, `app/MainUIBackend.cpp`
 
 **Purpose:** Core logic layer exposed to QML. Central coordinator for both Logos Modules and UI Apps — calls `liblogos_core` to manage Logos Modules, uses `QPluginLoader`/`QQuickWidget` to manage UI Apps, polls stats, handles package install events, and manages navigation. This is where most `logos_core_*` calls and `LogosAPI` interactions happen.
 
@@ -219,13 +219,13 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 ### MainContainer
 
-**Files:** `src/MainContainer.h`, `src/MainContainer.cpp`
+**Files:** `src/MainContainer.h`, `src/MainContainer.cpp` — plugin side, Qt only
 
-**Purpose:** UI coordinator that creates the `MainUIBackend`, assembles the sidebar (QML `SidebarPanel`) and content area (stacked widget with MdiView + QML system views), and routes navigation signals between them.
+**Purpose:** UI coordinator that assembles the sidebar (QML `SidebarPanel`) and content area (stacked widget with `WorkspaceArea` + QML system views), and routes navigation between them. It does **not** create `MainUIBackend` any more — `Window` owns that and the shell borrows it through `IShellHost`, reaching it from QML as an opaque `QObject*` via `backendObject()`.
 
 ### LogosQmlBridge
 
-**Files:** `src/LogosQmlBridge.h`, `src/LogosQmlBridge.cpp`
+**Files:** none in this repo — `LogosQmlBridge` is an external header, included by `app/PluginLoader.cpp` from a flake input's include path (logos-view-module-runtime).
 
 **Purpose:** Bridge between QML-based UI Apps and Logos Modules. Injected into each QML UI App's context as `logos`, enabling UI Apps to call Logos Module methods via the Logos API.
 
@@ -237,21 +237,15 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 The bridge validates that the `LogosAPI` is available and the target Logos Module is connected before dispatching. Results are serialized to JSON (objects, arrays, primitives) for consumption by QML.
 
-### MdiView
+### WorkspaceArea
 
-**Files:** `src/mdiview.h`, `src/mdiview.cpp`
+**Files:** `src/WorkspaceArea.h`, `src/WorkspaceArea.cpp` — plugin side, Qt only
 
-**Purpose:** Multi-document interface workspace. Manages a tab bar with one tab per loaded UI App. Handles tab creation, removal, switching, and custom styling with close buttons.
-
-### MdiChild
-
-**Files:** `src/mdichild.h`, `src/mdichild.cpp`
-
-**Purpose:** Individual tab in the MDI area. Wraps a UI App's widget and manages its lifecycle within the tabbed workspace.
+**Purpose:** Dock-based app workspace, one dock per loaded UI App: `addPluginDock` / `removePluginDock` / `activatePluginDock`. It replaced the earlier `MdiView` / `MdiChild` QMdiArea tab pair, which no longer exist.
 
 ### QML Sandbox
 
-**Files:** `src/restricted/QmlSandbox.h/cpp`, `src/restricted/DenyAllNetworkAccessManager.h/cpp`, `src/restricted/DenyAllNAMFactory.h/cpp`, `src/restricted/DenyAllReply.h/cpp`, `src/restricted/RestrictedUrlInterceptor.h/cpp`
+**Files:** `app/restricted/QmlSandbox.h/cpp`, `app/restricted/DenyAllNetworkAccessManager.h/cpp`, `app/restricted/DenyAllNAMFactory.h/cpp`, `app/restricted/DenyAllReply.h/cpp`, `app/restricted/RestrictedUrlInterceptor.h/cpp`
 
 **Purpose:** Security layer for QML-based UI Apps (`ui_qml` modules), applied by `QmlSandbox::configure()` (the single setup `PluginLoader::loadQmlView` runs on each app's `QQmlEngine`). A `ui_qml` app is meant to be QML/JS only, confined to its own install directory; the sandbox enforces that on three fronts:
 
@@ -268,12 +262,6 @@ The escape and its fix are covered by the `sandbox-test` check (`tests/sandbox/`
 | `DenyAllNAMFactory` | Factory that creates deny-all NAM instances for QML engines |
 | `DenyAllReply` | Network reply that immediately signals error |
 | `RestrictedUrlInterceptor` | URL interceptor: gates file/qmldir resolution to allowed roots (non-existent probe candidates pass through so Qt's module resolution still works; an *existing* path that can't be canonicalised fails closed), and rejects a qmldir under an *untrusted* root that declares a native plugin |
-
-### Main UI Plugin
-
-**Files:** `src/main_ui_plugin.h`, `src/main_ui_plugin.cpp`
-
-**Purpose:** Plugin entry point implementing `IComponent`. Its `createWidget(LogosAPI*)` method creates a `MainContainer`, which in turn creates the `MainUIBackend` and the full UI layout. Registered via `Q_PLUGIN_METADATA`.
 
 ## QML UI Layer
 
@@ -315,21 +303,19 @@ main()
  ├─ logos_core_get_loaded_modules()                    # Log loaded modules
  ├─ LogosAPI("core", nullptr)                          # Create SDK instance
  ├─ Window(&logosAPI)
- │   └─ QPluginLoader loads main_ui plugin
- │       └─ main_ui_plugin::createWidget(&logosAPI)
- │           └─ MainContainer(logosAPI)
- │               ├─ MainUIBackend(logosAPI)
- │               │   ├─ initializeSections()           # Dashboard, Modules, Settings + app sections
- │               │   ├─ m_statsTimer.start(2000)       # Poll module stats every 2s
- │               │   ├─ refreshCoreModules()
- │               │   │   └─ logos_core_refresh_modules()
- │               │   ├─ subscribeToPackageInstallationEvents()
- │               │   │   ├─ logos.package_manager.setUserModulesDirectory(...)
- │               │   │   ├─ logos.package_manager.on("corePluginFileInstalled", ...)
- │               │   │   └─ logos.package_manager.on("uiPluginFileInstalled", ...)
- │               │   └─ fetchUiPluginMetadata()
- │               │       └─ logos.package_manager.getInstalledUiPluginsAsync(callback)
- │               └─ setupUi()                          # Create sidebar + content area + MDI
+ │   └─ setCentralWidget(new MainContainer(&logosAPI))
+ │       ├─ MainUIBackend(logosAPI)
+ │       │   ├─ initializeSections()                   # Dashboard, Modules, Settings + app sections
+ │       │   ├─ m_statsTimer.start(2000)               # Poll module stats every 2s
+ │       │   ├─ refreshCoreModules()
+ │       │   │   └─ logos_core_refresh_modules()
+ │       │   ├─ subscribeToPackageInstallationEvents()
+ │       │   │   ├─ logos.package_manager.setUserModulesDirectory(...)
+ │       │   │   ├─ logos.package_manager.on("corePluginFileInstalled", ...)
+ │       │   │   └─ logos.package_manager.on("uiPluginFileInstalled", ...)
+ │       │   └─ fetchUiPluginMetadata()
+ │       │       └─ logos.package_manager.getInstalledUiPluginsAsync(callback)
+ │       └─ setupUi()                                  # Create sidebar + content area + MDI
  ├─ statsTimer.start(2000)                             # Console stats logging
  ├─ QML Inspector start (if enabled)
  ├─ app.exec()                                         # Qt event loop
@@ -484,7 +470,6 @@ All directory paths are managed via the `LogosBasecampPaths` utility class.
 | `lib/liblogos_core.{so,dylib}` | Core library (from logos-liblogos) |
 | `bin/logos_host` | Module subprocess host (from logos-liblogos) |
 | `modules/` | Embedded Logos Module bundles |
-| `plugins/main_ui/` | Main UI plugin (Basecamp's own UI, not a user-facing UI App) |
 | `plugins/*/` | Embedded UI App bundles |
 
 ### Distribution Artifacts
@@ -516,7 +501,6 @@ nix build '.#app'                  # Standard development build
 nix build '.#bin-bundle-dir'             # Self-contained portable build
 nix build '.#bin-appimage'         # Linux AppImage
 nix build '.#bin-macos-app'        # macOS .app bundle
-nix build '.#bin-macos-dmg'        # macOS DMG
 nix build '.#logos-qt-mcp'         # QML inspector for testing
 ```
 
@@ -632,13 +616,20 @@ Development tool for inspecting the running QML tree over TCP:
 
 ## Continuous Integration
 
-GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every push/PR to `master`:
+Two GitHub Actions workflows run on every push/PR to `master`:
 
-1. Checkout code
-2. Install Nix with flakes enabled
-3. Use cachix cache
-4. Build the application
-5. Run smoke tests
+- **`.github/workflows/build.yml`** ("Build & Release") — builds and smoke-tests
+  the distributable artifacts: an AppImage per Linux architecture and a macOS
+  app bundle. A separate job runs the unit tests, the QML tests, the sandbox
+  test, the integration (UI) tests, the host-services grant guard, and a
+  coverage report.
+- **`.github/workflows/doctests.yml`** — runs the repo's doc-tests across an OS
+  matrix and publishes the execution reports.
+
+Both get Nix and the shared binary cache from
+[`logos-co/setup-nix-cache-action`](https://github.com/logos-co/setup-nix-cache-action),
+which installs Nix with flakes enabled and configures the Attic cache in one
+step. (This replaced a hand-rolled install-Nix + cachix pair.)
 
 ## Supported Platforms
 
