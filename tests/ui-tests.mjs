@@ -137,6 +137,7 @@ test("welcome: first launch shows the welcome page", async (app) => {
       `"Welcome back"=${hasWelcomeBack} (expected exactly one)`);
   }
 });
+
 // Click options that pin a click to a sidebar SECTION button and nothing else.
 //
 // qt-mcp's findAndClick is a breadth-first walk that SUBSTRING-matches the
