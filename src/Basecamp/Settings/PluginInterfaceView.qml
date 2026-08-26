@@ -55,8 +55,9 @@ Item {
             spacing: 16
 
             Button {
+                objectName: "pluginInterface.back"
                 text: "← Back"
-                
+
                 contentItem: LogosText {
                     text: parent.text
                     color: "#ffffff"
@@ -159,8 +160,9 @@ Item {
                                         Item { Layout.fillWidth: true }
 
                                         Button {
+                                            objectName: "pluginInterface.call." + (modelData.name || modelData)
                                             text: "Call"
-                                            
+
                                             contentItem: LogosText {
                                                 text: parent.text
                                                 font.pixelSize: Theme.typography.secondaryText
@@ -292,6 +294,7 @@ Item {
                             clip: true
 
                             TextArea {
+                                objectName: "pluginInterface.result"
                                 text: root.resultText
                                 font.pixelSize: 12
                                 font.family: Theme.typography.publicSans

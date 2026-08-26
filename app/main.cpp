@@ -1,9 +1,9 @@
 #include "window.h"
 #include "logos_api.h"
-#include "token_manager.h"
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
 #include "LogRedirector.h"
+#include "AccessPolicyOption.h"
 #ifdef ENABLE_QML_INSPECTOR
 #include "inspectorserver.h"
 #endif
@@ -17,7 +17,6 @@
 #include <QIcon>
 #include <QDir>
 #include <QStyleHints>
-#include <QTimer>
 #include <QStandardPaths>
 #include <iostream>
 #include <memory>
@@ -26,6 +25,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
+#include "logos_qt_host_core.h"
 #include "logos_provider_object.h"
 #include "qt_provider_object.h"
 #include "BuildInfo.h"
@@ -35,19 +35,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-
-// Replace CoreManager with direct C API functions
-extern "C" {
-    void logos_core_add_modules_dir(const char* modules_dir);
-    void logos_core_set_persistence_base_path(const char* path);
-    void logos_core_set_access_policy(const char* policy_json);
-    void logos_core_start();
-    void logos_core_cleanup();
-    char** logos_core_get_loaded_modules();
-    int logos_core_load_module(const char* module_name, bool with_dependencies);
-    char* logos_core_process_module(const char* module_path);
-    char* logos_core_get_module_stats();
-}
 
 #ifdef Q_OS_UNIX
 // Self-pipe pattern for SIGTERM/SIGINT: the signal handler writes one byte
@@ -86,20 +73,6 @@ static void installUnixSignalHandlers(QApplication& app)
 }
 #endif
 
-// Drain a NULL-terminated char** from liblogos: copy each entry into the
-// returned QStringList and release the heap memory. liblogos allocates with
-// new char[] / new char*[], so delete[] is the correct deallocator.
-QStringList drainModuleNameArray(char** modules) {
-    QStringList result;
-    if (!modules) return result;
-    for (char** p = modules; *p != nullptr; ++p) {
-        result.append(QString::fromUtf8(*p));
-        delete[] *p;
-    }
-    delete[] modules;
-    return result;
-}
-
 int main(int argc, char *argv[])
 {
     // Set logos mode to Local for testing
@@ -126,6 +99,11 @@ int main(int argc, char *argv[])
     app.setApplicationName("LogosBasecamp");
     app.styleHints()->setTabFocusBehavior(Qt::TabFocusAllControls);
 
+    // Inter-module access policy, resolved from the CLI below. Empty ⇒ install
+    // nothing (enforcement off) — Basecamp's default, unchanged. See the
+    // logos_core_set_access_policy call further down.
+    QByteArray accessPolicyJson;
+
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against
     // isolated data trees (plugins, modules, module_data, logs). LOGOS_USER_DIR
@@ -139,10 +117,37 @@ int main(int argc, char *argv[])
                            "modules, module_data, logs for this instance)."),
             QStringLiteral("path"));
         parser.addOption(userDirOption);
+        QCommandLineOption accessPolicyOption(QStringLiteral("access-policy"),
+            QStringLiteral("Inter-module access policy (default: none, no "
+                           "enforcement). 'enforce' turns on deny-by-default: a "
+                           "module may only call the modules it declares as "
+                           "dependencies. Also accepts a path to a JSON policy "
+                           "file, or inline JSON."),
+            QStringLiteral("enforce|path|json"));
+        parser.addOption(accessPolicyOption);
         if (!parser.parse(app.arguments())) {
             std::cerr << parser.errorText().toStdString() << std::endl;
             return 1;
         }
+
+        // The flag wins; LOGOS_ACCESS_POLICY is the way in for a launch that
+        // has no argv to speak of (double-clicked bundle, desktop entry).
+        // Neither present ⇒ stays empty ⇒ enforcement off.
+        const QString accessPolicyArg = parser.isSet(accessPolicyOption)
+            ? parser.value(accessPolicyOption)
+            : QString::fromUtf8(qgetenv("LOGOS_ACCESS_POLICY"));
+        if (!accessPolicyArg.trimmed().isEmpty()) {
+            const auto resolved = LogosBasecamp::resolveAccessPolicy(accessPolicyArg);
+            if (!resolved.ok) {
+                // Abort rather than boot: the operator explicitly asked to lock
+                // this runtime down, and starting anyway would hand them a
+                // wide-open one that looks like it obeyed.
+                std::cerr << resolved.error.toStdString() << std::endl;
+                return 1;
+            }
+            accessPolicyJson = resolved.policyJson.toUtf8();
+        }
+
         if (parser.isSet(userDirOption)) {
             const QString absUserDir =
                 QFileInfo(parser.value(userDirOption)).absoluteFilePath();
@@ -177,34 +182,63 @@ int main(int argc, char *argv[])
     LogosBasecampBuildInfo::logStartupBanner();
     qInfo().noquote() << "Base data directory:" << LogosBasecampPaths::baseDirectory();
 
+    // Everything liblogos requires BEFORE start() is a constructor argument of
+    // the facade, so the ordering constraint below is enforced by the shape of
+    // the type rather than by this comment. Applied in the order set here.
+    logos::host::LogosCore::Config coreConfig;
+
     // Set up module directories for logos core.
     // 1. Embedded modules directory (pre-installed at build time, read-only)
     QString embeddedModulesDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../modules");
-    logos_core_add_modules_dir(embeddedModulesDir.toUtf8().constData());
+    coreConfig.modulesDirs.push_back(embeddedModulesDir.toStdString());
 
     // 2. User-writable modules directory (for runtime installs via the package store)
     QString userModulesDir = LogosBasecampPaths::modulesDirectory();
-    logos_core_add_modules_dir(userModulesDir.toUtf8().constData());
+    coreConfig.modulesDirs.push_back(userModulesDir.toStdString());
 
     // Set persistence base path for core modules
-    logos_core_set_persistence_base_path(
-        LogosBasecampPaths::moduleDataDirectory().toUtf8().constData());
+    coreConfig.persistenceBasePath =
+        LogosBasecampPaths::moduleDataDirectory().toStdString();
 
-    // Access policy temporarily disabled (allow all): passing NULL clears any
-    // policy so no enforcement runs. The enforce mode's derived deny-by-default
-    // gates every ui_qml app's calls to its own backend module, because UI
-    // plugins are loaded out-of-process and aren't tracked as dependents in the
-    // core ModuleRegistry — so they're never in a module's derived allowed-caller
-    // set and get denied (e.g. accounts_ui -> accounts_module). Re-enable once the
-    // access policy is redesigned to account for ui_qml callers.
-    // (Must be set before logos_core_start().)
-    logos_core_set_access_policy(nullptr);
+    // Inter-module access policy. DEFAULT: none — passing NULL clears any
+    // policy so no enforcement runs, and any loaded module may call any other.
+    //
+    // Why off by default: enforce mode's derived deny-by-default gates every
+    // ui_qml app's calls to its own backend module, because UI plugins are
+    // loaded out-of-process and aren't tracked as dependents in the core
+    // ModuleRegistry — so they're never in a module's derived allowed-caller
+    // set and get denied (e.g. accounts_ui -> accounts_module). Until the
+    // derivation accounts for ui_qml callers, turning this on by default would
+    // break the app.
+    //
+    // Operators can still opt IN per launch with `--access-policy enforce`
+    // (or LOGOS_ACCESS_POLICY), and name the ui_qml callers explicitly via a
+    // policy document's `restrictions` — see the README.
+    // (Must be set before logos_core_start() — see the Config note above.)
+    if (accessPolicyJson.isEmpty()) {
+        // nullopt, NOT an empty string. The old call passed NULL explicitly,
+        // which liblogos turns into "clear the policy"; at startup there is no
+        // policy to clear, so declining to set one is the same thing and says
+        // what is meant. An empty std::string would take the clearing path.
+        coreConfig.accessPolicyJson = std::nullopt;
+    } else {
+        qInfo().noquote() << "Installing inter-module access policy:" << accessPolicyJson;
+        coreConfig.accessPolicyJson = std::string(accessPolicyJson.constData(),
+                                                  accessPolicyJson.size());
+    }
+
+    // Heap-allocated deliberately. ~LogosCore is what calls
+    // logos_core_cleanup(), and it has to run at the explicit reset() during
+    // teardown below. A stack object declared here would instead run at the
+    // closing brace of main() — silently moving cleanup to AFTER ~LogosAPI,
+    // which is destroyed on the same unwind.
+    auto core = std::make_unique<logos::qt::QtLogosCore>(argc, argv, std::move(coreConfig));
 
     // Start the core
-    logos_core_start();
+    core->start();
     std::cout << "Logos Core started successfully!" << std::endl;
 
-    bool loaded = logos_core_load_module("package_manager", true);
+    bool loaded = core->loadModule(QStringLiteral("package_manager"));
 
     if (loaded) {
         qInfo() << "package_manager module loaded by default.";
@@ -212,7 +246,7 @@ int main(int argc, char *argv[])
         qWarning() << "Failed to load package_manager module by default.";
     }
 
-    bool downloaderLoaded = logos_core_load_module("package_downloader", true);
+    bool downloaderLoaded = core->loadModule(QStringLiteral("package_downloader"));
     if (downloaderLoaded) {
         qInfo() << "package_downloader module loaded by default.";
     } else {
@@ -220,7 +254,7 @@ int main(int argc, char *argv[])
     }
 
     // Log the initial loaded-module list.
-    const QStringList modules = drainModuleNameArray(logos_core_get_loaded_modules());
+    const QStringList modules = core->loadedModules();
 
     if (modules.isEmpty()) {
         qInfo() << "No modules loaded.";
@@ -233,12 +267,6 @@ int main(int argc, char *argv[])
     }
 
     LogosAPI logosAPI("core", nullptr);
-
-    qDebug() << "LogosAPI: printing keys";
-    QList<QString> keys = logosAPI.getTokenManager()->getTokenKeys();
-    for (const QString& key : keys) {
-        qDebug() << "LogosAPI: Token key:" << key << "value:" << logosAPI.getTokenManager()->getToken(key);
-    }
 
     // Set application icon.
 #ifdef Q_OS_LINUX
@@ -257,17 +285,13 @@ int main(int argc, char *argv[])
 
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
-    auto mainWindow = std::make_unique<Window>(&logosAPI);
+    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get());
     mainWindow->show();
 
 #ifdef ENABLE_QML_INSPECTOR
     // Start QML Inspector server (controlled by QML_INSPECTOR_PORT env var, default 3768)
     InspectorServer::attach(mainWindow.get());
 #endif
-
-    // Set up timer to poll module stats every 2 seconds
-    QTimer* statsTimer = new QTimer(&app);
-    statsTimer->start(2000);
 
     // Run the application
     int result = app.exec();
@@ -285,7 +309,6 @@ int main(int argc, char *argv[])
     // The fix is to install a no-op accessibility update handler before
     // destroying the widget hierarchy, so the platform bridge is never invoked
     // on partially-destroyed objects.
-    statsTimer->stop();
     if (mainWindow) {
         mainWindow->hide();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -311,8 +334,10 @@ int main(int argc, char *argv[])
         QAccessible::installUpdateHandler(previousHandler);
     }
 
-    // Cleanup logos core (plugins, modules, etc.)
-    logos_core_cleanup();
+    // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
+    // logos_core_cleanup(); this reset() is what pins it to exactly here,
+    // before logosAPI is destroyed on the stack unwind.
+    core.reset();
 
     // Flush final output, restore original stdout/stderr, and close the log file.
     LogosBasecampLog::LogRedirector::instance().stop();

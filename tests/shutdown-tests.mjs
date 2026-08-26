@@ -3,7 +3,9 @@
 // logos-basecamp shutdown tests
 //
 // Verifies every supported quit gesture actually terminates the process
-// cleanly (exit code 0, via the orderly teardown in app/main.cpp:224-254).
+// cleanly (exit code 0, via the orderly teardown in app/main.cpp -- the
+// block after app.exec() returns, ending in mainWindow.reset() then
+// core.reset(); it has moved twice, so it is named rather than line-numbered).
 //
 // Each test spawns a fresh app instance because triggering shutdown kills
 // the app — the shared-instance model in ui-tests.mjs doesn't fit.

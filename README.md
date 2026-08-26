@@ -73,6 +73,59 @@ open result/LogosBasecamp.app
 
 Equivalent to setting the `LOGOS_USER_DIR` env var.
 
+#### Inter-module access enforcement (`--access-policy`)
+
+**Default: off.** Without this flag, any loaded module may call any other —
+unchanged behaviour.
+
+`--access-policy enforce` turns on **deny-by-default**: a module may only call
+the modules it declares as dependencies in its `metadata.json`, and any other
+call is refused before it can proceed.
+
+```bash
+./result/bin/LogosBasecamp --access-policy enforce
+```
+
+The startup log states which side it landed on, so a policy that failed to arm
+is visible rather than silently permissive:
+
+```
+Installing inter-module access policy: {"version":1,"mode":"enforce","restrictions":{}}
+Inter-module access enforcement is ON (mode=enforce): deny-by-default — ...
+```
+
+and a refusal names **both** modules, so a denial never presents as a
+mysteriously empty result:
+
+```
+[capability_module] access policy denies 'caller_module' -> 'target_module'
+```
+
+> **Known limitation — read before enabling.** UI plugins (`ui_qml`) load
+> out-of-process and are **not** tracked as dependents in the core module
+> registry, so the derived allow-list never contains them and their calls to
+> their own backend module get denied (e.g. `accounts_ui -> accounts_module`).
+> That is why this is off by default. Until the derivation accounts for
+> `ui_qml` callers, name them explicitly with a policy document.
+
+`--access-policy` also accepts a path to a JSON policy file, or inline JSON,
+where a `restrictions` entry **replaces** the derived allow-list for that
+target:
+
+```bash
+./result/bin/LogosBasecamp --access-policy ./policy.json
+
+./result/bin/LogosBasecamp --access-policy \
+  '{"version":1,"mode":"enforce","restrictions":{"accounts_module":{"allowedCallers":["accounts_ui"]}}}'
+```
+
+`mode` is the switch — only `"enforce"` activates gating, and `enforce` is
+shorthand for exactly `{"version":1,"mode":"enforce","restrictions":{}}`. An
+unreadable file or malformed JSON aborts startup rather than booting wide open.
+Equivalent to setting the `LOGOS_ACCESS_POLICY` env var (the flag wins), which
+is the way in for a launch with no argv — a double-clicked bundle or a desktop
+entry. The same flag and spellings work on the `logoscore` CLI.
+
 #### Development Shell
 
 ```bash
@@ -90,9 +143,9 @@ nix build --extra-experimental-features 'nix-command flakes'
 #### Nix Organization
 
 The nix build system is organized into modular files in the `/nix` directory:
-- `nix/default.nix` - Common configuration and main application build
-- `nix/app.nix` - Application-specific compilation settings
-- `nix/main-ui.nix` - UI components compilation
+- `nix/default.nix` - Common configuration shared by every derivation
+- `nix/app.nix` - The application build
+- `nix/main-ui.nix` - The `main_ui` UI shell plugin
 
 ## Modules
 

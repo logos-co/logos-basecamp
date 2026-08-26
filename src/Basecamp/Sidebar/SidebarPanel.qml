@@ -189,6 +189,7 @@ Control {
         // ("Dev build" / "Portable build"). Selectable so the release tag can
         // be copied out of the sidebar.
         LogosSelectableText {
+            objectName: "sidebar.buildLabel"
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter
             horizontalAlignment: TextEdit.AlignHCenter

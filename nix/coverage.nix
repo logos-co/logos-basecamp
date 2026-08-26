@@ -12,9 +12,10 @@
 #
 # Scope caveat: gcovr only sees files that were compiled into the test
 # binaries. Sources no unit test links at all (PackageCoordinator,
-# UIPluginManager, PluginLoader, MainContainer, MainUIBackend) produce no
+# UIPluginManager, PluginLoader, MainUIBackend app-side; MainContainer and
+# MainShellView shell-side) produce no
 # .gcno and therefore do NOT appear in the report as 0% — the percentage here
-# is "coverage of the code under unit test", not of all of src/. Adding a
+# is "coverage of the code under unit test", not of all of app/. Adding a
 # source to tests/CMakeLists.txt is what pulls it into the denominator.
 { pkgs, src, logosPackageHeaders, failUnderLine ? 0, failUnderBranch ? 0 }:
 
@@ -76,10 +77,16 @@ pkgs.stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out
 
-    # --filter src/ keeps the report to production code (the tests' own
-    # translation units and CMake's *_autogen moc stubs are excluded).
+    # --filter keeps the report to production code (the tests' own translation
+    # units and CMake's *_autogen moc stubs are excluded). BOTH trees are
+    # listed: the shell split moved AppsFilterProxy, ModulesFilterProxy,
+    # InstallEnums, ShortcutBridge and WorkspaceArea into src/, and all five are
+    # still compiled into unit-test binaries via tests/CMakeLists.txt's srcdeps.
+    # With app/ alone their .gcno/.gcda were produced and then discarded, so
+    # four of the ten test binaries contributed nothing to the numbers.
     gcovr \
       --root "$PWD" \
+      --filter 'app/' \
       --filter 'src/' \
       --exclude '.*_autogen.*' \
       --gcov-executable "${gcovExecutable}" \

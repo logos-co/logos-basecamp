@@ -9,16 +9,36 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QMetaObject>
 #include <QPixmap>
 #include <QPointer>
 #include <QQmlContext>
 #include <QQuickWidget>
 #include <QSet>
+#include <QTimer>
 #include <QUrl>
 
 #include "LogosQmlBridge.h"
 
 #include <ViewModuleHost.h>
+
+namespace {
+
+// How long an in-process UI plugin that answers Asynchronous from
+// aboutToUnload() gets before we tear its widget down anyway.
+//
+// Same 3000ms the out-of-process module host spends
+// (logos-module-loader-qt/src/host/logos_host.cpp:230) so a module author has
+// one number to reason about rather than two. It is not the same *kind* of
+// budget, though: there it is carved out of the container's 5s SIGKILL window,
+// and overrunning it gets the module killed. Nothing kills Basecamp at the end
+// of this one. The bound is here so a plugin that answers Asynchronous and
+// then never calls unloadFinished() cannot pin its widget on screen — and,
+// through the uninstall cascade that calls us, stall a package operation —
+// indefinitely.
+constexpr int kUnloadGraceMs = 3000;
+
+} // namespace
 
 UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
                                  CoreModuleManager* coreModuleManager,
@@ -41,6 +61,20 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
 
 UIPluginManager::~UIPluginManager()
 {
+    // Safety net for the path that does not call shutdown() first. Idempotent:
+    // shutdown() returns immediately if it has already run.
+    shutdown();
+}
+
+void UIPluginManager::shutdown()
+{
+    // Idempotent — MainUIBackend::beginShutdown() normally gets here first,
+    // while the shell's widget tree is still intact, and the destructor then
+    // finds nothing left to do.
+    if (m_shuttingDown) {
+        return;
+    }
+
     // Tell unloadUiModule/unloadCoreModule to bypass the cascade-
     // confirmation fast-path — there's no user to confirm and no live
     // QML layer to drive the dialog. Otherwise the first loaded module
@@ -240,7 +274,7 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     // it may not yet be Valid, but Qt signal/slot connections work regardless
     // of replica state — the connection will fire when the source emits.
     if (type == UIPluginType::UiQml) {
-        auto* qw = m_qmlPluginWidgets.value(name);
+        QQuickWidget* qw = m_qmlPluginWidgets.value(name);
         if (qw) {
             auto* bridge = qobject_cast<LogosQmlBridge*>(
                 qw->rootContext()->contextProperty(QStringLiteral("logos"))
@@ -659,11 +693,268 @@ void UIPluginManager::cancelUnloadCascade(const QString& moduleName)
     m_pendingUnload = {};
 }
 
+// The in-process QObject that could carry the aboutToUnload() hook for
+// `moduleName`, or nullptr when there is none.
+//
+// Only LEGACY (type: ui) plugins have one. m_loadedUiModules is populated
+// exclusively from PluginLoader's Legacy branch — its ui_qml branch emits
+// pluginLoaded() with a null IComponent* (PluginLoader.cpp:385) — so a
+// non-null entry here is always an in-process QPluginLoader instance living in
+// this address space.
+//
+// ui_qml gets nullptr, and that is a structural fact rather than an omission
+// on this path. A ui_qml backend plugin is loaded by QPluginLoader inside the
+// ui-host CHILD PROCESS (logos-view-module-runtime/ui-host/main.cpp). All
+// Basecamp holds is the QQuickWidget showing its QML view — QML, not a QObject
+// plugin — and a ViewModuleHost, which is a QProcess wrapper, not the plugin.
+// There is nothing here to ask, and asking the wrapper would be theatre. That
+// path's grace period belongs in ui-host, between its app.exec() returning and
+// `delete pluginObject`, which is the same seam logos_host.cpp:409 uses, and
+// the budget for it already exists: ViewModuleHost::stop() gives the child
+// 3000ms to exit before it resorts to kill(). That is where ui-host runs
+// logos::runPluginAboutToUnload — so a ui_qml backend DOES get the hook, just
+// not from this process.
+//
+// IComponent is a plain interface (Q_DECLARE_INTERFACE, no QObject base), so
+// the QObject has to be recovered by cross-cast rather than held directly.
+// The concrete plugin class multiply-inherits QObject, which is what makes the
+// dynamic_cast succeed.
+QObject* UIPluginManager::unloadHookTarget(const QString& moduleName) const
+{
+    return dynamic_cast<QObject*>(m_loadedUiModules.value(moduleName));
+}
+
 void UIPluginManager::teardownUiPluginWidget(const QString& moduleName)
 {
     // Idempotent — each of these maps may or may not hold an entry. Nothing
     // below cares about insertion order; we just drop every structural
     // reference the UI side may hold.
+    const bool wasLoaded = m_loadedUiModules.contains(moduleName)
+                        || m_qmlPluginWidgets.contains(moduleName)
+                        || m_uiModuleWidgets.contains(moduleName)
+                        || m_viewModuleHosts.contains(moduleName);
+    if (!wasLoaded) return;
+
+    if (m_deferredTeardowns.contains(moduleName)) {
+        if (m_deferredTeardowns.value(moduleName).widget.data()
+                == m_uiModuleWidgets.value(moduleName)) {
+            // A deferral for this exact widget is already in flight. The maps
+            // are still populated — that is exactly what wasLoaded just saw —
+            // but the decision to tear down has been taken and is waiting on
+            // unloadFinished() or the deadline. Returning here is what keeps
+            // the documented idempotence honest in both directions: a second
+            // call starts no second teardown, and it does not tear down
+            // underneath the one already running either.
+            qDebug() << "Teardown of" << moduleName << "already deferred; ignoring re-entry";
+            return;
+        }
+        // Stale: it guards a widget that is no longer the loaded one, which
+        // means the module was torn down by some other path and reloaded
+        // inside the grace period. Drop it before arming a new deferral —
+        // leaving it would let its deadline fire into the FRESH entry and tear
+        // down a widget that had only just been asked.
+        qDebug() << "Discarding stale deferred teardown of" << moduleName
+                 << "— the module was reloaded while it waited";
+        takeDeferredTeardown(moduleName);
+    }
+
+    // Ask the plugin BY NAME, never through the vtable, and that is the whole
+    // reason this is shaped the way it is. IComponent — the interface every
+    // legacy UI plugin is compiled against — is a header, compiled separately
+    // into every plugin binary; adding a virtual to it would shift the vtable
+    // under every plugin already built and turn a missing hook into undefined
+    // behaviour instead of a no-op. initLogos is delivered by name for the
+    // same reason (ui-host/main.cpp does exactly this).
+    //
+    // A plugin that does not declare the hook simply has no such meta-method
+    // and we tear down as before. That is the common case — today it is EVERY
+    // case — and it stays free, including free of log noise: the index probe
+    // is there because invokeMethod on a missing method is a qWarning, not a
+    // quiet false, and every teardown of every existing plugin would print
+    // one. ui-host guards its initLogos call the same way.
+    QObject* plugin = unloadHookTarget(moduleName);
+    int flag = 0;  // LogosShutdown::Synchronous
+    const bool answered =
+        plugin
+        && plugin->metaObject()->indexOfMethod("aboutToUnload()") != -1
+        && QMetaObject::invokeMethod(plugin, "aboutToUnload",
+                                     Qt::DirectConnection, Q_RETURN_ARG(int, flag));
+
+    if (!answered || flag == 0) {
+        teardownUiPluginWidgetNow(moduleName);
+        return;
+    }
+
+    // Asynchronous, but we are on the shutdown path: ~UIPluginManager runs
+    // after QCoreApplication::exec() has returned, so neither a queued
+    // unloadFinished() nor a QTimer deadline can ever be delivered. Deferring
+    // here would not be slow, it would be permanent. The plugin still got told
+    // it is going away, which is the half of the hook that works without an
+    // event loop; it just does not get the wait.
+    if (m_shuttingDown) {
+        qWarning() << "UI plugin" << moduleName
+                   << "returned Asynchronous from aboutToUnload() during shutdown;"
+                      " no event loop left to wait on, tearing down now";
+        teardownUiPluginWidgetNow(moduleName);
+        return;
+    }
+
+    if (!beginDeferredTeardown(moduleName, plugin)) {
+        teardownUiPluginWidgetNow(moduleName);
+        return;
+    }
+
+    // Deferred. teardownUiPluginWidgetNow runs from resumeDeferredTeardown.
+}
+
+// Arm the unloadFinished()/deadline race.
+//
+// This deliberately does NOT call logos::runPluginAboutToUnload
+// (logos-plugin-qt/cpp/logos_plugin_unload.h), the shared helper the two
+// out-of-process hosts use, and its own header says why: "Call this AFTER the
+// application event loop has returned […] the nested event loop below is only
+// safe once the outer exec() is done." Neither host it serves has an outer
+// loop left — logos_host runs it after QtApp::exec() returns, ui-host after
+// app.exec() returns. We are the opposite case in every respect: the live UI
+// thread, inside a running application, typically from a user action, and the
+// body we are guarding destroys widgets (pluginWindowRemoveRequested,
+// destroyWidget, deleteLater, delete ViewModuleHost). Re-entering the event
+// loop in the middle of widget destruction is the class of bug that has
+// already cost this codebase a SIGSEGV — the QtRO read-stack re-entrancy in
+// the wallet, fixed by deferring through QTimer::singleShot(0). So the
+// algorithm is the same as the helper's and the wait is not: defer, never
+// block.
+bool UIPluginManager::beginDeferredTeardown(const QString& moduleName, QObject* plugin)
+{
+    // The widget is the staleness token the continuation re-validates against,
+    // so a deferral without one has no way to tell "still mine" from "someone
+    // else's". PluginLoader never emits pluginLoaded for a legacy plugin
+    // without a widget (PluginLoader.cpp:193-206), so this is a guard, not a
+    // path we expect to take.
+    QWidget* widget = m_uiModuleWidgets.value(moduleName);
+    if (!widget) return false;
+
+    DeferredTeardown deferred;
+    deferred.widget = widget;
+    deferred.plugin = plugin;
+
+    // Reached by NAME for the same ABI reason as the hook itself. A plugin
+    // that says Asynchronous but exposes no way to say it is done would
+    // otherwise cost every one of its teardowns the full grace period waiting
+    // for a signal that cannot arrive — so we say so and fall back to
+    // synchronous.
+    deferred.finished = connect(plugin, SIGNAL(unloadFinished()),
+                                this, SLOT(onUiPluginUnloadFinished()));
+    if (!deferred.finished) {
+        qWarning() << "UI plugin" << moduleName
+                   << "returned Asynchronous from aboutToUnload() but has no"
+                      " unloadFinished() signal; not waiting";
+        return false;
+    }
+
+    deferred.deadline = new QTimer(this);
+    deferred.deadline->setSingleShot(true);
+    connect(deferred.deadline, &QTimer::timeout, this, [this, moduleName]() {
+        resumeDeferredTeardown(moduleName, false);
+    });
+    deferred.elapsed.start();
+
+    m_deferredTeardowns.insert(moduleName, deferred);
+    deferred.deadline->start(kUnloadGraceMs);
+
+    qDebug() << "UI plugin" << moduleName
+             << "returned Asynchronous from aboutToUnload(); deferring teardown up to"
+             << kUnloadGraceMs << "ms";
+    return true;
+}
+
+void UIPluginManager::onUiPluginUnloadFinished()
+{
+    // Routed by sender() because the string-based connect() this arrives
+    // through cannot carry a captured name. The map holds one entry per
+    // in-flight deferral — a handful at the very most — so the scan is free.
+    QObject* plugin = sender();
+    if (!plugin) return;
+
+    for (auto it = m_deferredTeardowns.cbegin(); it != m_deferredTeardowns.cend(); ++it) {
+        if (it.value().plugin != plugin) continue;
+        // Copy the key: resumeDeferredTeardown erases the entry, which would
+        // leave a reference into the map dangling for the rest of the call.
+        const QString moduleName = it.key();
+        resumeDeferredTeardown(moduleName, true);
+        return;
+    }
+    // No deferral for this sender: the deadline already won, or the module was
+    // torn down by another path. Nothing to do — unloadFinished() is
+    // documented as safe to call when nobody is listening.
+}
+
+// Remove the deferral for `moduleName` and disarm both of its wires, returning
+// what it held (a default-constructed entry, whose `plugin` is null, when there
+// was none). Removing the entry is the one-shot guard: whichever of the two
+// wires lost the race finds nothing here.
+UIPluginManager::DeferredTeardown
+UIPluginManager::takeDeferredTeardown(const QString& moduleName)
+{
+    const auto it = m_deferredTeardowns.constFind(moduleName);
+    if (it == m_deferredTeardowns.cend()) return {};
+    const DeferredTeardown deferred = it.value();
+    m_deferredTeardowns.remove(moduleName);
+
+    // Disarm the loser explicitly rather than relying on it finding an empty
+    // map, so a plugin that keeps emitting unloadFinished() cannot keep
+    // waking us.
+    QObject::disconnect(deferred.finished);
+    if (deferred.deadline) {
+        deferred.deadline->stop();
+        // deleteLater, never delete: the timer owns the lambda whose frame we
+        // may be standing in, and that lambda owns the QString our callers
+        // still hold by reference.
+        deferred.deadline->deleteLater();
+    }
+    return deferred;
+}
+
+void UIPluginManager::resumeDeferredTeardown(const QString& moduleName, bool finishedInTime)
+{
+    const DeferredTeardown deferred = takeDeferredTeardown(moduleName);
+    if (!deferred.plugin) return;  // the other wire already won
+
+    if (finishedInTime) {
+        qDebug() << "UI plugin" << moduleName << "finished unloading in"
+                 << deferred.elapsed.elapsed() << "ms";
+    } else {
+        // Loud, because it costs every teardown of this plugin the full grace
+        // period and the plugin is the only thing that can fix it.
+        qWarning() << "UI plugin" << moduleName << "did not finish unloading within"
+                   << kUnloadGraceMs << "ms; proceeding";
+    }
+
+    // The continuation re-reads the maps instead of using anything captured
+    // when the deferral was armed. Over a grace period this long the maps are
+    // the only source of truth: unloadUiModuleImpl does not consult
+    // m_deferredTeardowns, so a user-driven unload can have torn the module
+    // down already, and a reload can have put a different widget behind the
+    // same name — QPluginLoader hands back the same cached instance for a
+    // reloaded library, so the IComponent* alone would not tell those apart.
+    // The widget would; hence the QPointer token. A captured raw QWidget*
+    // would be worse than useless here: the ui_qml branch of the body below
+    // destroys through deleteLater(), so the address could already belong to
+    // something else.
+    if (m_uiModuleWidgets.value(moduleName) != deferred.widget.data()) {
+        qDebug() << "Abandoning deferred teardown of" << moduleName
+                 << "— it was torn down or reloaded while we waited";
+        return;
+    }
+
+    teardownUiPluginWidgetNow(moduleName);
+}
+
+void UIPluginManager::teardownUiPluginWidgetNow(const QString& moduleName)
+{
+    // Re-checked rather than assumed: on the deferred path this runs up to a
+    // grace period after teardownUiPluginWidget looked, and the shutdown path
+    // (~UIPluginManager → unloadUiModuleImpl) can have got here first.
     const bool wasLoaded = m_loadedUiModules.contains(moduleName)
                         || m_qmlPluginWidgets.contains(moduleName)
                         || m_uiModuleWidgets.contains(moduleName)

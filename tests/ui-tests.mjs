@@ -40,14 +40,29 @@ process.on("exit", () => {
   }
 });
 
+// Shared with the dedicated `host-services-test` check. Registered here as well
+// because this suite is the one CI already runs by name (`nix build
+// .#integration-test` / `.#integration-test-bundle`), and it is the suite that
+// reported 16 passed / 0 failed against a build where capability_module never
+// received its host-services grant and 34 gated calls were refused.
+const { assertHostServicesGrantReached } = await import(
+  resolve(__dirname, "host-services-assert.mjs")
+);
+
 // Helper: click a plugin's sidebar icon and wait for its UI to load.
 // Plugins load asynchronously after clicking, so we wait for expected
 // content to appear before proceeding.
+//
+// `opts` is now forwarded to app.click(). It used to be declared and then
+// silently dropped; no caller passed anything, so nothing visibly broke — but
+// it meant a caller could not disambiguate its click even if it wanted to,
+// which is exactly what the package_manager_ui test needed. See sidebarSection.
 async function openPlugin(app, name, expectedTexts, opts = {}) {
-  await app.click(name);
+  const { timeout = 10000, ...clickOpts } = opts;
+  await app.click(name, clickOpts);
   await app.waitFor(
     async () => { await app.expectTexts(expectedTexts); },
-    { timeout: 10000, interval: 500, description: `"${name}" UI to load` }
+    { timeout, interval: 500, description: `"${name}" UI to load` }
   );
 }
 
@@ -201,6 +216,32 @@ test('welcome: "Install now" navigates to Applications', async (app) => {
       `${JSON.stringify(visible)} (expected false)`);
   }
 });
+// Click options that pin a click to a sidebar SECTION button and nothing else.
+//
+// qt-mcp's findAndClick is a breadth-first walk that SUBSTRING-matches the
+// `text` property and stops at the first object cmdClick accepts — and
+// cmdClick on a QWidget can never fail, it just posts a mouse event at the
+// widget's centre and reports success. MainContainer's PMUI placeholder is a
+// QLabel reading "Loading Package Manager…", which contains "Package Manager"
+// and sits SHALLOWER in that walk than the sidebar's QML button
+// (MainContainer > contentArea > QStackedWidget > placeholder > QLabel, vs
+// the sidebar's Control > contentItem > ColumnLayout > delegate).
+//
+// So `app.click("Package Manager")` clicked the placeholder label, reported
+// success, and left the section index untouched. Measured, before this fix:
+//
+//   clicked -> {"matchedText":"Loading Package Manager…","matchedType":"QLabel"}
+//   MainContainer: Active section index changed to 1 / 3   (never 2)
+//   ...no "Loading UI module: package_manager_ui", no ui-host, ever
+//
+// With { exact: true, type: "SidebarCircleButton" } it resolves to the real
+// button and the section actually opens:
+//
+//   clicked -> {"matchedText":"Package Manager","matchedType":"SidebarCircleButton_QMLTYPE_<n>"}
+//   MainContainer: Active section index changed to 2
+//   Loading UI module: "package_manager_ui" -> ViewModuleHost: spawning ui-host
+//   -> Successfully loaded UI module: "package_manager_ui"
+const sidebarSection = { exact: true, type: "SidebarCircleButton" };
 
 // --- Package Manager ---
 //
@@ -208,10 +249,53 @@ test('welcome: "Install now" navigates to Applications', async (app) => {
 // in UIPluginManager::launcherApps); it now lives behind the dedicated
 // "Package Manager" sidebar section button, which lazy-loads PMUI into
 // MainContainer's QStackedWidget slot 2 on first click.
-test("package_manager_ui: open and verify categories", async (app) => {
-  // Offscreen CI: logos-qt-mcp findByProperty sees "Reload" but not the Install label
-  // (Row contentItem). Assert Reload only; the UI itself is unchanged.
-  await openPlugin(app, "Package Manager", ["Reload"]);
+test("package_manager_ui: section click loads PMUI's own QML", async (app) => {
+  // This used to assert ["Reload"], which is NOT evidence of anything: the
+  // Reload button is rendered by basecamp's OWN InspectorPanelHeader.qml:85
+  // and AppManagerPanelHeader.qml:71, inside ContentViews.qml, whose
+  // StackLayout instantiates every page whether or not it is visible. So
+  // "Reload" was in the object tree from startup, and the assertion held even
+  // though PMUI had never been loaded, its dylib had never been mapped and
+  // ui-host had never been spawned — see sidebarSection above.
+  //
+  // These two strings come from PMUI itself and from nowhere else:
+  //   "Manage your plugins and packages." — logos-package-manager-ui
+  //                                         src/qml/Panels/HeaderBar.qml
+  //   "Types"                             — src/qml/Panels/CategorySidebar.qml
+  // Neither appears anywhere in basecamp's own QML, so neither can be
+  // satisfied unless PMUI's QML is live in MainContainer's stack slot 2 —
+  // which requires the plugin to have loaded and its ui-host to be up.
+  //
+  // 45s, not the default 10s: the load spawns a ui-host process, waits on its
+  // ready handshake (PluginLoader gives that 30s) and only then compiles the
+  // QML.
+  await openPlugin(app, "Package Manager",
+                   ["Manage your plugins and packages.", "Types"],
+                   { ...sidebarSection, timeout: 45000 });
+
+  // The placeholder QLabel is removed from the stack the moment PMUI's real
+  // widget is inserted (MainContainer's pluginWindowRequested intercept), so
+  // its absence is a second, independent witness that the swap happened —
+  // and it is exactly the object the old bare click was hitting.
+  const stillPlaceholder = await app.findByProperty("text", "Loading Package Manager…");
+  if ((stillPlaceholder.matches || []).length > 0) {
+    throw new Error("PMUI placeholder is still in the stack — the real widget never arrived");
+  }
+});
+
+// --- Host-services grant ---
+//
+// The test above proves PMUI's QML is LIVE. It says nothing about whether PMUI
+// can actually TALK to anything, and that gap is why this suite certified a
+// build in which capability_module had been denied its token_registry /
+// token_delivery grant: ui-host's every call came back
+// "ModuleProxy: rejecting unauthorized call" (34 of them), PMUI rendered its
+// chrome over an empty backend, and all 16 tests still passed.
+//
+// This one asserts the opposite direction — an outcome only a SUCCESSFUL
+// privileged operation can produce. See tests/host-services-assert.mjs.
+test("host-services: package_manager_ui completes a capability-gated call chain", async (app) => {
+  await assertHostServicesGrantReached(app, { timeout: 90000, log: console.log });
 });
 
 test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {
@@ -278,7 +362,15 @@ async function openModuleInspector(app) {
 test("apps inspector: shows installed UI plugins", async (app) => {
   await openAppsInspector(app);
   await app.waitFor(
-    async () => { await app.expectTexts(["Main UI", "Package Manager"]); },
+    // Asserting ["Package Manager"] alone is vacuous: the sidebar's own
+    // section button carries exactly that text, so it holds with the table
+    // completely empty. Assert the RAW module name, which
+    // AppsInspectorView.qml:187-192 renders in the row
+    // (`visible: rowItem.label !== rowItem.name`). Measured on a fresh app:
+    //   findByProperty(text,"Package Manager")   -> 2  (SidebarCircleButton, row)
+    //   findByProperty(text,"package_manager_ui")-> 1  (the row's LogosText)
+    //   findByProperty(text,"Main UI")           -> 0  (not an installed plugin)
+    async () => { await app.expectTexts(["package_manager_ui"]); },
     { timeout: 10000, interval: 500, description: "Apps Inspector list to populate" }
   );
 });
@@ -377,16 +469,21 @@ test("module inspector: leaving and returning preserves loaded state", async (ap
 test("sidebar: open multiple sections sequentially without failure", async (app) => {
   const sections = [
     { name: "Applications",    expect: ["Install and manage applications."] },
-    { name: "Package Manager", expect: ["Reload"] },
+    // Was ["Reload"] — rendered by basecamp's own panel headers regardless of
+    // PMUI, so this leg of the walk asserted nothing. PMUI's header subtitle
+    // can only come from PMUI. Every click here goes through sidebarSection
+    // for the reason documented at the top of this file.
+    { name: "Package Manager", expect: ["Manage your plugins and packages."] },
     { name: "Settings",        expect: ["Manage modules, apps and dashboards.", "Sections"] },
   ];
 
   for (const section of sections) {
-    await openPlugin(app, section.name, section.expect);
+    await openPlugin(app, section.name, section.expect,
+                     { ...sidebarSection, timeout: 45000 });
   }
 
   for (const section of sections) {
-    await app.click(section.name);
+    await app.click(section.name, sidebarSection);
     await app.waitFor(
       async () => { await app.expectTexts(section.expect); },
       { timeout: 10000, interval: 500, description: `"${section.name}" still accessible` }
