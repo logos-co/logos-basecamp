@@ -236,6 +236,7 @@ set(PROJECT_SOURCES
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
     utils/DependencyBlocker.h
+    utils/DependencyEntry.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
