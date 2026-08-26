@@ -26,6 +26,9 @@ AbstractButton {
     property bool hasMissingDeps: false
     property string appName: ""
 
+    // Test hook: whether this app is the front-most (active) one.
+    readonly property bool active: checked
+
     implicitHeight: 50
     hoverEnabled: true
 

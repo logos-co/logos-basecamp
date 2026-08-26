@@ -355,6 +355,15 @@
           #    aarch64-darwin host without one.)
           binBundleDir = withMainProgram (dirBundler appDistributed);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
+
+          # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
+          integrationTest = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          integrationTestBundle = import ./nix/integration-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
         in
         {
           # Individual outputs.
@@ -438,7 +447,7 @@
           };
 
           # Integration test (UI tests via Qt Inspector)
-          integration-test = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          integration-test = integrationTest;
 
           # Host-services grant guard. Asserts that a NON-"core" identity
           # (ui-host running package_manager_ui) actually completes a
@@ -453,7 +462,11 @@
 
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
-          shutdown-test = import ./nix/shutdown-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
+          shutdown-test = import ./nix/shutdown-test.nix {
+            inherit pkgs src logosQtMcp;
+            appPkg = app;
+            uiTestRun = if pkgs.stdenv.isDarwin then integrationTestBundle else integrationTest;
+          };
 
           # Default package
           default = app;

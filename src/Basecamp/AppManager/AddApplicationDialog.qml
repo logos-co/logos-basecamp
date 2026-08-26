@@ -289,6 +289,7 @@ Dialog {
             }
 
             LogosIconButton {
+                objectName: "addApplicationDialog.closeButton"
                 iconSource: LogosIcons.close
                 size: 28
                 iconSize: 14
@@ -416,6 +417,7 @@ Dialog {
 
                 LogosButton {
                     id: actionButton
+                    objectName: "addApplicationDialog.primaryButton"
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 110
                     Layout.preferredHeight: 40
@@ -494,6 +496,7 @@ Dialog {
         // On failure, show the error here; falls back to a generic line if the
         // backend didn't carry a reason.
         LogosText {
+            objectName: "addApplicationDialog.errorText"
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
@@ -510,6 +513,7 @@ Dialog {
         // Resolver couldn't resolve one or more deps. Surfaced as a
         // warning-tone line
         LogosText {
+            objectName: "addApplicationDialog.resolutionBanner"
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large

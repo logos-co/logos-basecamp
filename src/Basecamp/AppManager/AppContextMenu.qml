@@ -7,6 +7,8 @@ import Basecamp.Backend 1.0
 LogosMenu {
     id: root
 
+    objectName: "appContextMenu"
+
     // Plain object snapshot of the row: name, displayName, repositoryUrl,
     // isInstalled, installStage, installStatus, installType. Set via
     // openFor() — never bound to a delegate's `model`, which would dangle

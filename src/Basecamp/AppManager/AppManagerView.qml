@@ -108,6 +108,7 @@ Rectangle {
 
             LogosSearchBar {
                 id: searchBar
+                objectName: "appManager.searchField"
                 Layout.alignment: Qt.AlignRight
                 Layout.preferredWidth: 605
                 Layout.minimumWidth: 200
@@ -161,6 +162,7 @@ Rectangle {
 
                 delegate: LogosItemDelegate {
                     id: cell
+                    objectName: "appManager.category." + modelData
                     width: ListView.view.width
                     text: modelData
                     highlighted: ListView.isCurrentItem
@@ -205,6 +207,7 @@ Rectangle {
                     // AND there are no local-only installed rows to fall back on.
                     // If either exists, we render the grid instead.
                     EmptyView {
+                        objectName: "appManager.emptyView"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         visible: root.repositories.length === 0

@@ -492,7 +492,7 @@ void Window::closeEvent(QCloseEvent *event)
             );
         }
     } else {
-        // If system tray is not available, quit normally
+        // No tray: close only hides — setQuitOnLastWindowClosed(false) keeps the app running.
         event->accept();
     }
 }
