@@ -5,197 +5,21 @@
     logos-nix.url = "github:logos-co/logos-nix";
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
-    # Unpinned: feat/sdk-codegen-b3-d11 merged (logos-cpp-sdk#138), so the B3/B4
-    # SDK split and the generator entry points the module inputs below call are
-    # on master.
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
-    logos-cpp-sdk.inputs.logos-protocol.follows = "logos-protocol";
-    # Unpinned: feat/per-client-token-store merged (logos-protocol#59), so
-    # TokenManager::forIdentity/isolateIdentity — which logos-qt-host calls — are
-    # on master, along with the host-services C ABI.
-    logos-protocol = {
-      url = "github:logos-co/logos-protocol";
-      inputs.logos-nix.follows = "logos-nix";
-    };
-    # The Qt HOST RUNTIME — LogosAPI, LogosAPIProvider, the LogosProviderBase
-    # macros and the legacy QMetaObject adapter — that LogosBasecamp links. It
-    # lived in logos-qt-sdk until the host split moved it here.
-    #
-    # NOTE: the runtime is no longer the only thing basecamp takes from
-    # logos-qt-sdk — see the logos-qt-sdk input below. Taking the runtime from
-    # BOTH would put two copies of the same 392 symbols on the link, which is
-    # why that input is headers-only and links nothing.
-    #
-    # Unpinned: feat/b4-qt-host-windows-target merged (logos-plugin-qt#19), so
-    #  logos-qt-host is on master for every target. One master rev means one
-    # logos-qt-host in the closure, which is what the rev pin was protecting.
-    logos-plugin-qt = {
-      url = "github:logos-co/logos-plugin-qt";
-      inputs.logos-nix.follows = "logos-nix";
-      inputs.logos-protocol.follows = "logos-protocol";
-      inputs.logos-module.follows = "logos-module";
-    };
-    # logos-qt-sdk, HEADERS ONLY. It owns the Qt<->lp SEAM HEADERS
-    # (logos_qt_lp_bridge.h, logos_qt_wire.h) that are NOT part of the host
-    # runtime, and basecamp compiles a wrapper that opens with
-    # `#include "logos_qt_lp_bridge.h"`:
-    #
-    #   nix/app.nix copies ${logosPackageManagerModule}/include/* into
-    #   app/generated/, and since B5 the builder emits that Qt-typed dependency
-    #   wrapper as a VENEER over the lp path. app/generated/package_manager_api.cpp
-    #   therefore needs the seam header, and logos-qt-host does not ship it.
-    #
-    # This is the same reason logos-test-modules and logos-test-framework keep
-    # the input; only pure HOSTS (logos-standalone-app, logos-view-module-runtime)
-    # can drop it, because they load module plugins rather than compiling a
-    # module's dependency wrapper.
-    #
-    # Nothing links a logos-qt-sdk archive here — after B2a it is an INTERFACE
-    # library, and app/CMakeLists.txt consumes only its include directory.
-    #
-    # 8a06b870 is the tip of feat/sdk-codegen-b3-d11 and is the same rev
-    # logos-test-framework and the workspace pin; a different rev would put a
-    # second logos-qt-sdk in the closure.
-    # Unpinned: feat/sdk-codegen-b3-d11 merged (logos-qt-sdk#33). This pin was
-    # kept byte-identical to logos-test-framework's and the workspace's by hand,
-    # because NOTHING here makes logos-qt-sdk follow — and the convention had
-    # already drifted (logos-module-builder pinned aca2951, not 8a06b870), which
-    # is exactly the second-logos-qt-sdk-in-the-closure this guarded against.
-    # Tracking master puts every consumer on one rev structurally.
-    logos-qt-sdk = {
-      url = "github:logos-co/logos-qt-sdk";
-      inputs.logos-nix.follows = "logos-nix";
-      inputs.logos-protocol.follows = "logos-protocol";
-      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
-      inputs.logos-plugin-qt.follows = "logos-plugin-qt";
-    };
-    # win_dll_search.h (included unconditionally by app/PluginLoader.cpp) arrives
-    # in logos-module's MODULE_LIB_HEADERS from fcaaf78 "fix(windows): resolve a
-    # plugin's private DLLs from its own directory". An older rev fails the build
-    # on EVERY platform, not just Windows — the header is installed unguarded.
+    logos-protocol.url = "github:logos-co/logos-protocol";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk";
     logos-module.url = "github:logos-co/logos-module";
-    # The Qt-plugin module loader: the QtPluginFormatLoader that liblogos_core
-    # links AND the logos_host binary this app ships (nix/app.nix copies it out
-    # of ${logosLiblogos}/bin, which is just liblogos re-exporting this
-    # package's bin/ — see logos-liblogos/nix/bin.nix).
-    #
-    # Declared HERE, as a top-level input, purely so `logos-liblogos.inputs.
-    # default-module-loader` below has something to follow. liblogos's own lock
-    # pins e648735, the commit BEFORE the host-services grant, and that is the
-    # one hop of this chain basecamp was missing: 06134bfc is what teaches
-    # logos_host the `--host-services` flag, stamps it as the `hostServices`
-    # property on the LogosAPI object (right after loadModule()'s name check, so
-    # the identity the grant is bound to is already verified), and holds the
-    # host-side name-bound policy in QtPluginFormatLoader::buildArguments.
-    #
-    # Without it, capability_module at 07dba1f asks for `token_registry` and
-    # never receives it, so it fails CLOSED and every gated call becomes
-    # "ModuleProxy: rejecting unauthorized call". The module half of the chain
-    # is already in place: the plugin's generated glue reads that property and
-    # calls logos_module_grant_host_services -> lp_grant_host_services in its
-    # OWN image (verified with nm on the built plugin, not with strings).
-    #
-    # logos-protocol MUST follow, exactly as liblogos declares it for this same
-    # input: this loader's own lock pins protocol 03842db, which predates
-    # lp_grant_host_services entirely, and the emitted glue's
-    # `#if LOGOS_PROTOCOL_VERSION_MINOR >= 3` guard would compile away to
-    # nothing against it. c8bab12 is 0.4. logos-cpp-sdk / logos-qt-sdk are
-    # deliberately NOT followed: the loader's own lock already resolves them to
-    # e3744fb / c6be61d, which is exactly what liblogos's follows resolve to, so
-    # leaving them alone keeps this build byte-identical to liblogos's own
-    # except for the loader rev itself.
-    #
-    # The rev pin is gone -- feat/host-services-grant merged and this input now
-    # follows master. It is still declared rather than removed because the
-    # `follows` below is load-bearing; once liblogos's own lock carries the same
-    # resolution, the input itself can go away.
-    logos-module-loader-qt = {
-      url = "github:logos-co/logos-module-loader-qt";
-      inputs.logos-protocol.follows = "logos-protocol";
-    };
-    # Follows master. (This input used to be rev-pinned to a branch carrying the
-    # split host runtime and liblogos_core.dll's export list; that landed on
-    # master and the pin was retired, but the comment explaining it outlived it.)
-    # Rev-pinned to logos-liblogos#186 (chore/protocol-0.8-plugin-qt-master),
-    # which is the liblogos half of THIS wave and is not merged yet. It must move
-    # in lockstep with logos-plugin-qt above: plugin-qt#26 made protocol 0.8 a
-    # hard floor for every consumer of logos-qt-host (cpp/logos_provider_object.cpp
-    # and cpp/qt_provider_object.cpp call TokenManager::saveInboundToken
-    # unguarded), so liblogos cannot straddle and neither can this app.
-    # Retire the pin for a plain master URL once #186 lands.
-    #
-    # logos-plugin-qt.follows was MISSING here while every sibling input
-    # (logos-qt-sdk, logos-plugin-qt itself) declared it. It is REDUNDANT TODAY,
-    # and that is written down because it was measured rather than assumed:
-    # against the pin above, liblogos#186's lock already names plugin-qt 048152f2,
-    # which is this root's rev, so adding or removing these two lines changes
-    # nothing — 6 logos-qt-host derivations either way, and exactly ONE in the
-    # built runtime closure. Today the two sides agree by coincidence of two
-    # locks, not by constraint.
-    #
-    # It is added because the NEXT step breaks that coincidence. nix/app.nix:729
-    # copies ${logosLiblogos}/lib/*.{so,dylib,dll} over this app's own lib/ while
-    # the binary links logos-qt-host directly. Retire the pin above for a plain
-    # master URL — which is what happens when #186 lands — and liblogos resolves
-    # logos-plugin-qt through its OWN lock again: liblogos master bfbb1998 pins
-    # 1aa3e31c and packages a lib/liblogos_qt_host.so that is a DIFFERENT store
-    # path from this root's (kdz79ljg… vs ka5vgzb8…) and differs byte-wise.
-    # Measured: dropping the pin back to master without these lines takes the
-    # derivation count 6 -> 7. The app would then LINK one host runtime and SHIP
-    # another in the same directory — the duplicate-TokenManager defect this fleet
-    # has hit repeatedly, which builds clean and only fails at runtime as refused
-    # calls with no build diagnostic.
-    #
-    # logos-protocol follows for the same reason one hop down: logos-qt-host is
-    # compiled against protocol's headers, so a followed plugin-qt built against
-    # an unfollowed protocol is the same skew wearing a different hat.
-    logos-liblogos = {
-      url = "github:logos-co/logos-liblogos/chore/protocol-0.8-plugin-qt-master";
-      inputs.default-module-loader.follows = "logos-module-loader-qt";
-      inputs.logos-plugin-qt.follows = "logos-plugin-qt";
-      inputs.logos-protocol.follows = "logos-protocol";
-    };
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt";
+    logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
-    # Follows master. (This input carried a rev pin through the universal-module
-    # transition, walked between 07dba1f and 0cb33fb depending on whether the
-    # loader of the day could grant `token_registry` / `token_delivery` to a
-    # module that fails CLOSED without them. Both sides of that landed on master
-    # and the pin was retired; the history is kept here only because the
-    # fail-closed handshake is the thing to remember if this ever regresses.)
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-package.url = "github:logos-co/logos-package";
-    # Follows master. (Rev-pinned through the universal-view-plugin transition,
-    # and the pin had to be a merge of that branch with master: the branch alone
-    # published packages for the four native systems only, so the cross build
-    # failed with "logos-module-builder: dependency 'package_manager' publishes
-    # no packages for x86_64-windows", while master alone did not carry the view
-    # plugin and would have traded a build failure for a runtime mismatch that
-    # still looked green. Both landed and the pin was retired. The constraint
-    # that outlives it: this UI is loaded IN-PROCESS by the app, so it must come
-    # from the same generation as the host runtime above.)
-    #
-    # `package_manager` and `package_downloader` are the SAME flakes as this
-    # root's logos-package-manager-module / logos-package-downloader-module
-    # inputs, at the same revs, with identical resolved subtrees -- they are
-    # just reached under different input NAMES. Nix cannot know that, so
-    # without these it unrolls a private ~3,178-node copy of each.
-    logos-package-manager-ui = {
-      url = "github:logos-co/logos-package-manager-ui";
-      inputs.package_manager.follows = "logos-package-manager-module";
-      inputs.package_downloader.follows = "logos-package-downloader-module";
-    };
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    # Unpinned: logos-view-module-runtime#25 merged, so master carries the move
-    # onto the split host and no longer rev-pins logos-plugin-qt itself. That
-    # matters here beyond tidiness: a runtime naming a different plugin-qt puts a
-    # second logos-qt-host in the closure.
-    logos-view-module-runtime = {
-      url = "github:logos-co/logos-view-module-runtime";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
-    };
+    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
     logos-qt-mcp.url = "github:logos-co/logos-qt-mcp";
@@ -212,10 +36,6 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  # logos-module-loader-qt is in the formals only because Nix passes EVERY
-  # declared input to this function and this set has no ellipsis. Nothing here
-  # uses it directly — it exists so logos-liblogos.inputs.default-module-loader
-  # has a top-level input to follow.
   outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
