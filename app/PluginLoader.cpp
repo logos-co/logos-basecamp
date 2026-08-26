@@ -26,6 +26,7 @@
 #include "logos_api.h"
 #include "logos_consumer.h"
 #include "restricted/QmlSandbox.h"
+#include "utils/DependencyEntry.h"
 #include <ViewModuleHost.h>
 
 PluginLoader::PluginLoader(LogosAPI* logosAPI,
@@ -121,9 +122,10 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
     // Every core-plugin load goes through CoreModuleManager so the logos_core_*
     // C API is centralised in one place.
     for (const QVariant& dep : request.coreDependencies) {
-        QString depName = dep.toString();
-        if (depName.isEmpty())
+        const logos::DependencyEntry entry = logos::readDependencyEntry(dep);
+        if (entry.kind == logos::DependencyEntryKind::Unrecognised)
             continue;
+        const QString depName = entry.name;
         if (!m_coreModuleManager) {
             qWarning() << "Failed to load core dependency" << depName
                        << "for" << request.name;
