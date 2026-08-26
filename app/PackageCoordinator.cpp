@@ -4,6 +4,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
+#include "utils/DependencyBlocker.h"
 
 #include <QDebug>
 #include <QDir>
@@ -1414,11 +1415,17 @@ void PackageCoordinator::refreshDependencyInfo()
                     QStringList missing;
                     QStringList installed;
                     for (const QVariant& v : deps) {
-                        const QVariantMap m = v.toMap();
-                        const QString s = m.value("name").toString();
-                        if (s.isEmpty()) continue;
-                        if (m.value("status").toString() == "not_installed") missing << s;
-                        else                                                 installed << s;
+                        // What blocks a load is decided in one place —
+                        // utils/DependencyBlocker.h — because deciding it by
+                        // exclusion here is what admitted a dependency the
+                        // resolver had rejected.
+                        const logos::DependencyBlocker b =
+                            logos::readDependencyBlocker(v);
+                        if (b.name.isEmpty()) continue;
+                        if (b.kind == logos::DependencyBlockKind::None)
+                            installed << b.name;
+                        else
+                            missing << b.name;
                     }
                     missingMap->insert(name, missing);
                     dependenciesMap->insert(name, installed);
