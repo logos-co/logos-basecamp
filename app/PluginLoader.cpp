@@ -122,9 +122,26 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
     // Every core-plugin load goes through CoreModuleManager so the logos_core_*
     // C API is centralised in one place.
     for (const QVariant& dep : request.coreDependencies) {
+        // Bare name or {"name": …, "version": …, "signer": …} — either way we
+        // need the name. See utils/DependencyEntry.h for why this must not be
+        // a bare dep.toString().
         const logos::DependencyEntry entry = logos::readDependencyEntry(dep);
-        if (entry.kind == logos::DependencyEntryKind::Unrecognised)
-            continue;
+        if (entry.kind == logos::DependencyEntryKind::Unrecognised) {
+            // We cannot tell WHICH module this entry declares, so we cannot
+            // honour the declaration. Refuse the load and say so: carrying on
+            // would mount the plugin with a declared dependency silently
+            // unloaded, which surfaces later as an unexplained missing-method
+            // or dead-endpoint failure with nothing in the log pointing here.
+            qWarning() << "Unrecognised core dependency entry" << dep
+                       << "for" << request.name
+                       << "- expected a module name, or an object with a "
+                          "string \"name\"; refusing to load";
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Unrecognised dependency entry in ")
+                    + request.name + QStringLiteral("'s manifest"));
+            return;
+        }
         const QString depName = entry.name;
         if (!m_coreModuleManager) {
             qWarning() << "Failed to load core dependency" << depName
