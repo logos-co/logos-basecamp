@@ -25,14 +25,20 @@ AbstractButton {
     // still emits `clicked`, and the backend decides whether to load or show
     // the popup.
     property bool hasMissingDeps: false
-    // WHICH kind of dependency problem: "" | "absent" | "mismatch" | "mixed".
-    // A dependency that is installed at the wrong version is a different
+    // WHICH kind of dependency problem:
+    // "" | "absent" | "mismatch" | "signer" | "mixed".
+    // A dependency that is installed but REJECTED — wrong version, or a
+    // package under the right name from the wrong publisher — is a different
     // problem with a different remedy, so it gets its own marker rather than
     // borrowing the "not installed" cross. `hasMissingDeps` still owns
     // visibility, so a payload without this field renders exactly as before.
     property string depBlockKind: ""
 
-    readonly property bool _versionConflictOnly: root.depBlockKind === "mismatch"
+    // Everything needed is ON DISK and this app rejects it. "mixed" is
+    // excluded deliberately: something IS absent there, and absence is the
+    // fact the user has to act on first, so it keeps the cross.
+    readonly property bool _presentButRejected: root.depBlockKind === "mismatch"
+                                             || root.depBlockKind === "signer"
     property string appName: ""
 
     // Test hook: whether this app is the front-most (active) one.
@@ -113,17 +119,22 @@ AbstractButton {
 
         Rectangle {
             id: missingDepsMarker
-            objectName: root._versionConflictOnly ? "sidebar.marker.versionConflict"
-                                                  : "sidebar.marker.missingDeps"
+            // Three names, so a UI test can tell the three states apart —
+            // and the amber marker means two different things, which a
+            // screenshot cannot distinguish.
+            objectName: root.depBlockKind === "signer" ? "sidebar.marker.signerConflict"
+                      : root._presentButRejected       ? "sidebar.marker.versionConflict"
+                                                       : "sidebar.marker.missingDeps"
             visible: root.hasMissingDeps && !root.loading
             width: 14
             height: 14
             radius: 7
             // Red cross = something is absent. Amber "!" = everything needed
-            // is present, but at a version this app rejects. Two states the
-            // user resolves differently, so they must not look identical.
+            // is present, but this app rejects it — wrong version, or the
+            // wrong publisher's package under the right name. States the user
+            // resolves differently, so they must not look identical.
             // "mixed" keeps the cross: something IS absent.
-            color: root._versionConflictOnly ? "#e8a33d" : "#d32f2f"
+            color: root._presentButRejected ? "#e8a33d" : "#d32f2f"
             anchors.right: tile.right
             anchors.top: tile.top
             anchors.rightMargin: -2
@@ -131,7 +142,7 @@ AbstractButton {
 
             // Cross — absent (or mixed).
             Rectangle {
-                visible: !root._versionConflictOnly
+                visible: !root._presentButRejected
                 width: 8
                 height: 1.5
                 color: "white"
@@ -139,7 +150,7 @@ AbstractButton {
                 rotation: 45
             }
             Rectangle {
-                visible: !root._versionConflictOnly
+                visible: !root._presentButRejected
                 width: 8
                 height: 1.5
                 color: "white"
@@ -149,7 +160,7 @@ AbstractButton {
 
             // Exclamation — version conflict.
             Rectangle {
-                visible: root._versionConflictOnly
+                visible: root._presentButRejected
                 width: 1.5
                 height: 5
                 radius: 0.75
@@ -159,7 +170,7 @@ AbstractButton {
                 anchors.topMargin: 3
             }
             Rectangle {
-                visible: root._versionConflictOnly
+                visible: root._presentButRejected
                 width: 1.5
                 height: 1.5
                 radius: 0.75

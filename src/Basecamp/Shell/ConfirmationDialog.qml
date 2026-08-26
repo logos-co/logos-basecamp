@@ -13,16 +13,21 @@ import Logos.Theme
 //                       "OK" that closes the dialog — Cancel is hidden, since
 //                       nothing was started and there is nothing to abort.
 //
-//                       TWO different things bring a user here, and the copy
+//                       THREE different things bring a user here, and the copy
 //                       must not conflate them: a dependency that is not
-//                       installed, and one that IS installed at a version
-//                       outside the range the manifest declared. `blockSummary`
-//                       ("absent" | "mismatch" | "mixed") picks the sentence,
-//                       and each row carries its own `detail` clause naming
-//                       the constraint and what was found — "requires ^2.0.0,
-//                       found 1.0.0". Without that pair the dialog told a user
-//                       with a version conflict that the module was "not
-//                       installed", which is both false and unactionable.
+//                       installed; one that IS installed at a version outside
+//                       the range the manifest declared; and one that is
+//                       installed under the right name but published by a
+//                       DIFFERENT SIGNER, which is somebody else's package and
+//                       cannot be fixed by installing or by changing version.
+//                       `blockSummary` ("absent" | "mismatch" | "signer" |
+//                       "mixed") picks the sentence, and each row carries its
+//                       own `detail` clause naming the constraint and what was
+//                       found — "requires ^2.0.0, found 1.0.0", or "published
+//                       by a different signer; requires <did>, found <did>".
+//                       Without that pair the dialog told a user with a version
+//                       conflict that the module was "not installed", which is
+//                       both false and unactionable.
 //  - "unloadCascade"  — confirmation; unloading this module would leave
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
@@ -71,10 +76,12 @@ Dialog {
     property string moduleName: ""
     // For "missingDeps" each entry is a map from
     // logos::dependencyBlockerToMap — {name, kind, requiredVersion,
-    // installedVersion, detail}. For the other one-list modes it is a plain
-    // module name. `_itemName` / `_itemDetail` read either shape.
+    // installedVersion, requiredSigner, observedSigner, detail}. For the other
+    // one-list modes it is a plain module name. `_itemName` / `_itemDetail`
+    // read either shape.
     property var items: []
-    // Only used in missingDeps mode: "" | "absent" | "mismatch" | "mixed".
+    // Only used in missingDeps mode:
+    // "" | "absent" | "mismatch" | "signer" | "mixed".
     // Computed host-side (logos::summariseDependencyBlockers) so one set of
     // blockers yields one sentence everywhere it is described.
     property string blockSummary: ""
@@ -211,10 +218,16 @@ Dialog {
             LogosText {
                 Layout.fillWidth: true
                 text: {
-                    if (root.mode === "missingDeps")
-                        return root.blockSummary === "mismatch"
-                             ? "Incompatible Dependencies"
-                             : "Missing Dependencies";
+                    if (root.mode === "missingDeps") {
+                        // Named, not defaulted. "Missing Dependencies" is the
+                        // fallback ONLY for the shapes where something really
+                        // is missing ("absent", "mixed"); a shape that means
+                        // everything is present would inherit a title that
+                        // contradicts its own body text.
+                        if (root.blockSummary === "signer")   return "Unexpected Publisher";
+                        if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
+                        return "Missing Dependencies";
+                    }
                     if (root.mode === "unloadCascade")
                         return "Unload Dependent Modules?";
                     if (root.mode === "upgradeCascade") {
@@ -242,18 +255,28 @@ Dialog {
             readonly property string _label: root.displayNameLookup(root.moduleName) || root.moduleName
             text: {
                 if (root.mode === "missingDeps") {
-                    // Three different facts, three different sentences. Saying
+                    // Four different facts, four different sentences. Saying
                     // "not installed" about a module that is installed at the
                     // wrong version sends the user to reinstall something they
-                    // already have.
+                    // already have; saying "wrong version" about a module
+                    // published by somebody else sends them after a version
+                    // that does not exist, because no version of the package
+                    // they have is the package they need.
+                    if (root.blockSummary === "signer")
+                        return "'" + _label + "' cannot be loaded because the "
+                             + "following modules were published by a different "
+                             + "signer than it requires. A package under the "
+                             + "right name from the wrong publisher is a "
+                             + "different package — reinstall these from the "
+                             + "publisher the module names:";
                     if (root.blockSummary === "mismatch")
                         return "'" + _label + "' cannot be loaded because the "
                              + "following modules are installed at a version it "
                              + "does not accept:";
                     if (root.blockSummary === "mixed")
                         return "'" + _label + "' cannot be loaded because the "
-                             + "following modules are missing or are the wrong "
-                             + "version:";
+                             + "following modules are missing, are the wrong "
+                             + "version, or came from a different publisher:";
                     return "'" + _label + "' cannot be loaded because the "
                          + "following modules are not installed:";
                 }

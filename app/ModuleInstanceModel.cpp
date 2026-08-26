@@ -18,11 +18,16 @@ QString ModuleInstanceModel::Row::statusText() const
     if (hasMissingDeps) {
         // "Missing deps" is a lie about a dependency that is installed and
         // merely the wrong version — the remedy there is a version change,
-        // not an install. "mixed" keeps the absence wording: something IS
-        // missing, and that is the fact the user has to act on first.
-        return depBlockKind == QLatin1String("mismatch")
-            ? QObject::tr("Version conflict")
-            : QObject::tr("Missing deps");
+        // not an install. It is a bigger lie about one that is installed and
+        // published by somebody else: no version of what is on disk will do,
+        // so both "install it" and "get another version" are dead ends.
+        // "mixed" keeps the absence wording: something IS missing, and that is
+        // the fact the user has to act on first.
+        if (depBlockKind == QLatin1String("signer"))
+            return QObject::tr("Signer conflict");
+        if (depBlockKind == QLatin1String("mismatch"))
+            return QObject::tr("Version conflict");
+        return QObject::tr("Missing deps");
     }
     if (isLoaded)       return QObject::tr("Loaded");
     return QObject::tr("Not loaded");

@@ -139,6 +139,22 @@ private slots:
         QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Version conflict");
     }
 
+    // A dependency installed under the right name by the WRONG PUBLISHER is
+    // a third state with a third remedy. "Missing deps" tells the user to
+    // install something they have; "Version conflict" tells them to find
+    // another version, and no version of what they have is the package the
+    // module needs. Only "get it from the publisher the module names" works,
+    // and the badge has to stop claiming otherwise.
+    void statusText_says_signer_conflict_for_a_wrong_publisher_dependency()
+    {
+        ModuleInstanceModel model;
+        model.replaceRows({
+            makeModule("wrongpub", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "signer"}}),
+        });
+        QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Signer conflict");
+    }
+
     // "mixed" means at least one dependency really is absent, and that is the
     // fact the user has to act on first — so it keeps the absence wording.
     void statusText_keeps_missing_deps_for_a_mixed_set()
