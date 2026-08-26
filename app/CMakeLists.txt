@@ -333,8 +333,31 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     Qt6::Network
-    logos-qt-host::logos_qt_host_shared
+    # LOGOS_VIEW_MODULE_RUNTIME_LIB comes BEFORE logos_qt_host_shared for the
+    # same GNU ld reason spelled out for logos_core below, and it is load-bearing
+    # on Windows for exactly the same mechanism. That archive references
+    # LogosAPI::forIdentity, and liblogos_qt_host.dll.a is an IMPORT library, so
+    # ld treats it like any archive: it takes only the members satisfying
+    # references already undefined when it reaches them. With the host ahead of
+    # this archive, nothing has demanded forIdentity yet, the member is skipped,
+    # and the mingw link dies with
+    #   liblogos_view_module_runtime.a(LogosQmlBridge.cpp.obj): undefined
+    #   reference to `LogosAPI::forIdentity(QString const&, QObject*)'
+    # despite the symbol being present, correctly mangled, in both the .dll.a
+    # (as T and __imp_) and the DLL's export table.
+    #
+    # This was LATENT until now rather than new. While app/PluginLoader.cpp
+    # called LogosAPI::forIdentity itself, basecamp's own objects demanded the
+    # symbol before ld reached the host, so the member was pulled early and this
+    # archive's later reference resolved against it. Admitting consumers through
+    # logos::admitConsumer removed that call — the last first-party reference —
+    # and with it the accident that was holding the old order up.
+    #
+    # Linux and macOS cannot see any of this: there the host is a real shared
+    # object, and shared libraries satisfy undefined references regardless of
+    # position. A green Linux build proves nothing about this line.
     ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
+    logos-qt-host::logos_qt_host_shared
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
     # logos_core is LAST, and that position is load-bearing on Windows: it is the
     # IMPORT LIBRARY for liblogos_core.dll, which re-exports the shared C++
