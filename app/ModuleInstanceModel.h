@@ -53,7 +53,7 @@ private:
         bool    isLoaded       = false;
         bool    isMainUi       = false;
         bool    hasMissingDeps = false;
-        // "" | "absent" | "mismatch" | "mixed" — which KIND of dependency
+        // "" | "absent" | "mismatch" | "signer" | "mixed" — which KIND of dependency
         // problem hasMissingDeps stands for. Only statusText() reads it; the
         // badge takes its wording from there.
         QString depBlockKind;

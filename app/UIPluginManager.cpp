@@ -618,7 +618,8 @@ QVariantList UIPluginManager::launcherApps() const
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};
         app["hasMissingDeps"] = !missing.isEmpty();
-        // "" | "absent" | "mismatch" | "mixed" — picks the marker's shape.
+        // "" | "absent" | "mismatch" | "signer" | "mixed" — picks the
+        // marker's shape.
         app["depBlockKind"] = m_packageCoordinator
             ? logos::summariseDependencyBlockers(
                   m_packageCoordinator->blockingDepsOf(pluginName))

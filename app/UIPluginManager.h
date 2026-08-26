@@ -155,7 +155,7 @@ signals:
     //
     // `blockers` is one map per blocking dependency — see
     // PackageCoordinator::blockingDepsOf — and `summary` is one word for the
-    // set ("absent" | "mismatch" | "mixed"). Both, because the dialog says a
+    // set ("absent" | "mismatch" | "signer" | "mixed"). Both, because the dialog says a
     // DIFFERENT sentence for a dependency that isn't installed and one that
     // is installed at the wrong version, and a bare name list cannot tell
     // those apart. Names alone shipped a headline that was a lie for half

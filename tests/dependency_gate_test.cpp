@@ -17,13 +17,19 @@ using logos::summariseDependencyBlockers;
 // transitive dependencies, may the plugin be loaded, and if not, what does the
 // user need to be told?
 //
-// The three rows below are VERBATIM wire payloads, captured by driving a real
-// logoscore daemon over a real installed tree (`~/deps-drive/gate.sh`) with the
-// ui_qml plugin `depui` declaring `{"name":"depsvc","version":"^2.0.0",
-// "signer":"did:jwk:…"}` against `depsvc` 1.0.0. They are parsed with
-// QJsonDocument rather than hand-built as QVariantMaps so this suite consumes
-// exactly the bytes the module emits — a hand-built fixture can drift from the
-// wire and still pass.
+// The rows below are VERBATIM wire payloads, captured by driving a real
+// logoscore daemon over a real installed tree with a module declaring
+// `{"name":"depsvc","version":"…","signer":"did:jwk:…"}` against `depsvc`
+// 1.0.0. They are parsed with QJsonDocument rather than hand-built as
+// QVariantMaps so this suite consumes exactly the bytes the module emits — a
+// hand-built fixture can drift from the wire and still pass.
+//
+// The signer rows come from the same rig, varying only the `signer` sidecar in
+// depsvc's install directory: absent -> signer_unknown, a different DID ->
+// signer_mismatch. The declared range is ^1.0.0 on those two so the SIGNER
+// verdict is the one reported; with ^2.0.0 and a mismatched signer the same
+// rig reports signer_mismatch (identity outranks a range) and with ^2.0.0 and
+// a matching signer it reports version_mismatch.
 //
 // What makes the mismatch row a gate problem rather than a display one: the
 // gate classified BY EXCLUSION —
@@ -74,6 +80,30 @@ class DependencyGateTest : public QObject {
             R"("version":""})");
     }
 
+    // depsvc 1.0.0 installed and its recorded publisher is NOT the pinned
+    // one: a package under the right name from the wrong signer.
+    static QVariant signerMismatchRow()
+    {
+        return wireRow(
+            R"({"installType":"user","name":"depsvc",)"
+            R"("observedSigner":"did:jwk:SOMEBODY_ELSE",)"
+            R"("requiredSigner":"did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0",)"
+            R"("requiredVersion":"^1.0.0","status":"signer_mismatch",)"
+            R"("version":"1.0.0"})");
+    }
+
+    // depsvc 1.0.0 installed with NO recorded publisher — the state of every
+    // embedded package and everything installed before the record existed.
+    // The pin cannot be checked; there is no observedSigner key at all.
+    static QVariant signerUnknownRow()
+    {
+        return wireRow(
+            R"({"installType":"user","name":"depsvc",)"
+            R"("requiredSigner":"did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0",)"
+            R"("requiredVersion":"^1.0.0","status":"signer_unknown",)"
+            R"("version":"1.0.0"})");
+    }
+
 private slots:
     // ── What blocks a load ──────────────────────────────────────────────
     void a_satisfied_dependency_does_not_block()
@@ -99,6 +129,43 @@ private slots:
         QCOMPARE(b.name, QStringLiteral("depsvc"));
     }
 
+    // A package under the right name from the WRONG PUBLISHER. It is not the
+    // dependency the module named, and no version of it ever will be, so the
+    // load must not proceed on top of it.
+    void a_signer_mismatch_blocks()
+    {
+        const auto b = readDependencyBlocker(signerMismatchRow());
+        QCOMPARE(b.kind, DependencyBlockKind::SignerMismatch);
+        QCOMPARE(b.name, QStringLiteral("depsvc"));
+        QCOMPARE(b.requiredSigner,
+                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
+        QCOMPARE(b.observedSigner, QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+    }
+
+    // THE DESIGN CALL, at the gate. A pin that could not be CHECKED — nothing
+    // records who published the installed package — does not block.
+    //
+    // Absence of evidence is not evidence of mismatch, and this is the normal
+    // state for two whole populations: every embedded package (placed by the
+    // build, never through the installer that records a publisher, so it can
+    // NEVER acquire one) and everything installed before the record existed.
+    // Blocking here would make a pin on an embedded dependency unsatisfiable
+    // by construction, forever, with no action a user could take.
+    //
+    // The package manager owns this call and can flip it in ONE place
+    // (UnknownSignerPolicy::Strict makes its scanner emit signer_mismatch
+    // instead, which this gate already blocks) — which is exactly why this
+    // gate must not second-guess it. A decision, pinned, not an omission.
+    void a_signer_that_cannot_be_checked_does_not_block()
+    {
+        const auto b = readDependencyBlocker(signerUnknownRow());
+        QCOMPARE(b.kind, DependencyBlockKind::None);
+        // The facts still arrive, so a caller that wants to SHOW the gap can.
+        QCOMPARE(b.requiredSigner,
+                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
+        QVERIFY(b.observedSigner.isEmpty());
+    }
+
     // ── Blocking a load and being on disk are DIFFERENT questions ───────
     // The same rows feed two consumers: the load gate, and the forward edges
     // of the dependency graph the uninstall plan walks. A version_mismatch
@@ -112,6 +179,13 @@ private slots:
         const auto b = readDependencyBlocker(mismatchRow());
         QCOMPARE(b.kind, DependencyBlockKind::VersionMismatch);  // blocks
         QVERIFY(logos::dependencyIsPresent(b));                  // and is present
+    }
+
+    void a_signer_mismatched_dependency_blocks_a_load_and_is_still_on_disk()
+    {
+        const auto b = readDependencyBlocker(signerMismatchRow());
+        QCOMPARE(b.kind, DependencyBlockKind::SignerMismatch);  // blocks
+        QVERIFY(logos::dependencyIsPresent(b));                 // and is present
     }
 
     void only_an_absent_row_is_treated_as_not_present()
@@ -207,6 +281,40 @@ private slots:
                  QStringLiteral("installed version 1.0.0 was rejected"));
     }
 
+    // A THIRD sentence, because it is a third problem. "not installed" sends
+    // the user to install a package they have; "requires ^2.0.0, found 1.0.0"
+    // sends them after a version that will never satisfy this, because the
+    // package on disk is somebody else's. Only naming the publisher does.
+    void a_signer_mismatch_says_publisher_not_version_and_names_both_dids()
+    {
+        const QString detail =
+            dependencyBlockerDetail(readDependencyBlocker(signerMismatchRow()));
+        QVERIFY2(detail.startsWith(QStringLiteral("published by a different signer")),
+                 qPrintable(detail));
+        // Must not read as either of the other two remedies.
+        QVERIFY2(!detail.contains(QStringLiteral("not installed")), qPrintable(detail));
+        QVERIFY2(!detail.startsWith(QStringLiteral("requires")), qPrintable(detail));
+        // Both DIDs: the pin alone does not say what went wrong, and the
+        // observation alone is an accusation with no charge attached.
+        QVERIFY2(detail.contains(QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0")),
+                 qPrintable(detail));
+        QVERIFY2(detail.contains(QStringLiteral("did:jwk:SOMEBODY_ELSE")), qPrintable(detail));
+    }
+
+    // Defensive: a signer-mismatch row that lost one DID still reads as a
+    // publisher problem rather than collapsing to an empty clause.
+    void a_signer_mismatch_with_a_missing_did_still_reads()
+    {
+        logos::DependencyBlocker b;
+        b.kind = DependencyBlockKind::SignerMismatch;
+        b.name = QStringLiteral("depsvc");
+        QCOMPARE(dependencyBlockerDetail(b),
+                 QStringLiteral("published by a different signer"));
+        b.requiredSigner = QStringLiteral("did:jwk:PINNED");
+        QCOMPARE(dependencyBlockerDetail(b),
+                 QStringLiteral("published by a different signer; requires did:jwk:PINNED"));
+    }
+
     void a_satisfied_row_has_no_detail()
     {
         QCOMPARE(dependencyBlockerDetail(readDependencyBlocker(satisfiedRow())), QString());
@@ -222,6 +330,23 @@ private slots:
         QCOMPARE(m.value("installedVersion").toString(), QStringLiteral("1.0.0"));
         QCOMPARE(m.value("detail").toString(),
                  QStringLiteral("requires ^2.0.0, found 1.0.0"));
+    }
+
+    // The kind QML switches on. This used to be a ternary
+    // (`VersionMismatch ? "version_mismatch" : "not_installed"`), so a signer
+    // mismatch would have crossed into QML labelled "not_installed" and the
+    // dialog would have told the user to install a package sitting on disk —
+    // the same trailing-else failure this whole header exists to prevent, one
+    // layer out.
+    void the_wire_map_carries_the_signer_kind_and_both_dids()
+    {
+        const QVariantMap m = dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
+        QCOMPARE(m.value("kind").toString(), QStringLiteral("signer_mismatch"));
+        QCOMPARE(m.value("requiredSigner").toString(),
+                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
+        QCOMPARE(m.value("observedSigner").toString(), QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+        // Still on disk, so the row keeps the version it has.
+        QCOMPARE(m.value("installedVersion").toString(), QStringLiteral("1.0.0"));
     }
 
     void the_wire_map_for_an_absent_dependency_reports_no_installed_version()
@@ -253,6 +378,31 @@ private slots:
         QVariantList l;
         l << dependencyBlockerToMap(readDependencyBlocker(absentRow()));
         l << dependencyBlockerToMap(readDependencyBlocker(mismatchRow()));
+        QCOMPARE(summariseDependencyBlockers(l), QStringLiteral("mixed"));
+    }
+
+    void summary_of_only_signer_blockers_is_signer()
+    {
+        QVariantList l;
+        l << dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
+        QCOMPARE(summariseDependencyBlockers(l), QStringLiteral("signer"));
+    }
+
+    // The summariser used to test ONE kind and sweep the rest into `absent`,
+    // so a pure signer set would have been summarised as "not installed".
+    void summary_of_a_signer_and_a_version_blocker_is_mixed()
+    {
+        QVariantList l;
+        l << dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
+        l << dependencyBlockerToMap(readDependencyBlocker(mismatchRow()));
+        QCOMPARE(summariseDependencyBlockers(l), QStringLiteral("mixed"));
+    }
+
+    void summary_of_a_signer_and_an_absent_blocker_is_mixed()
+    {
+        QVariantList l;
+        l << dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
+        l << dependencyBlockerToMap(readDependencyBlocker(absentRow()));
         QCOMPARE(summariseDependencyBlockers(l), QStringLiteral("mixed"));
     }
 
