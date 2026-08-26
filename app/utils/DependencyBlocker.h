@@ -27,15 +27,37 @@ namespace logos {
 //     "installed" | "not_installed" | "cycle" | "version_mismatch"
 //
 // This header decides which of those BLOCK a load, and turns a blocking row
-// into something a user can act on.
+// into something a user can act on. Route every read of a resolveFlatDeps row
+// through here.
 //
-// AS OF THIS COMMIT the predicate is a verbatim extraction of the one in
-// PackageCoordinator::refreshDependencyCaches — status == "not_installed"
-// blocks, everything else is treated as satisfied. It is lifted here
-// unchanged, and under test, before it is changed.
+// The rule: classify by NAMING the statuses, never by exclusion. The gate
+// used to read
+//
+//     if (m.value("status").toString() == "not_installed") missing << s;
+//     else                                                 installed << s;
+//
+// so every status invented after that line was written landed in `installed`.
+// That is how "version_mismatch" — an installed dependency the resolver had
+// just rejected — came to count as a satisfied one, with no diagnostic
+// anywhere. A switch over the vocabulary would have been a compile error to
+// extend; a trailing `else` was silence.
+//
+// Deliberately NOT blocking, both decisions rather than omissions:
+//
+//   "cycle" — a declared dependency cycle. Nothing here has been driven
+//     against a real cyclic install, and blocking it would be a behaviour
+//     change made blind. Pinned by a test so the next reader sees the choice.
+//
+//   an unrecognised status — this gate is an ADVISORY pre-check in front of
+//     liblogos' own dependency resolver, run so the user gets "depsvc is not
+//     installed" instead of a bare "plugin load failed". liblogos remains the
+//     authority on whether a load succeeds. Refusing on a word this build
+//     does not know would block loads that work; admitting one costs only the
+//     nicer message.
 
 enum class DependencyBlockKind {
-    // The row does not block a load.
+    // The row does not block a load: satisfied, cyclic, or a status this
+    // build does not recognise.
     None,
     // Nothing is installed under this name.
     NotInstalled,
@@ -64,11 +86,32 @@ inline DependencyBlocker readDependencyBlocker(const QVariant& row)
     b.requiredVersion  = m.value(QStringLiteral("requiredVersion")).toString();
     b.installedVersion = m.value(QStringLiteral("version")).toString();
 
+    // Named, not excluded. Absence outranks a range — the same precedence the
+    // scanner itself applies, and the right one: a range can only be judged
+    // against a version you have, and pointing a user at "requires ^2.0.0"
+    // when nothing is installed sends them after the wrong remedy.
     const QString status = m.value(QStringLiteral("status")).toString();
     if (status == QLatin1String("not_installed"))
         b.kind = DependencyBlockKind::NotInstalled;
+    else if (status == QLatin1String("version_mismatch"))
+        b.kind = DependencyBlockKind::VersionMismatch;
 
     return b;
+}
+
+// Whether the dependency is PRESENT on disk.
+//
+// A DIFFERENT question from whether the row blocks a load, and the one the
+// dependency GRAPH asks — a version_mismatch row blocks a load and is on disk
+// at the same time. Callers that build the graph (the uninstall plan's
+// forward edges, the on-disk closure) must ask this one: dropping a
+// mismatched dependency from the closure would leave the forward edge missing
+// while resolveFlatDependents still reports the reverse edge, and a planner
+// walking an asymmetric graph produces plans that are wrong in ways nobody
+// traces back to here.
+inline bool dependencyIsPresent(const DependencyBlocker& b)
+{
+    return b.kind != DependencyBlockKind::NotInstalled;
 }
 
 // The clause that tells the user what to DO about this row, without the
@@ -140,6 +183,43 @@ inline QString summariseDependencyBlockers(const QVariantList& blockers)
     if (mismatch)           return QStringLiteral("mismatch");
     if (absent)             return QStringLiteral("absent");
     return QString();
+}
+
+// One module's whole resolveFlatDependencies reply, split the way its
+// consumers need it. Lives here rather than in the caller's async lambda so
+// the split is under test — the two lists answer DIFFERENT questions and a
+// mismatched dependency belongs in BOTH.
+struct DependencyRowSplit {
+    // On disk. The forward edges of the dependency graph the uninstall plan
+    // walks — it must agree with the reverse edges resolveFlatDependents
+    // reports, and those know nothing about version ranges.
+    QStringList  present;
+    // Refuses the load. Names only, for the consumers that just need to know
+    // something is wrong (the tile marker, installStatus).
+    QStringList  blocking;
+    // The same set with the reason attached, for the one consumer that has to
+    // tell the user what to do about it.
+    QVariantList blockers;
+};
+
+inline DependencyRowSplit splitDependencyRows(const QVariantList& rows)
+{
+    DependencyRowSplit out;
+    for (const QVariant& row : rows) {
+        const DependencyBlocker b = readDependencyBlocker(row);
+        // A row that names nothing is not a dependency. Dropping it is the
+        // pre-existing behaviour and the only safe one — there is no name to
+        // act on.
+        if (b.name.isEmpty()) continue;
+
+        if (dependencyIsPresent(b)) out.present << b.name;
+
+        if (b.kind != DependencyBlockKind::None) {
+            out.blocking << b.name;
+            out.blockers << dependencyBlockerToMap(b);
+        }
+    }
+    return out;
 }
 
 } // namespace logos
