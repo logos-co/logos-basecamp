@@ -99,6 +99,75 @@ private slots:
         QCOMPARE(b.name, QStringLiteral("depsvc"));
     }
 
+    // ── Blocking a load and being on disk are DIFFERENT questions ───────
+    // The same rows feed two consumers: the load gate, and the forward edges
+    // of the dependency graph the uninstall plan walks. A version_mismatch
+    // row answers YES to both — it blocks the load AND the package is sitting
+    // on disk. Collapsing the two into one predicate drops the mismatched
+    // dependency out of the graph while resolveFlatDependents still reports
+    // the reverse edge, and an uninstall plan walking an asymmetric graph is
+    // wrong in a way nobody traces back to a load gate.
+    void a_mismatched_dependency_blocks_a_load_and_is_still_on_disk()
+    {
+        const auto b = readDependencyBlocker(mismatchRow());
+        QCOMPARE(b.kind, DependencyBlockKind::VersionMismatch);  // blocks
+        QVERIFY(logos::dependencyIsPresent(b));                  // and is present
+    }
+
+    void only_an_absent_row_is_treated_as_not_present()
+    {
+        QVERIFY(!logos::dependencyIsPresent(readDependencyBlocker(absentRow())));
+        QVERIFY(logos::dependencyIsPresent(readDependencyBlocker(satisfiedRow())));
+        // A cycle row keeps the graph edge, which is what the gate did before
+        // any of this — the cycle is a property of the edge, not evidence the
+        // package is missing.
+        QVERIFY(logos::dependencyIsPresent(readDependencyBlocker(
+            wireRow(R"({"name":"a","status":"cycle","version":"","installType":""})"))));
+    }
+
+    // ── The whole split, as the coordinator consumes it ─────────────────
+    // PackageCoordinator's async lambda is not reachable from a unit test, so
+    // the split it performs lives in the header and is exercised here. The
+    // regression this guards: a mismatched dependency landing in `blocking`
+    // but NOT in `present`, which silently deletes a forward edge from the
+    // graph the uninstall plan walks while resolveFlatDependents keeps
+    // reporting the reverse one.
+    void the_split_puts_a_mismatched_dependency_in_both_lists()
+    {
+        const auto split = logos::splitDependencyRows({mismatchRow()});
+        QCOMPARE(split.present,  QStringList{QStringLiteral("depsvc")});
+        QCOMPARE(split.blocking, QStringList{QStringLiteral("depsvc")});
+        QCOMPARE(split.blockers.size(), 1);
+        QCOMPARE(split.blockers.first().toMap().value("detail").toString(),
+                 QStringLiteral("requires ^2.0.0, found 1.0.0"));
+    }
+
+    void the_split_keeps_an_absent_dependency_out_of_the_graph()
+    {
+        const auto split = logos::splitDependencyRows({absentRow()});
+        QVERIFY(split.present.isEmpty());
+        QCOMPARE(split.blocking, QStringList{QStringLiteral("depsvc")});
+    }
+
+    void the_split_leaves_a_satisfied_dependency_unblocked()
+    {
+        const auto split = logos::splitDependencyRows({satisfiedRow()});
+        QCOMPARE(split.present, QStringList{QStringLiteral("depsvc")});
+        QVERIFY(split.blocking.isEmpty());
+        QVERIFY(split.blockers.isEmpty());
+    }
+
+    // A row with no name is not a dependency; there is nothing to act on, and
+    // dropping it is what the gate has always done.
+    void the_split_drops_a_row_that_names_nothing()
+    {
+        const auto split = logos::splitDependencyRows({
+            wireRow(R"({"name":"","status":"not_installed","version":""})")});
+        QVERIFY(split.present.isEmpty());
+        QVERIFY(split.blocking.isEmpty());
+        QVERIFY(split.blockers.isEmpty());
+    }
+
     // ── What the user is told ───────────────────────────────────────────
     // A mismatch message that names neither the constraint nor what is
     // actually installed leaves the user with nothing to act on: they can see

@@ -309,6 +309,11 @@ QStringList PackageCoordinator::missingDepsOf(const QString& name) const
     return m_missingDepsByModule.value(name);
 }
 
+QVariantList PackageCoordinator::blockingDepsOf(const QString& name) const
+{
+    return m_blockingDepsByModule.value(name);
+}
+
 QStringList PackageCoordinator::dependentsOf(const QString& name) const
 {
     return m_dependentsByModule.value(name);
@@ -1357,6 +1362,7 @@ void PackageCoordinator::refreshDependencyInfo()
         QStringList names = self->m_installTypeByModule.keys();
         if (names.isEmpty()) {
             self->m_missingDepsByModule.clear();
+            self->m_blockingDepsByModule.clear();
             self->m_dependentsByModule.clear();
             self->m_dependenciesByModule.clear();
             // Nothing installed is a complete answer, not an unfinished one —
@@ -1376,15 +1382,17 @@ void PackageCoordinator::refreshDependencyInfo()
         LogosModules inner(self->m_logosAPI);
         auto remaining = std::make_shared<int>(names.size() * 2);
         auto missingMap = std::make_shared<QMap<QString, QStringList>>();
+        auto blockingMap = std::make_shared<QMap<QString, QVariantList>>();
         auto dependenciesMap = std::make_shared<QMap<QString, QStringList>>();
         auto dependentsMap = std::make_shared<QMap<QString, QStringList>>();
         QPointer<PackageCoordinator> selfCopy(self.data());
 
-        auto maybeFinish = [selfCopy, missingMap, dependenciesMap,
+        auto maybeFinish = [selfCopy, missingMap, blockingMap, dependenciesMap,
                             dependentsMap, remaining]() {
             if (!selfCopy) return;
             if (--(*remaining) > 0) return;
             selfCopy->m_missingDepsByModule = *missingMap;
+            selfCopy->m_blockingDepsByModule = *blockingMap;
             selfCopy->m_dependenciesByModule = *dependenciesMap;
             selfCopy->m_dependentsByModule = *dependentsMap;
             if (!selfCopy->m_dependencyDataReady) {
@@ -1405,30 +1413,26 @@ void PackageCoordinator::refreshDependencyInfo()
         };
 
         for (const QString& name : names) {
-            // One call, two caches. The missing-deps list is the subset with
-            // status == "not_installed"; the full closure (minus those) is
-            // what the uninstall plan walks. Keeping both here is why the
-            // dependency cleanup needs no extra IPC.
+            // One call, three caches. The blocking list is the subset the
+            // load gate refuses on; the blockers carry why; the closure (every
+            // row that is actually on disk) is what the uninstall plan walks.
+            // Keeping all three here is why the dependency cleanup needs no
+            // extra IPC.
             inner.package_manager.resolveFlatDependenciesAsync(
                 name, true,
-                [missingMap, dependenciesMap, name, maybeFinish](QVariantList deps) {
-                    QStringList missing;
-                    QStringList installed;
-                    for (const QVariant& v : deps) {
-                        // What blocks a load is decided in one place —
-                        // utils/DependencyBlocker.h — because deciding it by
-                        // exclusion here is what admitted a dependency the
-                        // resolver had rejected.
-                        const logos::DependencyBlocker b =
-                            logos::readDependencyBlocker(v);
-                        if (b.name.isEmpty()) continue;
-                        if (b.kind == logos::DependencyBlockKind::None)
-                            installed << b.name;
-                        else
-                            missing << b.name;
-                    }
-                    missingMap->insert(name, missing);
-                    dependenciesMap->insert(name, installed);
+                [missingMap, blockingMap, dependenciesMap, name,
+                 maybeFinish](QVariantList deps) {
+                    // One reply, three caches, two questions — which rows are
+                    // on disk (the graph) and which refuse the load (the
+                    // gate). Deciding both here with one test is what admitted
+                    // a dependency the resolver had rejected; the split lives
+                    // in utils/DependencyBlocker.h, under test, because this
+                    // lambda is not reachable from one.
+                    const logos::DependencyRowSplit split =
+                        logos::splitDependencyRows(deps);
+                    missingMap->insert(name, split.blocking);
+                    blockingMap->insert(name, split.blockers);
+                    dependenciesMap->insert(name, split.present);
                     maybeFinish();
                 });
 

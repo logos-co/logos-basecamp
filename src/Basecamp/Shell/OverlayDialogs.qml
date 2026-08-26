@@ -179,8 +179,10 @@ Item {
         target: backend
         ignoreUnknownSignals: true
 
-        function onMissingDepsPopupRequested(name, missing) {
-            missingDepsDialog.openWith("missingDeps", name, missing);
+        // `blockers` carries a reason per entry and `summary` names the set
+        // as a whole — see UIPluginManager::missingDepsPopupRequested.
+        function onMissingDepsPopupRequested(name, blockers, summary) {
+            missingDepsDialog.openWith("missingDeps", name, blockers, summary);
         }
 
         function onUnloadCascadeConfirmationRequested(name, loadedDependents) {

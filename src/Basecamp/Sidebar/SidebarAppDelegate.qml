@@ -20,10 +20,19 @@ AbstractButton {
 
     property bool loaded: false
     property bool loading: false
-    // True iff the backend reports this plugin has unmet core dependencies.
-    // When set, a red-cross overlay renders top-right — clicking still emits
-    // `clicked`, and the backend decides whether to load or show the popup.
+    // True iff the backend reports this plugin has core dependencies that
+    // won't let it load. When set, a marker renders top-right — clicking
+    // still emits `clicked`, and the backend decides whether to load or show
+    // the popup.
     property bool hasMissingDeps: false
+    // WHICH kind of dependency problem: "" | "absent" | "mismatch" | "mixed".
+    // A dependency that is installed at the wrong version is a different
+    // problem with a different remedy, so it gets its own marker rather than
+    // borrowing the "not installed" cross. `hasMissingDeps` still owns
+    // visibility, so a payload without this field renders exactly as before.
+    property string depBlockKind: ""
+
+    readonly property bool _versionConflictOnly: root.depBlockKind === "mismatch"
     property string appName: ""
 
     // Test hook: whether this app is the front-most (active) one.
@@ -104,17 +113,25 @@ AbstractButton {
 
         Rectangle {
             id: missingDepsMarker
+            objectName: root._versionConflictOnly ? "sidebar.marker.versionConflict"
+                                                  : "sidebar.marker.missingDeps"
             visible: root.hasMissingDeps && !root.loading
             width: 14
             height: 14
             radius: 7
-            color: "#d32f2f"
+            // Red cross = something is absent. Amber "!" = everything needed
+            // is present, but at a version this app rejects. Two states the
+            // user resolves differently, so they must not look identical.
+            // "mixed" keeps the cross: something IS absent.
+            color: root._versionConflictOnly ? "#e8a33d" : "#d32f2f"
             anchors.right: tile.right
             anchors.top: tile.top
             anchors.rightMargin: -2
             anchors.topMargin: -2
 
+            // Cross — absent (or mixed).
             Rectangle {
+                visible: !root._versionConflictOnly
                 width: 8
                 height: 1.5
                 color: "white"
@@ -122,11 +139,34 @@ AbstractButton {
                 rotation: 45
             }
             Rectangle {
+                visible: !root._versionConflictOnly
                 width: 8
                 height: 1.5
                 color: "white"
                 anchors.centerIn: parent
                 rotation: -45
+            }
+
+            // Exclamation — version conflict.
+            Rectangle {
+                visible: root._versionConflictOnly
+                width: 1.5
+                height: 5
+                radius: 0.75
+                color: "white"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.topMargin: 3
+            }
+            Rectangle {
+                visible: root._versionConflictOnly
+                width: 1.5
+                height: 1.5
+                radius: 0.75
+                color: "white"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 3
             }
         }
     }

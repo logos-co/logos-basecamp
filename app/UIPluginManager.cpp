@@ -3,6 +3,7 @@
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
+#include "utils/DependencyBlocker.h"
 
 #include <QDebug>
 #include <QDir>
@@ -203,6 +204,13 @@ QVariantList UIPluginManager::uiModules() const
             : QString(); // "" | "embedded" | "user"
         module["hasMissingDeps"] = !missing.isEmpty();
         module["missingDeps"] = missing;
+        // Which KIND of dependency problem, so the row badge can say
+        // "Version conflict" rather than "Missing deps" about a dependency
+        // that is very much installed.
+        module["depBlockKind"] = (isInstalled && m_packageCoordinator)
+            ? logos::summariseDependencyBlockers(
+                  m_packageCoordinator->blockingDepsOf(pluginName))
+            : QString();
 
         modules.append(module);
     }
@@ -220,15 +228,21 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         return;
     }
 
-    // Gate on missing core dependencies — no point attempting the load
-    // if liblogos's dependency resolver will refuse it. We show the popup
-    // instead of letting the user see a cryptic "plugin load failed" error.
-    const QStringList missing = m_packageCoordinator
-        ? m_packageCoordinator->missingDepsOf(moduleName)
-        : QStringList{};
-    if (!missing.isEmpty()) {
-        qDebug() << "UI module" << moduleName << "has missing deps:" << missing;
-        emit missingDepsPopupRequested(moduleName, missing);
+    // Gate on core dependencies the resolver won't accept — no point
+    // attempting the load if liblogos's dependency resolver will refuse it.
+    // We show the popup instead of letting the user see a cryptic "plugin
+    // load failed" error. A dependency that is INSTALLED but at a version
+    // outside the declared range refuses the load exactly as an absent one
+    // does, and the popup has to say which of the two it was: "install it"
+    // and "you have the wrong version" are different instructions.
+    const QVariantList blockers = m_packageCoordinator
+        ? m_packageCoordinator->blockingDepsOf(moduleName)
+        : QVariantList{};
+    if (!blockers.isEmpty()) {
+        const QString summary = logos::summariseDependencyBlockers(blockers);
+        qDebug() << "UI module" << moduleName << "blocked by deps (" << summary
+                 << "):" << blockers;
+        emit missingDepsPopupRequested(moduleName, blockers, summary);
         return;
     }
 
@@ -594,15 +608,21 @@ QVariantList UIPluginManager::launcherApps() const
         app["supportsFullBleedIcon"] = AppsModel::supportsFullBleedIcon(
             m_uiPluginMetadata.value(pluginName)
                 .value("manifestVersion").toString());
-        // Sidebar red-cross marker source. The SidebarAppDelegate reads
-        // this field directly; we don't ship the full missingDeps list
-        // here because the sidebar only draws an indicator — the detailed
-        // list lives behind the click-triggered popup which reads from
-        // backend.uiModulesModel.
+        // Sidebar marker source. The SidebarAppDelegate reads these two
+        // fields directly; we don't ship the blocker list here because the
+        // sidebar only draws an indicator — the detailed list lives behind
+        // the click-triggered popup, which gets it from
+        // PackageCoordinator::blockingDepsOf. The kind is a single word
+        // because that is all a 14px marker can carry.
         const QStringList missing = m_packageCoordinator
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};
         app["hasMissingDeps"] = !missing.isEmpty();
+        // "" | "absent" | "mismatch" | "mixed" — picks the marker's shape.
+        app["depBlockKind"] = m_packageCoordinator
+            ? logos::summariseDependencyBlockers(
+                  m_packageCoordinator->blockingDepsOf(pluginName))
+            : QString();
 
         apps.append(app);
     }

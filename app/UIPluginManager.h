@@ -150,10 +150,19 @@ signals:
     void coreModulesChanged();
 
     // Dependency-aware UX. missingDepsPopup fires when the user clicks a
-    // UI plugin that can't load because its core deps aren't installed;
-    // unloadCascade fires when they try to unload a module other running
-    // things depend on.
-    void missingDepsPopupRequested(const QString& name, const QStringList& missing);
+    // UI plugin whose core dependencies don't let it load; unloadCascade
+    // fires when they try to unload a module other running things depend on.
+    //
+    // `blockers` is one map per blocking dependency — see
+    // PackageCoordinator::blockingDepsOf — and `summary` is one word for the
+    // set ("absent" | "mismatch" | "mixed"). Both, because the dialog says a
+    // DIFFERENT sentence for a dependency that isn't installed and one that
+    // is installed at the wrong version, and a bare name list cannot tell
+    // those apart. Names alone shipped a headline that was a lie for half
+    // the cases it fired on.
+    void missingDepsPopupRequested(const QString& name,
+                                   const QVariantList& blockers,
+                                   const QString& summary);
     void unloadCascadeConfirmationRequested(const QString& name,
                                             const QStringList& loadedDependents);
 

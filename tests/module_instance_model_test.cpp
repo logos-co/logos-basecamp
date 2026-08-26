@@ -125,6 +125,65 @@ private slots:
         QCOMPARE(fieldFor(model, 3, "statusText").toString(), "Missing deps");
     }
 
+    // A dependency that is INSTALLED at a version outside the declared range
+    // blocks the load exactly as an absent one does — but calling it "Missing
+    // deps" points the user at an install they have already performed. The
+    // wording lives here because ModuleStatusBadge reads only `statusText`.
+    void statusText_says_version_conflict_when_nothing_is_actually_missing()
+    {
+        ModuleInstanceModel model;
+        model.replaceRows({
+            makeModule("mismatched", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "mismatch"}}),
+        });
+        QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Version conflict");
+    }
+
+    // "mixed" means at least one dependency really is absent, and that is the
+    // fact the user has to act on first — so it keeps the absence wording.
+    void statusText_keeps_missing_deps_for_a_mixed_set()
+    {
+        ModuleInstanceModel model;
+        model.replaceRows({
+            makeModule("both", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "mixed"}}),
+            makeModule("absent", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "absent"}}),
+            // A payload predating depBlockKind must read as it did before.
+            makeModule("legacy", /*loaded=*/false, {{"hasMissingDeps", true}}),
+        });
+        QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Missing deps");
+        QCOMPARE(fieldFor(model, 1, "statusText").toString(), "Missing deps");
+        QCOMPARE(fieldFor(model, 2, "statusText").toString(), "Missing deps");
+    }
+
+    // A row can go absent -> mismatch (the user installs the dependency, at
+    // the wrong version) with hasMissingDeps never moving. replaceRows'
+    // fast path patches in place and SKIPS a row whose diff mask is empty —
+    // so leaving depBlockKind out of diffRoles doesn't merely miss a
+    // dataChanged, it leaves the old row in the model and the badge keeps the
+    // stale word forever.
+    void statusText_refreshes_when_only_the_block_kind_moved()
+    {
+        ModuleInstanceModel model;
+        model.replaceRows({
+            makeModule("app", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "absent"}}),
+        });
+        QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Missing deps");
+
+        QSignalSpy spy(&model, &ModuleInstanceModel::dataChanged);
+        model.replaceRows({
+            makeModule("app", /*loaded=*/false,
+                       {{"hasMissingDeps", true}, {"depBlockKind", "mismatch"}}),
+        });
+        QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Version conflict");
+
+        QCOMPARE(spy.count(), 1);
+        const auto roles = spy.at(0).at(2).value<QList<int>>();
+        QVERIFY(roles.contains(ModuleInstanceModel::StatusTextRole));
+    }
+
     // ── Numeric coercion ──────────────────────────────────────────────
     // Core stats arrive as either doubles or strings depending on what the
     // module reported. The proxy sorts numerically — coerce up front so the

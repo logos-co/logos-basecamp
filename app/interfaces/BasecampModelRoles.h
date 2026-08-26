@@ -37,10 +37,13 @@ struct AppsModelRoles {
         LatestVersionRole,       // versions[0].version
         HasUpdateRole,           // installedVersion != "" && installed != latest
         IsInstalledRole,         // installedVersion != ""
-        MissingDepsRole,         // QStringList of dep names whose LGX isn't on
-                                 //   disk (sourced from
-                                 //   PackageCoordinator::m_missingDepsByModule).
-                                 //   Empty when the install is complete.
+        MissingDepsRole,         // QStringList of dep names that BLOCK a load:
+                                 //   not on disk, or on disk at a version the
+                                 //   declared range rejects (sourced from
+                                 //   PackageCoordinator::m_missingDepsByModule;
+                                 //   the reason per name is in the parallel
+                                 //   m_blockingDepsByModule). Empty when every
+                                 //   dependency is satisfied.
         InstallStatusRole,       // InstallStatus enum — per-row catalog-vs-disk
                                  //   state (Install/Launch/Upgrade/Downgrade/
                                  //   Reinstall in QML terms). PMUI mirror.
