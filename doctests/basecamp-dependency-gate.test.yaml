@@ -285,9 +285,12 @@ sections:
             --keyring build/depgate/keyring --require-signatures \
             install --file build/depgate/depsvc.lgx
           ls testdata/depgate-user/modules/depsvc
+          # The suffix is the platform's; expect_contains is matched verbatim.
+          test -f testdata/depgate-user/modules/depsvc/depsvc_plugin.{ext} \
+            && echo "plugin binary installed"
         expect_contains:
           - "Package signed"
-          - "depsvc_plugin.so"
+          - "plugin binary installed"
           - "manifest.sig"
 
       - title: "Confirm the embedded dependency carries no signature"
