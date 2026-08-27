@@ -15,18 +15,14 @@ using logos::readDependencyEntry;
 // Both forms declare THE SAME EDGE, so both must yield the same name here.
 //
 // The trap: QVariant::toString() on a QVariantMap returns a NULL QString, not
-// a diagnostic. A reader written as
-//
-//     QString depName = dep.toString();
-//     if (depName.isEmpty()) continue;
-//
-// therefore drops every object-form entry in total silence — no error, no log
-// line — and the plugin mounts with an unloaded dependency.
+// a diagnostic. `dep.toString()` plus an isEmpty() skip therefore drops every
+// object-form entry in silence, and the plugin mounts with an unloaded
+// dependency.
 class DependencyEntryTest : public QObject {
     Q_OBJECT
 
 private slots:
-    // ── The Qt semantics this whole file exists for ─────────────────────
+    // The Qt semantics this whole file exists for.
     void toString_on_an_object_entry_is_null_not_a_diagnostic()
     {
         QVariantMap constrained;
@@ -34,12 +30,11 @@ private slots:
         constrained.insert("version", "^2.0.0");
         constrained.insert("signer",  "did:jwk:eyJrdHkiOiJPS1AifQ");
 
-        // This is why a bare toString() reader cannot be trusted: the call
-        // succeeds, returns nothing, and reports nothing.
+        // The call succeeds, returns nothing, and reports nothing.
         QVERIFY(QVariant(constrained).toString().isNull());
     }
 
-    // ── Bare-name entries: the shape the ABI sends today ────────────────
+    // Bare-name entries: the shape the ABI sends today.
     void bare_name_yields_that_name()
     {
         const auto e = readDependencyEntry(QVariant(QStringLiteral("wallet_module")));
@@ -47,7 +42,7 @@ private slots:
         QCOMPARE(e.name, QStringLiteral("wallet_module"));
     }
 
-    // ── Object entries: the shape the ABI will send once widened ────────
+    // Object entries: the shape the ABI will send once widened.
     void object_entry_yields_its_name()
     {
         QVariantMap constrained;
@@ -70,8 +65,8 @@ private slots:
         QCOMPARE(e.name, QStringLiteral("libp2p_module"));
     }
 
-    // The IPC layer hands us QVariantMap, but a caller that went through
-    // QJsonDocument directly holds a QJsonObject. Same entry, same answer.
+    // The IPC layer hands us QVariantMap; a caller that went through
+    // QJsonDocument holds a QJsonObject. Same entry, same answer.
     void json_object_entry_yields_its_name()
     {
         QJsonObject o;
@@ -93,7 +88,7 @@ private slots:
         QCOMPARE(e.name, QStringLiteral("waku_module"));
     }
 
-    // ── Everything we cannot name is Unrecognised, never a quiet skip ───
+    // Everything we cannot name is Unrecognised, never a quiet skip.
     void object_without_a_name_is_unrecognised()
     {
         QVariantMap noName;
@@ -131,9 +126,8 @@ private slots:
 
     void a_number_is_unrecognised()
     {
-        // Not "42": a dependencies[] entry is a name or an object, and a
-        // number is neither. Reporting it beats silently loading a module
-        // called "42" and beats silently loading nothing.
+        // Not "42": reporting it beats silently loading a module by that
+        // name, and beats silently loading nothing.
         QCOMPARE(readDependencyEntry(QVariant(42)).kind,
                  DependencyEntryKind::Unrecognised);
     }

@@ -17,51 +17,26 @@ using logos::summariseDependencyBlockers;
 // transitive dependencies, may the plugin be loaded, and if not, what does the
 // user need to be told?
 //
-// The rows below are VERBATIM wire payloads, captured by driving a real
-// logoscore daemon over a real installed tree with a module declaring
-// `{"name":"depsvc","version":"…","signer":"did:jwk:…"}` against `depsvc`
-// 1.0.0. They are parsed with QJsonDocument rather than hand-built as
-// QVariantMaps so this suite consumes exactly the bytes the module emits — a
-// hand-built fixture can drift from the wire and still pass.
+// The rows below are VERBATIM wire payloads captured from a real logoscore
+// daemon over a real installed tree, parsed with QJsonDocument rather than
+// hand-built as QVariantMaps so this suite consumes exactly the bytes the
+// module emits — a hand-built fixture can drift from the wire and still pass.
 //
-// The signer rows come from the same rig and NOTHING in them is hand-planted.
-// depsvc is INSTALLED FROM A REALLY-SIGNED .lgx, so the `manifest.sig` in its
-// install directory is the one `lgx sign` produced over that package's own
-// manifest; the only thing that varies between them is the `signer` PIN in the
-// depending manifest, which is a developer declaration and is meant to vary:
+// depsvc 1.0.0 is installed from a really-signed .lgx; only the `signer` PIN
+// in the depending manifest varies across the signer rows:
 //
 //   pin = the DID that signed depsvc      -> installed        (+ signerDid)
 //   pin = a DIFFERENT, REAL did:jwk       -> signer_mismatch  (+ signerDid)
 //   depsvc installed with no manifest.sig -> signer_unknown   (no signerDid)
 //
-// THE PIN MUST CARRY A KEY, and that is why these three were re-captured. The
-// verdict is now reached by EXTRACTING the Ed25519 public key from the pinned
-// did:jwk and verifying depsvc's installed signature with it. These rows used
-// to pin `did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0`, which decodes to
-// {"kty":"OKP","crv":"Ed25519"} — no `x` member, so no key at all. Against the
-// `signer` sidecar it was only ever STRING-COMPARED, so it worked; against a
-// signature it is an UNPARSEABLE PIN, which the library also reports as
-// signer_mismatch (fail-closed, plus a warning naming the depending manifest).
-// The suite would have stayed green while documenting the wrong cause.
-//
-// The version and absence rows above are older captures and keep that
-// placeholder pin. That is correct for them, and for a reason worth stating:
-// neither row carries a signature, so the scanner returns signer_unknown for
-// the pin WITHOUT EVER PARSING IT — it only reaches the did:jwk when there is
-// a signature to check against. `not_installed` then outranks every
-// constraint, and signer_unknown ranks below version_mismatch, so the pin's
-// value cannot affect either row's status whatever it is.
-//
-// What makes the mismatch row a gate problem rather than a display one: the
-// gate classified BY EXCLUSION —
-//
-//     if (m.value("status").toString() == "not_installed") missing << s;
-//     else                                                 installed << s;
-//
-// so a status invented after that line was written lands in `installed` and
-// the plugin is admitted on top of a dependency the resolver rejected. There
-// is no diagnostic; the user sees a bare "plugin load failed" from liblogos,
-// or worse, a plugin that mounts and misbehaves.
+// THE PIN MUST CARRY A KEY: the verdict comes from extracting the Ed25519
+// public key out of the pinned did:jwk and verifying depsvc's signature with
+// it. The version and absence rows still pin
+// `did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0` = {"kty":"OKP",
+// "crv":"Ed25519"} — no `x` member, so no key. Correct for those two only
+// because neither carries a signature, so the scanner never parses the pin.
+// Reuse it anywhere a signature IS checked and it fails closed as
+// signer_mismatch: green for the wrong reason.
 class DependencyGateTest : public QObject {
     Q_OBJECT
 
@@ -73,7 +48,7 @@ class DependencyGateTest : public QObject {
         return doc.object().toVariantMap();
     }
 
-    // depsvc 1.0.0 installed, edge declared bare — nothing to complain about.
+    // Edge declared bare — nothing to complain about.
     static QVariant satisfiedRow()
     {
         return wireRow(R"({"installType":"user","name":"depsvc",)"
@@ -90,8 +65,8 @@ class DependencyGateTest : public QObject {
             R"("version":"1.0.0"})");
     }
 
-    // depsvc removed from the tree entirely — absent outranks the range, and
-    // the declared range still rides along so the message can name it.
+    // Absent outranks the range, and the range still rides along so the message
+    // can name it.
     static QVariant absentRow()
     {
         return wireRow(
@@ -101,17 +76,10 @@ class DependencyGateTest : public QObject {
             R"("version":""})");
     }
 
-    // depsvc 1.0.0 installed, REALLY SIGNED by one key, and the depending
-    // manifest pins a DIFFERENT real key. The installed signature does not
-    // verify under the pinned key, so this is not the package that was asked
-    // for at any version.
-    //
-    // Read the two DIDs carefully — they are DIFFERENT keys, and both are
-    // real. `requiredSigner` is the pin; `signerDid` is the key that actually
-    // signed the installed package. Them differing is the NORMAL shape of this
-    // row, not an inconsistency, and it is emphatically not what produced the
-    // verdict: the scanner reached it by verifying under the PIN's key and
-    // failing. See readDependencyBlocker.
+    // Really signed by one key, and the depending manifest pins a DIFFERENT
+    // real key. The two DIDs differing is the NORMAL shape of this row, and is
+    // NOT what produced the verdict — the scanner verified under the pin's key
+    // and failed. See readDependencyBlocker.
     static QVariant signerMismatchRow()
     {
         return wireRow(
@@ -122,11 +90,7 @@ class DependencyGateTest : public QObject {
             R"("status":"signer_mismatch","version":"1.0.0"})");
     }
 
-    // depsvc 1.0.0 installed with NO SIGNATURE — no manifest.sig in its
-    // install directory. The state of every embedded package (none passes
-    // through installPluginFile, which is the only thing that copies a
-    // manifest.sig into an install tree) and of every unsigned one.
-    // The pin cannot be checked; there is no signerDid key at all.
+    // No manifest.sig, so no signerDid at all.
     static QVariant signerUnknownRow()
     {
         return wireRow(
@@ -136,14 +100,10 @@ class DependencyGateTest : public QObject {
             R"("status":"signer_unknown","version":"1.0.0"})");
     }
 
-    // depsvc 1.0.0 installed, really signed, and the pin NAMES THAT KEY: the
-    // signature verifies under it, so the pin is satisfied and the row is
-    // ordinary `installed`.
-    //
-    // It still carries `signerDid`, because that is a property of the PACKAGE
-    // rather than of the edge. This row exists so that stays true: a gate that
-    // took "a signerDid is present" as a signal in itself would block a
-    // perfectly satisfied dependency.
+    // The pin NAMES the signing key, so it is satisfied and the row is ordinary
+    // `installed` — while still carrying `signerDid`, which is a property of
+    // the PACKAGE, not of the edge. A gate reading "a signerDid is present" as
+    // a signal would block a perfectly satisfied dependency.
     static QVariant signerSatisfiedRow()
     {
         return wireRow(
@@ -155,7 +115,7 @@ class DependencyGateTest : public QObject {
     }
 
 private slots:
-    // ── What blocks a load ──────────────────────────────────────────────
+    // What blocks a load.
     void a_satisfied_dependency_does_not_block()
     {
         const auto b = readDependencyBlocker(satisfiedRow());
@@ -170,8 +130,6 @@ private slots:
         QCOMPARE(b.name, QStringLiteral("depsvc"));
     }
 
-    // THE ONE THIS FILE EXISTS FOR. An installed dependency of the wrong
-    // version is not a satisfied dependency.
     void a_version_mismatch_blocks()
     {
         const auto b = readDependencyBlocker(mismatchRow());
@@ -179,9 +137,6 @@ private slots:
         QCOMPARE(b.name, QStringLiteral("depsvc"));
     }
 
-    // A package under the right name from the WRONG PUBLISHER. It is not the
-    // dependency the module named, and no version of it ever will be, so the
-    // load must not proceed on top of it.
     void a_signer_mismatch_blocks()
     {
         const auto b = readDependencyBlocker(signerMismatchRow());
@@ -191,26 +146,11 @@ private slots:
         QCOMPARE(b.signerDid,      QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
     }
 
-    // THE DESIGN CALL, at the gate. A pin that could not be CHECKED — no
-    // signature is installed to check it against — does not block.
-    //
-    // Absence of evidence is not evidence of mismatch, and this is the normal
-    // state for two whole populations: every embedded package (placed by the
-    // build, never through installPluginFile, which is the only thing that
-    // copies a manifest.sig into an install tree — so an embedded package can
-    // NEVER carry one) and every unsigned package. Blocking here would make a
-    // pin on an embedded dependency unsatisfiable by construction, forever,
-    // with no action a user could take.
-    //
-    // The signature mechanism did not change this argument. It changed what
-    // the missing evidence IS — a manifest.sig rather than a record the
-    // installer wrote — and the population it is missing for is the same one,
-    // for the same structural reason.
-    //
-    // The package manager owns this call and can flip it in ONE place
-    // (UnknownSignerPolicy::Strict makes its scanner emit signer_mismatch
-    // instead, which this gate already blocks) — which is exactly why this
-    // gate must not second-guess it. A decision, pinned, not an omission.
+    // THE DESIGN CALL, pinned here. A pin with no signature to check it against
+    // does not block, because that is the normal state for every embedded
+    // package — placed by the build, never through installPluginFile, so it can
+    // NEVER carry a manifest.sig — and blocking would make those unpinnable by
+    // construction. See DependencyBlocker.h; the package manager can flip it.
     void a_signer_that_cannot_be_checked_does_not_block()
     {
         const auto b = readDependencyBlocker(signerUnknownRow());
@@ -220,37 +160,28 @@ private slots:
         QVERIFY(b.signerDid.isEmpty());
     }
 
-    // The other half of that call, and the one a "defensive" gate gets wrong.
-    // A dependency whose pin IS satisfied carries a signerDid — the row is
-    // `installed` and names the key that signed it. Presence of a signerDid is
-    // therefore not a problem signal, and must not be treated as one.
-    //
-    // A gate that blocked whenever a row carried signer information at all
-    // would refuse every correctly-signed dependency in the fleet, which is
-    // the exact opposite of what this mechanism is for.
+    // The other half of that call: a satisfied pin still carries a signerDid, so
+    // its presence is not a problem signal. A gate that blocked on it would
+    // refuse every correctly-signed dependency.
     void a_satisfied_signer_pin_does_not_block()
     {
         const auto b = readDependencyBlocker(signerSatisfiedRow());
         QCOMPARE(b.kind, DependencyBlockKind::None);
         QVERIFY(logos::dependencyIsPresent(b));
-        // Both DIDs arrive and are EQUAL here — which is what a satisfied pin
-        // looks like, and is exactly why equality must not be what a verdict
-        // is derived from: the scanner reached `installed` by VERIFYING, and
-        // this row would be indistinguishable from one an attacker relabelled.
+        // Both DIDs arrive EQUAL — what a satisfied pin looks like, and why
+        // equality must not be what a verdict is derived from: this row is
+        // indistinguishable from one that was relabelled.
         QCOMPARE(b.requiredSigner, QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
         QCOMPARE(b.signerDid,      QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
         // And no detail clause: there is nothing for a user to do.
         QVERIFY(dependencyBlockerDetail(b).isEmpty());
     }
 
-    // ── Blocking a load and being on disk are DIFFERENT questions ───────
-    // The same rows feed two consumers: the load gate, and the forward edges
-    // of the dependency graph the uninstall plan walks. A version_mismatch
-    // row answers YES to both — it blocks the load AND the package is sitting
-    // on disk. Collapsing the two into one predicate drops the mismatched
-    // dependency out of the graph while resolveFlatDependents still reports
-    // the reverse edge, and an uninstall plan walking an asymmetric graph is
-    // wrong in a way nobody traces back to a load gate.
+    // Blocking a load and being on disk are DIFFERENT questions; a
+    // version_mismatch row answers yes to both. One predicate for both drops
+    // the mismatched dependency out of the graph while resolveFlatDependents
+    // still reports the reverse edge, and an uninstall plan walking an
+    // asymmetric graph is wrong in a way nobody traces back to a load gate.
     void a_mismatched_dependency_blocks_a_load_and_is_still_on_disk()
     {
         const auto b = readDependencyBlocker(mismatchRow());
@@ -269,20 +200,15 @@ private slots:
     {
         QVERIFY(!logos::dependencyIsPresent(readDependencyBlocker(absentRow())));
         QVERIFY(logos::dependencyIsPresent(readDependencyBlocker(satisfiedRow())));
-        // A cycle row keeps the graph edge, which is what the gate did before
-        // any of this — the cycle is a property of the edge, not evidence the
-        // package is missing.
+        // A cycle is a property of the edge, not evidence the package is
+        // missing, so the row keeps its graph edge.
         QVERIFY(logos::dependencyIsPresent(readDependencyBlocker(
             wireRow(R"({"name":"a","status":"cycle","version":"","installType":""})"))));
     }
 
-    // ── The whole split, as the coordinator consumes it ─────────────────
-    // PackageCoordinator's async lambda is not reachable from a unit test, so
-    // the split it performs lives in the header and is exercised here. The
-    // regression this guards: a mismatched dependency landing in `blocking`
-    // but NOT in `present`, which silently deletes a forward edge from the
-    // graph the uninstall plan walks while resolveFlatDependents keeps
-    // reporting the reverse one.
+    // The whole split, as the coordinator consumes it. Its async lambda is not
+    // reachable from a unit test, so the split lives in the header and is
+    // exercised here.
     void the_split_puts_a_mismatched_dependency_in_both_lists()
     {
         const auto split = logos::splitDependencyRows({mismatchRow()});
@@ -308,8 +234,7 @@ private slots:
         QVERIFY(split.blockers.isEmpty());
     }
 
-    // A row with no name is not a dependency; there is nothing to act on, and
-    // dropping it is what the gate has always done.
+    // A row with no name is not a dependency: nothing to act on.
     void the_split_drops_a_row_that_names_nothing()
     {
         const auto split = logos::splitDependencyRows({
@@ -319,10 +244,8 @@ private slots:
         QVERIFY(split.blockers.isEmpty());
     }
 
-    // ── What the user is told ───────────────────────────────────────────
-    // A mismatch message that names neither the constraint nor what is
-    // actually installed leaves the user with nothing to act on: they can see
-    // the plugin refused to load and cannot tell which version to go and get.
+    // What the user is told. A mismatch naming neither the constraint nor what
+    // is installed leaves them unable to tell which version to go and get.
     void a_mismatch_names_the_constraint_and_the_installed_version()
     {
         const QString detail = dependencyBlockerDetail(readDependencyBlocker(mismatchRow()));
@@ -358,10 +281,9 @@ private slots:
                  QStringLiteral("installed version 1.0.0 was rejected"));
     }
 
-    // A THIRD sentence, because it is a third problem. "not installed" sends
-    // the user to install a package they have; "requires ^2.0.0, found 1.0.0"
-    // sends them after a version that will never satisfy this, because the
-    // package on disk is somebody else's. Only naming the keys does.
+    // A third sentence for a third problem: "not installed" sends the user
+    // after a package they have, and a version clause after a version that can
+    // never satisfy this. Only naming the keys works.
     void a_signer_mismatch_says_signer_not_version_and_names_both_dids()
     {
         const QString detail =
@@ -396,7 +318,7 @@ private slots:
         QCOMPARE(dependencyBlockerDetail(readDependencyBlocker(satisfiedRow())), QString());
     }
 
-    // ── The payload QML renders ─────────────────────────────────────────
+    // The payload QML renders.
     void the_wire_map_carries_the_kind_and_both_versions()
     {
         const QVariantMap m = dependencyBlockerToMap(readDependencyBlocker(mismatchRow()));
@@ -408,12 +330,8 @@ private slots:
                  QStringLiteral("requires ^2.0.0, found 1.0.0"));
     }
 
-    // The kind QML switches on. This used to be a ternary
-    // (`VersionMismatch ? "version_mismatch" : "not_installed"`), so a signer
-    // mismatch would have crossed into QML labelled "not_installed" and the
-    // dialog would have told the user to install a package sitting on disk —
-    // the same trailing-else failure this whole header exists to prevent, one
-    // layer out.
+    // A ternary here labels a signer mismatch "not_installed" on the way into
+    // QML, and the dialog tells the user to install a package on disk.
     void the_wire_map_carries_the_signer_kind_and_both_dids()
     {
         const QVariantMap m = dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
@@ -431,9 +349,8 @@ private slots:
         QVERIFY(m.value("installedVersion").toString().isEmpty());
     }
 
-    // ── Choosing the headline ───────────────────────────────────────────
-    // The dialog says one of three different things; a set containing both
-    // kinds must not claim to be either one of them.
+    // Choosing the headline: a set containing more than one kind must not claim
+    // to be any one of them.
     void summary_of_only_absent_blockers_is_absent()
     {
         QVariantList l;
@@ -463,8 +380,8 @@ private slots:
         QCOMPARE(summariseDependencyBlockers(l), QStringLiteral("signer"));
     }
 
-    // The summariser used to test ONE kind and sweep the rest into `absent`,
-    // so a pure signer set would have been summarised as "not installed".
+    // Sweeping unrecognised kinds into `absent` calls a pure signer set
+    // "not installed".
     void summary_of_a_signer_and_a_version_blocker_is_mixed()
     {
         QVariantList l;
@@ -486,14 +403,10 @@ private slots:
         QCOMPARE(summariseDependencyBlockers({}), QString());
     }
 
-    // ── Statuses this build deliberately admits ─────────────────────────
-    // Both of these are decisions, not oversights. `cycle` is admitted
-    // because nothing here has been driven against a real cyclic install and
-    // blocking it would be a behaviour change made blind. An unrecognised
-    // status is admitted because this gate is an ADVISORY pre-check in front
-    // of liblogos' own resolver — liblogos decides whether a load succeeds,
-    // and refusing on a word this build does not know would block loads that
-    // work. Change either only with a run behind it.
+    // Statuses this build deliberately admits: `cycle` because nothing here has
+    // been driven against a real cyclic install, and an unrecognised status
+    // because this gate is only an advisory pre-check in front of liblogos'
+    // own resolver. Change either only with a run behind it.
     void a_cycle_is_admitted_today()
     {
         const auto b = readDependencyBlocker(

@@ -25,18 +25,15 @@ AbstractButton {
     // still emits `clicked`, and the backend decides whether to load or show
     // the popup.
     property bool hasMissingDeps: false
-    // WHICH kind of dependency problem:
-    // "" | "absent" | "mismatch" | "signer" | "mixed".
-    // A dependency that is installed but REJECTED — wrong version, or a
-    // package under the right name from the wrong publisher — is a different
-    // problem with a different remedy, so it gets its own marker rather than
-    // borrowing the "not installed" cross. `hasMissingDeps` still owns
-    // visibility, so a payload without this field renders exactly as before.
+    // WHICH kind: "" | "absent" | "mismatch" | "signer" | "mixed".
+    // An installed-but-rejected dependency has a different remedy, so it gets
+    // its own marker rather than the "not installed" cross. `hasMissingDeps`
+    // still owns visibility, so a payload without this field renders as before.
     property string depBlockKind: ""
 
-    // Everything needed is ON DISK and this app rejects it. "mixed" is
-    // excluded deliberately: something IS absent there, and absence is the
-    // fact the user has to act on first, so it keeps the cross.
+    // Everything needed is ON DISK and this app rejects it. "mixed" is excluded
+    // deliberately: something IS absent there, and absence is what the user has
+    // to act on first, so it keeps the cross.
     readonly property bool _presentButRejected: root.depBlockKind === "mismatch"
                                              || root.depBlockKind === "signer"
     property string appName: ""
@@ -119,9 +116,8 @@ AbstractButton {
 
         Rectangle {
             id: missingDepsMarker
-            // Three names, so a UI test can tell the three states apart —
-            // and the amber marker means two different things, which a
-            // screenshot cannot distinguish.
+            // Three names, so a UI test can tell the states apart: the amber
+            // marker means two different things a screenshot cannot separate.
             objectName: root.depBlockKind === "signer" ? "sidebar.marker.signerConflict"
                       : root._presentButRejected       ? "sidebar.marker.versionConflict"
                                                        : "sidebar.marker.missingDeps"
@@ -129,11 +125,9 @@ AbstractButton {
             width: 14
             height: 14
             radius: 7
-            // Red cross = something is absent. Amber "!" = everything needed
-            // is present, but this app rejects it — wrong version, or the
-            // wrong publisher's package under the right name. States the user
-            // resolves differently, so they must not look identical.
-            // "mixed" keeps the cross: something IS absent.
+            // Red cross = something is absent, "mixed" included. Amber "!" =
+            // all present but rejected. Resolved differently by the user, so
+            // they must not look identical.
             color: root._presentButRejected ? "#e8a33d" : "#d32f2f"
             anchors.right: tile.right
             anchors.top: tile.top

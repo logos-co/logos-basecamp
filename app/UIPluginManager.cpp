@@ -207,9 +207,8 @@ QVariantList UIPluginManager::uiModules() const
             : QString(); // "" | "embedded" | "user"
         module["hasMissingDeps"] = !missing.isEmpty();
         module["missingDeps"] = missing;
-        // Which KIND of dependency problem, so the row badge can say
-        // "Version conflict" rather than "Missing deps" about a dependency
-        // that is very much installed.
+        // Which KIND, so the row badge can say "Version conflict" rather than
+        // "Missing deps" about a dependency that is very much installed.
         module["depBlockKind"] = (isInstalled && m_packageCoordinator)
             ? logos::summariseDependencyBlockers(
                   m_packageCoordinator->blockingDepsOf(pluginName))
@@ -231,13 +230,11 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         return;
     }
 
-    // Gate on core dependencies the resolver won't accept — no point
-    // attempting the load if liblogos's dependency resolver will refuse it.
-    // We show the popup instead of letting the user see a cryptic "plugin
-    // load failed" error. A dependency that is INSTALLED but at a version
+    // Gate on core dependencies the resolver won't accept, so the user gets a
+    // popup instead of a cryptic "plugin load failed". An INSTALLED dependency
     // outside the declared range refuses the load exactly as an absent one
-    // does, and the popup has to say which of the two it was: "install it"
-    // and "you have the wrong version" are different instructions.
+    // does, so the popup must say which: "install it" and "you have the wrong
+    // version" are different instructions.
     const QVariantList blockers = m_packageCoordinator
         ? m_packageCoordinator->blockingDepsOf(moduleName)
         : QVariantList{};
@@ -629,12 +626,10 @@ QVariantList UIPluginManager::launcherApps() const
         // small glyph that must stay inset.
         app["supportsFullBleedIcon"] =
             AppsModel::supportsFullBleedIcon(pluginManifestVersion(pluginName));
-        // Sidebar marker source. The SidebarAppDelegate reads these two
-        // fields directly; we don't ship the blocker list here because the
-        // sidebar only draws an indicator — the detailed list lives behind
-        // the click-triggered popup, which gets it from
-        // PackageCoordinator::blockingDepsOf. The kind is a single word
-        // because that is all a 14px marker can carry.
+        // Sidebar marker source, read directly by SidebarAppDelegate. The
+        // blocker list is deliberately not shipped here: the sidebar draws
+        // only an indicator, and the click-triggered popup fetches the detail
+        // from PackageCoordinator::blockingDepsOf.
         const QStringList missing = m_packageCoordinator
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};

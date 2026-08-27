@@ -16,13 +16,10 @@ QString ModuleInstanceModel::Row::statusText() const
 {
     if (isMainUi)       return QObject::tr("Main UI");
     if (hasMissingDeps) {
-        // "Missing deps" is a lie about a dependency that is installed and
-        // merely the wrong version — the remedy there is a version change,
-        // not an install. It is a bigger lie about one that is installed and
-        // published by somebody else: no version of what is on disk will do,
-        // so both "install it" and "get another version" are dead ends.
-        // "mixed" keeps the absence wording: something IS missing, and that is
-        // the fact the user has to act on first.
+        // "Missing deps" is wrong about a dependency that is installed at the
+        // wrong version, and worse about one signed by somebody else, where
+        // neither installing nor changing version is a remedy. "mixed" keeps
+        // the absence wording: something IS missing, and that comes first.
         if (depBlockKind == QLatin1String("signer"))
             return QObject::tr("Signer conflict");
         if (depBlockKind == QLatin1String("mismatch"))
@@ -119,9 +116,9 @@ QList<int> ModuleInstanceModel::diffRoles(const Row& a, const Row& b)
     if (a.isMainUi       != b.isMainUi)       roles.append(IsMainUiRole);
     if (a.hasMissingDeps != b.hasMissingDeps) roles.append(HasMissingDepsRole);
     // StatusText is derived from isMainUi/hasMissingDeps/depBlockKind/
-    // isLoaded — refresh it whenever any of those changed. depBlockKind is
-    // in the list because a row can go from absent to mismatch (install the
-    // dependency at the wrong version) with hasMissingDeps never moving.
+    // isLoaded — refresh whenever any changed. depBlockKind is in the list
+    // because a row can go absent -> mismatch (the dependency gets installed
+    // at the wrong version) with hasMissingDeps never moving.
     if (a.isMainUi != b.isMainUi
         || a.hasMissingDeps != b.hasMissingDeps
         || a.depBlockKind != b.depBlockKind

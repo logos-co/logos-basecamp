@@ -125,10 +125,9 @@ private slots:
         QCOMPARE(fieldFor(model, 3, "statusText").toString(), "Missing deps");
     }
 
-    // A dependency that is INSTALLED at a version outside the declared range
-    // blocks the load exactly as an absent one does — but calling it "Missing
-    // deps" points the user at an install they have already performed. The
-    // wording lives here because ModuleStatusBadge reads only `statusText`.
+    // Calling an installed-but-out-of-range dependency "Missing deps" points
+    // the user at an install they have already performed. The wording lives
+    // here because ModuleStatusBadge reads only `statusText`.
     void statusText_says_version_conflict_when_nothing_is_actually_missing()
     {
         ModuleInstanceModel model;
@@ -139,12 +138,8 @@ private slots:
         QCOMPARE(fieldFor(model, 0, "statusText").toString(), "Version conflict");
     }
 
-    // A dependency installed under the right name by the WRONG PUBLISHER is
-    // a third state with a third remedy. "Missing deps" tells the user to
-    // install something they have; "Version conflict" tells them to find
-    // another version, and no version of what they have is the package the
-    // module needs. Only "get it from the publisher the module names" works,
-    // and the badge has to stop claiming otherwise.
+    // A third state with a third remedy: no version of what is on disk is the
+    // package the module needs, so neither of the other two words is true.
     void statusText_says_signer_conflict_for_a_wrong_publisher_dependency()
     {
         ModuleInstanceModel model;
@@ -173,12 +168,10 @@ private slots:
         QCOMPARE(fieldFor(model, 2, "statusText").toString(), "Missing deps");
     }
 
-    // A row can go absent -> mismatch (the user installs the dependency, at
-    // the wrong version) with hasMissingDeps never moving. replaceRows'
-    // fast path patches in place and SKIPS a row whose diff mask is empty —
-    // so leaving depBlockKind out of diffRoles doesn't merely miss a
-    // dataChanged, it leaves the old row in the model and the badge keeps the
-    // stale word forever.
+    // A row can go absent -> mismatch with hasMissingDeps never moving.
+    // replaceRows' fast path patches in place and SKIPS a row whose diff mask
+    // is empty, so omitting depBlockKind from diffRoles does not merely miss a
+    // dataChanged — it leaves the old row in the model permanently.
     void statusText_refreshes_when_only_the_block_kind_moved()
     {
         ModuleInstanceModel model;

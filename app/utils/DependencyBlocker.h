@@ -8,20 +8,10 @@
 
 namespace logos {
 
-// Reading a `package_manager.resolveFlatDependencies` row.
-//
-// The module answers with one row per transitive dependency:
-//
-//     {"name":"depsvc","status":"installed","version":"1.0.0","installType":"user"}
-//
-// and, when the depending manifest declared an object-form edge
-// ({"name":…,"version":"^2.0.0","signer":"did:jwk:…"}), the row also carries
-// what was required — and, for a signer, what the installed package's own
-// signature says about itself:
-//
-//     {"name":"depsvc","status":"version_mismatch","version":"1.0.0",
-//      "requiredVersion":"^2.0.0","requiredSigner":"did:jwk:…",
-//      "signerDid":"did:jwk:…"}
+// Reading a `package_manager.resolveFlatDependencies` row — one row per
+// transitive dependency, and an object-form edge also carries what was
+// required plus what the installed signature says of itself. Verbatim wire
+// payloads are in tests/dependency_gate_test.cpp.
 //
 // `status` is a closed vocabulary owned by logos-package-manager
 // (DependencyStatus / dependencyStatusToString):
@@ -29,95 +19,60 @@ namespace logos {
 //     "installed" | "not_installed" | "cycle" | "version_mismatch"
 //                 | "signer_mismatch" | "signer_unknown"
 //
-// This header decides which of those BLOCK a load, and turns a blocking row
-// into something a user can act on. Route every read of a resolveFlatDeps row
-// through here.
+// Route every read of such a row through here, and classify by NAMING the
+// statuses: a trailing `else` silently counts every status invented after it
+// as satisfied.
 //
-// The rule: classify by NAMING the statuses, never by exclusion. The gate
-// used to read
+// Deliberately NOT blocking, decisions rather than omissions:
 //
-//     if (m.value("status").toString() == "not_installed") missing << s;
-//     else                                                 installed << s;
+//   "cycle" — never driven against a real cyclic install, so blocking would be
+//     a behaviour change made blind. Pinned by a test.
 //
-// so every status invented after that line was written landed in `installed`.
-// That is how "version_mismatch" — an installed dependency the resolver had
-// just rejected — came to count as a satisfied one, with no diagnostic
-// anywhere. A switch over the vocabulary would have been a compile error to
-// extend; a trailing `else` was silence.
+//   "signer_unknown" — the pin could not be CHECKED: nothing records who
+//     published the installed package. Absence of evidence, not evidence of
+//     mismatch, and the normal state for every embedded package — the build
+//     places them, so they never pass through the installer that writes a
+//     manifest.sig and can never acquire one. Blocking would make a pin on an
+//     embedded dependency unsatisfiable by construction. The package manager
+//     owns this call (UnknownSignerPolicy::Strict emits signer_mismatch
+//     instead, which this gate does block). Pinned by a test.
 //
-// Deliberately NOT blocking, all three decisions rather than omissions:
-//
-//   "cycle" — a declared dependency cycle. Nothing here has been driven
-//     against a real cyclic install, and blocking it would be a behaviour
-//     change made blind. Pinned by a test so the next reader sees the choice.
-//
-//   "signer_unknown" — the edge pinned a publisher and NOTHING RECORDS who
-//     published the installed package. That is absence of evidence, not
-//     evidence of mismatch, and it is the EXPECTED state for two whole
-//     populations: every embedded package (they are placed by the build and
-//     never pass through the installer that records a publisher, so they can
-//     never acquire one) and everything installed before the record existed.
-//     Blocking on it would make a pin on an embedded dependency unsatisfiable
-//     by construction, forever, with no action the user could take. The
-//     package manager owns this call and can flip it in one place
-//     (UnknownSignerPolicy::Strict makes the scanner emit signer_mismatch
-//     instead, and then this gate blocks it without needing a change here) —
-//     which is exactly why this gate should not second-guess it. Pinned by a
-//     test.
-//
-//   an unrecognised status — this gate is an ADVISORY pre-check in front of
-//     liblogos' own dependency resolver, run so the user gets "depsvc is not
-//     installed" instead of a bare "plugin load failed". liblogos remains the
-//     authority on whether a load succeeds. Refusing on a word this build
-//     does not know would block loads that work; admitting one costs only the
-//     nicer message.
+//   an unrecognised status — this gate is an advisory pre-check in front of
+//     liblogos' own resolver, which remains the authority on whether a load
+//     succeeds. Refusing on a word this build does not know would block loads
+//     that work.
 
 enum class DependencyBlockKind {
-    // The row does not block a load: satisfied, cyclic, a publisher we could
-    // not check, or a status this build does not recognise.
+    // Satisfied, cyclic, a publisher we could not check, or a status this
+    // build does not recognise.
     None,
-    // Nothing is installed under this name.
     NotInstalled,
-    // Something IS installed under this name, but its version does not
-    // satisfy the range the depending manifest declared for this edge.
     VersionMismatch,
-    // Something IS installed under this name and it is provably NOT the
-    // package the dependant named: the installed signature does not verify
-    // under the pinned key, so a different key signed it.
-    //
-    // A THIRD user action, not a variant of the other two. "Install it" and
-    // "get a different version" both assume the thing on disk is the right
-    // package; this one says it is not, and no version of what is installed
-    // will do. Folding it into either would give the user an instruction that
-    // cannot work.
+    // Installed and provably NOT the package the dependant named: the
+    // signature does not verify under the pinned key. A THIRD user action —
+    // no version of what is installed will do.
     SignerMismatch,
 };
 
 struct DependencyBlocker {
     DependencyBlockKind kind = DependencyBlockKind::None;
     QString name;
-    // The declared semver range, e.g. "^2.0.0". Empty when the manifest
-    // declared a bare-name dependency — the edge with no constraint on it.
+    // Declared semver range, e.g. "^2.0.0". Empty for a bare-name dependency.
     QString requiredVersion;
-    // The version actually present. Empty on a NotInstalled row: there is
-    // nothing installed to report.
+    // Empty on a NotInstalled row: there is nothing installed to report.
     QString installedVersion;
-    // The signer DID the depending manifest PINNED for this edge. Empty when
-    // it named no signer, which is every manifest in the fleet today.
+    // The signer DID the depending manifest PINNED. Empty when it named none,
+    // which is every manifest in the fleet today.
     QString requiredSigner;
-    // The DID the installed package's own signature names, once that signature
-    // has been checked against the key the DID itself carries. Empty when no
-    // usable signature is installed — which is not the same as "unsigned",
-    // and is why a SignerMismatch message must never be built from this field
-    // alone.
+    // What the installed signature says of itself, once checked against the
+    // key its own DID carries. Empty when no usable signature is installed,
+    // which is not the same as "unsigned".
     //
-    // NOT what the verdict was computed from. logos-package-manager decides a
-    // signer pin by verifying the installed signature under the PIN's key, so
-    // this differing from `requiredSigner` on a signer_mismatch row is the
-    // normal shape of that row. Do not re-derive the verdict by comparing the
-    // two here: a document supplies both a DID and a signature, so it can
-    // always be made to agree with itself, and the comparison would accept a
-    // signature relabelled to name the pinned DID.
+    // NOT what the verdict was computed from — that comes from verifying under
+    // the PIN's key, so this differing from `requiredSigner` is the normal
+    // shape of a signer_mismatch row. Never re-derive the verdict by comparing
+    // the two: a document supplies both DID and signature, so it can always be
+    // made to agree with itself.
     QString signerDid;
 };
 
@@ -132,15 +87,9 @@ inline DependencyBlocker readDependencyBlocker(const QVariant& row)
     b.requiredSigner   = m.value(QStringLiteral("requiredSigner")).toString();
     b.signerDid        = m.value(QStringLiteral("signerDid")).toString();
 
-    // Named, not excluded. Absence outranks everything — the same precedence
-    // the scanner itself applies, and the right one: a constraint can only be
-    // judged against something you have, and pointing a user at "requires
-    // ^2.0.0" when nothing is installed sends them after the wrong remedy.
-    //
-    // The scanner has already resolved which single constraint failed, so
-    // these are alternatives, not a priority list to re-derive here. Adding a
-    // status means adding a branch, which is the point: the `else` that used
-    // to sit here is how version_mismatch silently counted as satisfied.
+    // Named, not excluded. The scanner has already resolved which single
+    // constraint failed, so these are alternatives, not a priority list to
+    // re-derive here; adding a status means adding a branch.
     const QString status = m.value(QStringLiteral("status")).toString();
     if (status == QLatin1String("not_installed"))
         b.kind = DependencyBlockKind::NotInstalled;
@@ -153,37 +102,29 @@ inline DependencyBlocker readDependencyBlocker(const QVariant& row)
     return b;
 }
 
-// Whether the dependency is PRESENT on disk.
+// Whether the dependency is PRESENT on disk — a different question from
+// whether the row blocks a load, and a version_mismatch row is both. Callers
+// building the dependency GRAPH must ask this one: dropping a mismatched
+// dependency leaves the forward edge missing while resolveFlatDependents still
+// reports the reverse one, and a planner walking an asymmetric graph produces
+// wrong plans nobody traces back to here.
 //
-// A DIFFERENT question from whether the row blocks a load, and the one the
-// dependency GRAPH asks — a version_mismatch or signer_mismatch row blocks a
-// load and is on disk at the same time. Callers that build the graph (the
-// uninstall plan's forward edges, the on-disk closure) must ask this one:
-// dropping a mismatched dependency from the closure would leave the forward
-// edge missing while resolveFlatDependents still reports the reverse edge, and
-// a planner walking an asymmetric graph produces plans that are wrong in ways
-// nobody traces back to here.
-//
-// Exactly one kind means "nothing under this name", which is why this one IS
-// written by exclusion: every kind added later is by definition about a
-// package that is installed, so it should count as present by default.
+// Written by exclusion on purpose: every kind added later is about a package
+// that IS installed.
 inline bool dependencyIsPresent(const DependencyBlocker& b)
 {
     return b.kind != DependencyBlockKind::NotInstalled;
 }
 
-// The clause that tells the user what to DO about this row, without the
-// module's display name — the caller owns that lookup and prepends it.
-//
-// A blocking row that names no constraint and no version would produce an
-// empty clause; each branch keeps a fallback so the line never renders as a
-// bare bullet with a dangling dash.
+// The clause telling the user what to DO about this row, without the module's
+// display name — the caller prepends that. Every branch keeps a fallback so a
+// row naming neither constraint nor version never renders as a dangling dash.
 inline QString dependencyBlockerDetail(const DependencyBlocker& b)
 {
     switch (b.kind) {
     case DependencyBlockKind::NotInstalled:
-        // The declared range still rides along on an absent row, so the
-        // message can say WHICH version to go and install.
+        // The declared range rides along even on an absent row, so the message
+        // can say WHICH version to install.
         return b.requiredVersion.isEmpty()
             ? QStringLiteral("not installed")
             : QStringLiteral("not installed; requires %1").arg(b.requiredVersion);
@@ -198,21 +139,10 @@ inline QString dependencyBlockerDetail(const DependencyBlocker& b)
             .arg(b.requiredVersion, b.installedVersion);
 
     case DependencyBlockKind::SignerMismatch:
-        // A DIFFERENT sentence, because it is a different problem: the thing
-        // on disk is somebody else's package that happens to share the name.
-        // Never phrased as a version or an absence — no version of what is
-        // installed will satisfy this, and reinstalling "it" gets the same
-        // package back.
-        //
-        // Both DIDs when we have them: the pin alone says nothing about what
-        // went wrong, and the installed one alone reads as an accusation with
-        // no charge. Base64url DIDs are long, so the caller renders them on
-        // the row it already indents; keeping them out entirely would leave a
-        // user with no way to tell WHOSE package they ended up with.
-        //
-        // "signed by" rather than "published by": what failed is an Ed25519
-        // check against the pinned key, and `signerDid` is what the installed
-        // signature says of itself rather than an established publisher.
+        // Never phrased as a version or an absence: no version of what is
+        // installed satisfies this, and reinstalling gets the same package
+        // back. Both DIDs when we have them, or the user cannot tell whose
+        // package they ended up with.
         if (b.requiredSigner.isEmpty())
             return QStringLiteral("signed by a different key");
         if (b.signerDid.isEmpty())
@@ -227,15 +157,12 @@ inline QString dependencyBlockerDetail(const DependencyBlocker& b)
     return QString();
 }
 
-// The wire form handed to QML. `kind` reuses the module's own words for the
-// same facts, so one status has one name from the scanner to the dialog.
+// The wire form handed to QML. `kind` reuses the module's own words, so one
+// status has one name from the scanner to the dialog.
 inline QString dependencyBlockKindName(DependencyBlockKind k)
 {
-    // A switch, not a ternary chain. The chain this replaced was
-    // `VersionMismatch ? "version_mismatch" : "not_installed"`, so every kind
-    // added after it would have crossed into QML labelled "not_installed" —
-    // the identical shape of the trailing `else` that made version_mismatch
-    // count as satisfied in the first place, one layer out.
+    // A switch, not a ternary chain: a chain labels every kind added after it
+    // "not_installed" on the way into QML.
     switch (k) {
     case DependencyBlockKind::VersionMismatch: return QStringLiteral("version_mismatch");
     case DependencyBlockKind::SignerMismatch:  return QStringLiteral("signer_mismatch");
@@ -258,21 +185,17 @@ inline QVariantMap dependencyBlockerToMap(const DependencyBlocker& b)
     return m;
 }
 
-// One word for a whole set of blockers, so a tile marker and a dialog
-// headline can pick a shape without re-walking the list in QML.
+// One word for a whole set of blockers, so a tile marker and a dialog headline
+// need not re-walk the list in QML.
 //
 //   ""         nothing blocks the load
 //   "absent"   every blocker is a dependency that isn't installed
 //   "mismatch" every blocker is an installed dependency of the wrong version
 //   "signer"   every blocker is installed but published by somebody else
-//   "mixed"    more than one of the above, and the copy must not claim it is
-//              only one of them
+//   "mixed"    more than one of the above; the copy must not claim one
 //
-// Classified by NAMING each kind, for the third time in this header and for
-// the same reason each time: the loop this replaced tested one kind and swept
-// everything else into `absent`, so a signer mismatch would have been
-// summarised as "not installed" and the dialog would have told the user to go
-// install a package that is sitting on their disk.
+// Named, not excluded, for the same reason as above: sweeping unknown kinds
+// into `absent` summarises a signer mismatch as "not installed".
 inline QString summariseDependencyBlockers(const QVariantList& blockers)
 {
     bool absent = false;
@@ -293,19 +216,17 @@ inline QString summariseDependencyBlockers(const QVariantList& blockers)
 }
 
 // One module's whole resolveFlatDependencies reply, split the way its
-// consumers need it. Lives here rather than in the caller's async lambda so
-// the split is under test — the two lists answer DIFFERENT questions and a
+// consumers need it. Here rather than in the caller's async lambda so the
+// split is under test — the two lists answer DIFFERENT questions and a
 // mismatched dependency belongs in BOTH.
 struct DependencyRowSplit {
-    // On disk. The forward edges of the dependency graph the uninstall plan
-    // walks — it must agree with the reverse edges resolveFlatDependents
-    // reports, and those know nothing about version ranges.
+    // On disk. Forward edges of the graph the uninstall plan walks; must agree
+    // with the reverse edges resolveFlatDependents reports, which know nothing
+    // about version ranges.
     QStringList  present;
-    // Refuses the load. Names only, for the consumers that just need to know
-    // something is wrong (the tile marker, installStatus).
+    // Refuses the load. Names only, for consumers that need no reason.
     QStringList  blocking;
-    // The same set with the reason attached, for the one consumer that has to
-    // tell the user what to do about it.
+    // The same set with the reason attached.
     QVariantList blockers;
 };
 
@@ -314,9 +235,7 @@ inline DependencyRowSplit splitDependencyRows(const QVariantList& rows)
     DependencyRowSplit out;
     for (const QVariant& row : rows) {
         const DependencyBlocker b = readDependencyBlocker(row);
-        // A row that names nothing is not a dependency. Dropping it is the
-        // pre-existing behaviour and the only safe one — there is no name to
-        // act on.
+        // A row that names nothing is not a dependency: no name to act on.
         if (b.name.isEmpty()) continue;
 
         if (dependencyIsPresent(b)) out.present << b.name;

@@ -128,11 +128,10 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
         // a bare dep.toString().
         const logos::DependencyEntry entry = logos::readDependencyEntry(dep);
         if (entry.kind == logos::DependencyEntryKind::Unrecognised) {
-            // We cannot tell WHICH module this entry declares, so we cannot
-            // honour the declaration. Refuse the load and say so: carrying on
-            // would mount the plugin with a declared dependency silently
-            // unloaded, which surfaces later as an unexplained missing-method
-            // or dead-endpoint failure with nothing in the log pointing here.
+            // No name means no way to honour the declaration. Refuse rather
+            // than continue: mounting the plugin with a declared dependency
+            // silently unloaded surfaces later as a missing method or a dead
+            // endpoint, with nothing in the log pointing here.
             qWarning() << "Unrecognised core dependency entry" << dep
                        << "for" << request.name
                        << "- expected a module name, or an object with a "

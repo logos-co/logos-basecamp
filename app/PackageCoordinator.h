@@ -67,14 +67,11 @@ public:
     // the catalog's claim about the artifact — what is actually installed.
     QString     installedRootHash(const QString& name) const;
     QStringList missingDepsOf(const QString& name) const;
-    // The same set as missingDepsOf, with the reason attached: one map per
+    // The same set as missingDepsOf with the reason attached: one map per
     // blocking dependency, {name, kind, requiredVersion, installedVersion,
-    // requiredSigner, signerDid, detail} as built by
-    // logos::dependencyBlockerToMap. missingDepsOf is the
-    // names alone, kept because every existing consumer (the sidebar marker,
-    // AppsModel::setMissingDeps, installStatus) only ever needed presence.
-    // A caller that has to TELL the user something wants this one — the two
-    // are always populated together and always agree on membership.
+    // requiredSigner, signerDid, detail} from logos::dependencyBlockerToMap.
+    // The two are populated together and always agree on membership; a caller
+    // that has to TELL the user something wants this one.
     QVariantList blockingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
     QString     displayNameFor(const QString& name) const;

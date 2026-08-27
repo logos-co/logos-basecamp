@@ -12,22 +12,11 @@ import Logos.Theme
 //                       dependencies won't let it load. The only action is an
 //                       "OK" that closes the dialog — Cancel is hidden, since
 //                       nothing was started and there is nothing to abort.
-//
-//                       THREE different things bring a user here, and the copy
-//                       must not conflate them: a dependency that is not
-//                       installed; one that IS installed at a version outside
-//                       the range the manifest declared; and one that is
-//                       installed under the right name but published by a
-//                       DIFFERENT SIGNER, which is somebody else's package and
-//                       cannot be fixed by installing or by changing version.
-//                       `blockSummary` ("absent" | "mismatch" | "signer" |
-//                       "mixed") picks the sentence, and each row carries its
-//                       own `detail` clause naming the constraint and what was
-//                       found — "requires ^2.0.0, found 1.0.0", or "signed by a
-//                       different key; requires <did>, signed by <did>".
-//                       Without that pair the dialog told a user with a version
-//                       conflict that the module was "not installed", which is
-//                       both false and unactionable.
+//                       Three distinct problems land here — absent, wrong
+//                       version, wrong signer — with three different remedies,
+//                       so the copy must not conflate them. `blockSummary`
+//                       picks the sentence; each row's `detail` clause names
+//                       the constraint and what was found.
 //  - "unloadCascade"  — confirmation; unloading this module would leave
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
@@ -77,11 +66,10 @@ Dialog {
     // For "missingDeps" each entry is a map from
     // logos::dependencyBlockerToMap — {name, kind, requiredVersion,
     // installedVersion, requiredSigner, signerDid, detail}. For the other
-    // one-list modes it is a plain module name. `_itemName` / `_itemDetail`
+    // one-list modes it is a plain module name; `_itemName` / `_itemDetail`
     // read either shape.
     property var items: []
-    // Only used in missingDeps mode:
-    // "" | "absent" | "mismatch" | "signer" | "mixed".
+    // missingDeps only: "" | "absent" | "mismatch" | "signer" | "mixed".
     // Computed host-side (logos::summariseDependencyBlockers) so one set of
     // blockers yields one sentence everywhere it is described.
     property string blockSummary: ""
@@ -133,9 +121,9 @@ Dialog {
         open();
     }
 
-    // An `items` entry is either a blocker map or a bare module name; these
-    // two read either without a stringification that would quietly turn a map
-    // into an empty label.
+    // An `items` entry is either a blocker map or a bare module name. Read it
+    // through these, never by stringifying: a map stringifies to an empty
+    // label without complaint.
     function _itemName(entry) {
         if (entry === undefined || entry === null) return "";
         if (typeof entry === "string") return entry;
@@ -219,16 +207,10 @@ Dialog {
                 Layout.fillWidth: true
                 text: {
                     if (root.mode === "missingDeps") {
-                        // Named, not defaulted. "Missing Dependencies" is the
-                        // fallback ONLY for the shapes where something really
-                        // is missing ("absent", "mixed"); a shape that means
-                        // everything is present would inherit a title that
-                        // contradicts its own body text.
-                        // "Publisher" rather than "Signing Key": the user
-                        // register is WHOSE package this is, and the key is
-                        // the evidence, not the subject. The mechanism — an
-                        // Ed25519 check that failed — belongs in the body and
-                        // on the row, which now state it exactly.
+                        // Named, not defaulted: "Missing Dependencies" is
+                        // the fallback only for shapes where something really
+                        // is absent. Any other shape would inherit a title
+                        // contradicting its own body text.
                         if (root.blockSummary === "signer")   return "Unexpected Publisher";
                         if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
                         return "Missing Dependencies";
@@ -260,23 +242,13 @@ Dialog {
             readonly property string _label: root.displayNameLookup(root.moduleName) || root.moduleName
             text: {
                 if (root.mode === "missingDeps") {
-                    // Four different facts, four different sentences. Saying
-                    // "not installed" about a module that is installed at the
-                    // wrong version sends the user to reinstall something they
-                    // already have; saying "wrong version" about a module
-                    // published by somebody else sends them after a version
-                    // that does not exist, because no version of the package
-                    // they have is the package they need.
-                    // What is known here is a CRYPTOGRAPHIC RESULT, and it
-                    // is stronger than what this used to say. The old sentence
-                    // ("published by a different signer") reported a record
-                    // the installer had written down and could only be as good
-                    // as that record. The scanner now takes the key out of the
-                    // DID the module itself names, and checks the installed
-                    // package's own signature against it. So the claim is not
-                    // "our note says somebody else" but "this package is not
-                    // signed by the key your module asked for" — which no
-                    // amount of relabelling on the package's side can change.
+                    // Four facts, four sentences. "Not installed" about a
+                    // module installed at the wrong version sends the user to
+                    // reinstall what they have; "wrong version" about somebody
+                    // else's package sends them after a version that does not
+                    // exist. The signer sentence may be this strong because it
+                    // reports a failed Ed25519 check against the key the module
+                    // itself named, not a record the installer wrote down.
                     if (root.blockSummary === "signer")
                         return "'" + _label + "' cannot be loaded because the "
                              + "following modules are not signed by the key it "
@@ -389,9 +361,9 @@ Dialog {
                 delegate: LogosText {
                     readonly property string _name: root._itemName(modelData)
                     readonly property string _detail: root._itemDetail(modelData)
-                    // The detail clause is what makes a version complaint
-                    // actionable — a bare name tells the user a module is
-                    // wrong without telling them which version to get.
+                    // The detail clause is what makes the complaint
+                    // actionable: a bare name does not say which version, or
+                    // whose package, to go and get.
                     text: "• " + (root.displayNameLookup(_name) || _name)
                           + (_detail.length > 0 ? " — " + _detail : "")
                     color: "#e0e0e0"

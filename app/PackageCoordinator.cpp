@@ -1421,21 +1421,17 @@ void PackageCoordinator::refreshDependencyInfo()
         };
 
         for (const QString& name : names) {
-            // One call, three caches. The blocking list is the subset the
-            // load gate refuses on; the blockers carry why; the closure (every
-            // row that is actually on disk) is what the uninstall plan walks.
-            // Keeping all three here is why the dependency cleanup needs no
-            // extra IPC.
+            // One call, three caches: the names the load gate refuses on, the
+            // reason per name, and the on-disk closure the uninstall plan
+            // walks. Why the dependency cleanup needs no extra IPC.
             inner.package_manager.resolveFlatDependenciesAsync(
                 name, true,
                 [missingMap, blockingMap, dependenciesMap, name,
                  maybeFinish](QVariantList deps) {
-                    // One reply, three caches, two questions — which rows are
-                    // on disk (the graph) and which refuse the load (the
-                    // gate). Deciding both here with one test is what admitted
-                    // a dependency the resolver had rejected; the split lives
-                    // in utils/DependencyBlocker.h, under test, because this
-                    // lambda is not reachable from one.
+                    // Two questions, not one: which rows are on disk (the
+                    // graph) and which refuse the load (the gate). The split
+                    // lives in utils/DependencyBlocker.h so it is under test —
+                    // this lambda is not reachable from one.
                     const logos::DependencyRowSplit split =
                         logos::splitDependencyRows(deps);
                     missingMap->insert(name, split.blocking);
