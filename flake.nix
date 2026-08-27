@@ -440,6 +440,20 @@
             inherit pkgs; appPkg = app; negativeControl = true;
           };
 
+          # One library name staged twice -- lib/ and beside a module -- must
+          # mean the same build: macOS binds to lib/, Linux to the sibling.
+          # Over the BUNDLE, since the duplication is the bundler's doing.
+          # Build: nix build .#link-gate  (CI: build-appimage, build-macos-app)
+          link-gate = import ./nix/link-gate.nix {
+            inherit pkgs; bundlePkg = binBundleDir;
+          };
+
+          # Negative control for the above. Ship both or neither.
+          # Build: nix build .#link-gate-negative
+          link-gate-negative = import ./nix/link-gate.nix {
+            inherit pkgs; bundlePkg = binBundleDir; negativeControl = true;
+          };
+
           # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
           # builds a real malicious QML plugin and asserts the production sandbox
           # refuses to load it. Build: nix build .#sandbox-test
@@ -546,6 +560,9 @@
         host-services-test = self.packages.${system}.host-services-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
+      } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+        link-gate = self.packages.${system}.link-gate;
+        link-gate-negative = self.packages.${system}.link-gate-negative;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
