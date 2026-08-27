@@ -23,8 +23,8 @@ import Logos.Theme
 //                       `blockSummary` ("absent" | "mismatch" | "signer" |
 //                       "mixed") picks the sentence, and each row carries its
 //                       own `detail` clause naming the constraint and what was
-//                       found — "requires ^2.0.0, found 1.0.0", or "published
-//                       by a different signer; requires <did>, found <did>".
+//                       found — "requires ^2.0.0, found 1.0.0", or "signed by a
+//                       different key; requires <did>, signed by <did>".
 //                       Without that pair the dialog told a user with a version
 //                       conflict that the module was "not installed", which is
 //                       both false and unactionable.
@@ -224,6 +224,11 @@ Dialog {
                         // is missing ("absent", "mixed"); a shape that means
                         // everything is present would inherit a title that
                         // contradicts its own body text.
+                        // "Publisher" rather than "Signing Key": the user
+                        // register is WHOSE package this is, and the key is
+                        // the evidence, not the subject. The mechanism — an
+                        // Ed25519 check that failed — belongs in the body and
+                        // on the row, which now state it exactly.
                         if (root.blockSummary === "signer")   return "Unexpected Publisher";
                         if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
                         return "Missing Dependencies";
@@ -262,13 +267,23 @@ Dialog {
                     // published by somebody else sends them after a version
                     // that does not exist, because no version of the package
                     // they have is the package they need.
+                    // What is known here is a CRYPTOGRAPHIC RESULT, and it
+                    // is stronger than what this used to say. The old sentence
+                    // ("published by a different signer") reported a record
+                    // the installer had written down and could only be as good
+                    // as that record. The scanner now takes the key out of the
+                    // DID the module itself names, and checks the installed
+                    // package's own signature against it. So the claim is not
+                    // "our note says somebody else" but "this package is not
+                    // signed by the key your module asked for" — which no
+                    // amount of relabelling on the package's side can change.
                     if (root.blockSummary === "signer")
                         return "'" + _label + "' cannot be loaded because the "
-                             + "following modules were published by a different "
-                             + "signer than it requires. A package under the "
-                             + "right name from the wrong publisher is a "
-                             + "different package — reinstall these from the "
-                             + "publisher the module names:";
+                             + "following modules are not signed by the key it "
+                             + "requires. A package under the right name signed "
+                             + "by a different key is a different package — "
+                             + "reinstall these from the publisher the module "
+                             + "names:";
                     if (root.blockSummary === "mismatch")
                         return "'" + _label + "' cannot be loaded because the "
                              + "following modules are installed at a version it "
@@ -276,7 +291,8 @@ Dialog {
                     if (root.blockSummary === "mixed")
                         return "'" + _label + "' cannot be loaded because the "
                              + "following modules are missing, are the wrong "
-                             + "version, or came from a different publisher:";
+                             + "version, or are not signed by the key it "
+                             + "requires:";
                     return "'" + _label + "' cannot be loaded because the "
                          + "following modules are not installed:";
                 }

@@ -24,12 +24,33 @@ using logos::summariseDependencyBlockers;
 // QVariantMaps so this suite consumes exactly the bytes the module emits — a
 // hand-built fixture can drift from the wire and still pass.
 //
-// The signer rows come from the same rig, varying only the `signer` sidecar in
-// depsvc's install directory: absent -> signer_unknown, a different DID ->
-// signer_mismatch. The declared range is ^1.0.0 on those two so the SIGNER
-// verdict is the one reported; with ^2.0.0 and a mismatched signer the same
-// rig reports signer_mismatch (identity outranks a range) and with ^2.0.0 and
-// a matching signer it reports version_mismatch.
+// The signer rows come from the same rig and NOTHING in them is hand-planted.
+// depsvc is INSTALLED FROM A REALLY-SIGNED .lgx, so the `manifest.sig` in its
+// install directory is the one `lgx sign` produced over that package's own
+// manifest; the only thing that varies between them is the `signer` PIN in the
+// depending manifest, which is a developer declaration and is meant to vary:
+//
+//   pin = the DID that signed depsvc      -> installed        (+ signerDid)
+//   pin = a DIFFERENT, REAL did:jwk       -> signer_mismatch  (+ signerDid)
+//   depsvc installed with no manifest.sig -> signer_unknown   (no signerDid)
+//
+// THE PIN MUST CARRY A KEY, and that is why these three were re-captured. The
+// verdict is now reached by EXTRACTING the Ed25519 public key from the pinned
+// did:jwk and verifying depsvc's installed signature with it. These rows used
+// to pin `did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0`, which decodes to
+// {"kty":"OKP","crv":"Ed25519"} — no `x` member, so no key at all. Against the
+// `signer` sidecar it was only ever STRING-COMPARED, so it worked; against a
+// signature it is an UNPARSEABLE PIN, which the library also reports as
+// signer_mismatch (fail-closed, plus a warning naming the depending manifest).
+// The suite would have stayed green while documenting the wrong cause.
+//
+// The version and absence rows above are older captures and keep that
+// placeholder pin. That is correct for them, and for a reason worth stating:
+// neither row carries a signature, so the scanner returns signer_unknown for
+// the pin WITHOUT EVER PARSING IT — it only reaches the did:jwk when there is
+// a signature to check against. `not_installed` then outranks every
+// constraint, and signer_unknown ranks below version_mismatch, so the pin's
+// value cannot affect either row's status whatever it is.
 //
 // What makes the mismatch row a gate problem rather than a display one: the
 // gate classified BY EXCLUSION —
@@ -80,28 +101,57 @@ class DependencyGateTest : public QObject {
             R"("version":""})");
     }
 
-    // depsvc 1.0.0 installed and its recorded publisher is NOT the pinned
-    // one: a package under the right name from the wrong signer.
+    // depsvc 1.0.0 installed, REALLY SIGNED by one key, and the depending
+    // manifest pins a DIFFERENT real key. The installed signature does not
+    // verify under the pinned key, so this is not the package that was asked
+    // for at any version.
+    //
+    // Read the two DIDs carefully — they are DIFFERENT keys, and both are
+    // real. `requiredSigner` is the pin; `signerDid` is the key that actually
+    // signed the installed package. Them differing is the NORMAL shape of this
+    // row, not an inconsistency, and it is emphatically not what produced the
+    // verdict: the scanner reached it by verifying under the PIN's key and
+    // failing. See readDependencyBlocker.
     static QVariant signerMismatchRow()
     {
         return wireRow(
             R"({"installType":"user","name":"depsvc",)"
-            R"("signerDid":"did:jwk:SOMEBODY_ELSE",)"
-            R"("requiredSigner":"did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0",)"
-            R"("requiredVersion":"^1.0.0","status":"signer_mismatch",)"
-            R"("version":"1.0.0"})");
+            R"("requiredSigner":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Il96N1dqMUd4RWhEdURHQ1hHdVJuOUdTdm1teHo3ZGtMY0dvaEdqMTJOMEUifQ",)"
+            R"("requiredVersion":"^1.0.0",)"
+            R"("signerDid":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ",)"
+            R"("status":"signer_mismatch","version":"1.0.0"})");
     }
 
-    // depsvc 1.0.0 installed with NO recorded publisher — the state of every
-    // embedded package and everything installed before the record existed.
+    // depsvc 1.0.0 installed with NO SIGNATURE — no manifest.sig in its
+    // install directory. The state of every embedded package (none passes
+    // through installPluginFile, which is the only thing that copies a
+    // manifest.sig into an install tree) and of every unsigned one.
     // The pin cannot be checked; there is no signerDid key at all.
     static QVariant signerUnknownRow()
     {
         return wireRow(
             R"({"installType":"user","name":"depsvc",)"
-            R"("requiredSigner":"did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0",)"
-            R"("requiredVersion":"^1.0.0","status":"signer_unknown",)"
-            R"("version":"1.0.0"})");
+            R"("requiredSigner":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ",)"
+            R"("requiredVersion":"^1.0.0",)"
+            R"("status":"signer_unknown","version":"1.0.0"})");
+    }
+
+    // depsvc 1.0.0 installed, really signed, and the pin NAMES THAT KEY: the
+    // signature verifies under it, so the pin is satisfied and the row is
+    // ordinary `installed`.
+    //
+    // It still carries `signerDid`, because that is a property of the PACKAGE
+    // rather than of the edge. This row exists so that stays true: a gate that
+    // took "a signerDid is present" as a signal in itself would block a
+    // perfectly satisfied dependency.
+    static QVariant signerSatisfiedRow()
+    {
+        return wireRow(
+            R"({"installType":"user","name":"depsvc",)"
+            R"("requiredSigner":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ",)"
+            R"("requiredVersion":"^1.0.0",)"
+            R"("signerDid":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ",)"
+            R"("status":"installed","version":"1.0.0"})");
     }
 
 private slots:
@@ -137,20 +187,25 @@ private slots:
         const auto b = readDependencyBlocker(signerMismatchRow());
         QCOMPARE(b.kind, DependencyBlockKind::SignerMismatch);
         QCOMPARE(b.name, QStringLiteral("depsvc"));
-        QCOMPARE(b.requiredSigner,
-                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
-        QCOMPARE(b.signerDid, QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+        QCOMPARE(b.requiredSigner, QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Il96N1dqMUd4RWhEdURHQ1hHdVJuOUdTdm1teHo3ZGtMY0dvaEdqMTJOMEUifQ"));
+        QCOMPARE(b.signerDid,      QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
     }
 
-    // THE DESIGN CALL, at the gate. A pin that could not be CHECKED — nothing
-    // records who published the installed package — does not block.
+    // THE DESIGN CALL, at the gate. A pin that could not be CHECKED — no
+    // signature is installed to check it against — does not block.
     //
     // Absence of evidence is not evidence of mismatch, and this is the normal
     // state for two whole populations: every embedded package (placed by the
-    // build, never through the installer that records a publisher, so it can
-    // NEVER acquire one) and everything installed before the record existed.
-    // Blocking here would make a pin on an embedded dependency unsatisfiable
-    // by construction, forever, with no action a user could take.
+    // build, never through installPluginFile, which is the only thing that
+    // copies a manifest.sig into an install tree — so an embedded package can
+    // NEVER carry one) and every unsigned package. Blocking here would make a
+    // pin on an embedded dependency unsatisfiable by construction, forever,
+    // with no action a user could take.
+    //
+    // The signature mechanism did not change this argument. It changed what
+    // the missing evidence IS — a manifest.sig rather than a record the
+    // installer wrote — and the population it is missing for is the same one,
+    // for the same structural reason.
     //
     // The package manager owns this call and can flip it in ONE place
     // (UnknownSignerPolicy::Strict makes its scanner emit signer_mismatch
@@ -161,9 +216,31 @@ private slots:
         const auto b = readDependencyBlocker(signerUnknownRow());
         QCOMPARE(b.kind, DependencyBlockKind::None);
         // The facts still arrive, so a caller that wants to SHOW the gap can.
-        QCOMPARE(b.requiredSigner,
-                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
+        QCOMPARE(b.requiredSigner, QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
         QVERIFY(b.signerDid.isEmpty());
+    }
+
+    // The other half of that call, and the one a "defensive" gate gets wrong.
+    // A dependency whose pin IS satisfied carries a signerDid — the row is
+    // `installed` and names the key that signed it. Presence of a signerDid is
+    // therefore not a problem signal, and must not be treated as one.
+    //
+    // A gate that blocked whenever a row carried signer information at all
+    // would refuse every correctly-signed dependency in the fleet, which is
+    // the exact opposite of what this mechanism is for.
+    void a_satisfied_signer_pin_does_not_block()
+    {
+        const auto b = readDependencyBlocker(signerSatisfiedRow());
+        QCOMPARE(b.kind, DependencyBlockKind::None);
+        QVERIFY(logos::dependencyIsPresent(b));
+        // Both DIDs arrive and are EQUAL here — which is what a satisfied pin
+        // looks like, and is exactly why equality must not be what a verdict
+        // is derived from: the scanner reached `installed` by VERIFYING, and
+        // this row would be indistinguishable from one an attacker relabelled.
+        QCOMPARE(b.requiredSigner, QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
+        QCOMPARE(b.signerDid,      QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
+        // And no detail clause: there is nothing for a user to do.
+        QVERIFY(dependencyBlockerDetail(b).isEmpty());
     }
 
     // ── Blocking a load and being on disk are DIFFERENT questions ───────
@@ -296,9 +373,8 @@ private slots:
         QVERIFY2(!detail.startsWith(QStringLiteral("requires")), qPrintable(detail));
         // Both DIDs: the pin alone does not say what went wrong, and the
         // installed one alone is an accusation with no charge attached.
-        QVERIFY2(detail.contains(QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0")),
-                 qPrintable(detail));
-        QVERIFY2(detail.contains(QStringLiteral("did:jwk:SOMEBODY_ELSE")), qPrintable(detail));
+        QVERIFY2(detail.contains(QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Il96N1dqMUd4RWhEdURHQ1hHdVJuOUdTdm1teHo3ZGtMY0dvaEdqMTJOMEUifQ")), qPrintable(detail));
+        QVERIFY2(detail.contains(QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ")), qPrintable(detail));
     }
 
     // Defensive: a signer-mismatch row that lost one DID still reads as a
@@ -342,9 +418,8 @@ private slots:
     {
         const QVariantMap m = dependencyBlockerToMap(readDependencyBlocker(signerMismatchRow()));
         QCOMPARE(m.value("kind").toString(), QStringLiteral("signer_mismatch"));
-        QCOMPARE(m.value("requiredSigner").toString(),
-                 QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
-        QCOMPARE(m.value("signerDid").toString(), QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+        QCOMPARE(m.value("requiredSigner").toString(), QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Il96N1dqMUd4RWhEdURHQ1hHdVJuOUdTdm1teHo3ZGtMY0dvaEdqMTJOMEUifQ"));
+        QCOMPARE(m.value("signerDid").toString(),      QStringLiteral("did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlFpT2tQMHJOZmtLSUtIZlFuME1OZjlabldINlFjc0NveFRvQjRfTmxJUDgifQ"));
         // Still on disk, so the row keeps the version it has.
         QCOMPARE(m.value("installedVersion").toString(), QStringLiteral("1.0.0"));
     }
