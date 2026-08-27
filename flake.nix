@@ -19,9 +19,12 @@
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
-    # Without this the UI brings its own package_manager and the closure carries
-    # two, with the UI that drives installs on the one that has no VersionMismatch.
+    # The UI otherwise brings its own package_manager and package_downloader,
+    # so the closure carries two of each and the UI that drives installs sits
+    # on the older one — the one with no VersionMismatch, and without the
+    # signer-binding fix.
     logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
+    logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
