@@ -19,6 +19,10 @@
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    # Without this the UI brings its own package_downloader and the closure
+    # carries two logos-package-downloader revisions, with the UI that drives
+    # installs on the older one.
+    logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
