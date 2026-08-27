@@ -16,12 +16,12 @@ namespace logos {
 //
 // and, when the depending manifest declared an object-form edge
 // ({"name":…,"version":"^2.0.0","signer":"did:jwk:…"}), the row also carries
-// what was required — and, for a signer, who actually published what is
-// installed:
+// what was required — and, for a signer, what the installed package's own
+// signature says about itself:
 //
 //     {"name":"depsvc","status":"version_mismatch","version":"1.0.0",
 //      "requiredVersion":"^2.0.0","requiredSigner":"did:jwk:…",
-//      "observedSigner":"did:jwk:…"}
+//      "signerDid":"did:jwk:…"}
 //
 // `status` is a closed vocabulary owned by logos-package-manager
 // (DependencyStatus / dependencyStatusToString):
@@ -82,7 +82,8 @@ enum class DependencyBlockKind {
     // satisfy the range the depending manifest declared for this edge.
     VersionMismatch,
     // Something IS installed under this name and it is provably NOT the
-    // package the dependant named: it was published by a different signer.
+    // package the dependant named: the installed signature does not verify
+    // under the pinned key, so a different key signed it.
     //
     // A THIRD user action, not a variant of the other two. "Install it" and
     // "get a different version" both assume the thing on disk is the right
@@ -101,14 +102,23 @@ struct DependencyBlocker {
     // The version actually present. Empty on a NotInstalled row: there is
     // nothing installed to report.
     QString installedVersion;
-    // The publisher DID the depending manifest PINNED for this edge. Empty
-    // when it named no publisher, which is every manifest in the fleet today.
+    // The signer DID the depending manifest PINNED for this edge. Empty when
+    // it named no signer, which is every manifest in the fleet today.
     QString requiredSigner;
-    // The publisher DID the installed package's signature was VERIFIED
-    // against. Empty when nothing recorded one — which is not the same as
-    // "unsigned", and is why a SignerMismatch message must never be built
-    // from this field alone.
-    QString observedSigner;
+    // The DID the installed package's own signature names, once that signature
+    // has been checked against the key the DID itself carries. Empty when no
+    // usable signature is installed — which is not the same as "unsigned",
+    // and is why a SignerMismatch message must never be built from this field
+    // alone.
+    //
+    // NOT what the verdict was computed from. logos-package-manager decides a
+    // signer pin by verifying the installed signature under the PIN's key, so
+    // this differing from `requiredSigner` on a signer_mismatch row is the
+    // normal shape of that row. Do not re-derive the verdict by comparing the
+    // two here: a document supplies both a DID and a signature, so it can
+    // always be made to agree with itself, and the comparison would accept a
+    // signature relabelled to name the pinned DID.
+    QString signerDid;
 };
 
 inline DependencyBlocker readDependencyBlocker(const QVariant& row)
@@ -120,7 +130,7 @@ inline DependencyBlocker readDependencyBlocker(const QVariant& row)
     b.requiredVersion  = m.value(QStringLiteral("requiredVersion")).toString();
     b.installedVersion = m.value(QStringLiteral("version")).toString();
     b.requiredSigner   = m.value(QStringLiteral("requiredSigner")).toString();
-    b.observedSigner   = m.value(QStringLiteral("observedSigner")).toString();
+    b.signerDid        = m.value(QStringLiteral("signerDid")).toString();
 
     // Named, not excluded. Absence outranks everything — the same precedence
     // the scanner itself applies, and the right one: a constraint can only be
@@ -195,17 +205,21 @@ inline QString dependencyBlockerDetail(const DependencyBlocker& b)
         // package back.
         //
         // Both DIDs when we have them: the pin alone says nothing about what
-        // went wrong, and the observation alone reads as an accusation with
+        // went wrong, and the installed one alone reads as an accusation with
         // no charge. Base64url DIDs are long, so the caller renders them on
         // the row it already indents; keeping them out entirely would leave a
-        // user with no way to tell WHICH publisher they ended up with.
+        // user with no way to tell WHOSE package they ended up with.
+        //
+        // "signed by" rather than "published by": what failed is an Ed25519
+        // check against the pinned key, and `signerDid` is what the installed
+        // signature says of itself rather than an established publisher.
         if (b.requiredSigner.isEmpty())
-            return QStringLiteral("published by a different signer");
-        if (b.observedSigner.isEmpty())
-            return QStringLiteral("published by a different signer; requires %1")
+            return QStringLiteral("signed by a different key");
+        if (b.signerDid.isEmpty())
+            return QStringLiteral("not signed by the required key; requires %1")
                 .arg(b.requiredSigner);
-        return QStringLiteral("published by a different signer; requires %1, found %2")
-            .arg(b.requiredSigner, b.observedSigner);
+        return QStringLiteral("signed by a different key; requires %1, signed by %2")
+            .arg(b.requiredSigner, b.signerDid);
 
     case DependencyBlockKind::None:
         break;
@@ -239,7 +253,7 @@ inline QVariantMap dependencyBlockerToMap(const DependencyBlocker& b)
     m.insert(QStringLiteral("requiredVersion"),  b.requiredVersion);
     m.insert(QStringLiteral("installedVersion"), b.installedVersion);
     m.insert(QStringLiteral("requiredSigner"),   b.requiredSigner);
-    m.insert(QStringLiteral("observedSigner"),   b.observedSigner);
+    m.insert(QStringLiteral("signerDid"),        b.signerDid);
     m.insert(QStringLiteral("detail"), dependencyBlockerDetail(b));
     return m;
 }

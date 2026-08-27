@@ -86,7 +86,7 @@ class DependencyGateTest : public QObject {
     {
         return wireRow(
             R"({"installType":"user","name":"depsvc",)"
-            R"("observedSigner":"did:jwk:SOMEBODY_ELSE",)"
+            R"("signerDid":"did:jwk:SOMEBODY_ELSE",)"
             R"("requiredSigner":"did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0",)"
             R"("requiredVersion":"^1.0.0","status":"signer_mismatch",)"
             R"("version":"1.0.0"})");
@@ -94,7 +94,7 @@ class DependencyGateTest : public QObject {
 
     // depsvc 1.0.0 installed with NO recorded publisher — the state of every
     // embedded package and everything installed before the record existed.
-    // The pin cannot be checked; there is no observedSigner key at all.
+    // The pin cannot be checked; there is no signerDid key at all.
     static QVariant signerUnknownRow()
     {
         return wireRow(
@@ -139,7 +139,7 @@ private slots:
         QCOMPARE(b.name, QStringLiteral("depsvc"));
         QCOMPARE(b.requiredSigner,
                  QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
-        QCOMPARE(b.observedSigner, QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+        QCOMPARE(b.signerDid, QStringLiteral("did:jwk:SOMEBODY_ELSE"));
     }
 
     // THE DESIGN CALL, at the gate. A pin that could not be CHECKED — nothing
@@ -163,7 +163,7 @@ private slots:
         // The facts still arrive, so a caller that wants to SHOW the gap can.
         QCOMPARE(b.requiredSigner,
                  QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
-        QVERIFY(b.observedSigner.isEmpty());
+        QVERIFY(b.signerDid.isEmpty());
     }
 
     // ── Blocking a load and being on disk are DIFFERENT questions ───────
@@ -284,35 +284,35 @@ private slots:
     // A THIRD sentence, because it is a third problem. "not installed" sends
     // the user to install a package they have; "requires ^2.0.0, found 1.0.0"
     // sends them after a version that will never satisfy this, because the
-    // package on disk is somebody else's. Only naming the publisher does.
-    void a_signer_mismatch_says_publisher_not_version_and_names_both_dids()
+    // package on disk is somebody else's. Only naming the keys does.
+    void a_signer_mismatch_says_signer_not_version_and_names_both_dids()
     {
         const QString detail =
             dependencyBlockerDetail(readDependencyBlocker(signerMismatchRow()));
-        QVERIFY2(detail.startsWith(QStringLiteral("published by a different signer")),
+        QVERIFY2(detail.startsWith(QStringLiteral("signed by a different key")),
                  qPrintable(detail));
         // Must not read as either of the other two remedies.
         QVERIFY2(!detail.contains(QStringLiteral("not installed")), qPrintable(detail));
         QVERIFY2(!detail.startsWith(QStringLiteral("requires")), qPrintable(detail));
         // Both DIDs: the pin alone does not say what went wrong, and the
-        // observation alone is an accusation with no charge attached.
+        // installed one alone is an accusation with no charge attached.
         QVERIFY2(detail.contains(QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0")),
                  qPrintable(detail));
         QVERIFY2(detail.contains(QStringLiteral("did:jwk:SOMEBODY_ELSE")), qPrintable(detail));
     }
 
     // Defensive: a signer-mismatch row that lost one DID still reads as a
-    // publisher problem rather than collapsing to an empty clause.
+    // signer problem rather than collapsing to an empty clause.
     void a_signer_mismatch_with_a_missing_did_still_reads()
     {
         logos::DependencyBlocker b;
         b.kind = DependencyBlockKind::SignerMismatch;
         b.name = QStringLiteral("depsvc");
         QCOMPARE(dependencyBlockerDetail(b),
-                 QStringLiteral("published by a different signer"));
+                 QStringLiteral("signed by a different key"));
         b.requiredSigner = QStringLiteral("did:jwk:PINNED");
         QCOMPARE(dependencyBlockerDetail(b),
-                 QStringLiteral("published by a different signer; requires did:jwk:PINNED"));
+                 QStringLiteral("not signed by the required key; requires did:jwk:PINNED"));
     }
 
     void a_satisfied_row_has_no_detail()
@@ -344,7 +344,7 @@ private slots:
         QCOMPARE(m.value("kind").toString(), QStringLiteral("signer_mismatch"));
         QCOMPARE(m.value("requiredSigner").toString(),
                  QStringLiteral("did:jwk:eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5In0"));
-        QCOMPARE(m.value("observedSigner").toString(), QStringLiteral("did:jwk:SOMEBODY_ELSE"));
+        QCOMPARE(m.value("signerDid").toString(), QStringLiteral("did:jwk:SOMEBODY_ELSE"));
         // Still on disk, so the row keeps the version it has.
         QCOMPARE(m.value("installedVersion").toString(), QStringLiteral("1.0.0"));
     }

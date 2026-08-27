@@ -76,7 +76,7 @@ Dialog {
     property string moduleName: ""
     // For "missingDeps" each entry is a map from
     // logos::dependencyBlockerToMap — {name, kind, requiredVersion,
-    // installedVersion, requiredSigner, observedSigner, detail}. For the other
+    // installedVersion, requiredSigner, signerDid, detail}. For the other
     // one-list modes it is a plain module name. `_itemName` / `_itemDetail`
     // read either shape.
     property var items: []

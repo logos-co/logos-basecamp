@@ -69,7 +69,7 @@ public:
     QStringList missingDepsOf(const QString& name) const;
     // The same set as missingDepsOf, with the reason attached: one map per
     // blocking dependency, {name, kind, requiredVersion, installedVersion,
-    // requiredSigner, observedSigner, detail} as built by
+    // requiredSigner, signerDid, detail} as built by
     // logos::dependencyBlockerToMap. missingDepsOf is the
     // names alone, kept because every existing consumer (the sidebar marker,
     // AppsModel::setMissingDeps, installStatus) only ever needed presence.
