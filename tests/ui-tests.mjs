@@ -139,7 +139,89 @@ test("welcome: first launch shows the welcome page", async (app) => {
   }
 });
 
+const CI_MODE = process.argv.includes("--ci");
+// --- Welcome page (A2) — must run right after A1: navigating clicks the
+// welcome page away ---
+test('welcome: "Install now" navigates to Applications', async (app) => {
+  // Prefer the spec objectName; fall back to the button text until
+  // "welcomePage.installNow" exists in WelcomePage.qml.
+  let button = null;
+  await app.waitFor(async () => {
+    const byName = await app.findByProperty("objectName", "welcomePage.installNow");
+    button = (byName.matches ?? [])[0] || null;
+    if (!button) {
+      const byText = await app.findByProperty("text", "Install now");
+      button = (byText.matches ?? []).find((m) => (m.type ?? "").includes("Button")) || null;
+    }
+    if (!button) throw new Error('"Install now" button not found on the welcome page');
+  }, { timeout: 10000, interval: 500, description: '"Install now" button to exist' });
+
+  // Signal-level click — coordinate hit-testing on offscreen is fragile
+  // (see installViaPmu); the onClicked handler chain is identical.
+  const clicked = await app.inspector.send("callMethod", {
+    objectId: button.id, method: "clicked",
+  });
+  if (clicked.error) throw new Error(`callMethod(clicked) failed: ${clicked.error}`);
+
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+
+  // The sidebar "Applications" button carries the section index it activates
+  // (onClicked passes _d.workspaceSections.length + index) — read it from the
+  // delegate's context instead of hard-coding the sidebar layout. Only
+  // objects in SidebarPanel's delegate scope can resolve the expression, so
+  // it also disambiguates the button from same-text headers.
+  const sidebarHits = await app.findByProperty("text", "Applications");
+  let appsButtonId = null;
+  let applicationsIndex = null;
+  for (const m of sidebarHits.matches ?? []) {
+    const res = await app.inspector.send("evaluate", {
+      objectId: m.id, expression: "_d.workspaceSections.length + index",
+    });
+    if (!res.error && typeof res.result === "number") {
+      appsButtonId = m.id;
+      applicationsIndex = res.result;
+      break;
+    }
+  }
+  if (appsButtonId === null) {
+    throw new Error('sidebar "Applications" button (with section index in scope) not found');
+  }
+
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: appsButtonId, expression: "backend.currentActiveSectionIndex",
+    });
+    if (res.error) {
+      throw new Error(`evaluate(backend.currentActiveSectionIndex) failed: ${res.error}`);
+    }
+    if (res.result !== applicationsIndex) {
+      throw new Error(
+        `backend.currentActiveSectionIndex=${res.result} ` +
+        `(expected Applications index ${applicationsIndex})`);
+    }
+  }, { timeout: 10000, interval: 500, description: "active section to become Applications" });
+
+  // WelcomePage's own QML `visible` stays true inside its offscreen
+  // QQuickWidget host; what observably hides it is that host — WorkspaceArea
+  // (objectName "workspace"), the stack page the section switch left.
+  const wsHits = await app.findByProperty("objectName", "workspace");
+  const workspace = (wsHits.matches ?? [])[0];
+  if (!workspace) throw new Error("workspace area (welcome page host) not found");
+  const props = await app.inspector.send("getProperties", { objectId: workspace.id });
+  const visible = props.properties?.find((p) => p.name === "visible")?.value;
+  if (visible !== false) {
+    throw new Error(
+      `welcome page still visible: workspace visible=` +
+      `${JSON.stringify(visible)} (expected false)`);
+  }
+});
+
 // --- Workspace (A3) — opening an app replaces the welcome page with a dock ---
+// Runs after A2: it hides the welcome host and leaves a dock open, so it must
+// not sit between A1 and A2 (A2 asserts the pre-navigation welcome state).
 //
 // Fixture A (test_qml_only, spec §0.A) is pre-seeded into <user-dir>/plugins/
 // by nix/integration-test.nix, so in --ci mode its sidebar tile is guaranteed
@@ -150,8 +232,6 @@ test("welcome: first launch shows the welcome page", async (app) => {
 // The dock check uses WorkspaceArea's dockCount test hook rather than the
 // spec's workspace.dock.<name> objectName: DockCard's objectName is the
 // constant "dockCard" on this branch (src/WorkspaceArea.cpp:96).
-
-const CI_MODE = process.argv.includes("--ci");
 
 // Payload text rendered by fixture A's Main.qml (see qmlViewFor in
 // tests/fixtures/lgx.mjs) — derived from FIXTURE_A so it can't drift.
@@ -269,84 +349,6 @@ test("workspace: opening an app replaces the welcome page with a dock", async (a
 
   // Leave the dock open: the A4 follow-up owns close-the-dock coverage
   // (workspace.closeDock), and no later test asserts welcome-page state.
-});
-// --- Welcome page (A2) — must run right after A1: navigating clicks the
-// welcome page away ---
-test('welcome: "Install now" navigates to Applications', async (app) => {
-  // Prefer the spec objectName; fall back to the button text until
-  // "welcomePage.installNow" exists in WelcomePage.qml.
-  let button = null;
-  await app.waitFor(async () => {
-    const byName = await app.findByProperty("objectName", "welcomePage.installNow");
-    button = (byName.matches ?? [])[0] || null;
-    if (!button) {
-      const byText = await app.findByProperty("text", "Install now");
-      button = (byText.matches ?? []).find((m) => (m.type ?? "").includes("Button")) || null;
-    }
-    if (!button) throw new Error('"Install now" button not found on the welcome page');
-  }, { timeout: 10000, interval: 500, description: '"Install now" button to exist' });
-
-  // Signal-level click — coordinate hit-testing on offscreen is fragile
-  // (see installViaPmu); the onClicked handler chain is identical.
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: button.id, method: "clicked",
-  });
-  if (clicked.error) throw new Error(`callMethod(clicked) failed: ${clicked.error}`);
-
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  // The sidebar "Applications" button carries the section index it activates
-  // (onClicked passes _d.workspaceSections.length + index) — read it from the
-  // delegate's context instead of hard-coding the sidebar layout. Only
-  // objects in SidebarPanel's delegate scope can resolve the expression, so
-  // it also disambiguates the button from same-text headers.
-  const sidebarHits = await app.findByProperty("text", "Applications");
-  let appsButtonId = null;
-  let applicationsIndex = null;
-  for (const m of sidebarHits.matches ?? []) {
-    const res = await app.inspector.send("evaluate", {
-      objectId: m.id, expression: "_d.workspaceSections.length + index",
-    });
-    if (!res.error && typeof res.result === "number") {
-      appsButtonId = m.id;
-      applicationsIndex = res.result;
-      break;
-    }
-  }
-  if (appsButtonId === null) {
-    throw new Error('sidebar "Applications" button (with section index in scope) not found');
-  }
-
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: appsButtonId, expression: "backend.currentActiveSectionIndex",
-    });
-    if (res.error) {
-      throw new Error(`evaluate(backend.currentActiveSectionIndex) failed: ${res.error}`);
-    }
-    if (res.result !== applicationsIndex) {
-      throw new Error(
-        `backend.currentActiveSectionIndex=${res.result} ` +
-        `(expected Applications index ${applicationsIndex})`);
-    }
-  }, { timeout: 10000, interval: 500, description: "active section to become Applications" });
-
-  // WelcomePage's own QML `visible` stays true inside its offscreen
-  // QQuickWidget host; what observably hides it is that host — WorkspaceArea
-  // (objectName "workspace"), the stack page the section switch left.
-  const wsHits = await app.findByProperty("objectName", "workspace");
-  const workspace = (wsHits.matches ?? [])[0];
-  if (!workspace) throw new Error("workspace area (welcome page host) not found");
-  const props = await app.inspector.send("getProperties", { objectId: workspace.id });
-  const visible = props.properties?.find((p) => p.name === "visible")?.value;
-  if (visible !== false) {
-    throw new Error(
-      `welcome page still visible: workspace visible=` +
-      `${JSON.stringify(visible)} (expected false)`);
-  }
 });
 // Click options that pin a click to a sidebar SECTION button and nothing else.
 //
