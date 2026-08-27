@@ -16,6 +16,7 @@
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
+    logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-design-system.url = "github:logos-co/logos-design-system";
@@ -36,7 +37,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -63,6 +64,7 @@
           { name = "logos-package-manager-module"; commit = revOf logos-package-manager-module; }
           { name = "logos-package-downloader-module"; commit = revOf logos-package-downloader-module; }
           { name = "logos-capability-module"; commit = revOf logos-capability-module; }
+          { name = "logos-modules-state-module"; commit = revOf logos-modules-state-module; }
           { name = "logos-package"; commit = revOf logos-package; }
           { name = "logos-package-manager-ui"; commit = revOf logos-package-manager-ui; }
           { name = "logos-design-system"; commit = revOf logos-design-system; }
@@ -112,6 +114,7 @@
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
         logosPackageManagerModuleLibPortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
+        logosModulesStateModule = logos-modules-state-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         # Headers-only output (include/ with logos/semver.hpp + semver/, no
         # library). The app's AppsModel includes the shared semver comparator;
@@ -150,7 +153,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -183,12 +186,18 @@
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
+            # The module lifecycle registry. liblogos feeds it load/unload/crash
+            # as sequenced facts, which is what lets a consumer stop polling --
+            # PackageCoordinator's settle-timer inference is what this replaces.
+            # Optional by construction: absent, the feed never arms.
+            logosModulesStateModule
             packageManagerUIPlugin
           ];
           installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
+            logosModulesStateModule
             packageManagerUIPlugin
           ];
 
