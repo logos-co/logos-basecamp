@@ -261,12 +261,16 @@ private slots:
         QCOMPARE(detail, QStringLiteral("not installed; requires ^2.0.0"));
     }
 
-    void an_absent_dependency_with_no_declared_range_says_only_that()
+    // Empty, so the row renders as just the name. The heading already says
+    // these are not installed, and every dependency in the fleet is a bare
+    // name — a per-row repeat would change that text for all of them, which
+    // is what broke basecamp-missing-deps.
+    void an_absent_dependency_with_no_declared_range_adds_nothing()
     {
         logos::DependencyBlocker b;
         b.kind = DependencyBlockKind::NotInstalled;
         b.name = QStringLiteral("depsvc");
-        QCOMPARE(dependencyBlockerDetail(b), QStringLiteral("not installed"));
+        QCOMPARE(dependencyBlockerDetail(b), QString());
     }
 
     // Defensive: a blocking row that carries only half the facts must still

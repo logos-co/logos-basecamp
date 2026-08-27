@@ -123,10 +123,11 @@ inline QString dependencyBlockerDetail(const DependencyBlocker& b)
 {
     switch (b.kind) {
     case DependencyBlockKind::NotInstalled:
-        // The declared range rides along even on an absent row, so the message
-        // can say WHICH version to install.
+        // Empty when there is no range: the dialog heading already says these
+        // are not installed, and every dependency in the fleet today is a bare
+        // name, so a per-row repeat would change that text for all of them.
         return b.requiredVersion.isEmpty()
-            ? QStringLiteral("not installed")
+            ? QString()
             : QStringLiteral("not installed; requires %1").arg(b.requiredVersion);
 
     case DependencyBlockKind::VersionMismatch:
