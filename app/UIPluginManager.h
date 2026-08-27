@@ -311,6 +311,11 @@ private:
     LogosAPI*          m_logosAPI;          // not owned
     CoreModuleManager* m_coreModuleManager; // not owned (sibling Qt child)
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator
+
+    // Load parked on dependencyDataReadyChanged; empty when idle. Mirrors
+    // PackageCoordinator::uninstallApp's deferral — last click wins.
+    QString                 m_pendingGatedLoadName;
+    QMetaObject::Connection m_pendingGatedLoadConn;
     PluginLoader*      m_pluginLoader;      // owned (parent=this)
 
     // Loaded-plugin state

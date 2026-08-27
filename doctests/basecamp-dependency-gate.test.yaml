@@ -420,13 +420,12 @@ sections:
               text: "Installed-but-blocked apps are never hidden — all seven are listed; the marker and the dialog say which are runnable."
               screenshot: "depgate-sidebar.png"
 
-            # Generous margin on purpose. `expect_property` is a one-shot
-            # assertion — no polling — so this sleep is the whole safety
-            # margin, and it cannot be traded for "click first, retry": a
-            # click landing before the verdicts are published passes the gate
-            # and really attempts the load, which the run cannot undo. The
-            # work is one resolveFlatDependencies round-trip per installed
-            # package on a cold headless launch.
+            # Generous margin on purpose: `expect_property` is one-shot — no
+            # polling — so the verdicts must be published before it runs. One
+            # resolveFlatDependencies round-trip per installed package on a
+            # cold headless launch. An early CLICK no longer races the gate
+            # (loadUiModule defers on dependencyDataReady); this sleep is for
+            # the assertions, not the click.
             - name: "Give the dependency resolution a moment to complete"
               action: sleep
               ms: 20000

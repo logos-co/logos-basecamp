@@ -230,6 +230,30 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         return;
     }
 
+    // The caches answer "empty" both for "nothing blocks this" and for "not
+    // asked yet", and the tiles are published before the dependency fan-out
+    // runs (PackageCoordinator.cpp: uiPluginsFetched precedes
+    // refreshDependencyInfo). Reading through that window fails OPEN, so park
+    // the load until the data exists. Same shape as
+    // PackageCoordinator::uninstallApp; last click wins.
+    if (m_packageCoordinator && !m_packageCoordinator->dependencyDataReady()) {
+        qDebug() << "UI module" << moduleName
+                 << "deferred: dependency data not ready";
+        QObject::disconnect(m_pendingGatedLoadConn);
+        m_pendingGatedLoadName = moduleName;
+        QPointer<UIPluginManager> self(this);
+        m_pendingGatedLoadConn = connect(
+            m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
+            this, [self, moduleName]() {
+                if (!self) return;
+                if (self->m_pendingGatedLoadName != moduleName) return;   // superseded
+                self->m_pendingGatedLoadName.clear();
+                QObject::disconnect(self->m_pendingGatedLoadConn);
+                self->loadUiModule(moduleName);
+            });
+        return;
+    }
+
     // Gate on core dependencies the resolver won't accept, so the user gets a
     // popup instead of a cryptic "plugin load failed". An INSTALLED dependency
     // outside the declared range refuses the load exactly as an absent one
