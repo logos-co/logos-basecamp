@@ -6,18 +6,11 @@
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
-    logos-cpp-sdk.inputs.logos-protocol.follows = "logos-protocol";
-    logos-protocol = {
-      url = "github:logos-co/logos-protocol";
-      inputs.logos-nix.follows = "logos-nix";
-    };
-    logos-qt-sdk = {
-      url = "github:logos-co/logos-qt-sdk";
-      inputs.logos-nix.follows = "logos-nix";
-      inputs.logos-protocol.follows = "logos-protocol";
-      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
-    };
+    logos-protocol.url = "github:logos-co/logos-protocol";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk";
     logos-module.url = "github:logos-co/logos-module";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
@@ -26,11 +19,7 @@
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    logos-view-module-runtime = {
-      url = "github:logos-co/logos-view-module-runtime";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
-    };
+    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
     logos-qt-mcp.url = "github:logos-co/logos-qt-mcp";
@@ -47,10 +36,10 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-qt-sdk, logos-module, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
-      # Build info (version + commit hashes) baked into the main UI plugin so
+      # Build info (version + commit hashes) baked into the app binary so
       # the Dashboard can render it. Commits come from the flake inputs'
       # locked revs; self's rev is "dirty" when the checkout has uncommitted
       # changes or is overridden via a path input.
@@ -109,6 +98,9 @@
         # "logos-cpp-generator: command not found".
         logosSdkBuild = logos-cpp-sdk.packages.${buildSystem}.default;
         logosProtocolPkg = logos-protocol.packages.${system}.default;
+        logosQtHost = logos-plugin-qt.packages.${system}.logos-qt-host;
+        # HEADERS ONLY -- the Qt<->lp seam headers the generated dependency
+        # wrapper in app/generated/ includes. Nothing links this.
         logosQtSdk = logos-qt-sdk.packages.${system}.default;
         logosModule = logos-module.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
@@ -122,7 +114,7 @@
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         # Headers-only output (include/ with logos/semver.hpp + semver/, no
-        # library). main_ui's AppsModel includes the shared semver comparator;
+        # library). The app's AppsModel includes the shared semver comparator;
         # it links nothing from lgx, so the headers output keeps liblgx out of
         # the app entirely.
         logosPackageHeaders = logos-package.packages.${system}.headers;
@@ -158,25 +150,24 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
-            inherit pkgs logosSdk logosProtocolPkg logosQtSdk logosModule logosLiblogos;
+            inherit pkgs logosSdk logosProtocolPkg logosQtHost logosModule logosLiblogos;
           };
           src = ./.;
 
-          # Plugin packages (development builds)
+          # Basecamp's own UI shell: a privilege-free plugin that links Qt and
+          # nothing else from this workspace, which nix/symbol-gate.nix enforces
+          # across the in-process image set. It builds from the SAME `src` as
+          # the app; its CMakeLists lives in src/ and can only see
+          # app/interfaces/, so it cannot include a host header even by accident.
           mainUIPlugin = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
+            inherit pkgs common src logosDesignSystem;
           };
-          packageManagerUIPlugin = logosPackageManagerUI;
 
-          # Plugin packages (distributed builds for DMG/AppImage)
-          mainUIPluginDistributed = import ./nix/main-ui.nix {
-            inherit pkgs common src logosSdk logosProtocolPkg logosQtSdk logosModule logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders logosLiblogos logosViewModuleRuntime logosDesignSystem buildInfo logosSdkBuild;
-            distributed = true;
-          };
+          packageManagerUIPlugin = logosPackageManagerUI;
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
@@ -192,28 +183,27 @@
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            mainUIPlugin
             packageManagerUIPlugin
           ];
           installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
-            mainUIPluginDistributed
             packageManagerUIPlugin
           ];
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
-            inherit logosQtMcp;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit logosQtMcp mainUIPlugin;
             installedModules = installedDev;
           };
 
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -222,8 +212,8 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtSdk logosDesignSystem logosViewModuleRuntime buildInfo logosSdkBuild;
-            inherit logosQtMcp;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -253,14 +243,11 @@
             }
           else null;
 
-          # Linux AppImage (only for Linux)
-          appImage = if pkgs.stdenv.isLinux then
-            import ./nix/appimage.nix {
-              inherit pkgs src;
-              app = appDistributed;
-              version = common.version;
-            }
-          else null;
+          # (There is no ./nix/appimage.nix binding here. The shipped AppImage is
+          # the `bin-appimage` output further down, built by nix-bundle-appimage.
+          # A dead `appImage = import ./nix/appimage.nix ...` binding survived
+          # here long after that file was removed, evaluating only because
+          # nothing ever forced it.)
 
           # Self-contained directory bundle: appDistributed modules expect host Qt
           # via @rpath; qtApp copies Qt frameworks into lib/ and rewrites the binary.
@@ -349,22 +336,23 @@
           #  * None of this has been RUN on Windows, by this change or by CI,
           #    which has never executed a Windows binary. Every claim above is
           #    build-time and tree-shape only.
-          #  * The two trees measured came from a harness that drops ONE entry
-          #    from installedDistributed -- packageManagerUIPlugin -- because
-          #    logos-package-manager-ui does not cross-compile at the rev this
-          #    flake pins: its generated logos_sdk.h includes
-          #    package_manager_api.h, which is not produced for the Windows
-          #    target. That is pre-existing and independent of this change; the
-          #    identical derivation fails when built straight from the pinned
-          #    rev with no basecamp involved. Everything above concerns Qt
-          #    staging and the DLL closure, which that one plugin does not
-          #    participate in -- but the numbers are from a bundle missing it.
-          #  * For the same reason `nix build .#packages.x86_64-windows.*`
-          #    cannot succeed on this branch as pinned. A second, unrelated
-          #    blocker sits in front of it at EVAL time: line ~119's
-          #    logos-package-downloader-module has no x86_64-windows target, so
-          #    the attribute cannot even be evaluated. Both blockers predate
-          #    this change and are identical with the bypass in place.
+          #  * The two trees measured came from a harness that dropped ONE
+          #    entry from installedDistributed -- packageManagerUIPlugin --
+          #    because logos-package-manager-ui did not cross-compile at the rev
+          #    this flake pinned then: its generated logos_sdk.h included
+          #    package_manager_api.h, which was not produced for the Windows
+          #    target. There was also a separate EVAL-time blocker, a
+          #    logos-package-downloader-module with no x86_64-windows target.
+          #
+          #    BOTH have since been fixed upstream. `.#packages.x86_64-windows.*`
+          #    now evaluates AND builds, and the resulting bundle DOES include
+          #    package_manager_ui -- so the numbers above describe a tree that
+          #    was missing a plugin which is no longer missing. Re-measure
+          #    before quoting them.
+          #
+          #    (The cross build needs an x86_64-linux builder: logos_build_info.h
+          #    is an x86_64-linux derivation, so it cannot run on an
+          #    aarch64-darwin host without one.)
           binBundleDir = withMainProgram (dirBundler appDistributed);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
 
@@ -378,7 +366,7 @@
           };
         in
         {
-          # Individual outputs
+          # Individual outputs.
           main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
           app = app;
@@ -410,6 +398,29 @@
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
 
+          # One-runtime symbol gate. Asserts the logos C++ runtime (TokenManager,
+          # StoreRegistry, LogosAPI, LogosAPIClient) is DEFINED exactly once across
+          # the images that share one process. The assertion is exactly-one and
+          # deliberately does NOT name an owner: liblogos_core stopped being the
+          # provider when the runtime became real shared libraries, and it is
+          # liblogos_protocol and liblogos_qt_host that define these types today.
+          # A second definition is a second TokenManager and every cross-module
+          # call is refused at runtime with no build diagnostic.
+          # Build: nix build .#symbol-gate  (CI: the "One-runtime symbol gate"
+          # step in test-linux, test-macos AND build-windows runs this and its
+          # negative control -- Windows being the one where a duplicate is fatal,
+          # since PE has no symbol interposition to collapse it)
+          symbol-gate = import ./nix/symbol-gate.nix { inherit pkgs; appPkg = app; };
+
+          # Negative control for the above. Plants a REAL duplicate runtime where
+          # an in-process consumer goes and asserts the gate REJECTS it. Ship both
+          # or neither: an absence assertion that has never been seen to fail is
+          # indistinguishable from a broken one.
+          # Build: nix build .#symbol-gate-negative
+          symbol-gate-negative = import ./nix/symbol-gate.nix {
+            inherit pkgs; appPkg = app; negativeControl = true;
+          };
+
           # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
           # builds a real malicious QML plugin and asserts the production sandbox
           # refuses to load it. Build: nix build .#sandbox-test
@@ -438,6 +449,17 @@
           # Integration test (UI tests via Qt Inspector)
           integration-test = integrationTest;
 
+          # Host-services grant guard. Asserts that a NON-"core" identity
+          # (ui-host running package_manager_ui) actually completes a
+          # capability-gated call chain — i.e. that capability_module really
+          # received its token_registry/token_delivery grant from the loader
+          # basecamp pins, rather than failing closed. See
+          # nix/host-services-test.nix and tests/host-services-assert.mjs.
+          # Build: nix build .#host-services-test
+          host-services-test = import ./nix/host-services-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+          };
+
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {
@@ -463,7 +485,18 @@
             appPkg = macosApp;
             appBin = "${macosApp}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
-          integration-test-bundle = integrationTestBundle;
+          integration-test-bundle = import ./nix/integration-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
+          host-services-test-bundle = import ./nix/host-services-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            inherit logosQtMcp;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
         }
       );
 
@@ -487,9 +520,12 @@
         qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
         shutdown-test = self.packages.${system}.shutdown-test;
+        host-services-test = self.packages.${system}.host-services-test;
+        symbol-gate = self.packages.${system}.symbol-gate;
+        symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
       });
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtSdk, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
+      devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.cmake
@@ -508,7 +544,7 @@
             # Nix package paths (pre-built for host system)
             export LOGOS_CPP_SDK_ROOT="${logosSdk}"
             export LOGOS_PROTOCOL_ROOT="${logosProtocolPkg}"
-            export LOGOS_QT_SDK_ROOT="${logosQtSdk}"
+            export LOGOS_QT_HOST_ROOT="${logosQtHost}"
             export LOGOS_MODULE_ROOT="${logosModule}"
             export LOGOS_LIBLOGOS_ROOT="${logosLiblogos}"
             export LOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}"

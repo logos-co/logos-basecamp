@@ -1,5 +1,7 @@
 #include "CoreModuleManager.h"
 
+#include "logos_qt_host_core.h"
+
 #include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -11,37 +13,7 @@
 #include "logos_api_client.h"
 #include "logos_types.h"
 
-// The logos_core_* C API is forward-declared here rather than in a shared
-// header so this is the only translation unit that links against it
-// directly. Anywhere else that needs core-plugin state goes through the
-// typed wrappers above.
-extern "C" {
-    char* logos_core_get_module_stats();
-    char** logos_core_get_known_modules();
-    char** logos_core_get_loaded_modules();
-    int logos_core_load_module(const char* module_name, bool with_dependencies);
-    int logos_core_unload_module(const char* module_name, bool with_dependents);
-    void logos_core_refresh_modules();
-}
-
 namespace {
-
-// Drain a NULL-terminated char** handed back by the lib and release every
-// entry plus the outer array. liblogos allocates these with new char[] /
-// new char*[] (see module_manager.cpp::toNullTerminatedArray), so delete[]
-// is the correct deallocator — do NOT use free(). Used by the knownModules
-// / loadedModules wrappers.
-QStringList drainCStringArray(char** arr)
-{
-    QStringList out;
-    if (!arr) return out;
-    for (char** p = arr; *p != nullptr; ++p) {
-        out << QString::fromUtf8(*p);
-        delete[] *p;
-    }
-    delete[] arr;
-    return out;
-}
 
 QJsonValue variantToJsonValue(const QVariant& value)
 {
@@ -80,11 +52,21 @@ QJsonValue variantToJsonValue(const QVariant& value)
 
 }
 
-CoreModuleManager::CoreModuleManager(LogosAPI* logosAPI, QObject* parent)
+CoreModuleManager::CoreModuleManager(LogosAPI* logosAPI,
+                                     logos::qt::QtLogosCore* core,
+                                     QObject* parent)
     : QObject(parent)
     , m_logosAPI(logosAPI)
+    , m_core(core)
     , m_statsTimer(new QTimer(this))
 {
+    // No fallback path: without the core facade every wrapper below would be
+    // a null dereference on the first stats tick, 2 seconds after startup and
+    // far from the cause. main() owns the object and must pass it down.
+    if (!m_core) {
+        qFatal("CoreModuleManager requires a QtLogosCore instance");
+    }
+
     connect(m_statsTimer, &QTimer::timeout,
             this, &CoreModuleManager::updateModuleStats);
     m_statsTimer->start(2000);
@@ -100,27 +82,27 @@ CoreModuleManager::~CoreModuleManager()
 
 QStringList CoreModuleManager::knownModules() const
 {
-    return drainCStringArray(logos_core_get_known_modules());
+    return m_core->knownModules();
 }
 
 QStringList CoreModuleManager::loadedModules() const
 {
-    return drainCStringArray(logos_core_get_loaded_modules());
+    return m_core->loadedModules();
 }
 
 bool CoreModuleManager::loadModule(const QString& name)
 {
-    return logos_core_load_module(name.toUtf8().constData(), true) == 1;
+    return m_core->loadModule(name, /*withDependencies=*/true);
 }
 
 bool CoreModuleManager::unloadModule(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), false) == 1;
+    return m_core->unloadModule(name, /*withDependents=*/false);
 }
 
 bool CoreModuleManager::unloadModuleWithDependents(const QString& name)
 {
-    return logos_core_unload_module(name.toUtf8().constData(), true) == 1;
+    return m_core->unloadModule(name, /*withDependents=*/true);
 }
 
 QVariantMap CoreModuleManager::moduleStats(const QString& name) const
@@ -132,7 +114,7 @@ void CoreModuleManager::refresh()
 {
     // Re-scan all module directories via the lib, then let the Modules tab
     // re-read the composed list through Q_PROPERTY.
-    logos_core_refresh_modules();
+    m_core->refreshModules();
     emit coreModulesChanged();
 }
 
@@ -220,49 +202,46 @@ QString CoreModuleManager::callMethod(const QString& moduleName,
 
 void CoreModuleManager::updateModuleStats()
 {
-    char* stats_json = logos_core_get_module_stats();
-    if (!stats_json) {
-        return;
-    }
+    // ONE call for the whole set. Do not rewrite this as moduleStats(name)
+    // per module: each of those repeats the same full C call and full parse
+    // (logos_qt_host_core.h says so), and MainUIBackend walks every known
+    // module on every one of these 2-second ticks.
+    const QVariantList allStats = m_core->allStats();
 
-    QJsonDocument doc = QJsonDocument::fromJson(stats_json);
-    // logos_core_get_module_stats allocates with new char[], so free with delete[].
-    delete[] stats_json;
-
-    if (doc.isNull()) {
-        qWarning() << "Failed to parse module stats JSON";
-        return;
-    }
-
-    QJsonArray modulesArray;
-    if (doc.isArray()) {
-        modulesArray = doc.array();
-    } else if (doc.isObject()) {
-        QJsonObject root = doc.object();
-        modulesArray = root["modules"].toArray();
-    }
-
-    for (const QJsonValue& val : modulesArray) {
-        QJsonObject moduleObj = val.toObject();
-        QString name = moduleObj["name"].toString();
-
-        if (!name.isEmpty()) {
-            QVariantMap stats;
-            // Tolerate multiple field names across runtime versions. Older
-            // lib builds emit `cpu` / `memory` / `memory_MB`; newer ones
-            // emit `cpu_percent` / `memory_mb`. Take the first non-zero hit.
-            double cpu = moduleObj["cpu_percent"].toDouble();
-            if (cpu == 0) cpu = moduleObj["cpu"].toDouble();
-
-            double memory = moduleObj["memory_mb"].toDouble();
-            if (memory == 0) memory = moduleObj["memory"].toDouble();
-            if (memory == 0) memory = moduleObj["memory_MB"].toDouble();
-
-            stats["cpu"] = QString::number(cpu, 'f', 1);
-            stats["memory"] = QString::number(memory, 'f', 1);
-            m_moduleStats[name] = stats;
+    for (const QVariant& entry : allStats) {
+        const QVariantMap moduleObj = entry.toMap();
+        const QString name = moduleObj.value(QStringLiteral("name")).toString();
+        if (name.isEmpty()) {
+            continue;
         }
+
+        QVariantMap stats;
+        // Tolerate multiple field names across runtime versions. Older
+        // lib builds emit `cpu` / `memory` / `memory_MB`; newer ones
+        // emit `cpu_percent` / `memory_mb` — which the facade models as
+        // `cpuPercent` / `memoryMb` while still passing every raw key
+        // through, so the old spellings remain readable here. Take the
+        // first non-zero hit.
+        double cpu = moduleObj.value(QStringLiteral("cpuPercent")).toDouble();
+        if (cpu == 0) cpu = moduleObj.value(QStringLiteral("cpu")).toDouble();
+
+        double memory = moduleObj.value(QStringLiteral("memoryMb")).toDouble();
+        if (memory == 0) memory = moduleObj.value(QStringLiteral("memory")).toDouble();
+        if (memory == 0) memory = moduleObj.value(QStringLiteral("memory_MB")).toDouble();
+
+        // "cpu"/"memory" as 1-decimal STRINGS is the QML-facing contract, and
+        // it stops here: MainUIBackend::buildCoreModulesSnapshot copies these
+        // two keys straight through, ModuleInstanceModel exposes them as the
+        // cpu/memory roles, and both fall back to the literal "0.0". The
+        // facade's cpuPercent/memoryMb renaming must not leak past this line.
+        stats[QStringLiteral("cpu")] = QString::number(cpu, 'f', 1);
+        stats[QStringLiteral("memory")] = QString::number(memory, 'f', 1);
+        m_moduleStats[name] = stats;
     }
 
+    // Emitted unconditionally, where the hand-rolled version returned early on
+    // a null or unparseable blob. Those two paths were unreachable — the
+    // producer always returns a valid JSON array (process_stats.cpp:133,165) —
+    // and an empty array already reached this emit before.
     emit coreModulesChanged();
 }

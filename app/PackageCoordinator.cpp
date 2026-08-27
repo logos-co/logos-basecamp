@@ -1,6 +1,5 @@
 #include "PackageCoordinator.h"
 #include "InstallRegistry.h"
-#include "AppsFilterProxy.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
@@ -1796,8 +1795,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         requiredEntries.append(v);
     }
 
-    if (m_requiredPackagesModel)
-        m_requiredPackagesModel->setRequiredPackages(requiredEntries);
+    emit requiredPackagesResolved(requiredEntries);
 
     if (requestOpen)
         emit requestOpenAddApplicationDialog(metadata);

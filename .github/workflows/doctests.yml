@@ -45,11 +45,6 @@ concurrency:
   group: doctests-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  ATTIC_CACHE: ${{ github.ref == 'refs/heads/master' && 'public' || 'ci' }}
-  # Empty on fork PRs (secrets not available) — Attic steps skip via the if below.
-  ATTIC_ENDPOINT: ${{ secrets.ATTIC_ENDPOINT }}
-
 jobs:
   doctests:
     name: basecamp doc-tests (${{ matrix.os }})
@@ -66,22 +61,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+      - name: Setup Nix cache
+        uses: logos-co/setup-nix-cache-action@v1
         with:
-          extra-conf: |
-            extra-substituters = https://cache.nix.logos.co/public
-            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
-            fallback = true
-
-      - name: Setup Attic cache
-        if: ${{ env.ATTIC_ENDPOINT != '' }}
-        uses: ryanccn/attic-action@v0.4.1
-        with:
-          endpoint: ${{ env.ATTIC_ENDPOINT }}
-          cache: ${{ env.ATTIC_CACHE }}
-          inputs-from: "."
-          token: ${{ github.ref == 'refs/heads/master' && secrets.ATTIC_TOKEN_PUBLIC || secrets.ATTIC_TOKEN_CI }}
+          attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
+          attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
       # The portable bundle (#bin-bundle-dir) is relocatable: it carries the app
       # and its Qt runtime, but NOT host graphics libraries (you can't bundle a
