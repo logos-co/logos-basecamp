@@ -49,8 +49,8 @@ jobs:
       # every Linux job green. Here because this job already built the bundle.
       - name: Duplicate-library link gate
         run: |
-          nix build .#link-gate -L
-          nix build .#link-gate-negative -L
+          nix build .#link-gate --no-link -L
+          nix build .#link-gate-negative --no-link -L
 
       - name: Smoke test
         run: |
@@ -159,8 +159,8 @@ jobs:
       # every Linux job green. Here because this job already built the bundle.
       - name: Duplicate-library link gate
         run: |
-          nix build .#link-gate -L
-          nix build .#link-gate-negative -L
+          nix build .#link-gate --no-link -L
+          nix build .#link-gate-negative --no-link -L
 
       - name: Smoke test
         run: |
