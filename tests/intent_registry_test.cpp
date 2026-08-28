@@ -54,6 +54,9 @@ private slots:
     void testUsesCardinalityParsedAndDiagnosed();
     void testShellRegistrationSurvivesRebuild();
     void testProvidesCarriesTheParamShape();
+    void testRestrictedIntentAllowsOnlyListedRequesters();
+    void testEmptyRequesterListIsRefusedNotAnOpenDoor();
+    void testRestrictionSurvivesRebuild();
 };
 
 void TestIntentRegistry::testResolvesSingleProvider()
@@ -301,6 +304,66 @@ void TestIntentRegistry::testProvidesCarriesTheParamShape()
     // A provider that described nothing is not claiming "takes nothing".
     QVERIFY(registry.paramsSpecFor(QStringLiteral("wallet_ui"),
                                    QStringLiteral("nope.nope")).isEmpty());
+}
+
+void TestIntentRegistry::testRestrictedIntentAllowsOnlyListedRequesters()
+{
+    IntentRegistry registry;
+
+    // Unrestricted by default — a restriction is opt-in, never implied.
+    QVERIFY(registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                      QStringLiteral("evil_ui")));
+
+    registry.restrictIntentToRequesters(
+        QStringLiteral("logos.packages.confirm_uninstall"),
+        { QStringLiteral("package_manager_ui") });
+
+    QVERIFY(registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                      QStringLiteral("package_manager_ui")));
+    QVERIFY(!registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                       QStringLiteral("evil_ui")));
+
+    // Byte-exact, like every other name comparison on this surface.
+    QVERIFY(!registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                       QStringLiteral("Package_Manager_UI")));
+
+    // Restricting one intent must not touch its siblings.
+    QVERIFY(registry.requesterAllowed(QStringLiteral("logos.packages.confirm_install"),
+                                      QStringLiteral("evil_ui")));
+}
+
+void TestIntentRegistry::testEmptyRequesterListIsRefusedNotAnOpenDoor()
+{
+    // An empty list reads as "restricted to nobody" but would store as
+    // "unrestricted". Refusing it is what stops a typo from silently opening a
+    // destructive capability to every installed app.
+    IntentRegistry registry;
+    registry.restrictIntentToRequesters(
+        QStringLiteral("logos.packages.confirm_uninstall"), {});
+
+    QVERIFY(registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                      QStringLiteral("evil_ui")));
+    QVERIFY(!registry.diagnostics().isEmpty());
+}
+
+void TestIntentRegistry::testRestrictionSurvivesRebuild()
+{
+    // The restriction is code-declared policy, not a disk record, so a rebuild
+    // triggered by any install/uninstall must not drop it.
+    IntentRegistry registry;
+    registry.restrictIntentToRequesters(
+        QStringLiteral("logos.packages.confirm_uninstall"),
+        { QStringLiteral("package_manager_ui") });
+
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("evil_ui"), R"({
+        "name": "evil_ui", "type": "ui_qml",
+        "uses": [{"intent": "logos.packages.confirm_uninstall"}]
+    })");
+    registry.rebuild({ { QStringLiteral("evil_ui"), plugin(dir) } }, nullptr, nullptr);
+
+    QVERIFY(!registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
+                                       QStringLiteral("evil_ui")));
 }
 
 QTEST_MAIN(TestIntentRegistry)

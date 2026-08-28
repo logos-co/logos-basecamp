@@ -153,6 +153,7 @@ private:
 private slots:
     void testNotDeclaredShortCircuits();
     void testNoProviderIsUnavailableAfterFloor();
+    void testRestrictedRequesterIsDeniedIndistinguishably();
     void testHappyPathDispatchesAndRoutesBack();
     void testDispatchIdDiffersFromRequestId();
     void testSpoofedResponseIsIgnored();
@@ -257,6 +258,42 @@ void TestIntentBroker::testNoProviderIsUnavailableAfterFloor()
     // The floor defeats the trivial "an instant no means nothing is installed"
     // probe. It is a partial mitigation, not indistinguishability.
     QVERIFY2(timer.elapsed() >= 200, "unavailable was delivered before the error floor");
+}
+
+void TestIntentBroker::testRestrictedRequesterIsDeniedIndistinguishably()
+{
+    // A denied requester must not be able to tell "you are not allowed" from
+    // "nothing provides this" — same code, same floor. Distinguishing the two
+    // would hand an app an oracle for what the shell can do.
+    QTemporaryDir root;
+    const QString evil = writeApp(root, QStringLiteral("evil"),
+        R"({"uses":[{"intent":"logos.packages.confirm_uninstall"}]})");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("evil_ui"), plugin(evil) } }, nullptr, nullptr);
+
+    // The shell really does provide it — so a leak here would be observable.
+    registry.registerShellProvider(QStringLiteral("main_ui"),
+        { QStringLiteral("logos.packages.confirm_uninstall") },
+        QStringLiteral("Logos"), QString());
+    registry.restrictIntentToRequesters(
+        QStringLiteral("logos.packages.confirm_uninstall"),
+        { QStringLiteral("package_manager_ui") });
+
+    FakePresenter presenter;
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(2000, 2000, 200);
+
+    FakeEndpoint evilEndpoint;
+    broker.registerEndpoint(QStringLiteral("evil_ui"), &evilEndpoint);
+
+    QElapsedTimer timer; timer.start();
+    broker.submit(&evilEndpoint, QStringLiteral("req-1"),
+                  QStringLiteral("logos.packages.confirm_uninstall"), {});
+    spin(500);
+
+    QCOMPARE(evilEndpoint.results.size(), 1);
+    QCOMPARE(evilEndpoint.error(), QStringLiteral("unavailable"));
+    QVERIFY2(timer.elapsed() >= 200, "denial was delivered before the error floor");
 }
 
 void TestIntentBroker::testHappyPathDispatchesAndRoutesBack()

@@ -98,11 +98,9 @@ Item {
     // Distinct dialog instance for upgrade/downgrade/reinstall cascades so
     // the title + body can lead with the target version + UpgradeMode
     // instead of "Uninstall and Unload Dependents?" (the previous
-    // shared-with-uninstall dialog confused users on downgrades — see
-    // PackageCoordinator::onBeforeUpgrade for the rationale). Confirm/
-    // Cancel routes through the same backend slots; PackageCoordinator
-    // disambiguates from its own m_pendingAction.op
-    // (UpgradeCascade vs UninstallCascade).
+    // shared-with-uninstall dialog confused users on downgrades). Confirm/
+    // Cancel route through the same backend slots — the shell-side work is
+    // identical (unload, then answer); only what PMU does next differs.
     ConfirmationDialog {
         id: upgradeCascadeDialog
         objectName: "confirmationDialog.upgradeCascade"
@@ -112,11 +110,10 @@ Item {
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
-    // Install gate initiated by package_manager_ui (via the module's
-    // requestInstall) — the only install confirmation in the app, covering
-    // both catalog downloads and local .lgx picks. Confirm/cancel forward the
-    // decision back through the module gate so PMU installs (or aborts).
-    // Lists the resolved transitive dep changes.
+    // Install gate raised by package_manager_ui as `confirm_install` — the only
+    // install confirmation in the app, covering both catalog downloads and
+    // local .lgx picks. Confirm/cancel answer the intent so PMU installs (or
+    // aborts). Lists the resolved transitive dep changes.
     ConfirmationDialog {
         id: installGateDialog
         objectName: "confirmationDialog.installGate"
@@ -249,16 +246,19 @@ Item {
         // instead of a bare uninstall heading.
         function onUpgradeCascadeConfirmationRequested(name, releaseTag, mode,
                                                        installedDependents, loadedDependents,
-                                                       depChanges) {
+                                                       depChanges, requesterName,
+                                                       requesterBundled) {
             upgradeCascadeDialog.openWithUpgrade(name, releaseTag, mode,
                                                  installedDependents, loadedDependents,
-                                                 depChanges);
+                                                 depChanges, requesterName, requesterBundled);
         }
 
         // Install gate (package_manager_ui-initiated). releaseTag is the
         // target version; depChanges is the resolved transitive set.
-        function onInstallGateConfirmationRequested(name, releaseTag, depChanges) {
-            installGateDialog.openWithInstallGate(name, releaseTag, depChanges);
+        function onInstallGateConfirmationRequested(name, releaseTag, depChanges,
+                                                    requesterName, requesterBundled) {
+            installGateDialog.openWithInstallGate(name, releaseTag, depChanges,
+                                                  requesterName, requesterBundled);
         }
 
         function onInstallFailureNoticeRequested(name, errorMessage) {

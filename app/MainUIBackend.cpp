@@ -21,6 +21,21 @@
 #include <QJSValue>
 #include <QTimer>
 
+namespace {
+const QStringList kPackageConfirmIntents = {
+    QStringLiteral("logos.packages.confirm_install"),
+    QStringLiteral("logos.packages.confirm_uninstall"),
+    QStringLiteral("logos.packages.confirm_upgrade"),
+};
+
+// Of those, the ones no third party has a legitimate reason to raise.
+const QStringList kRestrictedToPackageManagerUi = {
+    QStringLiteral("logos.packages.confirm_uninstall"),
+    QStringLiteral("logos.packages.confirm_upgrade"),
+};
+
+} // namespace
+
 MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QObject* parent)
     : QObject(parent)
     , m_currentActiveSectionIndex(0)
@@ -125,12 +140,9 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
             this,             &MainUIBackend::uninstallPlanRequested);
     connect(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
             this,             &MainUIBackend::dependencyDataReadyChanged);
-    // Distinct upgrade/downgrade/reinstall cascade signal — the dialog
-    // shape is the same as the uninstall variant, but the title + body
-    // need the target releaseTag + UpgradeMode (so a downgrade doesn't
-    // look like a bare uninstall). PackageCoordinator emits this from
-    // onBeforeUpgrade; OverlayDialogs.qml renders it via the
-    // "upgradeCascade" mode of ConfirmationDialog.
+    // Distinct upgrade/downgrade/reinstall cascade signal — same dialog shape
+    // as the uninstall variant, but the title + body need the target version +
+    // UpgradeMode so a downgrade doesn't look like a bare uninstall.
     connect(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
@@ -406,6 +418,21 @@ void MainUIBackend::wireIntents()
     m_shellEndpoint = std::make_unique<ShellIntentEndpoint>(
         [this](const QString& dispatchId, const QString& intent,
                const QVariantMap& params, const QString& requesterName) {
+            // Package confirmations are serviced in C++, NOT through the QML
+            // relay below: PackageCoordinator owns the cascade-unload that must
+            // finish before the requester is told it may delete anything, the
+            // dependent caches the dialog is drawn from, and the pending
+            // dispatch id that binds an answer to the dialog it came from.
+            //
+            // They also could not use the relay's receiver count: that counts
+            // ContentViews' connections, and these dialogs live in the separate
+            // OverlayDialogs widget.
+            if (kPackageConfirmIntents.contains(intent)) {
+                return m_packageCoordinator
+                    && m_packageCoordinator->beginPackageConfirmation(
+                           dispatchId, intent, params, requesterName)
+                    ? 1 : 0;
+            }
             const int receivers =
                 this->receivers(SIGNAL(shellIntentRequested(QString, QString, QVariantMap, QString)));
             if (receivers > 0)
@@ -413,6 +440,15 @@ void MainUIBackend::wireIntents()
             return receivers;
         });
     m_intentBroker->registerEndpoint(QStringLiteral("main_ui"), m_shellEndpoint.get());
+
+    // How PackageCoordinator answers. A callback rather than the broker itself,
+    // so it never has to know one exists.
+    if (m_packageCoordinator) {
+        m_packageCoordinator->setIntentResponder(
+            [this](const QString& requestId, bool ok, const QString& error) {
+                return respondToShellIntent(requestId, ok, QVariant(), error);
+            });
+    }
 
     // The shell's own provided capabilities. main_ui is the only module allowed
     // a "logos.*" name; IntentRegistry refuses that name from any disk record.
@@ -423,9 +459,18 @@ void MainUIBackend::wireIntents()
 
     m_intentRegistry->registerShellProvider(
         QStringLiteral("main_ui"),
-        {QStringLiteral("logos.repositories.manage")},
+        QStringList{QStringLiteral("logos.repositories.manage")} + kPackageConfirmIntents,
         QStringLiteral("Logos"),
         QStringLiteral("qrc:/qt/qml/Basecamp/Icons/assets/settings.svg"));
+
+    // confirm_install stays open: an app suggesting "you need X" is legitimate,
+    // and the shell already offers catalog installs an app's request provoked.
+    // Removal and version changes are restricted — no third party has a use for
+    // them, so the prompt would be one whose right answer is always no.
+    for (const QString& destructive : kRestrictedToPackageManagerUi) {
+        m_intentRegistry->restrictIntentToRequesters(
+            destructive, {QStringLiteral("package_manager_ui")});
+    }
 
     rebuildIntentRegistry();
 }
@@ -481,7 +526,7 @@ void MainUIBackend::rebuildInstallableProviders()
 
 // ── Intent surface for QML — all delegating one-liners ──────────────────────
 
-void MainUIBackend::respondToShellIntent(const QString& requestId, bool ok,
+bool MainUIBackend::respondToShellIntent(const QString& requestId, bool ok,
                                          const QVariant& data, const QString& error)
 {
     // `data` is an untyped QVariant, so QML hands over the QJSValue wrapper
@@ -493,8 +538,8 @@ void MainUIBackend::respondToShellIntent(const QString& requestId, bool ok,
                         ? data.value<QJSValue>().toVariant()
                         : data;
 
-    if (m_intentBroker && m_shellEndpoint)
-        m_intentBroker->submitResponse(m_shellEndpoint.get(), requestId, ok, flat, error);
+    if (!m_intentBroker || !m_shellEndpoint) return false;
+    return m_intentBroker->submitResponse(m_shellEndpoint.get(), requestId, ok, flat, error);
 }
 
 void MainUIBackend::resolveIntentChooser(const QString& dispatchId,

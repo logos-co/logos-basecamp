@@ -185,6 +185,17 @@ void IntentBroker::startRequest(const QString& dispatchId)
         return;
     }
 
+    // Restricted intent, wrong requester. Floored and merged with "nothing
+    // provides it" — the same reason `unavailable` covers denial: an app that
+    // could tell the two apart would learn the intent exists.
+    if (!m_registry->requesterAllowed(intent, requesterName)) {
+        qWarning().noquote()
+            << "IntentBroker: refusing" << intent << "from" << requesterName
+            << "— not a permitted requester";
+        failWithFloor(dispatchId, logos::intent::errUnavailable());
+        return;
+    }
+
     const IntentRegistry::Resolution resolution = m_registry->resolve(intent);
 
     if (resolution.status == IntentRegistry::None) {
@@ -542,7 +553,7 @@ void IntentBroker::dispatchTo(const QString& dispatchId)
 
 // ── Completion ───────────────────────────────────────────────────────────────
 
-void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchId,
+bool IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchId,
                                   bool ok, const QVariant& data, const QString& error)
 {
     auto it = m_pending.find(dispatchId);
@@ -555,7 +566,7 @@ void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchI
     else if (it->provider != from)        reject = "wrong endpoint";
     if (reject) {
         qWarning() << "IntentBroker: dropped response —" << reject;
-        return;
+        return false;
     }
 
     // A provider's response payload crosses back into the requester's engine, so
@@ -567,13 +578,14 @@ void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchI
             << "IntentBroker: provider" << it->providerName
             << "answered" << it->intent << "with a non-canonical payload — dropped";
         finish(dispatchId, false, QVariant(), logos::intent::errFailed());
-        return;
+        return false;
     }
 
     // A provider may only report cancelled / timeout / failed / bad_request.
     // Free text and the two broker-only codes are coerced here, at the boundary.
     const QString normalized = logos::intent::normalizeError(ok, error);
     finish(dispatchId, ok, data, normalized);
+    return true;
 }
 
 void IntentBroker::failWithFloor(const QString& dispatchId, const QString& errorCode)

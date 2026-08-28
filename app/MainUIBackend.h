@@ -185,7 +185,9 @@ public slots:
     // Delegating one-liners, like the rest of this facade. The broker is
     // deliberately NOT exposed to the QML context: that would let any view
     // reach policy directly and break the single-surface contract.
-    Q_INVOKABLE void respondToShellIntent(const QString& requestId, bool ok,
+    // Returns whether the broker accepted the response — false means the
+    // dispatch already ended and nobody heard it.
+    Q_INVOKABLE bool respondToShellIntent(const QString& requestId, bool ok,
                                           const QVariant& data = QVariant(),
                                           const QString& error = QString());
     Q_INVOKABLE void resolveIntentChooser(const QString& dispatchId,

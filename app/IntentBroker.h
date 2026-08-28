@@ -101,7 +101,10 @@ public:
     // ── Called by the router adapter ────────────────────────────────────
     void submit(IntentEndpoint* from, const QString& requestId,
                 const QString& intent, const QVariantMap& params);
-    void submitResponse(IntentEndpoint* from, const QString& dispatchId,
+    // Returns whether the response was accepted. False means the dispatch had
+    // already ended (requester gone, timed out) and nobody heard the answer —
+    // a provider that performed side effects needs to know that.
+    bool submitResponse(IntentEndpoint* from, const QString& dispatchId,
                         bool ok, const QVariant& data, const QString& error);
     void abandon(IntentEndpoint* from, const QStringList& requestIds);
     void endpointDestroyed(IntentEndpoint* endpoint);
