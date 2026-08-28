@@ -185,18 +185,16 @@ Control {
             }
         }
 
-        // Version footer — falls back to the build-type label
-        // ("Dev build" / "Portable build"). Selectable so the release tag can
-        // be copied out of the sidebar.
+        // Version footer — always shows the build type ("Portable" / "Dev"),
+        // prefixed with the version when one is set. Selectable so the release
+        // tag can be copied out of the sidebar.
         LogosSelectableText {
             objectName: "sidebar.buildLabel"
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter
             horizontalAlignment: TextEdit.AlignHCenter
-            text: backend.buildVersion.length > 0
-                ? backend.buildVersion
-                : (backend.isPortableBuild ? qsTr("Portable build")
-                                           : qsTr("Dev build"))
+            text: (backend.buildVersion.length > 0 ? backend.buildVersion + " · " : "")
+                + (backend.isPortableBuild ? qsTr("Portable") : qsTr("Dev"))
             color: Theme.palette.textSecondary
             font.pixelSize: Theme.typography.badgeText
             wrapMode: TextEdit.WrapAnywhere
