@@ -1190,7 +1190,10 @@ void PackageCoordinator::populateAppsModel(
             m_appsModel->setInstallType(name, installType);
         if (m_uiPluginManager) {
             const QString iconUrl = m_uiPluginManager->pluginIconUrl(name);
-            if (!iconUrl.isEmpty()) m_appsModel->setIconUrl(name, iconUrl);
+            if (!iconUrl.isEmpty())
+                m_appsModel->setIconUrl(
+                    name, iconUrl,
+                    m_uiPluginManager->pluginManifestVersion(name));
         }
     }
 

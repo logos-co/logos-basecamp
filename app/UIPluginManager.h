@@ -116,6 +116,10 @@ public:
     //   forWidgetIcon=true  → raw "qrc:…" path (for QWidget::setWindowIcon)
     QString pluginIconUrl(const QString& moduleName, bool forWidgetIcon = false) const;
 
+    // Manifest schema version of an installed UI plugin. Feeds the full-bleed
+    // icon gate on both the sidebar and App Manager paths.
+    QString pluginManifestVersion(const QString& moduleName) const;
+
     // By value, not by reference: the registry rebuilds by clear-and-refill, so
     // a reference held across a refresh is a use-after-free waiting to happen.
     QMap<QString, QVariantMap> uiPluginMetadataSnapshot() const;

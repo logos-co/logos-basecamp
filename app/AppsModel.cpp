@@ -411,6 +411,8 @@ void AppsModel::mergeLocalOnlyInstalled(const QVariantList& installedPackages)
         r.installedVersion = pkg.value("version").toString();
         r.installedHash    = pkg.value("hashes").toMap().value("root").toString();
         r.installType      = pkg.value("installType").toString();
+        r.supportsFullBleedIcon = AppsModel::supportsFullBleedIcon(
+            pkg.value("manifestVersion").toString());
         // versions{} + empty latestVersion → recomputeInstallStatus lands on
         // InstallStatus::Installed (installedVersion set + no release to
         // compare against). HasUpdate stays false. Local-only rows expose no
@@ -515,14 +517,23 @@ void AppsModel::setInstallType(const QString& name, const QString& installType)
     }
 }
 
-void AppsModel::setIconUrl(const QString& name, const QString& iconUrl)
+void AppsModel::setIconUrl(const QString& name,
+                           const QString& iconUrl,
+                           const QString& manifestVersion)
 {
+    const bool fullBleed = AppsModel::supportsFullBleedIcon(manifestVersion);
     for (int idx : m_indicesByName.values(name)) {
         Row& r = m_rows[idx];
-        if (r.iconUrl == iconUrl) continue;
+        const bool iconChanged     = r.iconUrl != iconUrl;
+        const bool fullBleedChanged = r.supportsFullBleedIcon != fullBleed;
+        if (!iconChanged && !fullBleedChanged) continue;
         r.iconUrl = iconUrl;
+        r.supportsFullBleedIcon = fullBleed;
+        QList<int> roles;
+        if (iconChanged)      roles.append(IconUrlRole);
+        if (fullBleedChanged) roles.append(SupportsFullBleedIconRole);
         const QModelIndex mi = index(idx);
-        emit dataChanged(mi, mi, {IconUrlRole});
+        emit dataChanged(mi, mi, roles);
     }
 }
 
