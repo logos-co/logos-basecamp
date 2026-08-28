@@ -613,9 +613,8 @@ QVariantList UIPluginManager::launcherApps() const
         // Manifest >= 0.4.0 guarantees a validated 256x256 icon, so the
         // sidebar tile can render it edge-to-edge; older packages ship a
         // small glyph that must stay inset.
-        app["supportsFullBleedIcon"] = AppsModel::supportsFullBleedIcon(
-            m_uiPluginMetadata.value(pluginName)
-                .value("manifestVersion").toString());
+        app["supportsFullBleedIcon"] =
+            AppsModel::supportsFullBleedIcon(pluginManifestVersion(pluginName));
         // Sidebar red-cross marker source. The SidebarAppDelegate reads
         // this field directly; we don't ship the full missingDeps list
         // here because the sidebar only draws an indicator — the detailed
@@ -1152,6 +1151,11 @@ QString UIPluginManager::pluginIconUrl(const QString& pluginName, bool forWidget
     const qint64 mtimeMs = QFileInfo(filePath).lastModified().toMSecsSinceEpoch();
     return QUrl::fromLocalFile(filePath).toString()
          + QStringLiteral("?v=") + QString::number(mtimeMs);
+}
+
+QString UIPluginManager::pluginManifestVersion(const QString& pluginName) const
+{
+    return m_uiPluginMetadata.value(pluginName).value("manifestVersion").toString();
 }
 
 QStringList UIPluginManager::intersectWithLoaded(const QStringList& moduleNames) const

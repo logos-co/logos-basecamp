@@ -53,7 +53,12 @@ public:
                              const QHash<QString, QString>& hashByName);
 
     void setInstallType(const QString& name, const QString& installType);
-    void setIconUrl(const QString& name, const QString& iconUrl);
+    // manifestVersion is not optional: the icon and its full-bleed eligibility
+    // come from the same manifest, so updating one without the other leaves a
+    // 0.4.0+ icon rendering inset. Taking both makes that state unreachable.
+    void setIconUrl(const QString& name,
+                    const QString& iconUrl,
+                    const QString& manifestVersion);
     void setMissingDeps(const QString& name, const QStringList& missing);
     void setInstallRegistry(InstallRegistry* installRegistry);
 
