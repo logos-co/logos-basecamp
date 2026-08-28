@@ -15,7 +15,17 @@ int ModuleInstanceModel::rowCount(const QModelIndex& parent) const
 QString ModuleInstanceModel::Row::statusText() const
 {
     if (isMainUi)       return QObject::tr("Main UI");
-    if (hasMissingDeps) return QObject::tr("Missing deps");
+    if (hasMissingDeps) {
+        // "Missing deps" is wrong about a dependency that is installed at the
+        // wrong version, and worse about one signed by somebody else, where
+        // neither installing nor changing version is a remedy. "mixed" keeps
+        // the absence wording: something IS missing, and that comes first.
+        if (depBlockKind == QLatin1String("signer"))
+            return QObject::tr("Signer conflict");
+        if (depBlockKind == QLatin1String("mismatch"))
+            return QObject::tr("Version conflict");
+        return QObject::tr("Missing deps");
+    }
     if (isLoaded)       return QObject::tr("Loaded");
     return QObject::tr("Not loaded");
 }
@@ -79,6 +89,7 @@ ModuleInstanceModel::Row ModuleInstanceModel::toRow(const QVariantMap& m)
     r.isLoaded       = m.value(QStringLiteral("isLoaded")).toBool();
     r.isMainUi       = m.value(QStringLiteral("isMainUi")).toBool();
     r.hasMissingDeps = m.value(QStringLiteral("hasMissingDeps")).toBool();
+    r.depBlockKind   = m.value(QStringLiteral("depBlockKind")).toString();
     // Stats arrive as either doubles or strings depending on what the module
     // reports — coerce both to double so the sort proxy always compares
     // numerically.
@@ -104,10 +115,13 @@ QList<int> ModuleInstanceModel::diffRoles(const Row& a, const Row& b)
     if (a.isLoaded       != b.isLoaded)       roles.append(IsLoadedRole);
     if (a.isMainUi       != b.isMainUi)       roles.append(IsMainUiRole);
     if (a.hasMissingDeps != b.hasMissingDeps) roles.append(HasMissingDepsRole);
-    // StatusText is derived from isMainUi/hasMissingDeps/isLoaded — refresh
-    // it whenever any of those changed.
+    // StatusText is derived from isMainUi/hasMissingDeps/depBlockKind/
+    // isLoaded — refresh whenever any changed. depBlockKind is in the list
+    // because a row can go absent -> mismatch (the dependency gets installed
+    // at the wrong version) with hasMissingDeps never moving.
     if (a.isMainUi != b.isMainUi
         || a.hasMissingDeps != b.hasMissingDeps
+        || a.depBlockKind != b.depBlockKind
         || a.isLoaded != b.isLoaded) {
         roles.append(StatusTextRole);
     }

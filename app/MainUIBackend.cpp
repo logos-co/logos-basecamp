@@ -331,7 +331,7 @@ void MainUIBackend::wireIntents()
                 m_intentBroker->onAppUnavailable(name);
             });
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
-            this, [this](const QString& name, const QStringList&) {
+            this, [this](const QString& name, const QVariantList&, const QString&) {
                 m_intentBroker->onAppUnavailable(name);
             });
 

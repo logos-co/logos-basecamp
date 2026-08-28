@@ -167,10 +167,17 @@ signals:
     void coreModulesChanged();
 
     // Dependency-aware UX. missingDepsPopup fires when the user clicks a
-    // UI plugin that can't load because its core deps aren't installed;
-    // unloadCascade fires when they try to unload a module other running
-    // things depend on.
-    void missingDepsPopupRequested(const QString& name, const QStringList& missing);
+    // UI plugin whose core dependencies don't let it load; unloadCascade
+    // fires when they try to unload a module other running things depend on.
+    //
+    // `blockers` is one map per blocking dependency (see
+    // PackageCoordinator::blockingDepsOf); `summary` is one word for the set
+    // ("absent" | "mismatch" | "signer" | "mixed"). Both, because the dialog
+    // says a different sentence per kind and a bare name list cannot tell an
+    // absent dependency from an installed one at the wrong version.
+    void missingDepsPopupRequested(const QString& name,
+                                   const QVariantList& blockers,
+                                   const QString& summary);
     void unloadCascadeConfirmationRequested(const QString& name,
                                             const QStringList& loadedDependents);
 
@@ -304,6 +311,11 @@ private:
     LogosAPI*          m_logosAPI;          // not owned
     CoreModuleManager* m_coreModuleManager; // not owned (sibling Qt child)
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator
+
+    // Load parked on dependencyDataReadyChanged; empty when idle. Mirrors
+    // PackageCoordinator::uninstallApp's deferral — last click wins.
+    QString                 m_pendingGatedLoadName;
+    QMetaObject::Connection m_pendingGatedLoadConn;
     PluginLoader*      m_pluginLoader;      // owned (parent=this)
 
     // Loaded-plugin state

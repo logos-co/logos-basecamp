@@ -1,0 +1,762 @@
+name: "Basecamp's dependency gate: every verdict, against the real binary"
+output: basecamp-dependency-gate.md
+release: ""
+
+intro: |
+  Before Basecamp loads an app it asks the `package_manager` module to resolve
+  that app's dependencies, and refuses the load if any of them is unusable.
+  "Unusable" is not one thing. A dependency can be **absent**, **installed at a
+  version the app does not accept**, or **installed under the right name but
+  published by somebody else** — three different problems, three different
+  things the user has to do about them, and one identical observable if the UI
+  only says "blocked".
+
+  The companion doc-test
+  ([basecamp-missing-deps](./basecamp-missing-deps.md)) covers the absent case
+  on its own. This one drives the **whole verdict matrix** through the real,
+  shippable bundle in a single launch — including the two verdicts that must
+  **not** block, because a gate that refuses everything is not a gate.
+
+  | dependency's state | verdict | gate |
+  |---|---|---|
+  | installed, version satisfies the range | `installed` | **admits** |
+  | installed, signed by the pinned key | `installed` | **admits** |
+  | installed, nothing records who published it | `signer_unknown` | **admits** |
+  | not installed anywhere | `not_installed` | **blocks** |
+  | installed at a version the range rejects | `version_mismatch` | **blocks** |
+  | installed, signed by a different key | `signer_mismatch` | **blocks** |
+
+  The last admitting row is deliberate, not an oversight. Embedded packages are
+  placed by the build and never pass through the installer that writes a
+  `manifest.sig`, so they can never carry one; blocking on "we could not check"
+  would make a signer pin on an embedded dependency unsatisfiable forever.
+
+  The fixtures are real: two Ed25519 publisher keys from `lgx keygen`, **both
+  anchored in the keyring**, so trust cannot be the discriminator between the
+  admitting and the blocking signer case — only identity can.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle, the logos-qt-mcp UI driver, two real
+  publisher keys, one genuinely compiled core module signed by one of them and
+  installed with signature verification on, seven hand-seeded QML-only apps
+  pinning that module (and an embedded one) seven different ways, and a single
+  headless UI run that clicks all seven and asserts the specific verdict each
+  one produces.
+
+what_you_learn:
+  - The closed vocabulary the resolver reports per dependency (`installed`, `not_installed`, `version_mismatch`, `signer_mismatch`, `signer_unknown`) and which of them refuse a load
+  - 'How a manifest pins a dependency''s version range and its publisher (`{"name": …, "version": "^2.0.0", "signer": "did:jwk:…"}`)'
+  - Why `signer_unknown` admits — and why tightening it would break every pin on an embedded package
+  - That the three refusals are told apart in the UI by title, body and detail clause, not just by "blocked"
+  - How to build, sign, and install a real fixture module (`lgx keygen` / `lgx sign` / `lgx keyring add` / `lgpm --require-signatures`)
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+
+sections:
+  - title: "Seven apps, one dependency, seven pins"
+    text: |
+      Every fixture app is a QML-only (`ui_qml`) package seeded straight into a
+      throwaway `--user-dir` — the same on-disk shape an install leaves behind,
+      and what the package scanner reads. They differ only in what their
+      manifest's `dependencies` array pins:
+
+      ```
+      admits                                                    verdict
+        dg_ok_exact     ─► capability_module  ^1.0.0            installed
+        dg_ok_range     ─► depsvc             ^2.0.0            installed
+        dg_ok_signer    ─► depsvc  ^2.0.0 + signer publisher-b  installed
+        dg_ok_unsigned  ─► capability_module  ^1.0.0
+                                             + signer publisher-a  signer_unknown
+
+      blocks
+        dg_absent       ─► dg_phantom_module  ^1.0.0            not_installed
+        dg_mismatch     ─► depsvc             ^3.0.0            version_mismatch
+        dg_signer_bad   ─► depsvc  ^2.0.0 + signer publisher-a  signer_mismatch
+      ```
+
+      Two dependencies carry the whole matrix. **`capability_module`** ships
+      inside the bundle at 1.0.0 and — like every embedded package — has no
+      `manifest.sig`, which is what makes `dg_ok_unsigned` a `signer_unknown`
+      pin rather than a mismatch. **`depsvc`** is built here as a real,
+      loadable core module at 2.1.0 and signed by `publisher-b`; the three apps
+      that point at it get three different answers from the same installed
+      bytes.
+
+      `depsvc` is compiled rather than faked because the four admitting apps
+      assert they *actually load*. A dummy payload admits at the gate and then
+      dies in the runtime, which would prove the opposite of what is wanted.
+
+  - title: "Build the tools"
+    step: true
+    text: |
+      The UI driver, the packaging CLI (keys, signing, `.lgx`), and the local
+      package installer. The installer must be the **portable** build: it is
+      the variant the bundle looks for, and the `-dev` one installs where the
+      app will not look.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+      - title: "Build the lgx packaging CLI"
+        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
+        check_file: "result-lgx/bin/lgx"
+
+      - title: "Build the portable package manager"
+        run: "nix build 'github:logos-co/logos-package-manager#cli-portable' -o result-lgpm"
+        check_file: "result-lgpm/bin/lgpm"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      Build **this** basecamp commit as the portable bundle — the same
+      self-contained directory you ship, with the QML inspector compiled in so
+      the driver can attach (`#bin-bundle-dir-inspector`, the inspector-enabled
+      twin of `#bin-bundle-dir`). It carries the `package_manager` module that
+      computes every verdict under test, and the embedded `capability_module`
+      two of the fixtures pin.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Two publishers, both trusted"
+    step: true
+    text: |
+      Generate two real Ed25519 publisher identities and anchor **both** in the
+      keyring. Anchoring both is the point: the difference between
+      `dg_ok_signer` and `dg_signer_bad` is then purely *which* key signed the
+      installed package, not whether that key is trusted at all.
+
+      (A pin must carry a real key. A placeholder DID with no `x` member is an
+      unparseable pin, which also reports `signer_mismatch` — a suite built on
+      one stays green while documenting the wrong cause.)
+    steps:
+      - title: "Generate and anchor the keys"
+        run: |
+          rm -rf build/depgate
+          mkdir -p build/depgate/keys build/depgate/keyring
+          ./result-lgx/bin/lgx keygen --name publisher-a --output-dir build/depgate/keys
+          ./result-lgx/bin/lgx keygen --name publisher-b --output-dir build/depgate/keys
+          ./result-lgx/bin/lgx keyring add publisher-a "$(cat build/depgate/keys/publisher-a.did)" --dir build/depgate/keyring
+          ./result-lgx/bin/lgx keyring add publisher-b "$(cat build/depgate/keys/publisher-b.did)" --dir build/depgate/keyring
+          # A pin with no `x` member is unparseable, and reports signer_mismatch
+          # for the wrong reason — the suite would stay green documenting it.
+          for k in publisher-a publisher-b; do
+            printf '%s' "$(cat build/depgate/keys/$k.did)" | sed 's/^did:jwk://' \
+              | tr '_-' '/+' | base64 -d 2>/dev/null | grep -q '"x"' \
+              || { echo "FATAL: $k.did carries no public key"; exit 1; }
+          done
+          echo "both DIDs carry a public key"
+          ./result-lgx/bin/lgx keyring list --dir build/depgate/keyring
+        expect_contains:
+          - "publisher-a"
+          - "publisher-b"
+
+  - title: "Build, sign and install the dependency"
+    step: true
+    text: |
+      `depsvc` is an ordinary universal module — the same five files
+      `nix flake init -t github:logos-co/logos-module-builder` scaffolds. Only
+      `metadata.json` matters to the gate (name, version, type), but the module
+      is really compiled so the apps that depend on it really load.
+    steps:
+      - title: "Write the module's identity"
+        text: |
+          `version` 2.1.0 is what makes `^2.0.0` a match and `^3.0.0` a
+          mismatch; `display_name` is what the blocked dialog will name.
+        file:
+          path: build/depgate/depsvc/metadata.json
+          language: json
+          content: |
+            {
+              "name": "depsvc",
+              "display_name": "Dep Service",
+              "version": "2.1.0",
+              "type": "core",
+              "interface": "universal",
+              "category": "testing",
+              "description": "Dependency-gate doc-test fixture: the module every pin points at",
+              "main": "depsvc_plugin",
+              "dependencies": []
+            }
+
+      - title: "Write the flake"
+        file:
+          path: build/depgate/depsvc/flake.nix
+          language: nix
+          content: |
+            {
+              description = "Dependency-gate doc-test fixture module";
+
+              inputs.logos-module-builder.url = "github:logos-co/logos-module-builder";
+
+              outputs = inputs@{ logos-module-builder, ... }:
+                logos-module-builder.lib.mkLogosModule {
+                  src = ./.;
+                  configFile = ./metadata.json;
+                  flakeInputs = inputs;
+                };
+            }
+
+      - title: "Write the CMakeLists"
+        file:
+          path: build/depgate/depsvc/CMakeLists.txt
+          language: cmake
+          content: |
+            cmake_minimum_required(VERSION 3.14)
+            project(DepsvcModulePlugin LANGUAGES CXX)
+
+            include($ENV{LOGOS_MODULE_BUILDER_ROOT}/cmake/LogosModule.cmake)
+
+            file(READ "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json" METADATA_JSON)
+            string(JSON MODULE_NAME GET ${METADATA_JSON} name)
+
+            logos_module(
+                NAME ${MODULE_NAME}
+                SOURCES
+                    src/depsvc_impl.h
+                    src/depsvc_impl.cpp
+            )
+
+      - title: "Write the implementation"
+        text: |
+          The public methods are the module's API; the Qt plugin glue is
+          generated from this header.
+        file:
+          path: build/depgate/depsvc/src/depsvc_impl.h
+          language: cpp
+          content: |
+            #pragma once
+
+            #include <string>
+            #include "logos_module_context.h"
+
+            class DepsvcImpl : public LogosModuleContext
+            {
+            public:
+                std::string getStatus();
+            };
+
+      - title: "…and its body"
+        file:
+          path: build/depgate/depsvc/src/depsvc_impl.cpp
+          language: cpp
+          content: |
+            #include "depsvc_impl.h"
+
+            std::string DepsvcImpl::getStatus()
+            {
+                return "depsvc 2.1.0 is running.";
+            }
+
+      - title: "Build the .lgx, sign it as publisher-b, install it"
+        text: |
+          `#lgx-portable` (not `#lgx`) emits the plain platform variant the
+          portable bundle installs and loads. The archive comes out of the Nix
+          store read-only and `lgx sign` writes in place, hence the copy.
+          `--require-signatures` makes the install itself verify the signature
+          against the keyring rather than take it on trust.
+        run: |
+          nix build "path:$PWD/build/depgate/depsvc#lgx-portable" -o build/depgate/result-depsvc
+          cp -f build/depgate/result-depsvc/*.lgx build/depgate/depsvc.lgx
+          chmod u+w build/depgate/depsvc.lgx
+          ./result-lgx/bin/lgx sign build/depgate/depsvc.lgx -k publisher-b -d build/depgate/keys
+          chmod -R u+w testdata/depgate-user 2>/dev/null || true
+          rm -rf testdata/depgate-user
+          mkdir -p testdata/depgate-user/modules testdata/depgate-user/plugins
+          ./result-lgpm/bin/lgpm \
+            --modules-dir testdata/depgate-user/modules \
+            --ui-plugins-dir testdata/depgate-user/plugins \
+            --keyring build/depgate/keyring --require-signatures \
+            install --file build/depgate/depsvc.lgx
+          ls testdata/depgate-user/modules/depsvc
+          # The suffix is the platform's; expect_contains is matched verbatim.
+          test -f testdata/depgate-user/modules/depsvc/depsvc_plugin.{ext} \
+            && echo "plugin binary installed"
+        expect_contains:
+          - "Package signed"
+          - "plugin binary installed"
+          - "manifest.sig"
+
+      - title: "Confirm the embedded dependency carries no signature"
+        text: |
+          The premise of the `signer_unknown` case: `capability_module` ships
+          inside the bundle, so there is no `manifest.sig` for a pin to check
+          against — by construction, not by accident.
+        run: |
+          grep -o '"version": "[^"]*"' result-bundle/modules/capability_module/manifest.json
+          ls result-bundle/modules/capability_module/manifest.sig 2>&1 || echo "no manifest.sig — embedded package"
+        expect_contains:
+          - '"version": "1.0.0"'
+          - "no manifest.sig — embedded package"
+
+  - title: "Seed the seven apps"
+    step: true
+    text: |
+      Each app is four files: the root `manifest.json` the scanner reads, the
+      module's own `metadata.json`, a QML view, and a `qmldir`. The view
+      renders a give-away line naming its own package — the load is asserted by
+      that text appearing, and for the three blocked apps by it never
+      appearing.
+    steps:
+      - title: "Write all seven"
+        run: |
+          DID_A=$(cat build/depgate/keys/publisher-a.did)
+          DID_B=$(cat build/depgate/keys/publisher-b.did)
+          seed() {
+            name=$1; display=$2; deps=$3
+            d="testdata/depgate-user/plugins/$name"; mkdir -p "$d"
+            cat > "$d/manifest.json" <<EOF
+          {
+            "author": "",
+            "category": "testing",
+            "dependencies": [$deps],
+            "description": "Dependency-gate doc-test fixture",
+            "display_name": "$display",
+            "icon": "",
+            "main": {},
+            "manifestVersion": "0.3.0",
+            "name": "$name",
+            "type": "ui_qml",
+            "version": "0.1.0",
+            "view": "Main.qml"
+          }
+          EOF
+            cat > "$d/metadata.json" <<EOF
+          {
+            "name": "$name",
+            "display_name": "$display",
+            "version": "0.1.0",
+            "type": "ui_qml",
+            "category": "testing",
+            "description": "Dependency-gate doc-test fixture",
+            "view": "Main.qml",
+            "dependencies": [$deps]
+          }
+          EOF
+            cat > "$d/Main.qml" <<EOF
+          import QtQuick
+          Rectangle {
+              color: "#1e1e1e"
+              Text {
+                  anchors.centerIn: parent
+                  color: "#ffffff"
+                  font.pixelSize: 18
+                  text: "$name loaded — the gate admitted it"
+              }
+          }
+          EOF
+            printf 'module com.logos.module.%s\n' "$name" > "$d/qmldir"
+          }
+
+          # ── the gate must ADMIT these four ─────────────────────────────────
+          seed dg_ok_exact    "Gate OK Exact"    "{\"name\":\"capability_module\",\"version\":\"^1.0.0\"}"
+          seed dg_ok_range    "Gate OK Range"    "{\"name\":\"depsvc\",\"version\":\"^2.0.0\"}"
+          seed dg_ok_signer   "Gate OK Signer"   "{\"name\":\"depsvc\",\"version\":\"^2.0.0\",\"signer\":\"$DID_B\"}"
+          seed dg_ok_unsigned "Gate OK Unsigned" "{\"name\":\"capability_module\",\"version\":\"^1.0.0\",\"signer\":\"$DID_A\"}"
+
+          # ── the gate must BLOCK these three, each for its own reason ───────
+          seed dg_absent      "Gate Absent"      "{\"name\":\"dg_phantom_module\",\"version\":\"^1.0.0\"}"
+          seed dg_mismatch    "Gate Mismatch"    "{\"name\":\"depsvc\",\"version\":\"^3.0.0\"}"
+          seed dg_signer_bad  "Gate Signer Bad"  "{\"name\":\"depsvc\",\"version\":\"^2.0.0\",\"signer\":\"$DID_A\"}"
+
+          ls testdata/depgate-user/plugins
+        expect_contains:
+          - "dg_ok_exact"
+          - "dg_ok_range"
+          - "dg_ok_signer"
+          - "dg_ok_unsigned"
+          - "dg_absent"
+          - "dg_mismatch"
+          - "dg_signer_bad"
+
+  - title: "Drive every verdict"
+    step: true
+    text: |
+      One launch, all seven apps. The order is deliberate: the four the gate
+      **admits** are clicked first, while no dialog has ever opened, so
+      asserting the missing-deps dialog is invisible cannot pass on a stale
+      render. The three refusals follow, each asserted on the state the tile
+      publishes (`depBlockKind`), the dialog that opens (`blockSummary`,
+      `moduleName`) and the words the user actually reads.
+    steps:
+      - title: "Click all seven"
+        ui_test:
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/depgate-user"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens with the sidebar visible"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+
+            - name: "All seven fixtures are listed"
+              action: wait_for
+              texts:
+                - "Gate OK Exact"
+                - "Gate OK Range"
+                - "Gate OK Signer"
+                - "Gate OK Unsigned"
+                - "Gate Absent"
+                - "Gate Mismatch"
+                - "Gate Signer Bad"
+              timeout: 60000
+              text: "Installed-but-blocked apps are never hidden — all seven are listed; the marker and the dialog say which are runnable."
+              screenshot: "depgate-sidebar.png"
+
+            # Generous margin on purpose: `expect_property` is one-shot — no
+            # polling — so the verdicts must be published before it runs. One
+            # resolveFlatDependencies round-trip per installed package on a
+            # cold headless launch. An early CLICK no longer races the gate
+            # (loadUiModule defers on dependencyDataReady); this sleep is for
+            # the assertions, not the click.
+            - name: "Give the dependency resolution a moment to complete"
+              action: sleep
+              ms: 20000
+
+            # ── at rest: the verdict each tile publishes ───────────────────
+            - name: "Satisfied range admits — ^1.0.0 against 1.0.0"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_exact"
+              property: "hasMissingDeps"
+              value: false
+              text: "The control for the whole suite: a gate that blocks everything would fail here first."
+
+            - name: "Satisfied range admits — ^2.0.0 against 2.1.0"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_range"
+              property: "hasMissingDeps"
+              value: false
+
+            - name: "Satisfied signer pin admits"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_signer"
+              property: "hasMissingDeps"
+              value: false
+              text: "`depsvc` really is signed by `publisher-b`, and the pin names `publisher-b`."
+
+            - name: "Unknown signer admits — the pin could not be checked"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_unsigned"
+              property: "hasMissingDeps"
+              value: false
+              text: "`capability_module` is embedded and carries no signature, so this pin resolves `signer_unknown`. Admitting is the deliberate choice — blocking would make a signer pin on any embedded dependency unsatisfiable forever, and this assertion is what a future tightening of the gate would trip over."
+
+            - name: "Absent dependency blocks, and says so"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_absent"
+              property: "depBlockKind"
+              value: "absent"
+
+            - name: "Wrong version blocks, as a version problem"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_mismatch"
+              property: "depBlockKind"
+              value: "mismatch"
+              text: "Not `absent`: `depsvc` is installed. The tile already distinguishes the two, which is what lets the dialog pick different words."
+
+            - name: "Wrong publisher blocks, as a publisher problem"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_signer_bad"
+              property: "depBlockKind"
+              value: "signer"
+              text: "Same installed bytes as the previous two apps — a different pin, a different verdict."
+              screenshot: "depgate-markers.png"
+
+            # ── the four the gate admits, before any dialog has opened ─────
+            - name: "Open the exact-range app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_exact"
+
+            - name: "…it loads and renders"
+              action: wait_for
+              texts: ["dg_ok_exact loaded — the gate admitted it"]
+              timeout: 30000
+
+            - name: "…and the tile agrees"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_exact"
+              property: "loaded"
+              value: true
+
+            - name: "Open the caret-range app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_range"
+
+            - name: "…it loads and renders"
+              action: wait_for
+              texts: ["dg_ok_range loaded — the gate admitted it"]
+              timeout: 30000
+
+            - name: "…and the tile agrees"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_range"
+              property: "loaded"
+              value: true
+
+            - name: "Open the matching-signer app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_signer"
+
+            - name: "…it loads and renders"
+              action: wait_for
+              texts: ["dg_ok_signer loaded — the gate admitted it"]
+              timeout: 30000
+
+            - name: "…and the tile agrees"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_signer"
+              property: "loaded"
+              value: true
+
+            - name: "Open the unknown-signer app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_unsigned"
+
+            - name: "…it loads and renders"
+              action: wait_for
+              texts: ["dg_ok_unsigned loaded — the gate admitted it"]
+              timeout: 30000
+              text: "The `signer_unknown` pin really runs its app — not merely 'was not flagged'."
+
+            - name: "…and the tile agrees"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_ok_unsigned"
+              property: "loaded"
+              value: true
+
+            - name: "No dialog was raised for any of the four"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "visible"
+              value: false
+              text: "Sound because it runs before any missing-deps dialog has ever opened: the per-mode instance still holds its initial state, so this cannot pass on a leftover render."
+              screenshot: "depgate-admitted.png"
+
+            # ── refusal 1: the dependency is not installed ─────────────────
+            - name: "Click the app whose dependency is absent"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_absent"
+
+            - name: "Missing Dependencies — named as an absence"
+              action: wait_for
+              texts:
+                - "Missing Dependencies"
+                - "'Gate Absent' cannot be loaded because the following modules are not installed:"
+                - "• dg_phantom_module — not installed; requires ^1.0.0"
+              timeout: 30000
+              text: "The row carries the declared range even though nothing is installed, so the user knows *which* version to go and get."
+
+            - name: "It is the missing-deps dialog, opened for this app"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "moduleName"
+              value: "dg_absent"
+
+            - name: "…summarised as an absence"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "blockSummary"
+              value: "absent"
+
+            - name: "Let the dialog render"
+              action: sleep
+              ms: 1500
+              screenshot: "depgate-absent.png"
+
+            - name: "Dismiss it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps.confirm"
+
+            - name: "…and settle"
+              action: sleep
+              ms: 1000
+
+            - name: "The load was never attempted"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_absent"
+              property: "loaded"
+              value: false
+
+            # ── refusal 2: installed, wrong version ────────────────────────
+            - name: "Click the app whose dependency is the wrong version"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_mismatch"
+
+            - name: "Incompatible Dependencies — the constraint AND what is installed"
+              action: wait_for
+              texts:
+                - "Incompatible Dependencies"
+                - "'Gate Mismatch' cannot be loaded because the following modules are installed at a version it does not accept:"
+                - "• Dep Service — requires ^3.0.0, found 2.1.0"
+              timeout: 30000
+              text: "A different title and a different sentence from the absent case — telling a user to install a module they already have sends them nowhere. The row names both sides of the comparison, and the module by its display name."
+
+            - name: "It is the missing-deps dialog, opened for this app"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "moduleName"
+              value: "dg_mismatch"
+
+            - name: "…summarised as a version problem, not an absence"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "blockSummary"
+              value: "mismatch"
+
+            - name: "Let the dialog render"
+              action: sleep
+              ms: 1500
+              screenshot: "depgate-mismatch.png"
+
+            - name: "Dismiss it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps.confirm"
+
+            - name: "…and settle"
+              action: sleep
+              ms: 1000
+
+            - name: "The load was never attempted"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_mismatch"
+              property: "loaded"
+              value: false
+
+            # ── refusal 3: installed, wrong publisher ──────────────────────
+            - name: "Click the app whose dependency is somebody else's package"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_signer_bad"
+
+            - name: "Unexpected Publisher — neither a version nor an absence"
+              action: wait_for
+              texts:
+                - "Unexpected Publisher"
+                - "'Gate Signer Bad' cannot be loaded because the following modules are not signed by the key it requires. A package under the right name signed by a different key is a different package — reinstall these from the publisher the module names:"
+              timeout: 30000
+              text: "Reinstalling gets the same package back and no version of it will do, so the copy says so outright. The row itself names both DIDs; they are fresh per run, so the last step of this doc-test pins them against the keys generated above."
+
+            - name: "It is the missing-deps dialog, opened for this app"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "moduleName"
+              value: "dg_signer_bad"
+
+            - name: "…summarised as a publisher problem"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps"
+              property: "blockSummary"
+              value: "signer"
+
+            - name: "Let the dialog render"
+              action: sleep
+              ms: 1500
+              screenshot: "depgate-signer.png"
+
+            - name: "Dismiss it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "confirmationDialog.missingDeps.confirm"
+
+            - name: "…and settle"
+              action: sleep
+              ms: 1000
+
+            - name: "The load was never attempted"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_signer_bad"
+              property: "loaded"
+              value: false
+
+            - name: "…and the tile still carries its own verdict"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.dg_signer_bad"
+              property: "depBlockKind"
+              value: "signer"
+              screenshot: "depgate-after.png"
+
+  - title: "What the resolver actually said"
+    step: true
+    text: |
+      The signer row names two DIDs that are generated fresh on every run, so
+      no literal text assertion can reach them. The app's own log can: it
+      records the verdict each blocked app got, and the pin warning naming the
+      key that was required and the key that actually signed. Checking those
+      against the two keys generated at the start closes the last gap — the
+      mismatch really is `publisher-a` vs `publisher-b`, and not an unparseable
+      pin that happens to report the same status.
+    steps:
+      - title: "Check the log against the generated keys"
+        run: |
+          DID_A=$(cat build/depgate/keys/publisher-a.did)
+          DID_B=$(cat build/depgate/keys/publisher-b.did)
+          grep -o 'blocked by deps ( "[a-z]*" )' ui-test-app.log | sort -u
+          grep -q "pinned to signer $DID_A" ui-test-app.log \
+            && echo "pin required publisher-a"
+          grep -q "it is signed by $DID_B" ui-test-app.log \
+            && echo "installed package signed by publisher-b"
+          grep -q "not a did:jwk carrying an Ed25519 key" ui-test-app.log \
+            || echo "every pin carried a real key"
+        expect_contains:
+          - 'blocked by deps ( "absent" )'
+          - 'blocked by deps ( "mismatch" )'
+          - 'blocked by deps ( "signer" )'
+          - "pin required publisher-a"
+          - "installed package signed by publisher-b"
+          - "every pin carried a real key"
+        post_text: |
+          Three verdicts, three distinct words, from the same run that produced
+          the three distinct dialogs — and the signer refusal is provably the
+          two real keys disagreeing, not a pin the verifier could not read.
+
+          One launch covered the gate's whole vocabulary: it admits a satisfied
+          range, a satisfied signer pin, and a pin it cannot check, and refuses
+          an absent dependency, a rejected version, and a foreign publisher —
+          each in words the other two never use.

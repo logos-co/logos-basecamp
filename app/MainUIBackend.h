@@ -316,7 +316,9 @@ signals:
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.
-    void missingDepsPopupRequested(const QString& name, const QStringList& missing);
+    void missingDepsPopupRequested(const QString& name,
+                                   const QVariantList& blockers,
+                                   const QString& summary);
     void unloadCascadeConfirmationRequested(const QString& name, const QStringList& loadedDependents);
     // Single uninstall-confirmation trigger for all four initiators — pure
     // re-emit of PackageCoordinator::uninstallPlanRequested, whose comment

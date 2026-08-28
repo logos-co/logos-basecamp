@@ -140,6 +140,13 @@ jobs:
           #     core-module dependency exists nowhere, then asserts the sidebar
           #     red-cross marker and the Missing Dependencies dialog raised by
           #     the load gate (hermetic: hand-written user-dir fixture).
+          #   basecamp-dependency-gate — the same load gate across its whole
+          #     verdict vocabulary: seven seeded ui_qml apps pin one real
+          #     signed fixture module (and one embedded module) seven ways, and
+          #     the run asserts a satisfied range, a satisfied signer pin and an
+          #     uncheckable signer pin all LOAD, while an absent dependency, a
+          #     rejected version and a foreign publisher are each refused with
+          #     their own dialog (hermetic: keys, module and fixtures built here).
           #   basecamp-failure-paths — hands a truncated .lgx and a fake .lgx
           #     to the Package Manager and asserts Basecamp's Install Failed
           #     notice surfaces each error (then proves the intact package
@@ -168,6 +175,7 @@ jobs:
             doctests/basecamp-shortcut-bridge.test.yaml \
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
+            doctests/basecamp-dependency-gate.test.yaml \
             doctests/basecamp-failure-paths.test.yaml \
             doctests/basecamp-persistence.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
@@ -198,7 +206,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \

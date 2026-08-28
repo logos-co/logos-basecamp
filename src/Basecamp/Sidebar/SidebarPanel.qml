@@ -134,6 +134,7 @@ Control {
                             iconSource: modelData.iconPath
                             fullBleedIcon: modelData.supportsFullBleedIcon === true
                             hasMissingDeps: modelData.hasMissingDeps === true
+                            depBlockKind: modelData.depBlockKind || ""
                             onClicked: root.launchUIModule(modelData.name)
                             onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
                         }
@@ -159,6 +160,7 @@ Control {
                             iconSource: modelData.iconPath
                             fullBleedIcon: modelData.supportsFullBleedIcon === true
                             hasMissingDeps: modelData.hasMissingDeps === true
+                            depBlockKind: modelData.depBlockKind || ""
                             onClicked: root.launchUIModule(modelData.name)
                             onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
                         }

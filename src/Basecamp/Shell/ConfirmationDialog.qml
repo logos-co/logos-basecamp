@@ -9,9 +9,14 @@ import Logos.Theme
 //
 // Display variants, selected via `mode`:
 //  - "missingDeps"    — informational; user tried to load a plugin whose
-//                       dependencies aren't installed. The only action is an
+//                       dependencies won't let it load. The only action is an
 //                       "OK" that closes the dialog — Cancel is hidden, since
 //                       nothing was started and there is nothing to abort.
+//                       Three distinct problems land here — absent, wrong
+//                       version, wrong signer — with three different remedies,
+//                       so the copy must not conflate them. `blockSummary`
+//                       picks the sentence; each row's `detail` clause names
+//                       the constraint and what was found.
 //  - "unloadCascade"  — confirmation; unloading this module would leave
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
@@ -47,8 +52,8 @@ import Logos.Theme
 // renders a resolved plan (what goes, what stays and why, what breaks) rather
 // than a pair of dependent lists.
 //
-// The dialog is controlled by calling `openWith(mode, name, items)` for the
-// one-list modes, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
+// The dialog is controlled by calling `openWith(mode, name, items,
+// blockSummary)` for the one-list modes, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
 // for upgradeCascade, or `openWithInstallGate(name, version, depChanges)` for
 // the install gate. Backend wiring listens for continueClicked/cancelClicked
 // and calls the appropriate slot with `name`.
@@ -58,7 +63,16 @@ Dialog {
     // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate" | "installError"
     property string mode: "missingDeps"
     property string moduleName: ""
+    // For "missingDeps" each entry is a map from
+    // logos::dependencyBlockerToMap — {name, kind, requiredVersion,
+    // installedVersion, requiredSigner, signerDid, detail}. For the other
+    // one-list modes it is a plain module name; `_itemName` / `_itemDetail`
+    // read either shape.
     property var items: []
+    // missingDeps only: "" | "absent" | "mismatch" | "signer" | "mixed".
+    // Computed host-side (logos::summariseDependencyBlockers) so one set of
+    // blockers yields one sentence everywhere it is described.
+    property string blockSummary: ""
     // Only used in upgradeCascade mode — the dependents currently loaded,
     // which get torn down for the version swap.
     property var loadedItems: []
@@ -97,13 +111,29 @@ Dialog {
     closePolicy: Popup.CloseOnEscape
 
     // API for parent components — simpler than setting props + open() each time.
-    function openWith(mode_, name_, items_) {
+    function openWith(mode_, name_, items_, blockSummary_) {
         root.mode = mode_;
         root.moduleName = name_ || "";
         root.items = items_ || [];
+        root.blockSummary = blockSummary_ || "";
         root.loadedItems = [];
         root._explicitClose = false;
         open();
+    }
+
+    // An `items` entry is either a blocker map or a bare module name. Read it
+    // through these, never by stringifying: a map stringifies to an empty
+    // label without complaint.
+    function _itemName(entry) {
+        if (entry === undefined || entry === null) return "";
+        if (typeof entry === "string") return entry;
+        return entry.name !== undefined ? entry.name : "";
+    }
+
+    function _itemDetail(entry) {
+        if (entry === undefined || entry === null || typeof entry === "string")
+            return "";
+        return entry.detail !== undefined ? entry.detail : "";
     }
 
     // Upgrade/Downgrade/Reinstall variant. The upgrade flow does an uninstall
@@ -176,8 +206,15 @@ Dialog {
             LogosText {
                 Layout.fillWidth: true
                 text: {
-                    if (root.mode === "missingDeps")
+                    if (root.mode === "missingDeps") {
+                        // Named, not defaulted: "Missing Dependencies" is
+                        // the fallback only for shapes where something really
+                        // is absent. Any other shape would inherit a title
+                        // contradicting its own body text.
+                        if (root.blockSummary === "signer")   return "Unexpected Publisher";
+                        if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
                         return "Missing Dependencies";
+                    }
                     if (root.mode === "unloadCascade")
                         return "Unload Dependent Modules?";
                     if (root.mode === "upgradeCascade") {
@@ -204,9 +241,33 @@ Dialog {
             color: Theme.palette.textSecondary
             readonly property string _label: root.displayNameLookup(root.moduleName) || root.moduleName
             text: {
-                if (root.mode === "missingDeps")
+                if (root.mode === "missingDeps") {
+                    // Four facts, four sentences. "Not installed" about a
+                    // module installed at the wrong version sends the user to
+                    // reinstall what they have; "wrong version" about somebody
+                    // else's package sends them after a version that does not
+                    // exist. The signer sentence may be this strong because it
+                    // reports a failed Ed25519 check against the key the module
+                    // itself named, not a record the installer wrote down.
+                    if (root.blockSummary === "signer")
+                        return "'" + _label + "' cannot be loaded because the "
+                             + "following modules are not signed by the key it "
+                             + "requires. A package under the right name signed "
+                             + "by a different key is a different package — "
+                             + "reinstall these from the publisher the module "
+                             + "names:";
+                    if (root.blockSummary === "mismatch")
+                        return "'" + _label + "' cannot be loaded because the "
+                             + "following modules are installed at a version it "
+                             + "does not accept:";
+                    if (root.blockSummary === "mixed")
+                        return "'" + _label + "' cannot be loaded because the "
+                             + "following modules are missing, are the wrong "
+                             + "version, or are not signed by the key it "
+                             + "requires:";
                     return "'" + _label + "' cannot be loaded because the "
                          + "following modules are not installed:";
+                }
                 if (root.mode === "unloadCascade")
                     return "The following modules are currently loaded and depend on '"
                          + _label + "'. Unloading will terminate them:";
@@ -298,7 +359,13 @@ Dialog {
                 model: root.items
                 clip: true
                 delegate: LogosText {
-                    text: "• " + (root.displayNameLookup(modelData) || modelData)
+                    readonly property string _name: root._itemName(modelData)
+                    readonly property string _detail: root._itemDetail(modelData)
+                    // The detail clause is what makes the complaint
+                    // actionable: a bare name does not say which version, or
+                    // whose package, to go and get.
+                    text: "• " + (root.displayNameLookup(_name) || _name)
+                          + (_detail.length > 0 ? " — " + _detail : "")
                     color: "#e0e0e0"
                     font.pixelSize: 13
                 }
