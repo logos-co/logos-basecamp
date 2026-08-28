@@ -768,6 +768,224 @@ test("sidebar: footer shows the build type, with the version when present", asyn
   }
 });
 
+// --- Sidebar (A7) — the active tile follows currentVisibleApp ---
+//
+// Spec §2.A A7 (amended 2026-08-28): open fixture A, click Settings, then
+// re-click the tile. The tile's highlight is
+// `checked: modelData.name === (backend.currentVisibleApp || "")`
+// (SidebarPanel.qml:131), so it must stay lit while Settings is front-most:
+// a section click only flips the content stack
+// (MainContainer::onViewIndexChanged), never currentVisibleApp. The re-click
+// goes through launchUIModule → navigateToApps →
+// setCurrentActiveSectionIndex(0), returning to the workspace.
+//
+// The Settings-active gate uses the button's own checked
+// (`backend.currentActiveSectionIndex - 1 === index`) plus "section index is
+// no longer the workspace 0" — never a hardcoded section number, the sidebar
+// layout owns the numbering. The view-section SidebarCircleButtons carry no
+// objectName (§4.1 skipped them), so the button is located by text + type.
+//
+// A5's cleanup closed fixture A's dock, so the "open" step here is a genuine
+// open; if a dock were already open the click merely re-activates (A5 pinned
+// that as dock-count-neutral) and every gate below still holds. Per the
+// amended spec this test ENDS with the dock OPEN — workspace section active,
+// dockCount 1, tile lit. No later test asserts welcome-page or dock state,
+// and the section-walk tests re-click their own sections regardless.
+
+test("sidebar: active tile follows currentVisibleApp across section switches", async (app) => {
+  // Same stable evaluate anchor as A3–A5 — has `backend` in context and
+  // survives sidebar delegate churn and section switches.
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  const workspace = await findByObjectName(app.inspector, "workspace");
+  if (!workspace) {
+    throw new Error('WorkspaceArea (objectName "workspace") not found');
+  }
+
+  const evalOnWelcome = async (expression) => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression,
+    });
+    if (res.error) throw new Error(`evaluate(${expression}) failed: ${res.error}`);
+    return res.result;
+  };
+
+  // Loading moves the tile from the unloaded to the loaded Repeater (same
+  // objectName, new object — and only the loaded delegate carries the
+  // checked binding), so every checked read re-finds the delegate.
+  const tileChecked = async () => {
+    const t = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+    if (!t) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    const res = await app.inspector.send("evaluate", {
+      objectId: t.id, expression: "checked",
+    });
+    if (res.error) throw new Error(`evaluate(tile checked) failed: ${res.error}`);
+    return res.result;
+  };
+
+  // Step 1 — open fixture A (CI-skip contract as in A3/A5).
+  let tile = null;
+  try {
+    await app.waitFor(async () => {
+      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
+        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
+      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
+  }
+  const opened = await app.inspector.send("callMethod", {
+    objectId: tile.id, method: "clicked",
+  });
+  if (opened.error) {
+    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${opened.error}`);
+  }
+
+  await app.waitFor(async () => {
+    const count = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
+    if (count.result !== 1) {
+      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
+    }
+    const visibleApp = await evalOnWelcome("backend.currentVisibleApp");
+    if (visibleApp !== FIXTURE_A.name) {
+      throw new Error(
+        `backend.currentVisibleApp=${JSON.stringify(visibleApp)} ` +
+        `(expected "${FIXTURE_A.name}")`);
+    }
+    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
+    if (section !== 0) {
+      throw new Error(
+        `backend.currentActiveSectionIndex=${section} ` +
+        `(expected workspace index 0 after open)`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "fixture A to open front-most in the workspace" });
+
+  // Gate: tile lit after open. Inside a waitFor — during the load the find
+  // can transiently hit the outgoing unloaded delegate (default unchecked).
+  await app.waitFor(async () => {
+    if ((await tileChecked()) !== true) {
+      throw new Error("tile checked=false after open (expected true)");
+    }
+  }, { timeout: 5000, interval: 250, description: "tile to light up after open" });
+
+  // Step 2 — click the Settings section button. Located by text + type: a
+  // bare text click can land on a shallower same-text widget (see the
+  // sidebarSection note above), and we need the button object anyway to read its
+  // checked. Signal-level click, as everywhere else in the A-series.
+  let settingsButton = null;
+  await app.waitFor(async () => {
+    const hits = await app.findByProperty("text", "Settings");
+    settingsButton = (hits.matches ?? [])
+      .find((m) => (m.type ?? "").includes("SidebarCircleButton")) || null;
+    if (!settingsButton) {
+      throw new Error('sidebar "Settings" SidebarCircleButton not found');
+    }
+  }, { timeout: 10000, interval: 500, description: '"Settings" sidebar button to exist' });
+
+  const settingsChecked = async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: settingsButton.id, expression: "checked",
+    });
+    if (res.error) {
+      throw new Error(`evaluate(Settings button checked) failed: ${res.error}`);
+    }
+    return res.result;
+  };
+
+  const clickedSettings = await app.inspector.send("callMethod", {
+    objectId: settingsButton.id, method: "clicked",
+  });
+  if (clickedSettings.error) {
+    throw new Error(`clicking the Settings button failed: ${clickedSettings.error}`);
+  }
+
+  await app.waitFor(async () => {
+    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
+    if (section === 0) {
+      throw new Error("still on workspace section 0 after the Settings click");
+    }
+    if ((await settingsChecked()) !== true) {
+      throw new Error("Settings button checked=false with Settings active");
+    }
+  }, { timeout: 10000, interval: 500, description: "Settings section to become active" });
+
+  // Gate: currentVisibleApp untouched by the section switch, tile STILL lit.
+  // Single-shot reads on purpose — a retried wait would mask a transient
+  // un-light, and "STILL true" is exactly what this test pins down.
+  const visibleInSettings = await evalOnWelcome("backend.currentVisibleApp");
+  if (visibleInSettings !== FIXTURE_A.name) {
+    throw new Error(
+      `backend.currentVisibleApp=${JSON.stringify(visibleInSettings)} after ` +
+      `the Settings click (expected it to stay "${FIXTURE_A.name}")`);
+  }
+  if ((await tileChecked()) !== true) {
+    throw new Error(
+      "tile checked=false while Settings is active — the tile must track " +
+      "currentVisibleApp, not the active section");
+  }
+
+  // Step 3 — re-click the tile: back to the workspace. Re-find inside the
+  // retry loop as in A5 — a duplicate activation click is harmless.
+  await app.waitFor(async () => {
+    const t = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+    if (!t) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    const reclicked = await app.inspector.send("callMethod", {
+      objectId: t.id, method: "clicked",
+    });
+    if (reclicked.error) {
+      throw new Error(`re-clicking sidebar.app.${FIXTURE_A.name} failed: ${reclicked.error}`);
+    }
+  }, { timeout: 10000, interval: 500, description: "re-click on fixture A tile" });
+
+  await app.waitFor(async () => {
+    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
+    if (section !== 0) {
+      throw new Error(
+        `backend.currentActiveSectionIndex=${section} ` +
+        `(expected 0 after re-clicking the tile)`);
+    }
+  }, { timeout: 10000, interval: 500, description: "workspace section to reactivate" });
+
+  // Gates after the re-click: tile still lit, Settings button unchecked,
+  // and the suite-visible end state — dockCount still 1, fixture A still
+  // front-most in the workspace section.
+  if ((await tileChecked()) !== true) {
+    throw new Error("tile checked=false after returning to the workspace (expected true)");
+  }
+  if ((await settingsChecked()) !== false) {
+    throw new Error("Settings button still checked after returning to the workspace");
+  }
+  const finalCount = await app.inspector.send("evaluate", {
+    objectId: workspace.id, expression: "dockCount",
+  });
+  if (finalCount.error) throw new Error(`evaluate(dockCount) failed: ${finalCount.error}`);
+  if (finalCount.result !== 1) {
+    throw new Error(
+      `WorkspaceArea.dockCount=${finalCount.result} at test end (expected 1)`);
+  }
+  const finalVisible = await evalOnWelcome("backend.currentVisibleApp");
+  if (finalVisible !== FIXTURE_A.name) {
+    throw new Error(
+      `backend.currentVisibleApp=${JSON.stringify(finalVisible)} at test end ` +
+      `(expected "${FIXTURE_A.name}")`);
+  }
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
