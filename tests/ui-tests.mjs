@@ -1874,6 +1874,167 @@ test("app manager: selecting a category filters the grid", async (app) => {
        description: 'the "All" category to restore the unfiltered grid' });
 });
 
+// --- App Manager (A12) — reload shows the loading state then settles ---
+//
+// Spec §2.A A12 (amended + corrected 2026-08-28): Applications → click
+// obj: appManager.reloadButton. Gates: within 2 s at least one loading
+// observable shows — appManager.loadingOverlay visible === true,
+// backend.appsLoading === true, or the reload button enabled === false
+// (the overlay's visible and the button's enabled both bind the same
+// backend.appsLoading, AppManagerView.qml:325 / AppManagerPanelHeader.qml:74)
+// · appsLoading is false again within 30 s · the outer model count
+// (localAppsProxy.sourceModel.rowCount()) after equals the count before ·
+// G-ERR (the suite epilogue's QML-error scan).
+//
+// The click goes through the button's objectName, never by text: "Reload" is
+// also rendered inside package_manager_ui's view (the PMUI section test
+// below asserts that instance), so a text click could land on the wrong
+// widget — the sidebarSection lesson again.
+//
+// Offline (the hermetic --ci build) PackageCoordinator::remoteRefresh sets
+// appsLoading synchronously, but the catalog fetch gives up after
+// ~10 × 200 ms ≈ 2 s and clears it — the loading window can be that brief,
+// so the phase gate polls all three observables in one fast (50 ms) loop
+// instead of the suite's usual 250-500 ms waitFor cadence, and any one of
+// them counts as the phase observed.
+//
+// A failed offline fetch never reaches replaceCatalog /
+// mergeLocalOnlyInstalled, so no rows may be removed: both counts recorded
+// before the click (outer sourceModel.rowCount() plus the local section's
+// visibleCount) must survive verbatim. Counts use the proven A8/A10 anchor
+// path — the spec's uiAppsProxy is a ContentViews.qml id and does not
+// evaluate. backend.appsLoading is read via the overlay anchor (backend is
+// an engine-wide context property; one primitive per evaluate call).
+// Cleanup: the test ends only after appsLoading is false, the overlay is
+// hidden and the reload button re-enabled.
+
+test("app manager: reload shows the loading state then settles", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+
+  let proxyId = null;
+  await app.waitFor(async () => {
+    proxyId = await findLocalAppsProxy(app);
+    if (proxyId === null) {
+      throw new Error("appManager.localAppsProxy not found in QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
+
+  let reloadButton = null;
+  await app.waitFor(async () => {
+    reloadButton = await findByObjectName(app.inspector, "appManager.reloadButton");
+    if (!reloadButton) {
+      throw new Error("appManager.reloadButton not in the QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "reload button to exist" });
+
+  let overlay = null;
+  await app.waitFor(async () => {
+    overlay = await findByObjectName(app.inspector, "appManager.loadingOverlay");
+    if (!overlay) {
+      throw new Error("appManager.loadingOverlay not in the QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "loading overlay to exist" });
+
+  // Normalize: no refresh may be in flight while the counts are recorded —
+  // a still-settling boot refresh would race the recording, and the click
+  // below must be a legitimate one (enabled binds !loading).
+  await app.waitFor(async () => {
+    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
+    if (loading !== false) {
+      throw new Error(
+        `backend.appsLoading=${JSON.stringify(loading)} (expected false)`);
+    }
+    const enabled = await evalOn(app, reloadButton.id, "enabled");
+    if (enabled !== true) {
+      throw new Error(
+        `reload button enabled=${JSON.stringify(enabled)} (expected true)`);
+    }
+  }, { timeout: 30000, interval: 500,
+       description: "no refresh to be in flight before the click" });
+
+  // Record the pre-click counts the post-settle gate compares against.
+  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (typeof preOuterRows !== "number") {
+    throw new Error(
+      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
+  }
+  const preLocal = await evalOn(app, proxyId, "visibleCount");
+  if (typeof preLocal !== "number") {
+    throw new Error(
+      `localAppsProxy.visibleCount=${JSON.stringify(preLocal)} (expected number)`);
+  }
+
+  // Click reload — signal-level, as everywhere in the A-series.
+  const clicked = await app.inspector.send("callMethod", {
+    objectId: reloadButton.id, method: "clicked",
+  });
+  if (clicked.error) {
+    throw new Error(`clicking appManager.reloadButton failed: ${clicked.error}`);
+  }
+
+  // Gate 1 — the loading phase is observable within 2 s of the click.
+  const phaseDeadline = Date.now() + 2000;
+  let observed = null;
+  for (;;) {
+    const overlayVisible = await evalOn(app, overlay.id, "visible");
+    if (overlayVisible === true) { observed = "loadingOverlay visible"; break; }
+    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
+    if (loading === true) { observed = "backend.appsLoading === true"; break; }
+    const enabled = await evalOn(app, reloadButton.id, "enabled");
+    if (enabled === false) { observed = "reload button disabled"; break; }
+    if (Date.now() >= phaseDeadline) {
+      throw new Error(
+        "no loading observable within 2s of clicking reload — the overlay " +
+        "stayed hidden, backend.appsLoading stayed false and the reload " +
+        "button stayed enabled");
+    }
+    await sleep(50);
+  }
+  console.log(`    loading phase observed via: ${observed}`);
+
+  // Gate 2 — settles within 30 s: appsLoading false again, the overlay
+  // hidden and the button re-enabled (the required end state).
+  await app.waitFor(async () => {
+    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
+    if (loading !== false) {
+      throw new Error(
+        `backend.appsLoading=${JSON.stringify(loading)} (expected false)`);
+    }
+    const overlayVisible = await evalOn(app, overlay.id, "visible");
+    if (overlayVisible !== false) {
+      throw new Error(
+        `appManager.loadingOverlay visible=${overlayVisible} after the ` +
+        `reload settled (expected false)`);
+    }
+    const enabled = await evalOn(app, reloadButton.id, "enabled");
+    if (enabled !== true) {
+      throw new Error(
+        `reload button enabled=${enabled} after the reload settled ` +
+        `(expected true)`);
+    }
+  }, { timeout: 30000, interval: 250, description: "reload to settle" });
+
+  // Gate 3 — no rows lost. Single-shot reads on purpose: the failed offline
+  // fetch never touches the model, so the counts must already be back the
+  // moment appsLoading clears — a retried wait would mask a transient drop.
+  const postOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (postOuterRows !== preOuterRows) {
+    throw new Error(
+      `outer apps proxy rowCount()=${postOuterRows} after the reload ` +
+      `settled (expected the recorded pre-click ${preOuterRows})`);
+  }
+  const postLocal = await evalOn(app, proxyId, "visibleCount");
+  if (postLocal !== preLocal) {
+    throw new Error(
+      `localAppsProxy.visibleCount=${postLocal} after the reload settled ` +
+      `(expected the recorded pre-click ${preLocal})`);
+  }
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
