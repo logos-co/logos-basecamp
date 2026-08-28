@@ -360,6 +360,32 @@ void IntentRegistry::registerShellProvider(const QString& shellModuleName,
     emit changed();
 }
 
+void IntentRegistry::restrictIntentToRequesters(const QString& intent,
+                                                const QStringList& requesters)
+{
+    if (intent.isEmpty())
+        return;
+
+    // An empty list would read as "restricted to nobody" but store as
+    // "unrestricted" — refuse it rather than silently opening the intent up.
+    if (requesters.isEmpty()) {
+        m_diagnostics.append(
+            QStringLiteral("shell: refusing empty requester list for '%1'").arg(intent));
+        return;
+    }
+
+    m_restrictedIntents.insert(intent, requesters);
+}
+
+bool IntentRegistry::requesterAllowed(const QString& intent,
+                                      const QString& requesterName) const
+{
+    const auto it = m_restrictedIntents.constFind(intent);
+    if (it == m_restrictedIntents.cend())
+        return true;
+    return it.value().contains(requesterName);
+}
+
 IntentRegistry::Resolution IntentRegistry::resolve(const QString& intent) const
 {
     Resolution resolution;

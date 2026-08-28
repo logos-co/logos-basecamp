@@ -9,6 +9,10 @@
 #include <QStringList>
 #include <QMap>
 #include <QSet>
+
+#include <functional>
+#include <utility>
+
 #include "logos_api.h"
 
 class AppsModel;
@@ -22,16 +26,14 @@ class UIPluginManager;
 // Scope:
 //   * Package scanning (getInstalledPackagesAsync, getInstalledUiPluginsAsync)
 //     and the derived installType / missing-deps / dependents caches.
-//   * Install confirmation — the requestInstall gate raised by
-//     package_manager_ui (beforeInstall → dialog → confirm/cancelInstallGate).
-//     Basecamp never initiates an install itself; PMU owns that, including
-//     local .lgx picks.
-//   * Gated uninstall/upgrade flow — requestUninstall / ackPendingAction /
-//     confirmUninstall / cancelUninstall (and the upgrade siblings), plus the
-//     cascade-unload + confirm handshake driven by beforeUninstall /
-//     beforeUpgrade events.
-//   * Pending-action state for the package-lifecycle cascade (one slot for
-//     UninstallCascade / UpgradeCascade / MultiUninstallCascade).
+//   * Servicing the three `logos.packages.confirm_*` intents raised by
+//     package_manager_ui: draw the dialog, run the cascade-unload, answer. The
+//     answer IS the permission — PMU removes nothing until it arrives, so the
+//     unload has always finished first. Basecamp initiates no install of its
+//     own here; PMU owns that, including local .lgx picks.
+//   * The shell's own uninstall dialogs (Settings → Modules / Apps), which
+//     carry no intent and so perform the removal themselves.
+//   * Pending-action state for the cascade (one slot).
 //
 // What it does NOT do:
 //   * Mount or unmount UI plugin widgets. UI lifecycle lives in
@@ -91,13 +93,29 @@ public:
     // no other caller gates on it.
     bool dependencyDataReady() const { return m_dependencyDataReady; }
 
+    // How a decision reaches the requester. Set by MainUIBackend, which owns
+    // the broker — keeping it a callback is what stops this class needing one.
+    // Returns whether the broker accepted the response; false means the
+    // dispatch already ended (requester gone, or timed out) and nobody heard.
+    using IntentResponder = std::function<bool(const QString& requestId, bool ok,
+                                               const QString& error)>;
+    void setIntentResponder(IntentResponder responder)
+    { m_intentResponder = std::move(responder); }
+
+    // Entry point for the three `logos.packages.confirm_*` intents. Opens the
+    // matching dialog and takes ownership of answering `dispatchId`. Returns
+    // false when the request cannot be shown at all, so the broker can fail it
+    // closed rather than park it behind a dialog that never appeared.
+    bool beginPackageConfirmation(const QString& dispatchId,
+                                  const QString& intent,
+                                  const QVariantMap& params,
+                                  const QString& requesterName);
+
 public slots:
-    // Install gate (package_manager_ui-initiated). The module holds the pending
-    // install; these just forward the user's decision back so it either emits
-    // installApproved (PMU then installs — downloading first for a catalog
-    // package, or using the local .lgx path it stashed) or installCancelled.
-    // Basecamp owns no install flow of its own: every install in the app is
-    // initiated by package_manager_ui and confirmed through this gate.
+    // Install gate (package_manager_ui-initiated). Answer the pending
+    // confirm_install intent; PMU then runs the install itself. Basecamp owns
+    // no install flow of its own here — every install in the app is initiated
+    // by package_manager_ui and confirmed through this gate.
     Q_INVOKABLE void confirmInstallGate(const QString& name);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
@@ -109,25 +127,22 @@ public slots:
                                            const QString& repositoryUrl,
                                            const QVariantMap& versionPins = QVariantMap());
 
-    // Gated uninstall. Both slots kick off requestUninstallAsync — the
-    // module owns its own pending state and emits beforeUninstall which
-    // we handle in onBeforeUninstall. uninstallUiModule additionally
-    // refuses "main_ui" because uninstalling it would brick Basecamp.
+    // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
+    // confirm dialog directly — the shell is both asker and decider here, so
+    // there is no intent. uninstallUiModule additionally refuses "main_ui"
+    // because uninstalling it would brick Basecamp.
     Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
     Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
     Q_INVOKABLE void uninstallApp(const QString& name,
                                   const QString& repositoryUrl = QString());
 
-    // Cascade confirmation — called from QML once the user OKs the
-    // uninstall / upgrade / local-upgrade dialog. Dispatches to the right
-    // confirmX / uninstallPackage + installPlugin chain based on which
-    // PendingOp the current state holds.
+    // Cascade confirmation — called from QML once the user OKs the uninstall
+    // or upgrade dialog. Unloads, then answers the intent recorded on the
+    // pending action (or removes locally when there is none).
     Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
 
-    // Multi-uninstall counterparts. Same gated protocol as the single-package
-    // path but for the batch initiated by package_manager.requestMultiUninstall.
-    // confirm runs the cascade-unload for every name in the batch and then
-    // calls confirmMultiUninstall. cancel forwards to cancelMultiUninstall.
+    // Multi-uninstall counterparts. confirm runs the cascade-unload for every
+    // name in the batch, then answers the requester; cancel just answers.
     Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
 
@@ -209,23 +224,28 @@ signals:
     // "Downgrade to v1.0.0" / "Reinstall v1.0.0" instead of bare
     // "Uninstall and Unload Dependents?". `mode` mirrors
     // PackageTypes::UpgradeMode (0=Upgrade, 1=Downgrade, 2=Sidegrade).
+    // `requesterName` is host-attested — who asked, for the dialog to name.
     void upgradeCascadeConfirmationRequested(const QString& name,
                                              const QString& releaseTag,
                                              int mode,
                                              const QStringList& installedDependents,
                                              const QStringList& loadedDependents,
-                                             const QVariantList& depChanges);
+                                             const QVariantList& depChanges,
+                                             const QString& requesterName,
+                                             bool requesterBundled);
 
     // Fresh-install confirmation dialog trigger — the sibling of the upgrade
-    // cascade for a not-yet-installed package coming through the module's
-    // requestInstall gate, initiated by package_manager_ui. Carries the target
-    // version and the resolved transitive `depChanges` so the single basecamp
-    // dialog lists exactly what else will be installed. No dependents list —
-    // a fresh install removes/unloads nothing. `depChanges` is empty when the
-    // initiator had no catalog to resolve against (a local .lgx).
+    // cascade for a not-yet-installed package. Carries the target version and
+    // the resolved transitive `depChanges` so the dialog lists exactly what
+    // else will be installed. No dependents list — a fresh install unloads
+    // nothing. `depChanges` is empty for a local .lgx (no catalog to resolve).
+    // Unlike the removal intents this one is open to any app, so naming the
+    // requester is the only thing telling the user who asked.
     void installGateConfirmationRequested(const QString& name,
                                           const QString& releaseTag,
-                                          const QVariantList& depChanges);
+                                          const QVariantList& depChanges,
+                                          const QString& requesterName,
+                                          bool requesterBundled);
 
     // Repository management — change-notify for the QML-facing cache and
     // an outcome signal for add/remove/toggle (success or error string).
@@ -237,53 +257,82 @@ signals:
                                       bool success,
                                       const QString& error);
 
-private slots:
-    // beforeUninstall / beforeUpgrade handlers. Both ack synchronously (to
-    // cancel the module's 3s ack timer) then — if the ack landed — set the
-    // pending slot here and emit the appropriate cascade-confirmation
-    // signal: uninstallPlanRequested for a real removal (as a batch of one),
-    // upgradeCascadeConfirmationRequested for a version swap (so the
-    // dialog can lead with the target version + UpgradeMode instead of
-    // bare "Uninstall and Unload Dependents?"). An ack rejection means
-    // the module already cancelled (timer fired or racing listener), so
-    // we stay silent rather than showing a dead dialog.
-    void onBeforeUninstall(const QString& name, const QStringList& installedDeps);
-    void onBeforeUpgrade(const QString& name, const QString& releaseTag,
-                         int mode, const QStringList& installedDeps,
-                         const QVariantList& depChanges);
-
-    // beforeInstall handler — the catalog-install counterpart of onBeforeUpgrade.
-    // Acks synchronously (cancelling the module's ack timer), then emits
-    // installGateConfirmationRequested so the shared dialog can confirm the
-    // install and list its transitive dep changes. No pending-slot / cascade
-    // work: a fresh install unloads nothing, so confirm/cancel just forward the
-    // decision to the module via confirmInstallGate / cancelInstallGate.
-    void onBeforeInstall(const QString& name, const QString& releaseTag,
-                         const QVariantList& depChanges);
-
-    // Multi-uninstall variant — same ack-then-emit-dialog shape, but holds the
-    // batch's full name list in m_pendingAction.names so confirm/cancel can
-    // forward the same list back to the module.
-    void onBeforeMultiUninstall(const QStringList& names, const QStringList& installedDeps);
-
 private:
-    // The gated-cascade pending slot. UnloadCascade (local, no IPC) lives on
-    // UIPluginManager. Here we only track the ops that the package_manager
-    // module itself gates (uninstall / upgrade / multi-uninstall).
-    enum class PendingOp { None, UninstallCascade, UpgradeCascade, MultiUninstallCascade };
+    // The confirm_install intent on screen, and the package it names. Install
+    // has no cascade and so no PendingAction to hang the id off; uninstall and
+    // upgrade carry theirs in PendingAction::intentRequestId instead.
+    //
+    // The id is ALWAYS paired with its subject and answered only via
+    // finishIntent(id, …). Answering "whatever is pending" would let a click on
+    // one dialog approve a different request — the shell's own uninstall dialog
+    // takes no id at all, so it would otherwise silently approve an app's
+    // in-flight install.
+    QString m_pendingInstallRequestId;
+    QString m_pendingInstallName;
+
+    // Answer `requestId` and report whether the broker accepted it. A false
+    // return means the requester is gone or the dispatch already ended, which
+    // is the signal to finish the job locally rather than assume PMU will.
+    // Empty id -> false, no call: that is how a shell-initiated flow is told it
+    // owns the removal.
+    bool finishIntent(const QString& requestId, bool ok,
+                      const QString& error = QString());
+
+    IntentResponder m_intentResponder;
+
+    // Open the confirm dialog for a shell-initiated removal (Settings →
+    // Modules / Apps). No intent: we asked ourselves, so we also do the work.
+    void beginLocalUninstall(const QStringList& names, const QString& kind);
+
+    // Remove each name. Only after the cascade-unload has run.
+    void performLocalRemoval(const QStringList& names);
+
+    // True when the requester is an embedded (bundled) package.
+    bool requesterIsBundled(const QString& requesterName) const;
+
+    // Union of the batch's installed dependents, excluding the batch itself.
+    QStringList dependentsOfBatch(const QStringList& names) const;
+
+    // Resolve what ELSE changes if (name, version) from `repositoryUrl` is
+    // installed, then hand the list to `then`.
+    //
+    // WE resolve it; the requester does not send it. A caller-supplied change
+    // list would let any app script the shell's own confirmation dialog, and
+    // confirm_install is open to every app.
+    //
+    // `then` runs exactly once. On a resolver failure — or with no repository
+    // to resolve against, which is every local .lgx — it runs with an empty
+    // list rather than being dropped: the dialog degrades to "nothing else
+    // needs to change", which is the honest reading, and the pending intent is
+    // never stranded waiting for a callback that isn't coming.
+    void resolveDepChangesThen(const QString& name,
+                               const QString& repositoryUrl,
+                               const QString& version,
+                               std::function<void(const QVariantList&)> then);
+
+    // The cascade pending slot. UnloadCascade (local, no IPC) lives on
+    // UIPluginManager. Here we track what the confirm dialog is deciding.
+    // Uninstall and upgrade behave identically on this side — both unload,
+    // then hand back — so one op covers them; what differs is only what the
+    // requester does next, which is PMU's business.
+    enum class PendingOp { None, UninstallCascade, MultiUninstallCascade };
     struct PendingAction {
-        PendingOp op = PendingOp::None;
-        QString   name;
-        QString   releaseTag;       // UpgradeCascade only
-        int       upgradeMode = 0;  // UpgradeCascade only
-        QStringList names;          // MultiUninstallCascade only — full batch (kept last so existing positional initialisers stay valid)
+        PendingOp   op = PendingOp::None;
+        QString     name;              // UninstallCascade
+        QStringList names;             // MultiUninstallCascade — full batch
+        // Empty for a shell-initiated dialog, which is exactly what tells the
+        // confirm path the removal is ours rather than the requester's.
+        QString     intentRequestId;
+        // Upgrade and uninstall unload identically, but they must NOT fall back
+        // identically: if the requester never hears the answer, removing is the
+        // right recovery for an uninstall and a disaster for an upgrade, which
+        // would delete the package with nothing left to install the new version.
+        bool        isUpgrade = false;
     };
 
     // Subscribe to corePluginFileInstalled/uiPluginFileInstalled/
-    // corePluginUninstalled/uiPluginUninstalled + beforeUninstall/beforeUpgrade.
-    // Also configures install directories on the module and issues
-    // resetPendingActionAsync to clear any slot left over from a crashed prior
-    // session.
+    // corePluginUninstalled/uiPluginUninstalled, and configure the module's
+    // install directories.
     void subscribeToPackageInstallationEvents();
 
     // Subscribe to package_downloader's catalogChanged event
@@ -324,7 +373,8 @@ private:
     QVariantMap buildPlanPayload(const QStringList& batch,
                                  const QStringList& installedDependents,
                                  const QString& kind,
-                                 bool multi) const;
+                                 bool multi,
+                                 const QString& requesterName = QString()) const;
 
     // Stub payload for the pre-cache-ready UninstallDialog spinner. The
     // real plan follows in a second payload once the module acks.
@@ -434,13 +484,11 @@ private:
     QMap<QString, QStringList> m_dependenciesByModule;
     bool m_dependencyDataReady = false;
 
-    // The names the user actually asked to remove, remembered across the
-    // request so the popup can tell "the app" apart from "what it dragged
-    // in". Cleared once the payload is built; empty means every row in the
-    // batch is an explicit target, which is the correct reading for a
-    // package_manager_ui or Settings-initiated uninstall.
+    // The names the user actually asked to remove, so the popup can tell "the
+    // app" apart from "what it dragged in". Cleared once the payload is built;
+    // empty means every row in the batch is an explicit target, which is the
+    // correct reading everywhere except the App Manager.
     QStringList m_lastRequestedTargets;
-    QString     m_lastRequestKind = QStringLiteral("packages");
 
     // App-Manager target parked on dependencyDataReadyChanged; empty when idle.
     QString m_pendingUninstallAppName;

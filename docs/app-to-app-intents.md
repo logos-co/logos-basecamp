@@ -45,7 +45,8 @@ Nothing is signed yet, so a name is a claim rather than an identity. §6 sets ou
 | Payload is the wrong shape | `bad_request` — fix what you sent rather than retrying |
 | User dismisses the chooser | `cancelled`, distinct from "nobody was there" |
 | Provider declares but ships no handler | `timeout` after 20s, with a log warning naming it |
-| The shell is the provider | `logos.repositories.manage` is serviced by Basecamp itself |
+| The shell is the provider | `logos.repositories.manage` and the three `logos.packages.confirm_*` are serviced by Basecamp itself |
+| Requester is not on a restricted intent's list | `unavailable`, floored — indistinguishable from "nothing provides it" |
 
 **Providers are `ui_qml` apps, by design.** Intents exist for *user-mediated* actions: the caller does not know who will service the request, and a human chooses. Core modules have no such problem — they already call each other directly by name through `LogosAPI`, with no chooser and no consent step, because nothing is being decided. A backend that needs another backend should make that call, not raise an intent.
 
@@ -145,6 +146,14 @@ An undeclared request fails `not_declared` before anything is resolved — the b
 Anything else a provider returns is coerced to `failed` — free text in the caller's error path is both a leak and an un-switchable API.
 
 **`unavailable` merges "nothing installed" with "denied" on purpose.** An app that could tell those apart would have an oracle for your installed-app list. Same reason the install offer never reports back: decline it and the caller gets the identical `unavailable` it would have got had no such package existed.
+
+**Some intents restrict who may ask.** A provider-side allow-list, declared in code beside the shell's own `provides` (`IntentRegistry::restrictIntentToRequesters`). Absent = unrestricted, which is every intent except two.
+
+It exists because attribution is not always enough. Showing who asked works when the user has context to judge against — they clicked something, and "Chat App wants to send funds" is a question they can answer. An *unsolicited* prompt to remove or downgrade one of your packages has no such context, and its correct answer is always no. A dialog whose right answer is unconditional can only cost you: it trains dismissal, and one mis-click is destructive and not undoable. So `logos.packages.confirm_uninstall` and `logos.packages.confirm_upgrade` are restricted to `package_manager_ui`, while `confirm_install` stays open — an app saying "you need X" is legitimate, and the shell already offers catalog installs an app's request provoked.
+
+Three properties are load-bearing. Denial answers `unavailable` **on the same floor** as "nothing provides it", so a refused app cannot learn the capability exists. An empty requester list is **refused**, not stored — it reads as "restricted to nobody" but would behave as unrestricted, so a typo must not silently open a destructive capability. And the list survives `rebuild()`, because it is code-declared policy rather than something read off disk.
+
+Its limit is the same one §6 sets out: an allow-list keyed on a self-declared module name is only as strong as the name, and nothing is signed. It raises the bar from "any installed app" to "an app that can successfully claim the name `package_manager_ui`". That is meaningfully better and it is not a proof.
 
 **`bad_request` vs `failed`** is "you sent the wrong thing" vs "the world didn't cooperate" — only the first is worth fixing on your side. Both the shell and the provider can send it, and you cannot tell which did: if only the shell could, the code itself would prove no provider was consulted. The reason goes to the log, not to the caller — the envelope carries a code and nothing else.
 

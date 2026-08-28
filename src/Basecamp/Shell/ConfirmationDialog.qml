@@ -21,9 +21,9 @@ import Logos.Theme
 //                       other loaded modules stranded. Continue cascades
 //                       the unload via the backend; Cancel aborts.
 //  - "upgradeCascade" — confirmation; upgrading/downgrading/reinstalling
-//                       this module. The package_manager performs an
-//                       uninstall step first, so currently-running dependents
-//                       are unloaded for the swap; `loadedItems` names them.
+//                       this module. The old version is removed first, so
+//                       currently-running dependents are unloaded for the
+//                       swap; `loadedItems` names them.
 //                       Installed-but-not-running dependents are NOT listed:
 //                       they pick up the new version on their next load and
 //                       aren't user-visibly affected. Title and body lead
@@ -31,16 +31,17 @@ import Logos.Theme
 //                       Downgrade / Reinstall) so the user knows the
 //                       operation isn't a bare uninstall. Confirm/Cancel flow
 //                       through `continueClicked` / `cancelClicked`.
-//  - "installGate"    — confirmation before a fresh install routed through the
-//                       package_manager requestInstall gate. Every install the
-//                       app performs comes through here: package_manager_ui
+//  - "installGate"    — confirmation before a fresh install, raised as the
+//                       `logos.packages.confirm_install` intent. Every install
+//                       the app performs comes through here: package_manager_ui
 //                       initiates them all, whether the source is a catalog
 //                       download or a local .lgx the user picked. Leads with the
 //                       package + target version and lists the resolved
 //                       transitive `depChanges`. No dependent-impact lists (a
 //                       fresh install unloads nothing). Confirm/Cancel flow
 //                       through continueClicked / cancelClicked →
-//                       confirmInstallGate / cancelInstallGate.
+//                       confirmInstallGate / cancelInstallGate, which answer
+//                       the intent; PMU then performs the install.
 //
 //                       Note: for a local .lgx the initiator has no catalog to
 //                       resolve against, so `depChanges` arrives empty and the
@@ -53,10 +54,11 @@ import Logos.Theme
 // than a pair of dependent lists.
 //
 // The dialog is controlled by calling `openWith(mode, name, items,
-// blockSummary)` for the one-list modes, `openWithUpgrade(name, version, upgradeMode, installedDeps, loadedDeps, depChanges)`
-// for upgradeCascade, or `openWithInstallGate(name, version, depChanges)` for
-// the install gate. Backend wiring listens for continueClicked/cancelClicked
-// and calls the appropriate slot with `name`.
+// blockSummary)` for the one-list modes, `openWithUpgrade(name, version,
+// upgradeMode, installedDeps, loadedDeps, depChanges, requester)` for
+// upgradeCascade, or `openWithInstallGate(name, version, depChanges,
+// requester)` for the install gate. Backend wiring listens for
+// continueClicked/cancelClicked and calls the appropriate slot with `name`.
 Dialog {
     id: root
 
@@ -76,23 +78,31 @@ Dialog {
     // Only used in upgradeCascade mode — the dependents currently loaded,
     // which get torn down for the version swap.
     property var loadedItems: []
-    // Only used in upgradeCascade mode. `upgradeTargetVersion` is the
-    // pinned target (e.g. "1.0.0") supplied by the caller's requestUpgrade
-    // call; `upgradeModeKind` mirrors PackageTypes/UpgradeMode —
+    // Only used in upgradeCascade mode. `upgradeTargetVersion` is the pinned
+    // target (e.g. "1.0.0") from the confirm_upgrade payload;
+    // `upgradeModeKind` mirrors PackageTypes/UpgradeMode —
     //   0 = Upgrade, 1 = Downgrade, 2 = Sidegrade (Reinstall).
     property string upgradeTargetVersion: ""
     property int upgradeModeKind: 0
 
     // Transitive dependency changes for the upgradeCascade + installGate modes.
     // Each entry: { name, action: "install"|"upgrade"|"downgrade",
-    //               fromVersion, toVersion, repository }. Resolved by the
-    //               initiator (package_manager_ui) and passed through the
-    //               module's beforeUpgrade / beforeInstall gate so this single
-    //               dialog lists exactly what else will change. Empty = nothing
-    //               else needs to change.
+    //               fromVersion, toVersion, repository }. Resolved by the SHELL,
+    //               never sent by the requester — confirm_install is open to any
+    //               app, and a caller-supplied list would let it script this
+    //               dialog. Empty = nothing else needs to change.
     property var depChanges: []
 
     property string errorMessage: ""
+
+    // The app that asked, host-attested. Empty when the user acted through
+    // the shell's own UI, where naming a requester would be noise.
+    property string requesterName: ""
+    // True when that app is embedded — it came out of our own bundle, which is
+    // provenance the shell can vouch for. Drives whether the line WARNS or
+    // merely attributes; a warning on every ordinary operation is noise that
+    // teaches the user to skip the one that matters.
+    property bool requesterBundled: false
 
     property var displayNameLookup: function(name) { return name; }
 
@@ -141,7 +151,7 @@ Dialog {
     // would — but the title + body lead with the target version and the
     // UpgradeMode so the user sees the full operation, not just
     // "Uninstall and Unload Dependents?".
-    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_) {
+    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_, requester_, requesterBundled_) {
         root.mode = "upgradeCascade";
         root.moduleName = name_ || "";
         root.upgradeTargetVersion = version_ || "";
@@ -149,6 +159,7 @@ Dialog {
         root.items = installedDeps_ || [];
         root.loadedItems = loadedDeps_ || [];
         root.depChanges = depChanges_ || [];
+        root.requesterName = requester_ || "";
         root._explicitClose = false;
         open();
     }
@@ -158,13 +169,14 @@ Dialog {
     // simply confirms the install and lists the transitive `depChanges`.
     // Continue / Cancel still flow through continueClicked / cancelClicked;
     // the backend routes those to confirmInstallGate / cancelInstallGate.
-    function openWithInstallGate(name_, version_, depChanges_) {
+    function openWithInstallGate(name_, version_, depChanges_, requester_, requesterBundled_) {
         root.mode = "installGate";
         root.moduleName = name_ || "";
         root.upgradeTargetVersion = version_ || "";
         root.items = [];
         root.loadedItems = [];
         root.depChanges = depChanges_ || [];
+        root.requesterName = requester_ || "";
         root._explicitClose = false;
         open();
     }
@@ -233,6 +245,37 @@ Dialog {
                 color: Theme.palette.text
                 wrapMode: Text.Wrap
             }
+        }
+
+        // Who asked. Shown for requests that crossed an app boundary — the
+        // package name, never the self-declared display name, so an app cannot
+        // dress itself up as another. Nothing is signed, so this is provenance
+        // for the channel, not proof of a publisher.
+        LogosText {
+            Layout.fillWidth: true
+            visible: root.requesterName.length > 0
+            wrapMode: Text.Wrap
+            // Payload-adjacent and attacker-influenced on the open
+            // confirm_install intent: never let a name render as markup.
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            // Bundled: the display name is enough — it came out of our bundle,
+            // so the label is as trustworthy as the rest of the app, and a
+            // module id here would just be noise.
+            //
+            // Not bundled: BOTH. The display name is self-declared, so showing
+            // it alone would let "Wallet" front for evil_ui; showing the id
+            // alone is unreadable. Same treatment as IntentChooserDialog — the
+            // id is appended only when it actually differs.
+            readonly property string _who: root.displayNameLookup(root.requesterName)
+                                           || root.requesterName
+            text: root.requesterBundled
+                  ? qsTr("Requested by %1, which ships with Logos.").arg(_who)
+                  : (_who === root.requesterName
+                     ? qsTr("Requested by %1 — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
+                         .arg(_who)
+                     : qsTr("Requested by %1 (%2) — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
+                         .arg(_who).arg(root.requesterName))
         }
 
         LogosText {

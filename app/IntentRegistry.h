@@ -79,6 +79,18 @@ public:
                                const QString& displayName,
                                const QString& iconSource);
 
+    // Limit who may request `intent`. For capabilities where no third party has
+    // a legitimate use — removing another app's package, say — attribution in
+    // the dialog is not enough: the right answer to the prompt is always no, so
+    // the prompt should not exist. Survives rebuild(); it is code-declared
+    // policy, not something read off disk.
+    void restrictIntentToRequesters(const QString& intent,
+                                    const QStringList& requesters);
+
+    // True when `intent` is unrestricted, or `requesterName` is on its list.
+    bool requesterAllowed(const QString& intent,
+                          const QString& requesterName) const;
+
     Resolution resolve(const QString& intent) const;
 
     // What a provider says an intent's payload should contain, from its own
@@ -139,6 +151,10 @@ private:
     // intent -> module names that could provide it once installed. Never
     // consulted by resolve().
     QHash<QString, QStringList> m_installable;
+
+    // intent -> requesters permitted to ask. Absent = unrestricted. Not cleared
+    // by reset(), like m_shellModuleName: declared in code, not read from disk.
+    QHash<QString, QStringList> m_restrictedIntents;
 
     // (moduleName, intent) -> [{name,type,required,description}]
     QHash<QString, QVariantList> m_paramsSpec;
