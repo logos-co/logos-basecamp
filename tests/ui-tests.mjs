@@ -13,8 +13,10 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { writeSync } from "node:fs";
-import { findByObjectName, makeTest, sleep } from "./fixtures/harness.mjs";
+import { readFileSync, statSync, writeSync } from "node:fs";
+import {
+  assertResponsive, findByObjectName, makeTest, sleep,
+} from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1371,6 +1373,261 @@ test("app manager: search with no match shows the empty view", async (app) => {
     }
   }, { timeout: 5000, interval: 250,
        description: "cleared search to hide the empty view and restore counts" });
+});
+
+// --- App Manager (A10) — search tolerates regex/special/unicode input ---
+//
+// Spec §2.A A10 (amended + corrected ×2 2026-08-28): Applications → type, in
+// turn, ( [ * \ .* 日本語 and a 512-char string into appManager.searchField.
+// The search is a fixed-string case-insensitive contains over
+// Name/DisplayName/Description (AppsFilterProxy.cpp) — regex metacharacters
+// are inert data, so none of these inputs may produce QRegularExpression
+// warnings, QML errors, or a stale grid.
+//
+// The expected row count per input is NOT hardcoded to 0 (first correction:
+// "(" matches fixture A's own seeded description, which contains a literal
+// "(") and the outer model is NOT assumed to hold only fixture A's row
+// (second correction: the hermetic build's package_downloader ships a default
+// catalog, so localAppsProxy.sourceModel holds fixture A plus the catalog
+// rows). Instead the test SNAPSHOTS every outer-model row's
+// name/displayName/description with the search empty, then computes each
+// input's expectation as the number of snapshot rows containing the literal
+// input case-insensitively — mirroring exactly the C++ filter. Role numbers
+// follow BasecampModelRoles.h (NameRole = Qt.UserRole + 1, DisplayNameRole =
+// + 3, DescriptionRole = + 4); rows are read one primitive per evaluate call
+// via sourceModel.data(sourceModel.index(i, 0), role).
+//
+// Gates per input: the field text round-trips exactly (equality plus
+// length/charCode spot-checks — the backslash and CJK legs are the ones a
+// broken transport would mangle) · outer rowCount() reaches the computed
+// expectation · appManager.emptyView is visible exactly when that expectation
+// is 0 (its visible binds on d.searchText.length > 0 &&
+// appsProxy.visibleCount === 0, and visibleCount IS rowCount()) · no new
+// QRegularExpression line in BASECAMP_APP_LOG (scanned from a test-start
+// baseline; the suite's G-ERR epilogue covers QML error lines). G-ALIVE runs
+// after the 512-char input. Clearing restores the recorded pre-search outer
+// count and hides the empty view.
+//
+// Precondition (as in A8): fixture A's local row is the sole LOCAL row
+// (localAppsProxy.visibleCount === 1) — hard failure in --ci, spec-§0.A skip
+// otherwise. The outer count is recorded, never assumed.
+
+test("app manager: search tolerates regex/special/unicode input", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+
+  let proxyId = null;
+  await app.waitFor(async () => {
+    proxyId = await findLocalAppsProxy(app);
+    if (proxyId === null) {
+      throw new Error("appManager.localAppsProxy not found in QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
+
+  let field = null;
+  await app.waitFor(async () => {
+    field = await findByObjectName(app.inspector, "appManager.searchField");
+    if (!field) throw new Error("appManager.searchField not in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "search field to exist" });
+
+  // Plain (non-Loader) child — findable while hidden, as in A9.
+  let emptyView = null;
+  await app.waitFor(async () => {
+    emptyView = await findByObjectName(app.inspector, "appManager.emptyView");
+    if (!emptyView) throw new Error("appManager.emptyView not in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "empty-search view to exist" });
+
+  const setSearch = async (value) => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
+    });
+    if (res.error) {
+      throw new Error(
+        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
+    }
+  };
+
+  // QRegularExpression scan of the app log, from a baseline taken now.
+  // Same file/offset mechanics as the harness's G-ERR file mode; no-ops
+  // when BASECAMP_APP_LOG is unset (attached-to-local-app runs).
+  const appLogPath = process.env.BASECAMP_APP_LOG || null;
+  let appLogBaseline = 0;
+  if (appLogPath) {
+    try {
+      appLogBaseline = statSync(appLogPath).size;
+    } catch {
+      appLogBaseline = 0;
+    }
+  }
+  const assertNoRegexWarnings = (label) => {
+    if (!appLogPath) return;
+    let tail = "";
+    try {
+      tail = readFileSync(appLogPath, "utf-8").slice(appLogBaseline);
+    } catch {
+      return; // log vanished — nothing to assert against
+    }
+    const hits = tail.split("\n").filter((l) => l.includes("QRegularExpression"));
+    if (hits.length > 0) {
+      throw new Error(
+        `${hits.length} QRegularExpression warning(s) in the app log after ` +
+        `input ${label}:\n  ${hits.join("\n  ")}`);
+    }
+  };
+
+  // Short display form for waitFor descriptions / error messages — the
+  // 512-char input must not flood the output.
+  const labelFor = (input) =>
+    input.length > 16
+      ? JSON.stringify(`${input.slice(0, 8)}…`) + ` (${input.length} chars)`
+      : JSON.stringify(input);
+
+  // Normalize: A9 ends cleared, but a leftover value would skew the
+  // snapshot and the recorded pre-search count.
+  const initialText = await evalOn(app, field.id, "text");
+  if (typeof initialText !== "string") {
+    throw new Error(
+      `search field text=${JSON.stringify(initialText)} (expected string)`);
+  }
+  if (initialText !== "") await setSearch("");
+
+  // PRECONDITION (spec gate, as in A8): fixture A's local row is the sole
+  // local row. Hard failure in --ci, spec-§0.A skip otherwise.
+  try {
+    await app.waitFor(async () => {
+      const count = await evalOn(app, proxyId, "visibleCount");
+      if (count !== 1) {
+        throw new Error(
+          `localAppsProxy.visibleCount=${count} ` +
+          `(expected exactly 1: fixture A's local row)`);
+      }
+    }, { timeout: 10000, interval: 500,
+         description: "fixture A's local row to be the sole local row" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: A10 precondition localAppsProxy.visibleCount === 1 not met ` +
+        `— fixture A (${FIXTURE_A.name}) is not the sole local row in this ` +
+        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `A10 precondition failed — fixture A's local row is not the sole ` +
+      `local row: ${e.message}`);
+  }
+
+  // Record the pre-search outer count — whatever it is (fixture A plus any
+  // default-catalog rows); the post-clear gate compares against it.
+  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (typeof preOuterRows !== "number") {
+    throw new Error(
+      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
+  }
+
+  // SNAPSHOT every outer-model row's searched fields while the search is
+  // empty. One primitive per evaluate call; String(x || "") keeps an unset
+  // role a plain empty string instead of an opaque QVariant.
+  const ROLE_EXPRS = {
+    name: "Qt.UserRole + 1",        // AppsModelRoles::NameRole
+    displayName: "Qt.UserRole + 3", // AppsModelRoles::DisplayNameRole
+    description: "Qt.UserRole + 4", // AppsModelRoles::DescriptionRole
+  };
+  const snapshot = [];
+  for (let i = 0; i < preOuterRows; i += 1) {
+    const row = {};
+    for (const [key, roleExpr] of Object.entries(ROLE_EXPRS)) {
+      const value = await evalOn(
+        app, proxyId,
+        `String(sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr}) || "")`);
+      row[key] = typeof value === "string" ? value : "";
+    }
+    snapshot.push(row);
+  }
+
+  // Mirror of AppsFilterProxy's search leg: fixed-string case-insensitive
+  // contains over name/displayName/description.
+  const expectedMatches = (input) => {
+    const needle = input.toLowerCase();
+    return snapshot.filter((r) =>
+      r.name.toLowerCase().includes(needle)
+      || r.displayName.toLowerCase().includes(needle)
+      || r.description.toLowerCase().includes(needle)).length;
+  };
+
+  // The inputs, spec order. The backslash is built from its char code so no
+  // source-level escaping sits between the test and the wire (JSON.stringify
+  // in setSearch handles the transport escaping).
+  const BACKSLASH = String.fromCharCode(92);
+  const inputs = ["(", "[", "*", BACKSLASH, ".*", "日本語", "x".repeat(512)];
+
+  for (const input of inputs) {
+    const expected = expectedMatches(input);
+    const label = labelFor(input);
+    await setSearch(input);
+    await app.waitFor(async () => {
+      const text = await evalOn(app, field.id, "text");
+      if (text !== input) {
+        throw new Error(
+          `search text=${labelFor(String(text))} did not round-trip ` +
+          `(expected ${label})`);
+      }
+      // Spot-checks on top of the equality: length and the end char codes —
+      // the legs a lossy transport would mangle first.
+      if (text.length !== input.length
+          || text.charCodeAt(0) !== input.charCodeAt(0)
+          || text.charCodeAt(text.length - 1)
+             !== input.charCodeAt(input.length - 1)) {
+        throw new Error(
+          `search text for ${label} corrupted in transport: length=` +
+          `${text.length}/${input.length}, charCodes ${text.charCodeAt(0)}/` +
+          `${input.charCodeAt(0)} … ${text.charCodeAt(text.length - 1)}/` +
+          `${input.charCodeAt(input.length - 1)}`);
+      }
+      const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+      if (outerRows !== expected) {
+        throw new Error(
+          `outer apps proxy rowCount()=${outerRows} for input ${label} ` +
+          `(expected ${expected} — the snapshot rows containing it literally)`);
+      }
+      const emptyVisible = await evalOn(app, emptyView.id, "visible");
+      if (emptyVisible !== (expected === 0)) {
+        throw new Error(
+          `appManager.emptyView visible=${emptyVisible} for input ${label} ` +
+          `(expected ${expected === 0} — visible exactly when 0 rows match)`);
+      }
+    }, { timeout: 5000, interval: 100,
+         description: `input ${label} to filter to ${expected} row(s)` });
+    assertNoRegexWarnings(label);
+  }
+
+  // G-ALIVE after the last (512-char) input.
+  await assertResponsive(app);
+
+  // Clear: the recorded outer count returns and the empty view hides.
+  await setSearch("");
+  await app.waitFor(async () => {
+    const text = await evalOn(app, field.id, "text");
+    if (text !== "") {
+      throw new Error(`search text=${JSON.stringify(text)} after clear (expected "")`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== preOuterRows) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} after clearing the search ` +
+        `(expected the recorded pre-search ${preOuterRows})`);
+    }
+    const emptyVisible = await evalOn(app, emptyView.id, "visible");
+    if (emptyVisible !== false) {
+      throw new Error(
+        `appManager.emptyView visible=${emptyVisible} after clearing the ` +
+        `search (expected false)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: "cleared search to restore the recorded outer count" });
+  assertNoRegexWarnings('"" (clear)');
 });
 
 // --- Package Manager ---
