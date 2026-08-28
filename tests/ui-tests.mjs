@@ -683,6 +683,91 @@ test("workspace: re-clicking an open app does not create a second dock", async (
   }, { timeout: 5000, interval: 250, description: "cleanup: fixture A dock to close" });
 });
 
+// --- Sidebar (A6) — footer shows the build type, with the version when present ---
+//
+// Spec §2.A A6 (amended 2026-08-28). Expectations are DERIVED from
+// backend.buildVersion / backend.isPortableBuild, never hardcoded — nix
+// builds bake "0.0.0-dev" when VERSION is absent (buildVersion is never
+// empty there), but a non-nix build can legitimately have an empty
+// buildVersion, in which case the footer is the build-type token alone.
+//
+// The assertion is scoped to the one footer element (SidebarPanel.qml's
+// LogosSelectableText, objectName "sidebar.buildLabel"), not a page-wide
+// text search: DashboardView renders its own "Dev build" string, so a
+// tree-wide substring match could pass against the wrong element.
+//
+// Read-only against the sidebar — no clicks, no workspace/dock changes.
+
+test("sidebar: footer shows the build type, with the version when present", async (app) => {
+  let footer = null;
+  await app.waitFor(async () => {
+    footer = await findByObjectName(app.inspector, "sidebar.buildLabel");
+    if (!footer) throw new Error("sidebar.buildLabel not in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "sidebar build-label footer to exist" });
+
+  const versionRes = await app.inspector.send("evaluate", {
+    objectId: footer.id, expression: "backend.buildVersion",
+  });
+  if (versionRes.error) {
+    throw new Error(`evaluate(backend.buildVersion) failed: ${versionRes.error}`);
+  }
+  const buildVersion = versionRes.result;
+  if (typeof buildVersion !== "string") {
+    throw new Error(
+      `backend.buildVersion=${JSON.stringify(buildVersion)} (expected string)`);
+  }
+
+  const portableRes = await app.inspector.send("evaluate", {
+    objectId: footer.id, expression: "backend.isPortableBuild",
+  });
+  if (portableRes.error) {
+    throw new Error(`evaluate(backend.isPortableBuild) failed: ${portableRes.error}`);
+  }
+  const isPortable = portableRes.result;
+  if (typeof isPortable !== "boolean") {
+    throw new Error(
+      `backend.isPortableBuild=${JSON.stringify(isPortable)} (expected boolean)`);
+  }
+
+  const textRes = await app.inspector.send("evaluate", {
+    objectId: footer.id, expression: "text",
+  });
+  if (textRes.error) throw new Error(`evaluate(text) failed: ${textRes.error}`);
+  const text = textRes.result;
+  if (typeof text !== "string") {
+    throw new Error(`footer text=${JSON.stringify(text)} (expected string)`);
+  }
+
+  // Gate: the footer carries the matching build-type token and never the
+  // other one ("Dev" is not a substring of "Portable" or vice versa, so
+  // plain containment on the single element is unambiguous).
+  const expectedToken = isPortable ? "Portable" : "Dev";
+  const otherToken = isPortable ? "Dev" : "Portable";
+  if (!text.includes(expectedToken)) {
+    throw new Error(
+      `footer text=${JSON.stringify(text)} does not contain ` +
+      `"${expectedToken}" (isPortableBuild=${isPortable})`);
+  }
+  if (text.includes(otherToken)) {
+    throw new Error(
+      `footer text=${JSON.stringify(text)} contains "${otherToken}" ` +
+      `(isPortableBuild=${isPortable} — must never show both tokens)`);
+  }
+
+  // Gate: version prefix iff buildVersion is set.
+  if (buildVersion.length > 0) {
+    if (!text.startsWith(buildVersion)) {
+      throw new Error(
+        `footer text=${JSON.stringify(text)} does not start with ` +
+        `buildVersion=${JSON.stringify(buildVersion)}`);
+    }
+  } else if (text !== expectedToken) {
+    throw new Error(
+      `buildVersion is empty but footer text=${JSON.stringify(text)} ` +
+      `(expected the build-type token "${expectedToken}" alone)`);
+  }
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
