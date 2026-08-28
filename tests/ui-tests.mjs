@@ -986,6 +986,203 @@ test("sidebar: active tile follows currentVisibleApp across section switches", a
   }
 });
 
+// --- App Manager (A8) — search narrows the grid to matching apps ---
+//
+// Spec §2.A A8 (amended 2026-08-28): Applications → type fixture A's display
+// name in deliberately wrong case into appManager.searchField, append a
+// non-matching suffix, then clear. AppsFilterProxy's search is a fixed-string
+// case-insensitive contains over Name/DisplayName/Description
+// (AppsFilterProxy.cpp:327-335).
+//
+// The spec's literal query is "LIFECYCLE" ("Lifecycle Demo"), but that is the
+// doctest package's display name (doctests/basecamp-package-lifecycle
+// .test.yaml), NOT this branch's fixture A: the pre-seeded fixture is
+// displayName "Test QML Only" (FIXTURE_A in tests/fixtures/lgx.mjs, seeded
+// verbatim by nix/integration-test.nix), so "LIFECYCLE" would match nothing.
+// The query is therefore DERIVED from FIXTURE_A.displayName, upper-cased to
+// keep the spec's wrong-case intent. It still matches via DisplayNameRole
+// only: the name is the underscored "test_qml_only" and the seeded
+// description embeds that underscored form, so neither contains the spaced
+// display name.
+//
+// Offline the grid has no catalog rows, so fixture A's local row is the only
+// one; appManager.localAppsProxy chains matchLocalOnly on top of the OUTER
+// searched proxy (AppManagerView.qml:69-75), so its visibleCount tracks the
+// search. The spec's non-match gate "backend.uiAppsProxy.rowCount() === 0"
+// reads that outer proxy — uiAppsProxy is a ContentViews.qml id, not a
+// backend property, and it is exactly localAppsProxy.sourceModel, so the
+// gate evaluates sourceModel.rowCount() on the proxy anchor (same access
+// path as the matchLocalOnly wiring test).
+//
+// The field's text is set via inspector evaluate on appManager.searchField
+// and read back (round-trip; evaluate returns primitives only, one property
+// per call). The assignment breaks the `text: d.searchText` binding, which
+// is harmless: onTextChanged pushes the value into d.searchText (the actual
+// filter input), and nothing else writes d.searchText. Cleanup: the search
+// ends cleared, so appManager.emptyView ends hidden.
+
+test("app manager: search narrows the grid to matching apps", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+
+  let proxyId = null;
+  await app.waitFor(async () => {
+    proxyId = await findLocalAppsProxy(app);
+    if (proxyId === null) {
+      throw new Error("appManager.localAppsProxy not found in QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
+
+  let field = null;
+  await app.waitFor(async () => {
+    field = await findByObjectName(app.inspector, "appManager.searchField");
+    if (!field) throw new Error("appManager.searchField not in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "search field to exist" });
+
+  const setSearch = async (value) => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
+    });
+    if (res.error) {
+      throw new Error(
+        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
+    }
+  };
+
+  // Normalize: pre-search means an empty field. Nothing before A8 touches the
+  // search, but a leftover value would skew the recording below.
+  const initialText = await evalOn(app, field.id, "text");
+  if (typeof initialText !== "string") {
+    throw new Error(
+      `search field text=${JSON.stringify(initialText)} (expected string)`);
+  }
+  if (initialText !== "") await setSearch("");
+
+  // PRECONDITION (spec gate): fixture A's local row is the one grid row.
+  // If it never shows, the seeding produced no user-install row — that is a
+  // hard failure in --ci (integration-test pre-seeds fixture A at boot) and
+  // a spec-§0.A skip against a local app without the fixture.
+  try {
+    await app.waitFor(async () => {
+      const count = await evalOn(app, proxyId, "visibleCount");
+      if (count !== 1) {
+        throw new Error(
+          `localAppsProxy.visibleCount=${count} ` +
+          `(expected exactly 1: fixture A's local row)`);
+      }
+    }, { timeout: 10000, interval: 500,
+         description: "fixture A's local row to be the one grid row" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: A8 precondition localAppsProxy.visibleCount === 1 not met ` +
+        `— fixture A (${FIXTURE_A.name}) is not the sole local row in this ` +
+        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `A8 precondition failed — the seeding produced no user-install row ` +
+      `(fixture A's local row never became the one grid row): ${e.message}`);
+  }
+
+  // Record the pre-search values; the post-clear gate compares against these.
+  const preLocal = await evalOn(app, proxyId, "visibleCount");
+  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (typeof preOuterRows !== "number") {
+    throw new Error(
+      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
+  }
+
+  // Step 1 — the display name in deliberately wrong case: count stays put and
+  // the text round-trips (match is case-insensitive over name/displayName/
+  // description). Guard that upper-casing actually changed the case — an
+  // already-uppercase display name would make this leg assert nothing.
+  const matchQuery = FIXTURE_A.displayName.toUpperCase();
+  if (matchQuery === FIXTURE_A.displayName) {
+    throw new Error(
+      `FIXTURE_A.displayName=${JSON.stringify(FIXTURE_A.displayName)} is ` +
+      `already upper-case — the wrong-case leg cannot prove case-insensitivity`);
+  }
+  await setSearch(matchQuery);
+  await app.waitFor(async () => {
+    const text = await evalOn(app, field.id, "text");
+    if (text !== matchQuery) {
+      throw new Error(
+        `search text=${JSON.stringify(text)} did not round-trip ` +
+        `(expected ${JSON.stringify(matchQuery)})`);
+    }
+    const count = await evalOn(app, proxyId, "visibleCount");
+    if (count !== preLocal) {
+      throw new Error(
+        `localAppsProxy.visibleCount=${count} with wrong-case display-name ` +
+        `search (expected it to stay ${preLocal} — search must be ` +
+        `case-insensitive)`);
+    }
+  }, { timeout: 5000, interval: 250,
+       description: "wrong-case display-name search to keep fixture A visible" });
+
+  // Step 2 — append a non-matching suffix: the grid empties, all the way down
+  // to the outer proxy (the spec's uiAppsProxy — localAppsProxy.sourceModel).
+  const noMatchQuery = `${matchQuery} ZZZ-NO-SUCH-APP`;
+  await setSearch(noMatchQuery);
+  await app.waitFor(async () => {
+    const text = await evalOn(app, field.id, "text");
+    if (text !== noMatchQuery) {
+      throw new Error(
+        `search text=${JSON.stringify(text)} did not round-trip ` +
+        `(expected ${JSON.stringify(noMatchQuery)})`);
+    }
+    const count = await evalOn(app, proxyId, "visibleCount");
+    if (count !== 0) {
+      throw new Error(
+        `localAppsProxy.visibleCount=${count} with non-matching search ` +
+        `(expected 0)`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== 0) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} with non-matching search ` +
+        `(expected 0)`);
+    }
+  }, { timeout: 5000, interval: 250,
+       description: "non-matching search to empty the grid" });
+
+  // Step 3 — clear: the recorded pre-search values return, and the
+  // empty-search view ends hidden (its `visible` binds on
+  // d.searchText.length > 0).
+  await setSearch("");
+  await app.waitFor(async () => {
+    const text = await evalOn(app, field.id, "text");
+    if (text !== "") {
+      throw new Error(`search text=${JSON.stringify(text)} after clear (expected "")`);
+    }
+    const count = await evalOn(app, proxyId, "visibleCount");
+    if (count !== preLocal) {
+      throw new Error(
+        `localAppsProxy.visibleCount=${count} after clearing the search ` +
+        `(expected the recorded pre-search ${preLocal})`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== preOuterRows) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} after clearing the search ` +
+        `(expected the recorded pre-search ${preOuterRows})`);
+    }
+    const empty = await findByObjectName(app.inspector, "appManager.emptyView");
+    if (!empty) throw new Error("appManager.emptyView not in the QML tree");
+    const emptyVisible = await evalOn(app, empty.id, "visible");
+    if (emptyVisible !== false) {
+      throw new Error(
+        `appManager.emptyView visible=${emptyVisible} after clearing the ` +
+        `search (expected false)`);
+    }
+  }, { timeout: 5000, interval: 250,
+       description: "cleared search to restore the pre-search grid" });
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
