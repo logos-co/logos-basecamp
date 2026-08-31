@@ -39,6 +39,8 @@ Item {
                                   || installGateDialog.visible
                                   || installErrorDialog.visible
                                   || addApplicationDialog.visible
+                                  || intentChooserDialog.visible
+                                  || intentInstallDialog.visible
     property string sidebarTooltipText: ""
     property real   sidebarTooltipY:    0
 
@@ -49,6 +51,7 @@ Item {
     QtObject {
         id: _dialogDeps
         property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
+        property var fallbackColorFor: function(name) { return AppColors.colorForApp(name); }
     }
 
     // Each dialog instance carries a mode-derived objectName (matching the
@@ -123,7 +126,31 @@ Item {
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
-    // Informational — no confirm/cancel wiring, OK just closes.
+    // NOTHING installed provides the requested capability, but the catalog has a
+    // package that would. IntentBroker gates this on Resolution::None — the
+    // two-or-more case raises the chooser instead.
+    IntentInstallDialog {
+        id: intentInstallDialog
+        displayNameLookup: _dialogDeps.displayNameLookup
+        fallbackColorFor: _dialogDeps.fallbackColorFor
+        onInstallRequested: function(providerName) {
+            backend.beginIntentInstall(providerName);
+        }
+    }
+
+    IntentChooserDialog {
+        id: intentChooserDialog
+        displayNameLookup: _dialogDeps.displayNameLookup
+        detailsLookup: function(name) { return backend.providerDetailsFor(name); }
+        onProviderChosen: function(dispatchId, providerName) {
+            backend.resolveIntentChooser(dispatchId, providerName);
+        }
+        onChoiceCancelled: function(dispatchId) {
+            backend.cancelIntentChooser(dispatchId);
+        }
+
+    }
+
     ConfirmationDialog {
         id: installErrorDialog
         objectName: "confirmationDialog.installError"
@@ -179,8 +206,29 @@ Item {
         target: backend
         ignoreUnknownSignals: true
 
-        function onMissingDepsPopupRequested(name, missing) {
-            missingDepsDialog.openWith("missingDeps", name, missing);
+        function onIntentInstallOffered(intent, candidates, details) {
+            intentInstallDialog.openWith(intent, candidates, details);
+        }
+
+        function onIntentChooserRequested(dispatchId, intent, requesterName, providers) {
+            intentChooserDialog.openWith({
+                dispatchId: dispatchId,
+                intent: intent,
+                requesterName: requesterName,
+                providers: providers
+            });
+        }
+
+        // The broker ended the request some other way (the requester died, the
+        // backstop fired). Close only if this is still the one on screen.
+        function onIntentChooserDismissed(dispatchId) {
+            intentChooserDialog.closeFor(dispatchId);
+        }
+
+        // `blockers` carries a reason per entry and `summary` names the set
+        // as a whole — see UIPluginManager::missingDepsPopupRequested.
+        function onMissingDepsPopupRequested(name, blockers, summary) {
+            missingDepsDialog.openWith("missingDeps", name, blockers, summary);
         }
 
         function onUnloadCascadeConfirmationRequested(name, loadedDependents) {

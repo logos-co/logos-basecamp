@@ -4,6 +4,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
+#include "utils/DependencyBlocker.h"
 
 #include <QDebug>
 #include <QDir>
@@ -308,9 +309,19 @@ QStringList PackageCoordinator::missingDepsOf(const QString& name) const
     return m_missingDepsByModule.value(name);
 }
 
+QVariantList PackageCoordinator::blockingDepsOf(const QString& name) const
+{
+    return m_blockingDepsByModule.value(name);
+}
+
 QStringList PackageCoordinator::dependentsOf(const QString& name) const
 {
     return m_dependentsByModule.value(name);
+}
+
+QString PackageCoordinator::installedRootHash(const QString& name) const
+{
+    return m_installedHashByName.value(name);
 }
 
 QString PackageCoordinator::displayNameFor(const QString& name) const
@@ -1185,7 +1196,10 @@ void PackageCoordinator::populateAppsModel(
             m_appsModel->setInstallType(name, installType);
         if (m_uiPluginManager) {
             const QString iconUrl = m_uiPluginManager->pluginIconUrl(name);
-            if (!iconUrl.isEmpty()) m_appsModel->setIconUrl(name, iconUrl);
+            if (!iconUrl.isEmpty())
+                m_appsModel->setIconUrl(
+                    name, iconUrl,
+                    m_uiPluginManager->pluginManifestVersion(name));
         }
     }
 
@@ -1356,6 +1370,7 @@ void PackageCoordinator::refreshDependencyInfo()
         QStringList names = self->m_installTypeByModule.keys();
         if (names.isEmpty()) {
             self->m_missingDepsByModule.clear();
+            self->m_blockingDepsByModule.clear();
             self->m_dependentsByModule.clear();
             self->m_dependenciesByModule.clear();
             // Nothing installed is a complete answer, not an unfinished one —
@@ -1375,15 +1390,17 @@ void PackageCoordinator::refreshDependencyInfo()
         LogosModules inner(self->m_logosAPI);
         auto remaining = std::make_shared<int>(names.size() * 2);
         auto missingMap = std::make_shared<QMap<QString, QStringList>>();
+        auto blockingMap = std::make_shared<QMap<QString, QVariantList>>();
         auto dependenciesMap = std::make_shared<QMap<QString, QStringList>>();
         auto dependentsMap = std::make_shared<QMap<QString, QStringList>>();
         QPointer<PackageCoordinator> selfCopy(self.data());
 
-        auto maybeFinish = [selfCopy, missingMap, dependenciesMap,
+        auto maybeFinish = [selfCopy, missingMap, blockingMap, dependenciesMap,
                             dependentsMap, remaining]() {
             if (!selfCopy) return;
             if (--(*remaining) > 0) return;
             selfCopy->m_missingDepsByModule = *missingMap;
+            selfCopy->m_blockingDepsByModule = *blockingMap;
             selfCopy->m_dependenciesByModule = *dependenciesMap;
             selfCopy->m_dependentsByModule = *dependentsMap;
             if (!selfCopy->m_dependencyDataReady) {
@@ -1404,24 +1421,22 @@ void PackageCoordinator::refreshDependencyInfo()
         };
 
         for (const QString& name : names) {
-            // One call, two caches. The missing-deps list is the subset with
-            // status == "not_installed"; the full closure (minus those) is
-            // what the uninstall plan walks. Keeping both here is why the
-            // dependency cleanup needs no extra IPC.
+            // One call, three caches: the names the load gate refuses on, the
+            // reason per name, and the on-disk closure the uninstall plan
+            // walks. Why the dependency cleanup needs no extra IPC.
             inner.package_manager.resolveFlatDependenciesAsync(
                 name, true,
-                [missingMap, dependenciesMap, name, maybeFinish](QVariantList deps) {
-                    QStringList missing;
-                    QStringList installed;
-                    for (const QVariant& v : deps) {
-                        const QVariantMap m = v.toMap();
-                        const QString s = m.value("name").toString();
-                        if (s.isEmpty()) continue;
-                        if (m.value("status").toString() == "not_installed") missing << s;
-                        else                                                 installed << s;
-                    }
-                    missingMap->insert(name, missing);
-                    dependenciesMap->insert(name, installed);
+                [missingMap, blockingMap, dependenciesMap, name,
+                 maybeFinish](QVariantList deps) {
+                    // Two questions, not one: which rows are on disk (the
+                    // graph) and which refuse the load (the gate). The split
+                    // lives in utils/DependencyBlocker.h so it is under test —
+                    // this lambda is not reachable from one.
+                    const logos::DependencyRowSplit split =
+                        logos::splitDependencyRows(deps);
+                    missingMap->insert(name, split.blocking);
+                    blockingMap->insert(name, split.blockers);
+                    dependenciesMap->insert(name, split.present);
                     maybeFinish();
                 });
 

@@ -62,7 +62,17 @@ public:
     // async refresh chain hasn't completed yet; QML and UIPluginManager
     // are expected to treat "empty" as "not known — show safe defaults".
     QString     installType(const QString& name) const;
+
+    // The Merkle root over the CONTENTS ON DISK, as recorded at install. Not
+    // the catalog's claim about the artifact — what is actually installed.
+    QString     installedRootHash(const QString& name) const;
     QStringList missingDepsOf(const QString& name) const;
+    // The same set as missingDepsOf with the reason attached: one map per
+    // blocking dependency, {name, kind, requiredVersion, installedVersion,
+    // requiredSigner, signerDid, detail} from logos::dependencyBlockerToMap.
+    // The two are populated together and always agree on membership; a caller
+    // that has to TELL the user something wants this one.
+    QVariantList blockingDepsOf(const QString& name) const;
     QStringList dependentsOf(const QString& name) const;
     QString     displayNameFor(const QString& name) const;
 
@@ -412,12 +422,15 @@ private:
     QMap<QString, QString>     m_installTypeByModule;
     QMap<QString, QString>     m_displayNameByModule;
     QMap<QString, QStringList> m_missingDepsByModule;
+    // Same membership as m_missingDepsByModule, carrying WHY each entry
+    // blocks. Filled by the same pass; see blockingDepsOf.
+    QMap<QString, QVariantList> m_blockingDepsByModule;
     QMap<QString, QStringList> m_dependentsByModule;
     // Full recursive forward closure per installed package. Same
     // resolveFlatDependencies call that already feeds m_missingDepsByModule —
-    // that one threw away everything except the "not_installed" rows, this
-    // one keeps the lot, so the whole on-disk graph is available host-side
-    // with no extra IPC.
+    // that one keeps only the rows that BLOCK a load, this one keeps the
+    // rest, so the whole on-disk graph is available host-side with no extra
+    // IPC.
     QMap<QString, QStringList> m_dependenciesByModule;
     bool m_dependencyDataReady = false;
 

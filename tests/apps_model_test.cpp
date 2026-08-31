@@ -67,7 +67,8 @@ QVariantMap makeInstalledPackage(const QString& name,
                                  const QString& version,
                                  const QString& rootHash,
                                  const QString& category = {},
-                                 const QString& installType = QStringLiteral("user"))
+                                 const QString& installType = QStringLiteral("user"),
+                                 const QString& manifestVersion = {})
 {
     QVariantMap hashes;
     hashes.insert(QStringLiteral("root"), rootHash);
@@ -79,6 +80,8 @@ QVariantMap makeInstalledPackage(const QString& name,
     pkg.insert(QStringLiteral("installType"), installType);
     if (!category.isEmpty())
         pkg.insert(QStringLiteral("category"), category);
+    if (!manifestVersion.isEmpty())
+        pkg.insert(QStringLiteral("manifestVersion"), manifestVersion);
     return pkg;
 }
 
@@ -624,7 +627,7 @@ private slots:
         AppsModel model;
         model.replaceCatalog({makeCatalogRow("repo1", "wallet_ui", "1.0", "H")});
         model.markInstalled("wallet_ui", "1.0", "H");
-        model.setIconUrl("wallet_ui", "file:///installed/assets/icon.png");
+        model.setIconUrl("wallet_ui", "file:///installed/assets/icon.png", "0.3.0");
         // Refresh with a bare-filename icon, as today's downloader emits.
         QVariantMap row = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
         row.insert(QStringLiteral("icon"), QStringLiteral("modules.png"));
@@ -713,6 +716,92 @@ private slots:
         QCOMPARE(model.data(model.index(0), flagRole).toBool(), false);
     }
 
+    // Regression: a locally-installed app (no catalog row) rendered inset in
+    // the App Manager while the sidebar showed it full-bleed, because
+    // mergeLocalOnlyInstalled built its Row without reading manifestVersion.
+    // getInstalledPackages carries the field; this locks that it is used.
+    void mergeLocalOnly_carriesFullBleedFlag()
+    {
+        AppsModel model;
+        model.replaceCatalog({});
+        model.mergeLocalOnlyInstalled({
+            makeInstalledPackage("modern_ui", "1.0", "H1", "misc", "user", "0.5.0"),
+            makeInstalledPackage("legacy_ui", "1.0", "H2", "misc", "user", "0.3.0"),
+            // No manifestVersion at all → inset, same as the catalog path.
+            makeInstalledPackage("silent_ui", "1.0", "H3", "misc", "user"),
+        });
+
+        int flagRole = -1, nameRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
+            if      (it.value() == "supportsFullBleedIcon") flagRole = it.key();
+            else if (it.value() == "name")                  nameRole = it.key();
+        }
+        QVERIFY(flagRole >= 0 && nameRole >= 0);
+
+        auto flagFor = [&](const QString& name) {
+            for (int i = 0; i < model.rowCount(); ++i) {
+                const QModelIndex idx = model.index(i);
+                if (model.data(idx, nameRole).toString() == name)
+                    return model.data(idx, flagRole).toBool();
+            }
+            return false;
+        };
+        QCOMPARE(flagFor("modern_ui"), true);
+        QCOMPARE(flagFor("legacy_ui"), false);
+        QCOMPARE(flagFor("silent_ui"), false);
+    }
+
+    // setIconUrl swaps a row's artwork to the installed binary's icon. The
+    // full-bleed flag describes THAT icon, so it has to move with it —
+    // otherwise a stale catalog entry keeps a 0.4.0+ icon rendering inset.
+    void setIconUrl_updatesFullBleedFlagWithIcon()
+    {
+        AppsModel model;
+        QVariantMap stale = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        stale.insert(QStringLiteral("manifestVersion"), QStringLiteral("0.3.0"));
+        model.replaceCatalog({stale});
+
+        int flagRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+            if (it.value() == "supportsFullBleedIcon") flagRole = it.key();
+        QVERIFY(flagRole >= 0);
+        QCOMPARE(model.data(model.index(0), flagRole).toBool(), false);
+
+        QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+        model.setIconUrl("wallet_ui", "file:///installed/assets/icon.png", "0.5.0");
+        QCOMPARE(model.data(model.index(0), flagRole).toBool(), true);
+
+        // The flag role must be in the changed set or the delegate binding
+        // never re-evaluates and the tile stays inset on screen.
+        QCOMPARE(spy.count(), 1);
+        const QList<int> changed = spy.at(0).at(2).value<QList<int>>();
+        QVERIFY(changed.contains(flagRole));
+    }
+
+    // Same icon path, newer manifest (an in-place upgrade re-resolving to the
+    // same file). The early-out used to key on iconUrl alone and skip the row.
+    void setIconUrl_updatesFlagEvenWhenIconUnchanged()
+    {
+        AppsModel model;
+        QVariantMap stale = makeCatalogRow("repo1", "wallet_ui", "1.0", "H");
+        stale.insert(QStringLiteral("manifestVersion"), QStringLiteral("0.3.0"));
+        stale.insert(QStringLiteral("icon"),
+                     QStringLiteral("file:///installed/assets/icon.png"));
+        model.replaceCatalog({stale});
+
+        int flagRole = -1;
+        const auto& roles = model.roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+            if (it.value() == "supportsFullBleedIcon") flagRole = it.key();
+        QVERIFY(flagRole >= 0);
+        QCOMPARE(model.data(model.index(0), flagRole).toBool(), false);
+
+        model.setIconUrl("wallet_ui", "file:///installed/assets/icon.png", "0.5.0");
+        QCOMPARE(model.data(model.index(0), flagRole).toBool(), true);
+    }
+
     // ── Regression: multi-repo setInstallType / setIconUrl ─────────────
     // installType and iconUrl come from the installed binary, not the
     // catalog row. Every (repo, name) tile must show them; previously
@@ -725,7 +814,7 @@ private slots:
             makeCatalogRow("repo2", "wallet_ui", "1.0", "H"),
         });
         model.setInstallType("wallet_ui", "user");
-        model.setIconUrl("wallet_ui", "file:///path/to/icon.png");
+        model.setIconUrl("wallet_ui", "file:///path/to/icon.png", "0.3.0");
 
         int typeRole = -1, iconRole = -1, nameRole = -1, repoRole = -1;
         const auto& roles = model.roleNames();

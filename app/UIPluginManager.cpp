@@ -1,8 +1,11 @@
 #include "UIPluginManager.h"
+
+#include "IntentBridgeAdapter.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
+#include "utils/DependencyBlocker.h"
 
 #include <QDebug>
 #include <QDir>
@@ -153,6 +156,7 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
     // has changed now and QML should reflect that.
     emit uiModulesChanged();
     emit launcherAppsChanged();
+    emit uiPluginMetadataChanged();
 }
 
 void UIPluginManager::reloadLoadedPluginIcon(const QString& name, QWidget* widget) const
@@ -203,6 +207,12 @@ QVariantList UIPluginManager::uiModules() const
             : QString(); // "" | "embedded" | "user"
         module["hasMissingDeps"] = !missing.isEmpty();
         module["missingDeps"] = missing;
+        // Which KIND, so the row badge can say "Version conflict" rather than
+        // "Missing deps" about a dependency that is very much installed.
+        module["depBlockKind"] = (isInstalled && m_packageCoordinator)
+            ? logos::summariseDependencyBlockers(
+                  m_packageCoordinator->blockingDepsOf(pluginName))
+            : QString();
 
         modules.append(module);
     }
@@ -220,15 +230,43 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         return;
     }
 
-    // Gate on missing core dependencies — no point attempting the load
-    // if liblogos's dependency resolver will refuse it. We show the popup
-    // instead of letting the user see a cryptic "plugin load failed" error.
-    const QStringList missing = m_packageCoordinator
-        ? m_packageCoordinator->missingDepsOf(moduleName)
-        : QStringList{};
-    if (!missing.isEmpty()) {
-        qDebug() << "UI module" << moduleName << "has missing deps:" << missing;
-        emit missingDepsPopupRequested(moduleName, missing);
+    // The caches answer "empty" both for "nothing blocks this" and for "not
+    // asked yet", and the tiles are published before the dependency fan-out
+    // runs (PackageCoordinator.cpp: uiPluginsFetched precedes
+    // refreshDependencyInfo). Reading through that window fails OPEN, so park
+    // the load until the data exists. Same shape as
+    // PackageCoordinator::uninstallApp; last click wins.
+    if (m_packageCoordinator && !m_packageCoordinator->dependencyDataReady()) {
+        qDebug() << "UI module" << moduleName
+                 << "deferred: dependency data not ready";
+        QObject::disconnect(m_pendingGatedLoadConn);
+        m_pendingGatedLoadName = moduleName;
+        QPointer<UIPluginManager> self(this);
+        m_pendingGatedLoadConn = connect(
+            m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
+            this, [self, moduleName]() {
+                if (!self) return;
+                if (self->m_pendingGatedLoadName != moduleName) return;   // superseded
+                self->m_pendingGatedLoadName.clear();
+                QObject::disconnect(self->m_pendingGatedLoadConn);
+                self->loadUiModule(moduleName);
+            });
+        return;
+    }
+
+    // Gate on core dependencies the resolver won't accept, so the user gets a
+    // popup instead of a cryptic "plugin load failed". An INSTALLED dependency
+    // outside the declared range refuses the load exactly as an absent one
+    // does, so the popup must say which: "install it" and "you have the wrong
+    // version" are different instructions.
+    const QVariantList blockers = m_packageCoordinator
+        ? m_packageCoordinator->blockingDepsOf(moduleName)
+        : QVariantList{};
+    if (!blockers.isEmpty()) {
+        const QString summary = logos::summariseDependencyBlockers(blockers);
+        qDebug() << "UI module" << moduleName << "blocked by deps (" << summary
+                 << "):" << blockers;
+        emit missingDepsPopupRequested(moduleName, blockers, summary);
         return;
     }
 
@@ -286,12 +324,6 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                         // String-based connects resolve against the replica's
                         // metaobject at runtime — a signature drift in the PMU
                         // .rep would fail silently, so guard each result.
-                        if (!connect(replica, SIGNAL(navigateToRepositoriesRequested()),
-                                     this,    SIGNAL(navigateToRepositoriesRequested()))) {
-                            qCritical() << "package_manager_ui replica signal"
-                                        << "navigateToRepositoriesRequested() not found"
-                                        << "- signature drift vs package_manager_ui.rep?";
-                        }
                         if (!connect(replica,
                                      SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
                                      this,
@@ -311,6 +343,10 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     emit launcherAppsChanged();
     emit pluginWindowRequested(widget, name);
     emit navigateToApps();
+
+    // Last, and after the window exists: a broker draining its activation queue
+    // dispatches into the view immediately, so it must already be mounted.
+    emit appReady(name);
 
     qDebug() << "Successfully loaded UI module:" << name;
 }
@@ -447,10 +483,31 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
 void UIPluginManager::activateApp(const QString& appName)
 {
     QWidget* widget = m_uiModuleWidgets.value(appName);
-    if (widget) {
-        emit pluginWindowActivateRequested(widget);
-        emit navigateToApps();
-    }
+    if (!widget) return;
+
+    // Before the raise, so a synchronous receiver already sees the new app.
+    setCurrentVisibleApp(appName);
+
+    // No navigateToApps(): which section to land on is the shell's call, since
+    // only it knows whether the widget was docked or hoisted into the stack.
+    emit presentAppRequested(widget);
+}
+
+
+void UIPluginManager::setIntentAdapter(IntentBridgeAdapter* adapter)
+{
+    if (m_pluginLoader) m_pluginLoader->setIntentAdapter(adapter);
+}
+
+QMap<QString, QVariantMap> UIPluginManager::uiPluginMetadataSnapshot() const
+{
+    return m_uiPluginMetadata;
+}
+
+bool UIPluginManager::isUiAppLoaded(const QString& moduleName) const
+{
+    return m_uiModuleWidgets.contains(moduleName)
+        || m_qmlPluginWidgets.contains(moduleName);
 }
 
 void UIPluginManager::setCurrentVisibleApp(const QString& pluginName)
@@ -591,18 +648,22 @@ QVariantList UIPluginManager::launcherApps() const
         // Manifest >= 0.4.0 guarantees a validated 256x256 icon, so the
         // sidebar tile can render it edge-to-edge; older packages ship a
         // small glyph that must stay inset.
-        app["supportsFullBleedIcon"] = AppsModel::supportsFullBleedIcon(
-            m_uiPluginMetadata.value(pluginName)
-                .value("manifestVersion").toString());
-        // Sidebar red-cross marker source. The SidebarAppDelegate reads
-        // this field directly; we don't ship the full missingDeps list
-        // here because the sidebar only draws an indicator — the detailed
-        // list lives behind the click-triggered popup which reads from
-        // backend.uiModulesModel.
+        app["supportsFullBleedIcon"] =
+            AppsModel::supportsFullBleedIcon(pluginManifestVersion(pluginName));
+        // Sidebar marker source, read directly by SidebarAppDelegate. The
+        // blocker list is deliberately not shipped here: the sidebar draws
+        // only an indicator, and the click-triggered popup fetches the detail
+        // from PackageCoordinator::blockingDepsOf.
         const QStringList missing = m_packageCoordinator
             ? m_packageCoordinator->missingDepsOf(pluginName)
             : QStringList{};
         app["hasMissingDeps"] = !missing.isEmpty();
+        // "" | "absent" | "mismatch" | "signer" | "mixed" — picks the
+        // marker's shape.
+        app["depBlockKind"] = m_packageCoordinator
+            ? logos::summariseDependencyBlockers(
+                  m_packageCoordinator->blockingDepsOf(pluginName))
+            : QString();
 
         apps.append(app);
     }
@@ -1130,6 +1191,11 @@ QString UIPluginManager::pluginIconUrl(const QString& pluginName, bool forWidget
     const qint64 mtimeMs = QFileInfo(filePath).lastModified().toMSecsSinceEpoch();
     return QUrl::fromLocalFile(filePath).toString()
          + QStringLiteral("?v=") + QString::number(mtimeMs);
+}
+
+QString UIPluginManager::pluginManifestVersion(const QString& pluginName) const
+{
+    return m_uiPluginMetadata.value(pluginName).value("manifestVersion").toString();
 }
 
 QStringList UIPluginManager::intersectWithLoaded(const QStringList& moduleNames) const

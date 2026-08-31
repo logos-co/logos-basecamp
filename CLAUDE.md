@@ -100,12 +100,27 @@ Owns UI plugin widget lifecycle in-process: PluginLoader wiring, widget teardown
 - **App launcher**: `activateApp`, `onAppLauncherClicked`, `setCurrentVisibleApp`
 
 ### PackageCoordinator (`app/PackageCoordinator.h/.cpp`)
-Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install gate dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.
+Owns every interaction with the `package_manager` LogosAPI module. (Named `PackageCoordinator` rather than `PackageManager` to avoid colliding with the SDK-generated `PackageManager` proxy class.) Event subscriptions, install/uninstall/upgrade IPC, the install gate dialog, the uninstall-cascade dialog, plus the package-state caches (`m_installTypeByModule`, `m_missingDepsByModule`, `m_blockingDepsByModule` — the same set as the previous one with the reason each entry blocks, `m_dependentsByModule`). Holds the gated-cascade pending slot for uninstall/upgrade ops.
 
 - **Install gate**: basecamp initiates no installs of its own — `package_manager_ui` does, for both catalog downloads and local `.lgx` picks. We subscribe to the module's `beforeInstall`, show the `installGate` dialog, and forward the decision via `confirmInstallGate()`/`cancelInstallGate()`; PMU then performs the install
 - **Gated uninstall/upgrade**: Subscribes to `package_manager` module's `beforeUninstall`/`beforeUpgrade` events, acks within 3s, shows cascade dialog, then confirms/cancels back to the module
 - **Cascade confirmation**: `confirmUninstallCascade`, `cancelPendingAction` — drives cascade unload via CoreModuleManager + UIPluginManager, then hands back to the module
 - **Metadata refresh**: `refresh()` triggers the full `getInstalledUiPlugins` + `getInstalledPackages` + per-package `resolveFlatDependencies/Dependents` chain; pushes UI metadata to UIPluginManager via `uiPluginsFetched` signal
+
+### App-to-app intents (`app/IntentRegistry`, `app/IntentBroker`)
+An app asks for a *capability* (`logos.request("wallet.send", …)`) and the shell picks who services it. Basecamp owns the **disposable** half — resolution, consent, dispatch; the frozen QML surface lives in `logos-view-module-runtime` (`LogosIntent.h`). No policy belongs in the frozen half, so this can be replaced wholesale when the core runtime takes over provider selection.
+
+- **IntentRegistry** — reads `provides` / `uses` / `provides[].params` out of each installed app's `metadata.json`. `ui_qml` only, and that is a design line, not a V1 shortcut: core modules call each other directly through `LogosAPI` with no chooser and nothing to consent to. `logos.*` is reserved and refused from any on-disk record.
+- **IntentBroker** — the whole lifecycle. Reaches the world through four seams (`IntentEndpoint`, `IntentPresenter`, `IntentChooser`, `IntentInstaller`), all faked in `tests/intent_broker_test.cpp`, so the policy layer is testable with no UI.
+- **IntentBridgeAdapter / ShellIntent\*** — bind each UI plugin's `LogosQmlBridge` to the broker, and re-emit chooser/install prompts as QML signals.
+
+Load-bearing invariants, all covered by tests:
+
+- **The requester's `requestId` never leaves its side.** The broker mints a separate `dispatchId`. A response is accepted only if the id is pending, the phase is `Dispatched`, **and** the responding endpoint is pointer-identical to the recorded provider — pointer, not name, so a reloaded app cannot inherit in-flight requests. A failed guard drops silently.
+- **`unavailable` merges "nothing installed" with "denied"**, floored at 400 ms, so an app cannot enumerate what you have installed. The install suggestion answers the requester immediately and never completes its request, for the same reason.
+- **One dialog at a time.** A second request queues rather than repointing a chooser under the user's cursor — that would be a consent swap.
+
+Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `Shell/OverlayDialogs.qml`, fixtures in `tests/fixtures/intents/`. Full design and known limitations: `docs/app-to-app-intents.md`.
 
 ### Construction & Destruction Order
 CoreModuleManager is constructed first, UIPluginManager second (receives CoreModuleManager), PackageCoordinator third (receives both). UIPluginManager's `setPackageCoordinator` is called after all three exist, closing the cycle and wiring the `uiPluginsFetched`/`uiModulesChanged`/`launcherAppsChanged`/`coreModulesChanged` signal flow. Qt's reverse-order child destruction tears PackageCoordinator down first (stops emitting), then UIPluginManager (tears down widgets while the C API handle is still valid), then CoreModuleManager.
