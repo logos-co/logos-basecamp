@@ -25,10 +25,17 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
-#include "logos_qt_host_core.h"
+#include "ICoreRuntime.h"
+#ifndef LOGOS_MOCK_BACKEND
+#include "QtLogosCoreRuntime.h"
+#endif
 #include "logos_provider_object.h"
 #include "qt_provider_object.h"
 #include "BuildInfo.h"
+#ifdef LOGOS_MOCK_BACKEND
+#include "FixtureCoreRuntime.h"
+#include "MockBackendFixture.h"
+#endif
 #ifdef Q_OS_UNIX
 #include <QSocketNotifier>
 #include <signal.h>
@@ -182,10 +189,28 @@ int main(int argc, char *argv[])
     LogosBasecampBuildInfo::logStartupBanner();
     qInfo().noquote() << "Base data directory:" << LogosBasecampPaths::baseDirectory();
 
+#ifdef LOGOS_MOCK_BACKEND
+    MockBackendFixture::install();
+    {
+        const LogosMode mode = LogosModeConfig::getMode();
+        if (mode == LogosMode::Mock) {
+            qInfo().noquote() << "MockBackendFixture: SDK mode is Mock — no IPC will be attempted.";
+        } else {
+            qWarning().noquote()
+                << "MockBackendFixture: SDK mode is"
+                << (mode == LogosMode::Local ? "Local" : "Remote")
+                << "but this is a MOCK build. Every module call will attempt real IPC"
+                   " and time out. This means logos-protocol did not see"
+                   " LOGOS_MOCK_FIXTURE — check that the build picked up the"
+                   " logos-protocol you expected.";
+        }
+    }
+#endif
+
     // Everything liblogos requires BEFORE start() is a constructor argument of
     // the facade, so the ordering constraint below is enforced by the shape of
     // the type rather than by this comment. Applied in the order set here.
-    logos::host::LogosCore::Config coreConfig;
+    ICoreRuntime::Config coreConfig;
 
     // Set up module directories for logos core.
     // 1. Embedded modules directory (pre-installed at build time, read-only)
@@ -232,7 +257,22 @@ int main(int argc, char *argv[])
     // teardown below. A stack object declared here would instead run at the
     // closing brace of main() — silently moving cleanup to AFTER ~LogosAPI,
     // which is destroyed on the same unwind.
-    auto core = std::make_unique<logos::qt::QtLogosCore>(argc, argv, std::move(coreConfig));
+    // The ONE place the two backends diverge. Everything downstream —
+    // CoreModuleManager, MainUIBackend, the QML — sees only ICoreRuntime and
+    // cannot tell which it got.
+    std::unique_ptr<ICoreRuntime> core;
+#ifdef LOGOS_MOCK_BACKEND
+    // install() already ran above — it has to, because exporting
+    // LOGOS_MOCK_FIXTURE is what puts logos-protocol's LogosMode into Mock and
+    // seeds MockStore, in THIS image and in every child process and plugin
+    // image, each of which holds its own copy of those statics.
+    core = std::make_unique<FixtureCoreRuntime>(MockBackendFixture::resolvedFixturePath());
+    // Built above either way so the two paths differ in one place; a fixture
+    // has no directories to load from.
+    (void)coreConfig;
+#else
+    core = std::make_unique<QtLogosCoreRuntime>(argc, argv, std::move(coreConfig));
+#endif
 
     // Start the core
     core->start();

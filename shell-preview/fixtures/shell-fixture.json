@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Fixture for the shell preview. Keys map to FixtureBackend's QML-bound",
+    "properties; array keys feed the three models.",
+    "Roles come from app/interfaces/BasecampModelRoles.h."
+  ],
+
+  "buildVersion": "shell-preview",
+  "isPortableBuild": false,
+  "isMockBackend": true,
+  "buildCommits": [],
+
+  "currentVisibleApp": "",
+  "loadingModules": [],
+  "appsLoading": false,
+  "modulesLoading": false,
+  "repositoriesLoading": false,
+  "requiredPackages": [],
+  "launcherApps": [
+    { "name": "package_manager_ui", "displayName": "Package Manager", "iconUrl": "", "hasMissingDeps": false }
+  ],
+  "repositories": [
+    { "url": "https://packages.logos.co/core", "name": "Logos Core", "enabled": true }
+  ],
+
+  "coreModules": [
+    { "name": "package_manager", "label": "Package Manager Module", "type": "core", "version": "1.0.0",
+      "category": "management", "installType": "embedded", "isLoaded": true, "isMainUi": false,
+      "hasMissingDeps": false, "statusText": "Running", "cpu": "0.4", "memory": "18.2" },
+    { "name": "package_downloader", "label": "Package Downloader", "type": "core", "version": "1.0.0",
+      "category": "management", "installType": "embedded", "isLoaded": true, "isMainUi": false,
+      "hasMissingDeps": false, "statusText": "Running", "cpu": "0.2", "memory": "12.6" },
+    { "name": "storage_module", "label": "Storage", "type": "core", "version": "0.4.1",
+      "category": "storage", "installType": "user", "isLoaded": false, "isMainUi": false,
+      "hasMissingDeps": false, "statusText": "Stopped", "cpu": "0.0", "memory": "0.0" }
+  ],
+
+  "uiModules": [
+    { "name": "package_manager_ui", "label": "Package Manager", "type": "ui_qml", "version": "1.0.0",
+      "category": "management", "installType": "embedded", "isLoaded": false, "isMainUi": false,
+      "hasMissingDeps": false, "statusText": "Installed", "cpu": "0.0", "memory": "0.0" }
+  ],
+
+  "apps": [
+    { "name": "package_manager_ui", "displayName": "Package Manager", "repositoryUrl": "https://packages.logos.co/core",
+      "description": "Browse, install and remove Logos packages.", "category": "management", "type": "ui_qml",
+      "installedVersion": "1.0.0", "latestVersion": "1.0.0", "isInstalled": true, "hasUpdate": false,
+      "installType": "embedded", "isTopLevel": true, "missingDeps": [], "dependencies": [] },
+    { "name": "chat_ui", "displayName": "Chat", "repositoryUrl": "https://packages.logos.co/core",
+      "description": "Messaging built on Waku.", "category": "messaging", "type": "ui_qml",
+      "installedVersion": "", "latestVersion": "0.9.0", "isInstalled": false, "hasUpdate": false,
+      "installType": "", "isTopLevel": true, "missingDeps": [], "dependencies": [] },
+    { "name": "storage_module", "displayName": "Storage", "repositoryUrl": "https://packages.logos.co/core",
+      "description": "Local key-value persistence.", "category": "storage", "type": "core",
+      "installedVersion": "0.4.1", "latestVersion": "0.4.1", "isInstalled": true, "hasUpdate": false,
+      "installType": "user", "isTopLevel": false, "missingDeps": [], "dependencies": [] }
+  ]
+}

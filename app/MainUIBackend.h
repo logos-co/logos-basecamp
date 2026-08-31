@@ -6,6 +6,8 @@
 #include "ModuleInstanceModel.h"
 
 #include <QAbstractItemModel>
+#include "ICoreRuntime.h"
+
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
@@ -25,9 +27,6 @@ class ShellIntentEndpoint;
 class ShellIntentChooser;
 class ShellIntentInstaller;
 
-// The process-wide core facade, created and owned by main(). Threaded down to
-// CoreModuleManager, which is the only thing here that calls it.
-namespace logos { namespace qt { class QtLogosCore; } }
 
 
 // MainUIBackend — thin QML-facing facade.
@@ -102,6 +101,18 @@ class MainUIBackend : public QObject {
     //   * buildCommits: list of { name, commit } for basecamp + each flake input.
     Q_PROPERTY(QString buildVersion READ buildVersion CONSTANT)
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
+
+    //   * isMockBackend: this Basecamp is serving FIXTURE DATA. No module is
+    //     running, nothing is installed or downloaded, and every list on screen
+    //     came out of a JSON file.
+    //
+    // Surfaced in the UI deliberately. A mock-backed build is indistinguishable
+    // from a working one at a glance — modules listed, catalog populated, stats
+    // ticking — which is exactly what makes it dangerous to mistake for the real
+    // thing. The sidebar badge is the cheapest possible guard against someone
+    // filing a bug, or shipping a screenshot, from a build that was never
+    // talking to anything.
+    Q_PROPERTY(bool isMockBackend READ isMockBackend CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
 
     // Package repositories
@@ -123,7 +134,7 @@ class MainUIBackend : public QObject {
 
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
-                           logos::qt::QtLogosCore* core = nullptr,
+                           ICoreRuntime* core = nullptr,
                            QObject* parent = nullptr);
 
     // Tears down the UI-plugin layer while the shell that hosts those widgets
@@ -143,6 +154,7 @@ public:
     // Build info accessors (see Q_PROPERTY declarations above).
     QString buildVersion() const;
     bool isPortableBuild() const;
+    bool isMockBackend() const;
     QVariantList buildCommits() const;
 
     QVariantList repositories() const;
@@ -435,7 +447,7 @@ private:
 
     // LogosAPI — shared with all three managers.
     LogosAPI* m_logosAPI;
-    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
+    ICoreRuntime* m_core; // not owned; owned by main()
     bool m_ownsLogosAPI;
 
     // Owned children (parent=this). Order matters: coreModuleManager first,
