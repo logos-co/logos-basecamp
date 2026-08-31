@@ -251,6 +251,7 @@ A UI App can request a *capability* without naming, linking against, or discover
 - Suggest an installable package when nothing on disk can service a request, while telling the requester only that nothing was available
 - Refuse a payload the chosen provider declared unusable, before it reaches that provider
 - Bring the chosen app to the foreground and deliver the request to it; return exactly one result to the requester
+- Return the user to the requester once the provider answers, on either outcome — unless the provider declared the intent a hand-off, meaning the request existed to take the user somewhere and leave them there. Never move the user for an outcome they cannot see the cause of: a timeout, a teardown, a refusal
 
 Requirements that constrain the above, rather than describing it:
 

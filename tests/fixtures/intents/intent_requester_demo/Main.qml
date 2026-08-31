@@ -181,6 +181,26 @@ Rectangle {
             MouseArea { anchors.fill: parent; onClicked: root.requestRoundTrip() }
         }
 
+        // ── Auto-return, drivable by hand ──────────────────────────────
+        //
+        // Both go to intent_provider_manual, which is the only provider of
+        // either. Same `ok:true` comes back from both; only the provider's
+        // "handoff" declaration differs, and that is what decides whether the
+        // shell brings you back here or leaves you there.
+        Rectangle {
+            objectName: "btnManual"
+            width: 200; height: 32; color: "#333333"
+            Text { anchors.centerIn: parent; color: "#ffffff"; text: "Manual (returns here)" }
+            MouseArea { anchors.fill: parent; onClicked: root.request("test.manual") }
+        }
+
+        Rectangle {
+            objectName: "btnHandoff"
+            width: 200; height: 32; color: "#333333"
+            Text { anchors.centerIn: parent; color: "#ffffff"; text: "Hand-off (stays there)" }
+            MouseArea { anchors.fill: parent; onClicked: root.request("test.handoff") }
+        }
+
         // NOT in metadata.json — must yield not_declared.
         Rectangle {
             objectName: "btnUndeclared"

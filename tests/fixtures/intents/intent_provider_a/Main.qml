@@ -8,10 +8,15 @@ import QtQuick
 // cannot be co-installed.
 //
 // It answers on a TIMER, not synchronously. A synchronous answer completes the
-// whole round trip inside one event-loop turn, so the broker's back-edge
-// returns the user to the requester before the provider has been painted —
-// making a correctly working system look like the chooser did nothing. A real
-// provider shows UI and responds after the user acts; this models that.
+// whole round trip inside one event-loop turn, so the user is returned to the
+// requester before the provider has been painted — making a correctly working
+// system look like the chooser did nothing. A real provider shows UI and
+// responds after the user acts; this models that.
+//
+// The shell now holds auto-return to a dwell floor for exactly this reason, so
+// the timer is no longer load-bearing for that. It stays because "answers after
+// the user acts" is what a provider does. To drive the return trip by hand, use
+// intent_provider_manual, which holds the request open until a button press.
 Rectangle {
     id: root
     // Unique per provider so a doctest can address each one directly with

@@ -259,6 +259,12 @@ public slots:
     void onAppLauncherClicked(const QString& appName);
     void setCurrentVisibleApp(const QString& pluginName);
 
+    // Pushed from OverlayDialogs.qml's anyDialogOpen binding. Read by the
+    // intent presenter, which declines to auto-return while a dialog owns the
+    // screen. Not a Q_PROPERTY: nothing binds to it, and a property would
+    // invite QML to start driving navigation policy.
+    Q_INVOKABLE void setOverlayActive(bool active);
+
     Q_INVOKABLE void refreshRepositories();
     Q_INVOKABLE void refreshAppCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
@@ -404,6 +410,7 @@ private:
 
     // Navigation state — the only state this facade class holds.
     int m_currentActiveSectionIndex;
+    bool m_overlayActive = false;
 
     // Intents. Construction order in the ctor is what decides destruction
     // order — see the comment there.

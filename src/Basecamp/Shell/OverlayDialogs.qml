@@ -46,7 +46,10 @@ Item {
 
     signal overlayActiveChanged(bool active)
 
-    onAnyDialogOpenChanged: root.overlayActiveChanged(anyDialogOpen)
+    onAnyDialogOpenChanged: {
+        root.overlayActiveChanged(anyDialogOpen)
+        backend.setOverlayActive(anyDialogOpen)
+    }
 
     QtObject {
         id: _dialogDeps

@@ -4,6 +4,8 @@
 #include <QPointer>
 #include <QString>
 
+#include <functional>
+
 #include "IntentBroker.h"
 
 class UIPluginManager;
@@ -24,14 +26,21 @@ class UIPluginManager;
 class UIPluginPresenter : public QObject, public IntentPresenter {
     Q_OBJECT
 public:
+    using SectionFn = std::function<int()>;
     explicit UIPluginPresenter(UIPluginManager* uiPluginManager,
+                               SectionFn sectionProvider = {},
                                QObject* parent = nullptr);
 
     // ── IntentPresenter ─────────────────────────────────────────────────
     bool isAppLoaded(const QString& appName) const override;
     void ensureAppLoaded(const QString& appName) override;
     void presentApp(const QString& appName) override;
+    bool isAppFrontmost(const QString& appName) const override;
+    bool anyDialogOpen() const override;
+    void setDialogProbe(std::function<bool()> probe);
 
 private:
     QPointer<UIPluginManager> m_uiPluginManager;
+    SectionFn                 m_sectionProvider;
+    std::function<bool()>     m_dialogProbe;
 };

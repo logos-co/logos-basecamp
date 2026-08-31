@@ -120,6 +120,7 @@ Load-bearing invariants, all covered by tests:
 - **The requester's `requestId` never leaves its side.** The broker mints a separate `dispatchId`. A response is accepted only if the id is pending, the phase is `Dispatched`, **and** the responding endpoint is pointer-identical to the recorded provider — pointer, not name, so a reloaded app cannot inherit in-flight requests. A failed guard drops silently.
 - **`unavailable` merges "nothing installed" with "denied"**, floored at 400 ms, so an app cannot enumerate what you have installed. The install suggestion answers the requester immediately and never completes its request, for the same reason.
 - **One dialog at a time.** A second request queues rather than repointing a chooser under the user's cursor — that would be a consent swap.
+- **Only a provider's own answer moves the user.** Answering returns them to the requester; the other five `finish()` paths (deadlines, endpoint death, abandon, refusals) never navigate, because nothing on screen would explain it. `"handoff": true` on a `provides` entry opts out entirely — the request existed to take the user somewhere and leave them there. It governs navigation only; when the provider answers (on arrival, or when the user marks the action done) is independent.
 
 Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `Shell/OverlayDialogs.qml`, fixtures in `tests/fixtures/intents/`. Full design and known limitations: `docs/app-to-app-intents.md`.
 

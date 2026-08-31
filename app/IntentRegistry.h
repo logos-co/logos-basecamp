@@ -2,6 +2,7 @@
 
 #include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -74,8 +75,14 @@ public:
 
     // The same for `provides`, and the only legitimate source of a "logos.*"
     // name — any disk record claiming one is refused.
+    // `handoffIntents` is the subset of `intents` that leaves the user with the
+    // shell rather than returning them. Declared rather than inferred: the
+    // repositories intent does not auto-return today only because the broker
+    // skips presentApp for shell providers, which is the right behaviour by an
+    // unrelated route.
     void registerShellProvider(const QString& shellModuleName,
                                const QStringList& intents,
+                               const QStringList& handoffIntents,
                                const QString& displayName,
                                const QString& iconSource);
 
@@ -102,6 +109,18 @@ public:
     // Each entry: { name, type, required, description }.
     QVariantList paramsSpecFor(const QString& moduleName,
                                const QString& intent) const;
+
+    // Does servicing this intent END, or does it hand the user off?
+    //
+    // A transaction returns control: the user acts, the provider answers, and
+    // the shell takes them back where they came from. A hand-off does not —
+    // the request's whole purpose was to put them somewhere and leave them
+    // there, so its `ok` means "I have taken you there", not "we are done".
+    //
+    // Same (provider, intent) key as paramsSpecFor, and for the same reason
+    // given there: two providers of one intent may legitimately differ, and
+    // there is no per-intent schema to appeal to. Absent means false.
+    bool isHandoff(const QString& moduleName, const QString& intent) const;
 
     // ── Installable providers — a SEPARATE table, deliberately ──────────
     //
@@ -158,5 +177,8 @@ private:
 
     // (moduleName, intent) -> [{name,type,required,description}]
     QHash<QString, QVariantList> m_paramsSpec;
+
+    // "moduleName/intent" for every provider entry declaring "handoff": true.
+    QSet<QString> m_handoff;
     QStringList m_diagnostics;
 };

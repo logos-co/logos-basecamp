@@ -57,6 +57,10 @@ private slots:
     void testRestrictedIntentAllowsOnlyListedRequesters();
     void testEmptyRequesterListIsRefusedNotAnOpenDoor();
     void testRestrictionSurvivesRebuild();
+    void testHandoffIsReadPerProviderIntent();
+    void testNonBooleanHandoffIsDiagnosedNotCoerced();
+    void testProvidersMayDisagreeAboutHandoff();
+    void testShellHandoffSurvivesRebuild();
 };
 
 void TestIntentRegistry::testResolvesSingleProvider()
@@ -135,7 +139,8 @@ void TestIntentRegistry::testReservedNamespaceRefusedFromApps()
         R"({"provides":[{"intent":"logos.repositories.manage"},{"intent":"evil.ok"}]})");
 
     IntentRegistry registry;
-    registry.registerShellProvider(QStringLiteral("main_ui"), {}, QStringLiteral("Basecamp"), {});
+    registry.registerShellProvider(QStringLiteral("main_ui"), {}, {},
+                                   QStringLiteral("Basecamp"), {});
     registry.rebuild({ { QStringLiteral("evil_ui"), plugin(dir) } }, nullptr, nullptr);
 
     QCOMPARE(registry.resolve(QStringLiteral("logos.repositories.manage")).status,
@@ -156,7 +161,7 @@ void TestIntentRegistry::testShellMayProvideReservedNamespace()
 {
     IntentRegistry registry;
     registry.registerShellProvider(QStringLiteral("main_ui"),
-                                   { QStringLiteral("logos.repositories.manage") },
+                                   { QStringLiteral("logos.repositories.manage") }, {},
                                    QStringLiteral("Logos Basecamp"),
                                    QStringLiteral("qrc:/logo.png"));
 
@@ -174,7 +179,7 @@ void TestIntentRegistry::testDiskRecordCannotClaimShellIdentity()
 
     IntentRegistry registry;
     registry.registerShellProvider(QStringLiteral("main_ui"),
-                                   { QStringLiteral("logos.x.y") }, {}, {});
+                                   { QStringLiteral("logos.x.y") }, {}, {}, {});
     registry.rebuild({ { QStringLiteral("main_ui"), plugin(dir) } }, nullptr, nullptr);
 
     // The shell's own registration is intact and the imposter contributed nothing.
@@ -262,7 +267,7 @@ void TestIntentRegistry::testShellRegistrationSurvivesRebuild()
     // Installing or removing an app must not deregister the shell.
     IntentRegistry registry;
     registry.registerShellProvider(QStringLiteral("main_ui"),
-                                   { QStringLiteral("logos.a.b") }, {}, {});
+                                   { QStringLiteral("logos.a.b") }, {}, {}, {});
     QCOMPARE(registry.resolve(QStringLiteral("logos.a.b")).status, IntentRegistry::Ok);
 
     registry.rebuild({}, nullptr, nullptr);
@@ -364,6 +369,96 @@ void TestIntentRegistry::testRestrictionSurvivesRebuild()
 
     QVERIFY(!registry.requesterAllowed(QStringLiteral("logos.packages.confirm_uninstall"),
                                        QStringLiteral("evil_ui")));
+}
+
+void TestIntentRegistry::testHandoffIsReadPerProviderIntent()
+{
+    // Does servicing this intent END, or does it hand the user off? Absent is
+    // false — the common case is a transaction, and opting out is the rare one.
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("wallet_ui"), R"({
+        "name": "wallet_ui", "type": "ui_qml",
+        "provides": [
+            {"intent": "wallet.sign"},
+            {"intent": "wallet.open", "handoff": true},
+            {"intent": "wallet.close", "handoff": false}
+        ]
+    })");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("wallet_ui"), plugin(dir) } }, nullptr, nullptr);
+
+    QVERIFY(registry.isHandoff(QStringLiteral("wallet_ui"), QStringLiteral("wallet.open")));
+    QVERIFY(!registry.isHandoff(QStringLiteral("wallet_ui"), QStringLiteral("wallet.sign")));
+    QVERIFY(!registry.isHandoff(QStringLiteral("wallet_ui"), QStringLiteral("wallet.close")));
+    // An intent this provider does not declare at all.
+    QVERIFY(!registry.isHandoff(QStringLiteral("wallet_ui"), QStringLiteral("nope.nope")));
+}
+
+void TestIntentRegistry::testNonBooleanHandoffIsDiagnosedNotCoerced()
+{
+    // QVariant("true").toBool() is true, so coercing would silently give a
+    // transactional intent the opposite navigation from the one its author
+    // wrote. Refuse and say so.
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("wallet_ui"), R"({
+        "name": "wallet_ui", "type": "ui_qml",
+        "provides": [{"intent": "wallet.open", "handoff": "true"}]
+    })");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("wallet_ui"), plugin(dir) } }, nullptr, nullptr);
+
+    QVERIFY(!registry.isHandoff(QStringLiteral("wallet_ui"), QStringLiteral("wallet.open")));
+    // The capability itself still registers — a bad flag is not a bad intent.
+    QCOMPARE(registry.resolve(QStringLiteral("wallet.open")).status, IntentRegistry::Ok);
+    QVERIFY(!registry.diagnostics().filter(QStringLiteral("handoff")).isEmpty());
+}
+
+void TestIntentRegistry::testProvidersMayDisagreeAboutHandoff()
+{
+    // Per (provider, intent), like paramsSpecFor and for the same reason: two
+    // apps may implement one capability differently and there is no per-intent
+    // schema to arbitrate. The chosen provider's answer is the one that counts.
+    QTemporaryDir root;
+    const QString a = makeApp(root, QStringLiteral("a_ui"), R"({
+        "name": "a_ui", "type": "ui_qml",
+        "provides": [{"intent": "notes.open", "handoff": true}]
+    })");
+    const QString b = makeApp(root, QStringLiteral("b_ui"), R"({
+        "name": "b_ui", "type": "ui_qml",
+        "provides": [{"intent": "notes.open"}]
+    })");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("a_ui"), plugin(a) },
+                       { QStringLiteral("b_ui"), plugin(b) } }, nullptr, nullptr);
+
+    QVERIFY(registry.isHandoff(QStringLiteral("a_ui"), QStringLiteral("notes.open")));
+    QVERIFY(!registry.isHandoff(QStringLiteral("b_ui"), QStringLiteral("notes.open")));
+    QCOMPARE(registry.resolve(QStringLiteral("notes.open")).status,
+             IntentRegistry::Ambiguous);
+}
+
+void TestIntentRegistry::testShellHandoffSurvivesRebuild()
+{
+    // The shell's declaration is code, not disk, so installing an app must not
+    // quietly turn its hand-off back into a transaction.
+    IntentRegistry registry;
+    registry.registerShellProvider(QStringLiteral("main_ui"),
+                                   { QStringLiteral("logos.repositories.manage"),
+                                     QStringLiteral("logos.packages.confirm_install") },
+                                   { QStringLiteral("logos.repositories.manage") },
+                                   QStringLiteral("Logos"), {});
+
+    QVERIFY(registry.isHandoff(QStringLiteral("main_ui"),
+                               QStringLiteral("logos.repositories.manage")));
+    QVERIFY(!registry.isHandoff(QStringLiteral("main_ui"),
+                                QStringLiteral("logos.packages.confirm_install")));
+
+    registry.rebuild({}, nullptr, nullptr);
+
+    QVERIFY(registry.isHandoff(QStringLiteral("main_ui"),
+                               QStringLiteral("logos.repositories.manage")));
+    QVERIFY(!registry.isHandoff(QStringLiteral("main_ui"),
+                                QStringLiteral("logos.packages.confirm_install")));
 }
 
 QTEST_MAIN(TestIntentRegistry)

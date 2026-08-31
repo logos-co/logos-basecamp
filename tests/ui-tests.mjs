@@ -999,6 +999,83 @@ async function providerMarker(app, which) {
   return typeof r.result === "string" ? r.result : "";
 }
 
+// backend.currentVisibleApp — "which app is the user actually looking at".
+//
+// Read through the overlay root because it lives in the SHELL's engine, where
+// `backend` is a context property; a fixture's anchor is in the plugin's own
+// engine and has no `backend` at all. This is the observable auto-return moves,
+// so every assertion below turns on it.
+async function currentVisibleApp(app) {
+  const overlay = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "overlayDialogs",
+  });
+  if (!overlay.matches || !overlay.matches.length)
+    throw new Error("shell overlay not found — cannot read backend state");
+  const r = await app.inspector.send("evaluate", {
+    objectId: overlay.matches[0].id, expression: "backend.currentVisibleApp",
+  });
+  return typeof r.result === "string" ? r.result : "";
+}
+
+// Ask for `intent`, then answer the confirmation with intent_provider_manual.
+// Returns once the provider's view is up and the shell has actually moved
+// there — the precondition every auto-return assertion needs, and the one that
+// makes "it never returned" distinguishable from "it never left".
+async function dispatchToManualProvider(app, anchor, intent) {
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: `root.request("${intent}")`,
+  });
+
+  let delegateId = null;
+  await app.waitFor(async () => {
+    const d = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "intentProvider_intent_provider_manual",
+    });
+    if (!d.matches || !d.matches.length)
+      throw new Error("chooser has no delegate for intent_provider_manual");
+    delegateId = d.matches[0].id;
+  }, { timeout: 8000, interval: 250, description: "confirmation dialog" });
+
+  await app.inspector.send("click", { objectId: delegateId });
+
+  await app.waitFor(async () => {
+    const visible = await currentVisibleApp(app);
+    if (visible !== "intent_provider_manual")
+      throw new Error(`shell is on "${visible}", not the provider`);
+  }, { timeout: 45000, interval: 500, description: "dispatch moved the user" });
+}
+
+// Wait until the manual provider is actually HOLDING a request.
+//
+// dispatchTo() presents the provider BEFORE delivering to it, so the shell
+// arriving is not evidence the QML handler has run. The fixture's buttons are
+// disabled until it has, so clicking on the strength of the navigation alone
+// silently does nothing and the test fails much later, somewhere else.
+async function waitForManualProviderHolding(app) {
+  await app.waitFor(async () => {
+    const found = await app.inspector.send("findByProperty", {
+      property: "objectName", value: "providerRootManual",
+    });
+    if (!found.matches || !found.matches.length)
+      throw new Error("manual provider view not up");
+    const handled = await app.inspector.send("evaluate", {
+      objectId: found.matches[0].id, expression: "root.lastHandled",
+    });
+    if (handled.result !== "waiting")
+      throw new Error(`provider is "${handled.result}", not holding a request`);
+  }, { timeout: 20000, interval: 500, description: "provider holding the request" });
+}
+
+// Click a button inside the manual provider's view.
+async function clickInManualProvider(app, objectName) {
+  const found = await app.inspector.send("findByProperty", {
+    property: "objectName", value: objectName,
+  });
+  if (!found.matches || !found.matches.length)
+    throw new Error(`manual provider has no ${objectName}`);
+  await app.inspector.send("click", { objectId: found.matches[0].id });
+}
+
 async function lastResult(app, anchorId) {
   return (await app.inspector.send("evaluate", {
     objectId: anchorId, expression: "root.lastResult",
@@ -1103,6 +1180,84 @@ test("intents: a single provider still asks before dispatching", async (app) => 
     const r = await lastResult(app, anchor);
     if (r !== "ok:intent_provider_a") throw new Error(`got "${r}"`);
   }, { timeout: 45000, interval: 500, description: "provider_a answered" });
+});
+
+test("intents: answering a request returns the user to the caller", async (app) => {
+  // The round trip. Dispatch already moves the user to the provider; this is
+  // about the move BACK, which nothing did before — you approved something in
+  // another app and were left standing there.
+  //
+  // The provider answers only when a button is pressed, so the return is
+  // triggered by a real user action rather than by a timer, which is the whole
+  // reason this fixture exists.
+  const anchor = await openIntentRequester(app);
+  await dispatchToManualProvider(app, anchor, "test.manual");
+
+  await waitForManualProviderHolding(app);
+  await clickInManualProvider(app, "btnComplete");
+
+  await app.waitFor(async () => {
+    const visible = await currentVisibleApp(app);
+    if (visible !== "intent_requester_demo")
+      throw new Error(`still on "${visible}" — the user was never brought back`);
+  }, { timeout: 20000, interval: 250, description: "returned to the requester" });
+
+  // Navigation only. The result must still have been delivered — a return that
+  // swallowed the answer would be worse than no return.
+  const r = await lastResult(app, anchor);
+  if (r !== "ok:intent_provider_manual")
+    throw new Error(`returned, but the requester got "${r}"`);
+});
+
+test("intents: cancelling also returns the user to the caller", async (app) => {
+  // Backing out is the outcome that most wants a ride home — the user decided
+  // not to do the thing, and being parked in the provider afterwards is the
+  // worst of both.
+  const anchor = await openIntentRequester(app);
+  await dispatchToManualProvider(app, anchor, "test.manual");
+
+  await waitForManualProviderHolding(app);
+  await clickInManualProvider(app, "btnCancel");
+
+  await app.waitFor(async () => {
+    const visible = await currentVisibleApp(app);
+    if (visible !== "intent_requester_demo")
+      throw new Error(`still on "${visible}" after a cancel`);
+  }, { timeout: 20000, interval: 250, description: "returned after cancel" });
+
+  const r = await lastResult(app, anchor);
+  if (r !== "cancelled") throw new Error(`expected cancelled, got "${r}"`);
+});
+
+test("intents: a hand-off leaves the user where it took them", async (app) => {
+  // THE PAIR IS THE POINT. Identical provider, identical button, identical
+  // ok:true — differing only by "handoff": true in metadata.json. If the shell
+  // returns here, the declaration is not being read.
+  const anchor = await openIntentRequester(app);
+  await dispatchToManualProvider(app, anchor, "test.handoff");
+
+  // Same button, same moment in the flow as the transaction above. WHEN a
+  // provider answers is its own business; `handoff` governs only what the
+  // shell does next, and holding both constant is what isolates that.
+  await waitForManualProviderHolding(app);
+  await clickInManualProvider(app, "btnComplete");
+
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "ok:intent_provider_manual")
+      throw new Error(`hand-off not answered yet, requester has "${r}"`);
+  }, { timeout: 20000, interval: 250, description: "hand-off answered" });
+
+  // The answer has landed. Give the dwell floor room to fire a return if the
+  // guard is broken — asserting immediately would pass even with the feature
+  // misbehaving, because the wrong behaviour is merely late, not absent.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  const visible = await currentVisibleApp(app);
+  if (visible !== "intent_provider_manual")
+    throw new Error(
+      `a hand-off bounced the user to "${visible}" — the whole point is that ` +
+      "they were sent somewhere to stay");
 });
 
 test("intents: a payload the provider declared unusable never reaches it", async (app) => {
