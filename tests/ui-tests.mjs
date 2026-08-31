@@ -738,33 +738,18 @@ test("sidebar: footer shows the build type, with the version when present", asyn
     throw new Error(`footer text=${JSON.stringify(text)} (expected string)`);
   }
 
-  // Gate: the footer carries the matching build-type token and never the
-  // other one ("Dev" is not a substring of "Portable" or vice versa, so
-  // plain containment on the single element is unambiguous).
+  // Gate: the footer is a pure function of (buildVersion, isPortableBuild) —
+  // see SidebarPanel.qml's buildLabel binding — so compare against the
+  // exact expected string. This pins the " · " separator and rejects
+  // stray suffixes, which token-containment checks would let through.
   const expectedToken = isPortable ? "Portable" : "Dev";
-  const otherToken = isPortable ? "Dev" : "Portable";
-  if (!text.includes(expectedToken)) {
+  const expectedText = buildVersion.length > 0
+    ? `${buildVersion} · ${expectedToken}`
+    : expectedToken;
+  if (text !== expectedText) {
     throw new Error(
-      `footer text=${JSON.stringify(text)} does not contain ` +
-      `"${expectedToken}" (isPortableBuild=${isPortable})`);
-  }
-  if (text.includes(otherToken)) {
-    throw new Error(
-      `footer text=${JSON.stringify(text)} contains "${otherToken}" ` +
-      `(isPortableBuild=${isPortable} — must never show both tokens)`);
-  }
-
-  // Gate: version prefix iff buildVersion is set.
-  if (buildVersion.length > 0) {
-    if (!text.startsWith(buildVersion)) {
-      throw new Error(
-        `footer text=${JSON.stringify(text)} does not start with ` +
-        `buildVersion=${JSON.stringify(buildVersion)}`);
-    }
-  } else if (text !== expectedToken) {
-    throw new Error(
-      `buildVersion is empty but footer text=${JSON.stringify(text)} ` +
-      `(expected the build-type token "${expectedToken}" alone)`);
+      `footer text=${JSON.stringify(text)} (expected ${JSON.stringify(expectedText)}; ` +
+      `buildVersion=${JSON.stringify(buildVersion)}, isPortableBuild=${isPortable})`);
   }
 });
 
