@@ -1,0 +1,248 @@
+{
+  "_comment": [
+    "Fixture for the mock backend. See mock/README.md.",
+    "",
+    "`modules` answers ICoreRuntime (FixtureCoreRuntime).",
+    "`calls`   seeds MockStore, in this process and in every ui-host child.",
+    "",
+    "INVARIANTS:",
+    "1. package_manager MUST be \"loaded\": true \u2014 PackageCoordinator.cpp:98 gates",
+    "   all of its setup and all ten event subscriptions on it.",
+    "2. `calls` keys use the WIRE method name: the wrapper name minus any \"Async\"",
+    "   suffix (logos-cpp-sdk/cpp-generator/legacy/generator_lib.cpp:990).",
+    "3. {PLUGINS_DIR}/{LIB_EXT} are expanded at load. Never hardcode a suffix \u2014",
+    "   hasBackendPlugin accepts all three, so a wrong one fails later in ui-host."
+  ],
+  "modules": [
+    {
+      "name": "package_manager",
+      "path": "static://package_manager",
+      "loaded": true,
+      "loaded_at": 1756100000,
+      "dependencies": [],
+      "stats": {
+        "cpu_percent": 0.4,
+        "memory_mb": 18.2
+      },
+      "metadata": {
+        "name": "package_manager",
+        "version": "1.0.0",
+        "type": "core",
+        "category": "management",
+        "description": "Installs, removes and inventories Logos packages"
+      }
+    },
+    {
+      "name": "package_downloader",
+      "path": "static://package_downloader",
+      "loaded": true,
+      "loaded_at": 1756100000,
+      "dependencies": [],
+      "stats": {
+        "cpu_percent": 0.2,
+        "memory_mb": 12.6
+      },
+      "metadata": {
+        "name": "package_downloader",
+        "version": "1.0.0",
+        "type": "core",
+        "category": "management",
+        "description": "Browses the online catalog and fetches .lgx packages"
+      }
+    },
+    {
+      "name": "capability_module",
+      "path": "static://capability_module",
+      "loaded": true,
+      "loaded_at": 1756100000,
+      "dependencies": [],
+      "stats": {
+        "cpu_percent": 0.1,
+        "memory_mb": 9.4
+      },
+      "metadata": {
+        "name": "capability_module",
+        "version": "1.0.0",
+        "type": "core",
+        "category": "security",
+        "description": "Issues and validates inter-module auth tokens"
+      }
+    },
+    {
+      "name": "storage_module",
+      "path": "static://storage_module",
+      "loaded": false,
+      "loaded_at": 0,
+      "dependencies": [],
+      "stats": {
+        "cpu_percent": 0.0,
+        "memory_mb": 0.0
+      },
+      "metadata": {
+        "name": "storage_module",
+        "version": "0.4.1",
+        "type": "core",
+        "category": "storage",
+        "description": "Local key-value persistence for modules"
+      }
+    },
+    {
+      "name": "chat_module",
+      "path": "static://chat_module",
+      "loaded": false,
+      "loaded_at": 0,
+      "dependencies": [
+        "storage_module"
+      ],
+      "stats": {
+        "cpu_percent": 0.0,
+        "memory_mb": 0.0
+      },
+      "metadata": {
+        "name": "chat_module",
+        "version": "0.9.0",
+        "type": "core",
+        "category": "messaging",
+        "description": "Messaging backend (unloaded \u2014 exercises the load button)"
+      }
+    }
+  ],
+  "calls": {
+    "_comment_capability": "capability_module must appear here even though Basecamp never calls it directly. MockStore's seeder mints a TokenManager token for every module named by a key, and the host must hold a capability_module token to be admitted as the trusted channel when loading a ui_qml plugin.",
+    "capability_module.requestModule": "mock-token-capability_module",
+    "package_manager.setEmbeddedModulesDirectory": true,
+    "package_manager.setUserModulesDirectory": true,
+    "package_manager.setEmbeddedUiPluginsDirectory": true,
+    "package_manager.setUserUiPluginsDirectory": true,
+    "package_manager.resetPendingAction": {},
+    "package_manager.getInstalledUiPlugins": [
+      {
+        "name": "package_manager_ui",
+        "displayName": "Package Manager",
+        "type": "ui_qml",
+        "installType": "embedded",
+        "version": "1.0.0",
+        "installDir": "{PLUGINS_DIR}/package_manager_ui",
+        "view": "qml/PackageManager.qml",
+        "mainFilePath": "{PLUGINS_DIR}/package_manager_ui/package_manager_ui_plugin{LIB_EXT}",
+        "icon": "assets/icon.png",
+        "dependencies": [
+          "package_manager",
+          "package_downloader"
+        ],
+        "hashes": {
+          "root": "mockhash-pmui-0001"
+        }
+      }
+    ],
+    "package_manager.getInstalledPackages": [
+      {
+        "name": "package_manager_ui",
+        "displayName": "Package Manager",
+        "moduleName": "package_manager_ui",
+        "installType": "embedded",
+        "version": "1.0.0",
+        "hashes": {
+          "root": "mockhash-pmui-0001"
+        }
+      },
+      {
+        "name": "package_manager",
+        "displayName": "Package Manager Module",
+        "moduleName": "package_manager",
+        "installType": "embedded",
+        "version": "1.0.0",
+        "hashes": {
+          "root": "mockhash-pm-0001"
+        }
+      },
+      {
+        "name": "package_downloader",
+        "displayName": "Package Downloader",
+        "moduleName": "package_downloader",
+        "installType": "embedded",
+        "version": "1.0.0",
+        "hashes": {
+          "root": "mockhash-pd-0001"
+        }
+      },
+      {
+        "name": "storage_module",
+        "displayName": "Storage",
+        "moduleName": "storage_module",
+        "installType": "user",
+        "version": "0.4.1",
+        "hashes": {
+          "root": "mockhash-storage-0001"
+        }
+      }
+    ],
+    "package_manager.resolveFlatDependencies": [],
+    "package_manager.resolveFlatDependents": [],
+    "package_downloader.getCatalog": [
+      {
+        "name": "package_manager_ui",
+        "repositoryUrl": "https://packages.logos.co/core",
+        "displayName": "Package Manager",
+        "description": "Browse, install and remove Logos packages.",
+        "category": "management",
+        "type": "ui_qml",
+        "manifestVersion": "1.1",
+        "versions": [
+          {
+            "manifest": {
+              "version": "1.0.0",
+              "dependencies": [
+                "package_manager",
+                "package_downloader"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "storage_module",
+        "repositoryUrl": "https://packages.logos.co/core",
+        "displayName": "Storage",
+        "description": "Local key-value persistence for modules.",
+        "category": "storage",
+        "type": "core",
+        "manifestVersion": "1.1",
+        "versions": [
+          {
+            "manifest": {
+              "version": "0.4.1",
+              "dependencies": []
+            }
+          }
+        ]
+      },
+      {
+        "name": "chat_module",
+        "repositoryUrl": "https://packages.logos.co/core",
+        "displayName": "Chat",
+        "description": "Messaging backend built on Waku.",
+        "category": "messaging",
+        "type": "core",
+        "manifestVersion": "1.1",
+        "versions": [
+          {
+            "manifest": {
+              "version": "0.9.0",
+              "dependencies": [
+                "storage_module"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "package_downloader.listRepositories": [
+      {
+        "url": "https://packages.logos.co/core",
+        "name": "Logos Core",
+        "enabled": true
+      }
+    ]
+  }
+}

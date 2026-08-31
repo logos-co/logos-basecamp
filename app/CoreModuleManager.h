@@ -5,26 +5,16 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
+#include "ICoreRuntime.h"
 #include "logos_api.h"
 
 class QTimer;
 
-// Forward-declared, not included: logos_qt_host_core.h pulls in nlohmann/json,
-// and MainUIBackend, UIPluginManager, PackageCoordinator and PluginLoader all
-// include this header without touching the facade.
-namespace logos { namespace qt { class QtLogosCore; } }
-
-// CoreModuleManager — the app's module-management surface over the SDK facade.
+// CoreModuleManager — the app's module-management surface over ICoreRuntime.
 //
-// Every call into liblogos (known/loaded module lists, load/unload, cascade
-// unload, stats) funnels through this class; UIPluginManager, PackageManager
-// and MainUIBackend never touch the C API directly.
-//
-// The char*/char** marshalling and the `delete[]`-not-`free()` ownership rule
-// live once, in logos-qt-sdk's `logos::qt::QtLogosCore`
-// (`logos_qt_host_core.h`) over logos-cpp-sdk's `logos::host::LogosCore`.
-// Declaring that ABI a second time in the same image is an ODR hazard with no
-// diagnostic.
+// Every module-management call (known/loaded lists, load/unload, cascade
+// unload, stats) funnels through this class; UIPluginManager,
+// PackageCoordinator and MainUIBackend never reach past it.
 //
 // What stays here is what the facade has no basis to decide: the poll interval,
 // which thread the timer lives on, when "the module set changed" is announced,
@@ -38,11 +28,11 @@ public:
     // `core` is the process-wide facade, owned by main() and outliving this
     // object. Must not be null.
     explicit CoreModuleManager(LogosAPI* logosAPI,
-                               logos::qt::QtLogosCore* core,
+                               ICoreRuntime* core,
                                QObject* parent = nullptr);
     ~CoreModuleManager() override;
 
-    // Thin wrappers over QtLogosCore. Callers never see a raw C string.
+    // Thin wrappers over ICoreRuntime, the seam Basecamp owns.
     QStringList knownModules() const;
     QStringList loadedModules() const;
     // Loads with forward dependencies resolved. Returns true on success.
@@ -83,7 +73,7 @@ private slots:
 
 private:
     LogosAPI*               m_logosAPI;   // not owned
-    logos::qt::QtLogosCore* m_core;       // not owned; owned by main()
+    ICoreRuntime* m_core;       // not owned; owned by main()
     QTimer*                 m_statsTimer; // owned (parent=this)
     QMap<QString, QVariantMap> m_moduleStats;
 };

@@ -61,6 +61,36 @@ open result/LogosBasecamp.app
 ```
 
 
+#### Mock Backend (no Logos runtime)
+
+Runs Basecamp against a JSON fixture instead of a live module runtime: no `liblogos_core`, no `logos_host`, no module subprocesses. Useful for working on the UI while the core is unavailable, and as a starting point on platforms the runtime has not been ported to.
+
+```bash
+nix build '.#app-mock' && ./result/bin/LogosBasecamp
+```
+
+The sidebar reads `Dev build (Mocked)` in the warning colour, so a fixture build is never mistaken for a working one. Module lists, packages, the catalog and stats all come from `mock/fixtures/mock-backend.json`.
+
+| Output | What it is |
+|---|---|
+| `app-mock` | Local mock build |
+| `bin-bundle-dir-mock` | Portable mock bundle |
+| `mock-tests` | Fixture and placeholder-resolution tests |
+
+UI plugins still load and run their **real** backends — only the module calls those backends make are answered from the fixture. `ui-host` is still spawned and plugins are still `dlopen`ed; the mock replaces the core, not the plugin machinery. Install, uninstall and upgrade complete no round trip, and module events never fire.
+
+Two things to know before changing anything: every image that talks to a module carries its own copy of the mode flag, so all of them must be built from a logos-protocol that reads `LOGOS_MOCK_FIXTURE`; and `ui-host`'s output is hidden unless you run with `QT_LOGGING_RULES='logos.viewhost.debug=true'`. Both are covered in [`mock/README.md`](mock/README.md), along with the fixture invariants.
+
+#### UI-only Preview (no Logos code at all)
+
+If you only want the shell UI — to work on layout, or as a first bring-up on a new platform — [`shell-preview/`](shell-preview/README.md) loads the real `main_ui.so` through `IShellHost` with fixture data and links no Logos library whatsoever.
+
+```bash
+nix run .#shell-preview
+```
+
+Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and loads no plugins — its nix closure contains no Logos library at all, so a core rework cannot reach it. For mobile, see [`MOBILE-HANDOFF.md`](MOBILE-HANDOFF.md).
+
 #### Parallel Instances (`--user-dir`)
 
 `--user-dir <path>` (or `-u`) sets the base directory so multiple Basecamp instances can run side-by-side with isolated `plugins/`, `modules/`, `module_data/`, and `logs/`. The path is used verbatim.
@@ -241,6 +271,14 @@ Validates the app starts without QML errors or crashes:
 ```bash
 nix build .#smoke-test -L
 cat result/smoke-test.log
+```
+
+### Mock Fixture Tests
+
+Covers the fixture's invariants and the startup placeholder resolution. Not part of `nix flake check` — run it explicitly in CI:
+
+```bash
+nix build .#mock-tests -L
 ```
 
 ### UI Integration Tests
