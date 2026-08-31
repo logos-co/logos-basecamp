@@ -211,7 +211,7 @@ Three consequences worth settling before any of this is built. `uses` cannot gat
 
 **Consent that scales, starting with "always use this app".** This shipped once and was pulled before release: remembering a pick is only half a feature without a way to see and undo it, and a preference you cannot revoke from the UI is worse than one you never made. Landing it properly needs a settings screen listing every remembered choice with a revoke button; intents that can never be remembered, since "always allow" must not apply to signing a transaction — a property of the intent, so it belongs in the registry above; and a rule that a remembered pick is only ever a shortcut past the chooser, never a different call shape, so the whole thing stays removable. Beyond that: a read/mutate distinction, which the vocabulary currently cannot express, and scoped grants — "this app, this intent, up to this amount, for 24 hours" — the shape that reduces prompts without reducing safety.
 
-**Getting back to whoever asked.** Dispatching brings the provider forward; nothing brings the user back — and after installing a suggested package you must return to the original app and repeat the action yourself. `IntentPresenter` deliberately has no "put it back", because a shell that navigates on its own fights whoever is driving — but the current state is the opposite extreme, where you approve something in a wallet and are left there with no thread home. What is missing is *offered* return: an affordance naming the app that asked, present while a request is in flight and briefly after, surviving navigation within the provider. Shell navigation only — no error code, no manifest field, no change to the frozen surface.
+**Getting back to whoever asked — partly answered.** A provider answering now returns the user to the requester, on either outcome; see §8. What is still missing is the *install* case: after installing a suggested package you must find the original app and repeat the action yourself. Nothing dispatched, so there is nothing to return from, and reviving a request the user was already told was `unavailable` would mean an app's action firing without them asking twice.
 
 **`cardinality: "all"` needs rethinking before it is built.** It is reserved in the grammar, but broadcast conflicts with the rest of the design in two ways: it tells providers the user never chose that a request happened, leaking the requester's activity to bystanders; and returning N results tells the caller how many providers exist, which is precisely the enumeration oracle that merging `unavailable` and flooring the timing exist to prevent. It needs a different consent shape — the user picking a *set* — and probably must not report a count. It is not simply pending implementation.
 
@@ -231,3 +231,43 @@ Three consequences worth settling before any of this is built. `uses` cannot gat
 | Dialogs | `logos-basecamp/src/Basecamp/Shell/Intent*Dialog.qml` |
 | App-author guide | `logos-tutorial/guide-intents-for-app-developers.md` |
 | Full reference | `logos-tutorial/logos-developer-guide.md` §8.5 |
+
+---
+
+## 8. Returning to the caller
+
+Dispatching moves the user to the provider. Not moving them back was an asymmetry, not a policy: the shell was willing to take someone somewhere and unwilling to bring them home.
+
+When a provider **answers** — `ok` either way; a cancel is the outcome that most wants a ride home — the shell returns the user to the requester. Navigation only: the result reaches the requester's callback exactly as before, and nothing about the frozen surface in `LogosIntent.h` changes.
+
+**Only that path navigates.** `finish()` is reached six ways and only `submitResponse` is something the user did. The `sweep` deadlines, the 400 ms `failWithFloor`, `endpointDestroyed`, `abandon` and refused payloads all happen for reasons that never reach the screen — four of them never navigated in the first place, and the two that did would otherwise move the shell minutes later with nothing on it to explain why. The path is recorded as `CompletionPath` and carried into `finish()` for exactly this reason.
+
+Five further guards, each keeping the motion explainable rather than merely safe:
+
+| Guard | Prevents |
+|---|---|
+| `didNavigate` | "returning" from a request that displaced nobody — a shell provider, or anything that failed before dispatch |
+| `isHandoff` | bouncing the user out of a destination they were sent to |
+| `isAppFrontmost(provider)` | dragging back a user who already moved on |
+| `isAppLoaded(requester)` | navigating to an app that unloaded meanwhile; a return must never become a load |
+| `anyDialogOpen()` | navigating out from under a shell dialog |
+
+A **400 ms dwell floor** holds the return so a fast provider produces visible motion rather than a flicker; it is a legibility bound, not a semantic one — `handoff` is the semantic test. A **circuit breaker** (3 returns in 10 s) disables auto-return for the session: nothing detects intent cycles and a provider may submit while handling one, so the user must never be trapped in a shell moving on its own.
+
+**Hand-offs.** Not every intent is a transaction. Some exist to take the user somewhere and leave them: a page, a note, something they will watch on its own timescale. Their `ok` means "I have taken you there", not "we are done", and returning would undo the request. The provider declares it on the `provides` entry beside `params`:
+
+```json
+{ "intent": "some.intent", "handoff": true }
+```
+
+Absent means `false`. Per *(provider, intent)*, like `params` and for the same reason: two apps may implement one capability differently and there is no per-intent schema to appeal to. A non-boolean is refused into `diagnostics()` rather than coerced — `"handoff": "true"` would otherwise read as true and silently invert an author's intent. Two providers may disagree; the chosen one's declaration is the one that applies.
+
+**`handoff` governs navigation only.** When a provider answers is a separate, independent decision: on arrival when there is no completion to wait for, or when the user marks the action done — at which point the caller learns it really happened and the user still is not sent back. The one constraint is the deadline a provider that accepted already lives under: **10 minutes** before the backstop reports `timeout`. Ample for a button press, not for work waiting on a network or a chain, where the provider should answer once the work is *started* and let the caller read the outcome from its own data source.
+
+`logos.repositories.manage` is declared a hand-off in code, through `registerShellProvider`. It happens not to auto-return anyway — the broker never presents a shell provider, so `didNavigate` is false — but that is the right behaviour by an unrelated route, and it would stop holding the day a shell intent is transactional.
+
+**Not carried into the manifest.** `handoff` stays in the installed `metadata.json`, exactly like `params`, and `bundle.sh` copies intent names alone. A second copy in the signed manifest would be a bundle-time snapshot nothing reads and that can drift from the file actually enforced.
+
+**Why no return affordance.** An earlier draft had a floating "← Back to Chat" chip for every case auto-return declines. Dropped: every loaded app has a permanent sidebar icon, and plugin widgets are confined to the content stack, so a provider's own popup cannot cover the way back. The chip would have been a second escape hatch layered on one that cannot be blocked — at the cost of a component, a grace timer, bridge plumbing, and a placement constraint (`OverlayDialogs` must stay hidden when idle or it steals the Linux drag-and-drop pixmap). **That makes "app content cannot cover the sidebar" load-bearing**, and it is the kind of thing a later full-bleed workspace would quietly break.
+
+Known limits: wander off before the provider answers and there is no automatic return; the install-offer flow has none, as above; and a return lands you on the app, not on where you were inside it — in-app position survives only because nothing here unloads anything.

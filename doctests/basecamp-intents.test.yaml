@@ -122,6 +122,7 @@ sections:
           - "intent_requester_demo"
           - "intent_provider_a"
           - "intent_provider_b"
+          - "intent_provider_manual"
 
   - title: "Refusal, the chooser, and isolation"
     step: true
@@ -222,6 +223,74 @@ sections:
               property: "lastHandled"
               value: ""
               text: "The unchosen provider is not merely ignored — it is never told. The broker mints a separate dispatch id for the provider it picked, so the requester's own id never leaves its side and no other app sees the request at all."
+
+            - name: "Ask for something a provider answers on a button press"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnManual"
+              text: "`test.manual` goes to a fixture that holds the request open until someone clicks. The two providers above answer on a timer, which proves routing but says nothing about *when* the user acts — and the return trip is defined by that moment."
+
+            - name: "Choose the manual provider"
+              action: click_object
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_manual"
+
+            - name: "It holds the request rather than answering"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "providerRootManual"
+              property: "lastHandled"
+              value: "waiting"
+              timeout: 45000
+              text: "The shell has moved the user here and is waiting. Note the ordering the next step depends on: dispatch presents the provider *before* delivering to it, so arriving is not evidence the handler has run — which is why this gate exists rather than clicking straight away."
+
+            - name: "Answer it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnComplete"
+
+            - name: "The user is back with whoever asked"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "requesterRoot"
+              property: "lastResult"
+              value: "ok:intent_provider_manual"
+              timeout: 45000
+              text: "Answering returns the user to the requester — the same move dispatch made, run backwards. Navigation only: the result still arrives exactly as before, which is what this property shows. A cancel returns them too; the outcome that most wants a way home is the one where the user changed their mind."
+
+            - name: "Ask for a hand-off instead"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnHandoff"
+              text: "`test.handoff` is serviced by the SAME app, holds the request open the same way, and answers with the same `ok:true` on the same button. The only difference is `\"handoff\": true` in its `metadata.json`."
+
+            - name: "Choose the manual provider again"
+              action: click_object
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_manual"
+
+            - name: "It holds this one open too"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "providerRootManual"
+              property: "lastHandled"
+              value: "waiting"
+              timeout: 45000
+              text: "WHEN a provider answers and WHETHER the shell then moves the user are independent. The first is the provider's business — answer on arrival, or wait for the user, as here. The second is all `handoff` controls."
+
+            - name: "Complete it the same way"
+              action: click_object
+              find_by: "objectName"
+              find_value: "btnComplete"
+
+            - name: "Answered, and the user stays"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "providerRootManual"
+              property: "lastHandled"
+              value: "handed-off"
+              timeout: 45000
+              text: "Identical completion to the transaction above, opposite navigation. A hand-off's `ok` means \"the thing you sent me here for is done\", not \"send me back\" — the request existed to put the user here, so returning would undo it. From here the sidebar is the way back, chosen by the user rather than by the shell."
 
   - title: "What this proves"
     text: |

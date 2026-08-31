@@ -16,6 +16,12 @@
     },
     {
       "intent": "test.roundtrip"
+    },
+    {
+      "intent": "test.manual"
+    },
+    {
+      "intent": "test.handoff"
     }
   ]
 }

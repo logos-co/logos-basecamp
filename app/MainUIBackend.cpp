@@ -89,7 +89,11 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, Q
     // ui_qml app's bridge as it loads, before its QML runs.
     m_uiPluginManager->setIntentAdapter(m_intentAdapter);
 
-    m_intentPresenter = new UIPluginPresenter(m_uiPluginManager, this);
+    m_intentPresenter = new UIPluginPresenter(
+        m_uiPluginManager,
+        [this]() { return m_currentActiveSectionIndex; },
+        this);
+    m_intentPresenter->setDialogProbe([this]() { return m_overlayActive; });
     m_intentBroker->setPresenter(m_intentPresenter);
     wireIntents();
 
@@ -321,6 +325,7 @@ void MainUIBackend::refreshUiModules()
 }
 void MainUIBackend::onAppLauncherClicked(const QString& n)    { m_uiPluginManager->onAppLauncherClicked(n); }
 void MainUIBackend::setCurrentVisibleApp(const QString& n)    { m_uiPluginManager->setCurrentVisibleApp(n); }
+void MainUIBackend::setOverlayActive(bool active)             { m_overlayActive = active; }
 
 // PackageCoordinator — package_manager IPC and package-lifecycle cascade.
 void MainUIBackend::wireIntents()
@@ -457,9 +462,17 @@ void MainUIBackend::wireIntents()
     m_intentRegistry->registerShellUses(
         QStringLiteral("main_ui"), {QStringLiteral("packages.show")});
 
+    // repositories.manage is a HAND-OFF: it puts the user on the Settings
+    // repositories page and leaves them there for as long as they like, so its
+    // `ok` means "I have taken you there", not "we are done". Declared rather
+    // than left to fall out of the broker skipping presentApp for shell
+    // providers — that gives the right answer by an unrelated route, and stops
+    // doing so the day a shell intent is transactional. The confirm intents are
+    // not hand-offs: they are dialogs that resolve.
     m_intentRegistry->registerShellProvider(
         QStringLiteral("main_ui"),
         QStringList{QStringLiteral("logos.repositories.manage")} + kPackageConfirmIntents,
+        QStringList{QStringLiteral("logos.repositories.manage")},
         QStringLiteral("Logos"),
         QStringLiteral("qrc:/qt/qml/Basecamp/Icons/assets/settings.svg"));
 

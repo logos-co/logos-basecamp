@@ -41,6 +41,8 @@ public:
     virtual bool isAppLoaded(const QString& appName) const = 0;
     virtual void ensureAppLoaded(const QString& appName) = 0;
     virtual void presentApp(const QString& appName) = 0;
+    virtual bool isAppFrontmost(const QString& appName) const = 0;
+    virtual bool anyDialogOpen() const = 0;
 };
 
 // A seam rather than a signal because the broker must know whether a chooser is
@@ -124,6 +126,24 @@ public:
     // activation to prove the mute-provider case.
     void setTimeouts(int activationMs, int responseMs, int errorFloorMs);
 
+    // The two auto-return timings, overridable for the same reason as the
+    // deadlines above — a test should not pay wall-clock to watch either.
+    //
+    // Both are held apart from setTimeouts deliberately: a deadline decides
+    // whether a request SUCCEEDS, while these two only shape navigation. A
+    // wrong value here is a worse experience, never a wrong answer.
+    //
+    //   dwell floor (400 ms) — how long the user must have been on the
+    //     provider before a return is allowed. Legibility only: below it the
+    //     round trip is a flicker the eye reads as a glitch. `handoff` is the
+    //     semantic test; this is not.
+    //   breaker cooldown (30 s) — how long auto-return stays paused once the
+    //     runaway breaker trips. Tests drop it to milliseconds to prove it
+    //     re-arms at all, which is the half that matters: a permanent
+    //     disable was the original bug.
+    void setReturnDwellFloorMs(int ms);
+    void setReturnBreakerCooldownMs(int ms);
+
     int pendingCount() const;
 
 signals:
@@ -144,6 +164,19 @@ private:
         Dispatched
     };
 
+    // HOW a request ended, not just that it did. finish() is reached six ways
+    // and only one of them is something the user did: a provider answering.
+    // The rest — deadlines, an endpoint dying, a bridge dropping its callbacks,
+    // a payload refused — happen for reasons that never appear on screen, and
+    // navigating on those would move the shell with nothing to explain it.
+    enum class CompletionPath {
+        ProviderResponse,   // the provider answered; the user acted
+        Deadline,           // sweep() gave up
+        EndpointGone,       // provider or requester destroyed
+        Abandoned,          // the bridge dropped its callbacks
+        Rejected            // refused before or during dispatch
+    };
+
     struct PendingRequest {
         QString dispatchId;
         QString requestId;                 // the requester's own id
@@ -161,6 +194,9 @@ private:
         QVariantList choiceProviders;     // chooser payload
         qint64 acceptedAtMs = 0;
         qint64 phaseSinceMs = 0;
+        bool didNavigate = false;
+        qint64 navigatedAtMs = 0;
+        bool isHandoff = false;
     };
 
     void startRequest(const QString& dispatchId);
@@ -169,9 +205,13 @@ private:
     QString specViolation(const QString& providerName, const QString& intent,
                           const QVariantMap& params) const;
     void finish(const QString& dispatchId, bool ok, const QVariant& data,
-                const QString& error);
-    void failWithFloor(const QString& dispatchId, const QString& errorCode);
+                const QString& error, CompletionPath path);
+    void failWithFloor(const QString& dispatchId, const QString& errorCode,
+                       CompletionPath path = CompletionPath::Rejected);
     void deliver(const PendingRequest& request, const QVariantMap& envelope);
+    void maybeReturnToRequester(const PendingRequest& request,
+                                CompletionPath path);
+    void noteReturn();
     bool aChoiceIsOnScreen() const;
     void presentPendingChoice(const QString& dispatchId);
     void drainChoiceQueue();
@@ -194,6 +234,19 @@ private:
     QHash<QString, IntentEndpoint*> m_endpointsByName;
     QHash<QString, QStringList> m_activationQueue;
 
+    // Auto-return circuit breaker. Nothing in the broker detects intent cycles
+    // and a provider may submit while handling one, so nested requests can
+    // legitimately produce several returns in a row. A handful is a flow; a
+    // stream is a shell moving on its own, and the user must be able to get
+    // out of it.
+    QList<qint64> m_returnTimestamps;
+    bool m_returnsDisabled = false;
+    qint64 m_returnsDisabledAtMs = 0;
+    qint64 m_returnBreakerCooldownMs = kReturnBreakerCooldownMsDefault;
+    int m_returnDwellFloorMs = kReturnDwellFloorMsDefault;
+
+    static constexpr int    kReturnDwellFloorMsDefault      = 400;
+    static constexpr qint64 kReturnBreakerCooldownMsDefault = 30 * 1000;
     int m_activationTimeoutMs = 45000;
     int m_responseTimeoutMs = 20000;
     int m_errorFloorMs = 400;
