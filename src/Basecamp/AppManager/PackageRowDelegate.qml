@@ -33,6 +33,25 @@ ItemDelegate {
 
         readonly property var usableVersions:
             root.appRow ? (root.appRow.versions || []) : []
+
+        // Live download bytes. `downloadTotal` is 0 when nobody knows the
+        // size, so guard every division on `hasProgress`.
+        readonly property real dlReceived:
+            root.appRow ? (root.appRow.downloadReceived || 0) : 0
+        readonly property real dlTotal:
+            root.appRow ? (root.appRow.downloadTotal || 0) : 0
+        readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        // A determinate bar claims a FRACTION, so it needs a real sample.
+        // dlTotal is seeded from the catalog when the plan is registered —
+        // before any transfer — so gating on it alone parked the bar at 0%.
+        readonly property bool hasProgress:
+            d.rowStage === InstallStage.Downloading && d.dlTotal > 0
+            && d.dlReceived > 0 && !d.downloadDone
+        // Nothing measurable yet: no bytes, or no size from transport or
+        // catalog. Sweep rather than sit still.
+        readonly property bool indeterminateProgress:
+            d.rowStage === InstallStage.Downloading && !d.downloadDone
+            && (d.dlReceived <= 0 || d.dlTotal <= 0)
     }
 
     hoverEnabled: true
@@ -115,11 +134,26 @@ ItemDelegate {
         }
 
         LogosBadge {
+            id: stageBadge
+            TextMetrics {
+                id: widestInstallLabel
+                font: stageBadge.labelItem.font
+                text: "999.9 / 999.9 MB"
+            }
+            property int pillWidth: (d.rowStage === InstallStage.Downloading || d.rowStage === InstallStage.Downloaded || d.rowStage === InstallStage.Queued || d.rowStage === InstallStage.Installing)
+                ? Math.ceil(widestInstallLabel.width) + leftPadding + rightPadding
+                : implicitWidth
+            Behavior on pillWidth {
+                NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
+            }
+            Layout.preferredWidth: pillWidth
             Layout.alignment: Qt.AlignVCenter
             text: {
                 if (d.isError) return qsTr("Conflict")
+                if (d.hasProgress) return DownloadFormat.label(d.dlReceived, d.dlTotal)
                 switch (d.rowStage) {
                 case InstallStage.Downloading: return qsTr("Downloading…")
+                case InstallStage.Downloaded:  return qsTr("Downloaded")
                 case InstallStage.Queued:      return qsTr("Queued")
                 case InstallStage.Installing:  return qsTr("Installing…")
                 case InstallStage.Installed:   return qsTr("Installed")
@@ -138,6 +172,7 @@ ItemDelegate {
                 if (d.isError) return Theme.palette.error
                 switch (d.rowStage) {
                 case InstallStage.Downloading:
+                case InstallStage.Downloaded:
                 case InstallStage.Queued:
                 case InstallStage.Installing:  return Theme.palette.warning
                 case InstallStage.Installed:   return Theme.palette.textTertiary
@@ -153,6 +188,28 @@ ItemDelegate {
                 return d.isInstalled ? Theme.palette.textTertiary : Theme.palette.primary
             }
             radius: Theme.spacing.radiusLarge
+
+            LogosProgressBar {
+                parent: stageBadge.backgroundItem
+                visible: d.hasProgress || d.indeterminateProgress
+                anchors.left: parent ? parent.left : undefined
+                anchors.right: parent ? parent.right : undefined
+                anchors.bottom: parent ? parent.bottom : undefined
+                anchors.margins: stageBadge.borderWidth + 1
+                height: 3
+
+                from: 0
+                to: d.dlTotal > 0 ? d.dlTotal : 1
+                value: d.dlReceived
+                indeterminate: d.indeterminateProgress
+
+                trackColor: "transparent"
+                fillColor: Theme.colors.getColor(Theme.palette.warning, 0.95)
+
+                Behavior on value {
+                    NumberAnimation { duration: 180; easing.type: Easing.OutQuad }
+                }
+            }
 
             HoverHandler { id: badgeHover; enabled: d.isError }
             ToolTip.visible: badgeHover.hovered && d.isError

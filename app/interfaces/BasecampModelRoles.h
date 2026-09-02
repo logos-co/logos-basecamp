@@ -54,6 +54,11 @@ struct AppsModelRoles {
         InstallStageRole,        // InstallStage::Value (int) — see InstallEnums.h
         InstallErrorRole,        // failure message when InstallStage == Failed
         ProvidesRole,            // QStringList — intents this package can service
+        DownloadReceivedRole,    // bytes fetched so far; 0 unless downloading
+        DownloadTotalRole,       // bytes expected; 0 = size unknown
+        PlanDownloadReceivedRole,
+        PlanDownloadTotalRole,
+        PlanInstallStageRole,    // InstallStage of the whole install this row's app started.
     };
 };
 

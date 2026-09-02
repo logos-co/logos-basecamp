@@ -25,14 +25,39 @@ ItemDelegate {
             root.appData && root.appData.installStatus !== undefined
                 ? root.appData.installStatus
                 : InstallStatus.NotInstalled
+        // The SESSION's stage, not this package's. A tile represents the
+        // whole install: its own package downloads last, so binding to the
+        // package's stage left the tile idle while its dependencies were
+        // being fetched. planInstallStage is derived across the plan.
         readonly property int installStage:
-            root.appData && root.appData.installStage !== undefined
-                ? root.appData.installStage
+            root.appData && root.appData.planInstallStage !== undefined
+                ? root.appData.planInstallStage
                 : InstallStage.None
         readonly property bool isInstalling:
             d.installStage === InstallStage.Downloading
+            || d.installStage === InstallStage.Downloaded
             || d.installStage === InstallStage.Queued
             || d.installStage === InstallStage.Installing
+
+        // Live download bytes. Only meaningful during Downloading; the
+        // stages either side of it have no byte count, so the badge falls
+        // back to "Installing…" there rather than freezing on a number.
+        readonly property real dlReceived:
+            root.appData ? (root.appData.planDownloadReceived || 0) : 0
+        readonly property real dlTotal:
+            root.appData ? (root.appData.planDownloadTotal || 0) : 0
+        readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        // A determinate bar claims a FRACTION, so it needs a real sample.
+        // dlTotal is seeded from the catalog when the plan is registered —
+        // before any transfer — so gating on it alone parked the bar at 0%.
+        readonly property bool hasProgress:
+            d.installStage === InstallStage.Downloading && d.dlTotal > 0
+            && d.dlReceived > 0 && !d.downloadDone
+        // Nothing measurable yet: no bytes, or no size from transport or
+        // catalog. Sweep rather than sit still.
+        readonly property bool indeterminateProgress:
+            d.installStage === InstallStage.Downloading && !d.downloadDone
+            && (d.dlReceived <= 0 || d.dlTotal <= 0)
 
         readonly property string nameText:      root.appData ? (root.appData.name || "") : ""
         readonly property string displayName:   root.appData ? (root.appData.displayName || root.appData.name || "") : ""
@@ -142,13 +167,30 @@ ItemDelegate {
         }
 
         LogosBadge {
+            id: stateBadge
+            TextMetrics {
+                id: widestInstallLabel
+                font: stateBadge.labelItem.font
+                text: "999.9 / 999.9 MB"
+            }
+            property int pillWidth: (d.isInstalling)
+                ? Math.ceil(widestInstallLabel.width) + leftPadding + rightPadding
+                : implicitWidth
+            Behavior on pillWidth {
+                NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
+            }
+            Layout.preferredWidth: pillWidth
             Layout.alignment: Qt.AlignVCenter
             // Installed-but-stale states stay visible; NotInstalled only on hover.
             visible: d.isInstalling
                      || d.installStage === InstallStage.Failed
                      || (d.installStatus !== InstallStatus.Installed
                          && (d.isInstalled || root.hovered))
-            text: d.isInstalling                                      ? qsTr("Installing…")
+            // While bytes are moving the badge counts them; the rest of the
+            // install (verify, install) has no byte count, so it reverts to
+            // the plain label instead of parking at 100%.
+            text: d.hasProgress ? DownloadFormat.label(d.dlReceived, d.dlTotal)
+                : d.isInstalling                                      ? qsTr("Installing…")
                 : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                 : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
                 : d.installStatus === InstallStatus.DowngradeAvailable    ? qsTr("Downgrade")
@@ -161,6 +203,28 @@ ItemDelegate {
                  : d.installStatus === InstallStatus.DifferentHash         ? Theme.palette.info
                                                                        : Theme.palette.accentOrange
             backgroundColor: Theme.palette.surfaceRaised
+
+            LogosProgressBar {
+                parent: stateBadge.backgroundItem
+                visible: d.hasProgress || d.indeterminateProgress
+                anchors.left: parent ? parent.left : undefined
+                anchors.right: parent ? parent.right : undefined
+                anchors.bottom: parent ? parent.bottom : undefined
+                anchors.margins: stateBadge.borderWidth + 1
+                height: 3
+
+                from: 0
+                to: d.dlTotal > 0 ? d.dlTotal : 1
+                value: d.dlReceived
+                indeterminate: d.indeterminateProgress
+
+                trackColor: "transparent"
+                fillColor: Theme.colors.getColor(Theme.palette.warning, 0.95)
+
+                Behavior on value {
+                    NumberAnimation { duration: 180; easing.type: Easing.OutQuad }
+                }
+            }
         }
 
         // Per-row Uninstall — trash icon in the trailing cell.
