@@ -37,10 +37,10 @@ ShellHostAdapter::ShellHostAdapter(MainUIBackend* backend, QObject* parent)
         m_observer->onPluginWindowRemoveRequested(widget);
     });
 
-    connect(m_backend, &MainUIBackend::pluginWindowActivateRequested, this,
+    connect(m_backend, &MainUIBackend::presentAppRequested, this,
             [this](QWidget* widget) {
         if (!m_observer) return;
-        m_observer->onPluginWindowActivateRequested(widget);
+        m_observer->onPresentAppRequested(widget);
     });
 }
 

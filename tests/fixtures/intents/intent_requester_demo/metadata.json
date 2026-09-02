@@ -1,0 +1,27 @@
+{
+  "name": "intent_requester_demo",
+  "display_name": "Intent Requester",
+  "version": "1.0.0",
+  "description": "Intent test fixture (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": [],
+  "category": "misc",
+  "uses": [
+    {
+      "intent": "test.echo"
+    },
+    {
+      "intent": "test.solo"
+    },
+    {
+      "intent": "test.roundtrip"
+    },
+    {
+      "intent": "test.manual"
+    },
+    {
+      "intent": "test.handoff"
+    }
+  ]
+}
