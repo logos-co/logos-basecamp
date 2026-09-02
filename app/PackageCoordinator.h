@@ -245,7 +245,8 @@ signals:
                                           const QString& releaseTag,
                                           const QVariantList& depChanges,
                                           const QString& requesterName,
-                                          bool requesterBundled);
+                                          bool requesterBundled,
+                                          bool depChangesResolved);
 
     // Repository management — change-notify for the QML-facing cache and
     // an outcome signal for add/remove/toggle (success or error string).
@@ -302,13 +303,18 @@ private:
     //
     // `then` runs exactly once. On a resolver failure — or with no repository
     // to resolve against, which is every local .lgx — it runs with an empty
-    // list rather than being dropped: the dialog degrades to "nothing else
-    // needs to change", which is the honest reading, and the pending intent is
-    // never stranded waiting for a callback that isn't coming.
+    // list rather than being dropped, so the pending intent is never stranded
+    // waiting for a callback that isn't coming.
+    //
+    // `then(resolved, changes)`. `resolved` says whether the resolver actually
+    // ran: an empty `changes` means "nothing needs to change" ONLY when it is
+    // true. With no repository to resolve against, or a failed call, the gate
+    // has established nothing — and a consent dialog must not report an
+    // absence of knowledge as an absence of consequences.
     void resolveDepChangesThen(const QString& name,
                                const QString& repositoryUrl,
                                const QString& version,
-                               std::function<void(const QVariantList&)> then);
+                               std::function<void(bool, const QVariantList&)> then);
 
     // The cascade pending slot. UnloadCascade (local, no IPC) lives on
     // UIPluginManager. Here we track what the confirm dialog is deciding.
@@ -407,7 +413,6 @@ private:
     // from the local catalog dependency graph — no async resolver.
     QVariantList collectCatalogRequired(const QString& name,
                                         const QString& repositoryUrl) const;
-    QString buildInstalledPackagesJson() const;
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;
     static QString depAction(const QString& installedVersion,

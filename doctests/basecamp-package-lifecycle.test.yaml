@@ -358,9 +358,9 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
-              text: "The gate presents exactly what would be installed: `test_qml_only` v0.1.1, with no transitive dependency changes. Until this dialog is confirmed, no files have been written."
+              text: "The gate presents what would be installed: `test_qml_only` v0.1.1. It says the dependencies could not be determined rather than claiming there are none — this package came from a local file, so there is no repository for the gate to resolve against, and a consent dialog must not report an absence of knowledge as an absence of consequences. Until this dialog is confirmed, no files have been written."
               screenshot: "pkglife-install-dialog.png"
 
             - name: "Confirm the install"
@@ -572,7 +572,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               text: "The package manager no longer knows `test_qml_only` — the same LGX that would have been a *reinstall* a minute ago gates as a *fresh install* again, greeted by its raw name because the display-name cache forgot it too. That's positive proof the uninstall removed both the files and the package record."
               screenshot: "pkglife-reinspect.png"
