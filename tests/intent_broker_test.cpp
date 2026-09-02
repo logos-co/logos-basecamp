@@ -95,10 +95,33 @@ public:
     QStringList loaded;
     QStringList ensureCalls;
     QStringList presented;
+    QString     frontmost;
+    bool        dialogOpen = false;
 
     bool isAppLoaded(const QString& appName) const override { return loaded.contains(appName); }
     void ensureAppLoaded(const QString& appName) override { ensureCalls.append(appName); }
-    void presentApp(const QString& appName) override { presented.append(appName); }
+
+    // Presenting an app makes it the one on screen — modelling the real shell,
+    // where the return trip's own presentApp is what clears the frontmost
+    // provider. Without this a test could not tell a return from a no-op.
+    void presentApp(const QString& appName) override
+    {
+        presented.append(appName);
+        frontmost = appName;
+    }
+
+    bool isAppFrontmost(const QString& appName) const override
+    {
+        return !appName.isEmpty() && frontmost == appName;
+    }
+    bool anyDialogOpen() const override { return dialogOpen; }
+
+    // "provider was raised, then the requester was raised again" — the shape a
+    // completed round trip leaves behind.
+    bool returnedTo(const QString& requester) const
+    {
+        return presented.size() >= 2 && presented.last() == requester;
+    }
 };
 
 QString writeApp(QTemporaryDir& root, const QString& dirName, const QByteArray& json)
@@ -153,6 +176,7 @@ private:
 private slots:
     void testNotDeclaredShortCircuits();
     void testNoProviderIsUnavailableAfterFloor();
+    void testRestrictedRequesterIsDeniedIndistinguishably();
     void testHappyPathDispatchesAndRoutesBack();
     void testDispatchIdDiffersFromRequestId();
     void testSpoofedResponseIsIgnored();
@@ -181,6 +205,24 @@ private slots:
     void testInstallableProvidersNeverReachResolve();
     void testSecondChoiceQueuesInsteadOfRepointingTheDialog();
     void testAmbiguousWithChooserAsksAndRoutesTheChoice();
+
+    // ── Auto-return ─────────────────────────────────────────────────────
+    void testProviderResponseReturnsToRequester();
+    void testCancelledResponseAlsoReturns();
+    void testHandoffProviderLeavesTheUserThere();
+    void testTimeoutNeverReturns();
+    void testProviderDeathNeverReturns();
+    void testUserWhoMovedOnIsNotDraggedBack();
+    void testDialogOpenSuppressesTheReturn();
+    void testUnloadedRequesterIsNotPresented();
+    void testShellProviderNeverReturns();
+    void testReturnBreakerStopsRunawayNavigation();
+    void testOrdinaryUseDoesNotTripTheBreaker();
+    void testBreakerRecoversAfterQuiet();
+    void testDwellFloorDelaysTheReturn();
+    void testRequesterUnloadedDuringDwellIsNotPresented();
+    void testUserWhoMovesOnDuringDwellIsNotDraggedBack();
+    void testDialogOpenedDuringDwellSuppressesTheReturn();
 };
 
 void TestIntentBroker::buildTwoProviderWorld(QTemporaryDir& root, IntentRegistry& registry)
@@ -257,6 +299,42 @@ void TestIntentBroker::testNoProviderIsUnavailableAfterFloor()
     // The floor defeats the trivial "an instant no means nothing is installed"
     // probe. It is a partial mitigation, not indistinguishability.
     QVERIFY2(timer.elapsed() >= 200, "unavailable was delivered before the error floor");
+}
+
+void TestIntentBroker::testRestrictedRequesterIsDeniedIndistinguishably()
+{
+    // A denied requester must not be able to tell "you are not allowed" from
+    // "nothing provides this" — same code, same floor. Distinguishing the two
+    // would hand an app an oracle for what the shell can do.
+    QTemporaryDir root;
+    const QString evil = writeApp(root, QStringLiteral("evil"),
+        R"({"uses":[{"intent":"logos.packages.confirm_uninstall"}]})");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("evil_ui"), plugin(evil) } }, nullptr, nullptr);
+
+    // The shell really does provide it — so a leak here would be observable.
+    registry.registerShellProvider(QStringLiteral("main_ui"),
+        { QStringLiteral("logos.packages.confirm_uninstall") }, {},
+        QStringLiteral("Logos"), QString());
+    registry.restrictIntentToRequesters(
+        QStringLiteral("logos.packages.confirm_uninstall"),
+        { QStringLiteral("package_manager_ui") });
+
+    FakePresenter presenter;
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(2000, 2000, 200);
+
+    FakeEndpoint evilEndpoint;
+    broker.registerEndpoint(QStringLiteral("evil_ui"), &evilEndpoint);
+
+    QElapsedTimer timer; timer.start();
+    broker.submit(&evilEndpoint, QStringLiteral("req-1"),
+                  QStringLiteral("logos.packages.confirm_uninstall"), {});
+    spin(500);
+
+    QCOMPARE(evilEndpoint.results.size(), 1);
+    QCOMPARE(evilEndpoint.error(), QStringLiteral("unavailable"));
+    QVERIFY2(timer.elapsed() >= 200, "denial was delivered before the error floor");
 }
 
 void TestIntentBroker::testHappyPathDispatchesAndRoutesBack()
@@ -781,7 +859,7 @@ void TestIntentBroker::testShellProviderIsNeverLoadedOrPresented()
     registry.rebuild(plugins, [](const QString& n) { return n; },
                              [](const QString&) { return QString(); });
     registry.registerShellProvider(QStringLiteral("main_ui"),
-                                   {QStringLiteral("logos.repositories.manage")},
+                                   {QStringLiteral("logos.repositories.manage")}, {},
                                    QStringLiteral("Logos"), QString());
 
 
@@ -1338,6 +1416,403 @@ void TestIntentBroker::testAnAppProvidingItsOwnIntentSkipsTheChooser()
     QVERIFY(chooser.presented.isEmpty());
     QCOMPARE(pmEndpoint.requests.size(), 1);
     QCOMPARE(otherEndpoint.requests.size(), 0);
+}
+
+// ── Auto-return ──────────────────────────────────────────────────────────────
+//
+// Dispatch already moves the user to the provider. These are about the move
+// back, and nearly all of them are about NOT making it: the guard set exists so
+// the shell only navigates for a reason the user can see on screen.
+
+namespace {
+
+// chat_ui uses two intents; wallet_ui provides one as a transaction and one as
+// a hand-off. Everything below turns on which of the two was asked for.
+struct ReturnWorld {
+    QTemporaryDir root;
+    IntentRegistry registry;
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeEndpoint chatEndpoint;
+    FakeEndpoint walletEndpoint;
+    std::unique_ptr<IntentBroker> broker;
+
+    ReturnWorld()
+    {
+        const QString chat = writeApp(root, QStringLiteral("chat"),
+            R"({"uses":[{"intent":"wallet.send"},{"intent":"wallet.open"}]})");
+        const QString wallet = writeApp(root, QStringLiteral("wallet"),
+            R"({"provides":[{"intent":"wallet.send"},
+                            {"intent":"wallet.open","handoff":true}]})");
+        registry.rebuild({ { QStringLiteral("chat_ui"),   plugin(chat) },
+                           { QStringLiteral("wallet_ui"), plugin(wallet) } },
+                         nullptr, nullptr);
+
+        presenter.loaded << QStringLiteral("chat_ui") << QStringLiteral("wallet_ui");
+        // The user starts in the requester, which is where a request comes from.
+        presenter.frontmost = QStringLiteral("chat_ui");
+
+        broker = std::make_unique<IntentBroker>(&registry, &presenter);
+        broker->setTimeouts(1000, 400, 20);
+        broker->setReturnDwellFloorMs(20);
+        broker->setChooser(&chooser);
+        broker->registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+        broker->registerEndpoint(QStringLiteral("wallet_ui"), &walletEndpoint);
+    }
+
+    // Submit, answer the chooser, and land on the provider. Returns the
+    // dispatchId the provider must answer with.
+    QString dispatch(const QString& intent)
+    {
+        submitAndConfirm(*broker, chooser, &chatEndpoint, QStringLiteral("req-1"),
+                         intent, QStringLiteral("wallet_ui"));
+        return walletEndpoint.requests.isEmpty()
+                 ? QString()
+                 : walletEndpoint.requests.last().dispatchId;
+    }
+};
+
+} // namespace
+
+void TestIntentBroker::testProviderResponseReturnsToRequester()
+{
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+    QVERIFY(!dispatchId.isEmpty());
+
+    // Dispatch put the user in the wallet, and left them there.
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true,
+                             QVariantMap{ { QStringLiteral("tx"), QStringLiteral("0x1") } },
+                             QString());
+    spin(120);
+
+    QVERIFY2(w.presenter.returnedTo(QStringLiteral("chat_ui")),
+             "answering should have brought the user back to the requester");
+    // And the result still reached the requester — the return is navigation
+    // only, never a substitute for delivering.
+    QCOMPARE(w.chatEndpoint.results.size(), 1);
+}
+
+void TestIntentBroker::testCancelledResponseAlsoReturns()
+{
+    // Backing out is the outcome that most wants a ride home: the user decided
+    // not to do the thing, and leaving them parked in the provider afterwards
+    // is the worst of both.
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, false, QVariantMap{},
+                             QStringLiteral("cancelled"));
+    spin(120);
+
+    QVERIFY(w.presenter.returnedTo(QStringLiteral("chat_ui")));
+}
+
+void TestIntentBroker::testHandoffProviderLeavesTheUserThere()
+{
+    // Same instant ok:true as a transaction. The ONLY difference is the
+    // provider's declaration, and it must be the whole difference.
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.open"));
+    QVERIFY(!dispatchId.isEmpty());
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(120);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+    QCOMPARE(w.presenter.frontmost, QStringLiteral("wallet_ui"));
+    // Still answered. A hand-off completes its request like anything else; it
+    // just does not move the user.
+    QCOMPARE(w.chatEndpoint.results.size(), 1);
+}
+
+void TestIntentBroker::testTimeoutNeverReturns()
+{
+    // The case that rules out "just navigate on any terminal outcome". A
+    // deadline fires with nothing on screen to explain it, and for a provider
+    // that ACCEPTED the request it is the 10-minute backstop — long enough that
+    // the user has forgotten the request ever existed.
+    //
+    // Driven here through the mute-provider deadline instead, because that one
+    // is affordable to wait out. Same CompletionPath::Deadline, same
+    // didNavigate: the user was moved to the wallet and it never answered.
+    ReturnWorld w;
+    w.walletEndpoint.receiverCount = 0;   // declared the capability, no handler
+    QVERIFY(!w.dispatch(QStringLiteral("wallet.send")).isEmpty());
+
+    spin(900);   // past the 400 ms response timeout set in ReturnWorld
+
+    QCOMPARE(w.chatEndpoint.error(), QStringLiteral("timeout"));
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testProviderDeathNeverReturns()
+{
+    ReturnWorld w;
+    QVERIFY(!w.dispatch(QStringLiteral("wallet.send")).isEmpty());
+
+    w.broker->endpointDestroyed(&w.walletEndpoint);
+    spin(120);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testUserWhoMovedOnIsNotDraggedBack()
+{
+    // They left the provider while it was thinking. Whatever they are doing now
+    // outranks a request they walked away from.
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+    w.presenter.frontmost = QStringLiteral("settings");
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(120);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+    QCOMPARE(w.chatEndpoint.results.size(), 1);
+}
+
+void TestIntentBroker::testDialogOpenSuppressesTheReturn()
+{
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+    w.presenter.dialogOpen = true;
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(120);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testUnloadedRequesterIsNotPresented()
+{
+    // Nowhere to go. presentApp on an unloaded app would be a load, and a
+    // navigation must never become one.
+    ReturnWorld w;
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+    w.presenter.loaded.removeAll(QStringLiteral("chat_ui"));
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(120);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testShellProviderNeverReturns()
+{
+    // The shell is never presented, so nothing displaced the user and there is
+    // nothing to undo — its handler did whatever navigating happened.
+    QTemporaryDir root;
+    const QString chat = writeApp(root, QStringLiteral("chat"),
+        R"({"uses":[{"intent":"logos.repositories.manage"}]})");
+    IntentRegistry registry;
+    registry.registerShellProvider(QStringLiteral("main_ui"),
+                                   { QStringLiteral("logos.repositories.manage") },
+                                   { QStringLiteral("logos.repositories.manage") },
+                                   QStringLiteral("Logos"), QString());
+    registry.rebuild({ { QStringLiteral("chat_ui"), plugin(chat) } }, nullptr, nullptr);
+
+    FakePresenter presenter;
+    presenter.loaded << QStringLiteral("chat_ui");
+    presenter.frontmost = QStringLiteral("chat_ui");
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(1000, 1000, 20);
+    broker.setReturnDwellFloorMs(20);
+
+    FakeEndpoint chatEndpoint, shellEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+    broker.registerEndpoint(QStringLiteral("main_ui"), &shellEndpoint);
+
+    broker.submit(&chatEndpoint, QStringLiteral("req-1"),
+                  QStringLiteral("logos.repositories.manage"), {});
+    spin(120);
+    QCOMPARE(shellEndpoint.requests.size(), 1);
+
+    broker.submitResponse(&shellEndpoint, shellEndpoint.requests.last().dispatchId,
+                          true, QVariantMap{}, QString());
+    spin(120);
+
+    QVERIFY2(presenter.presented.isEmpty(),
+             "the shell provider must neither be presented nor returned from");
+}
+
+void TestIntentBroker::testReturnBreakerStopsRunawayNavigation()
+{
+    // Nothing detects intent cycles and a provider may submit while handling
+    // one, so a runaway is reachable. This drives one with no delay at all
+    // between round trips — the shape a loop has and a human cannot produce.
+    ReturnWorld w;
+
+    for (int i = 0; i < 12; ++i) {
+        w.presenter.frontmost = QStringLiteral("chat_ui");
+        submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
+                         QStringLiteral("req-%1").arg(i),
+                         QStringLiteral("wallet.send"), QStringLiteral("wallet_ui"));
+        const auto& requests = w.walletEndpoint.requests;
+        if (requests.isEmpty()) continue;
+        w.broker->submitResponse(&w.walletEndpoint, requests.last().dispatchId,
+                                 true, QVariantMap{}, QString());
+        spin(80);
+    }
+
+    const int returns = w.presenter.presented.count(QStringLiteral("chat_ui"));
+    QVERIFY2(returns >= 1, "the first few returns should still have happened");
+    QVERIFY2(returns < 12,
+             qPrintable(QStringLiteral("breaker never tripped — %1 auto-returns")
+                            .arg(returns)));
+}
+
+void TestIntentBroker::testOrdinaryUseDoesNotTripTheBreaker()
+{
+    // THE REGRESSION. At 3-in-10s the intent suite tripped this by doing four
+    // ordinary round trips in a row, and auto-return then stayed dead for the
+    // rest of the session — the feature silently switching itself off on a
+    // pattern a real user produces without trying.
+    //
+    // Paced at ~1.2 s per trip: far faster than anyone clicking through a
+    // chooser and acting in a provider, and it must still be fine.
+    ReturnWorld w;
+
+    for (int i = 0; i < 4; ++i) {
+        w.presenter.frontmost = QStringLiteral("chat_ui");
+        submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
+                         QStringLiteral("req-%1").arg(i),
+                         QStringLiteral("wallet.send"), QStringLiteral("wallet_ui"));
+        const auto& requests = w.walletEndpoint.requests;
+        QVERIFY(!requests.isEmpty());
+        w.broker->submitResponse(&w.walletEndpoint, requests.last().dispatchId,
+                                 true, QVariantMap{}, QString());
+        spin(1000);
+    }
+
+    QCOMPARE(w.presenter.presented.count(QStringLiteral("chat_ui")), 4);
+}
+
+void TestIntentBroker::testBreakerRecoversAfterQuiet()
+{
+    // A one-way door means one burst costs the user the feature until they
+    // restart. Whatever the loop was, it is over by the time things go quiet.
+    ReturnWorld w;
+    w.broker->setReturnBreakerCooldownMs(300);
+
+    for (int i = 0; i < 12; ++i) {
+        w.presenter.frontmost = QStringLiteral("chat_ui");
+        submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
+                         QStringLiteral("burst-%1").arg(i),
+                         QStringLiteral("wallet.send"), QStringLiteral("wallet_ui"));
+        const auto& requests = w.walletEndpoint.requests;
+        if (requests.isEmpty()) continue;
+        w.broker->submitResponse(&w.walletEndpoint, requests.last().dispatchId,
+                                 true, QVariantMap{}, QString());
+        spin(20);
+    }
+    const int duringBurst = w.presenter.presented.count(QStringLiteral("chat_ui"));
+    QVERIFY2(duringBurst < 12, "breaker never tripped, so recovery is untested");
+
+    spin(500);   // past the cooldown
+
+    w.presenter.frontmost = QStringLiteral("chat_ui");
+    submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
+                     QStringLiteral("after"), QStringLiteral("wallet.send"),
+                     QStringLiteral("wallet_ui"));
+    w.broker->submitResponse(&w.walletEndpoint,
+                             w.walletEndpoint.requests.last().dispatchId,
+                             true, QVariantMap{}, QString());
+    spin(200);
+
+    QVERIFY2(w.presenter.presented.count(QStringLiteral("chat_ui")) > duringBurst,
+             "auto-return never came back after the cooldown");
+}
+
+// ── The dwell floor's deferred path ─────────────────────────────────────────
+//
+// A provider that answers faster than the floor does not return the user
+// immediately — the trip is held on a timer so it reads as motion rather than
+// a flicker. That branch re-checks every guard on the way out, because the
+// window is exactly long enough for the world to change underneath it.
+//
+// Every other test in this file responds well after the floor and so takes the
+// immediate path; these four are the only ones that exercise the timer at all.
+// ReturnWorld's floor is deliberately raised in each, so "before" and "after"
+// are far enough apart to assert separately.
+
+void TestIntentBroker::testDwellFloorDelaysTheReturn()
+{
+    // The floor must DELAY, not merely permit. A version that fired instantly
+    // would pass every assertion below except the first.
+    ReturnWorld w;
+    w.broker->setReturnDwellFloorMs(800);
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(150);
+    QVERIFY2(!w.presenter.returnedTo(QStringLiteral("chat_ui")),
+             "returned inside the dwell floor — the flicker it exists to prevent");
+
+    // The result itself is NOT held back. Only the navigation waits.
+    QCOMPARE(w.chatEndpoint.results.size(), 1);
+
+    spin(1000);
+    QVERIFY2(w.presenter.returnedTo(QStringLiteral("chat_ui")),
+             "the deferred return never fired");
+}
+
+void TestIntentBroker::testRequesterUnloadedDuringDwellIsNotPresented()
+{
+    // THE CASE THE RE-CHECKS EXIST FOR. Loaded when the answer arrived, gone
+    // by the time the timer runs. Presenting it now would either no-op or ask
+    // the shell to load an app the user closed.
+    ReturnWorld w;
+    w.broker->setReturnDwellFloorMs(800);
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(100);
+    w.presenter.loaded.removeAll(QStringLiteral("chat_ui"));
+    spin(1200);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testUserWhoMovesOnDuringDwellIsNotDraggedBack()
+{
+    // They answered and then went somewhere else inside the same half second.
+    // Whatever they are doing now outranks the trip home.
+    ReturnWorld w;
+    w.broker->setReturnDwellFloorMs(800);
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(100);
+    w.presenter.frontmost = QStringLiteral("settings");
+    spin(1200);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+void TestIntentBroker::testDialogOpenedDuringDwellSuppressesTheReturn()
+{
+    // A background-triggered gate can raise a dialog at any moment, including
+    // this one. Declined rather than retried: the sidebar is the fallback.
+    ReturnWorld w;
+    w.broker->setReturnDwellFloorMs(800);
+    const QString dispatchId = w.dispatch(QStringLiteral("wallet.send"));
+
+    w.broker->submitResponse(&w.walletEndpoint, dispatchId, true, QVariantMap{},
+                             QString());
+    spin(100);
+    w.presenter.dialogOpen = true;
+    spin(1200);
+
+    QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
 }
 
 QTEST_MAIN(TestIntentBroker)

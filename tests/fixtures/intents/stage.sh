@@ -13,13 +13,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGINS="$USER_DIR/plugins"
 
 mkdir -p "$PLUGINS"
-for app in intent_requester_demo intent_provider_a intent_provider_b; do
+for app in intent_requester_demo intent_provider_a intent_provider_b intent_provider_manual; do
     # Human label the chooser shows — deliberately distinct from the module
     # name so the test can tell which string the dialog rendered.
     case "$app" in
         intent_requester_demo) disp="Intent Requester" ;;
         intent_provider_a)     disp="Provider A" ;;
         intent_provider_b)     disp="Provider B" ;;
+        intent_provider_manual) disp="Manual Provider" ;;
         *)                     disp="$app" ;;
     esac
     dest="$PLUGINS/$app"

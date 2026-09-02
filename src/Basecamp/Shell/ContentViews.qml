@@ -31,9 +31,19 @@ Item {
         function onRepositoryOperationCompleted(operation, url, success, error) {
             settingsView.reportRepositoryResult(operation, url, success, error)
         }
-        // Capabilities the shell itself provides. Adding the next one is one
-        // more `case`. Anything unrecognised must still be answered, or the
-        // requester waits out the full deadline for a reply never coming.
+        // Capabilities the shell itself provides *that are pure navigation* —
+        // no state, no IPC, answerable on the spot. Adding the next one of
+        // those is one more `case`. Anything unrecognised must still be
+        // answered, or the requester waits out the full deadline for a reply
+        // never coming.
+        //
+        // NOT EVERY SHELL INTENT REACHES HERE. `logos.packages.confirm_*` is
+        // intercepted in C++ before this signal is emitted — see
+        // kPackageConfirmIntents in MainUIBackend.cpp. Those need the
+        // cascade-unload, the dependent caches and a pending dispatch id, and
+        // their dialogs live in OverlayDialogs rather than this layer. So the
+        // `unavailable` default below is not the whole story: check that list
+        // before concluding an intent is unhandled.
         function onShellIntentRequested(requestId, intent, params, requesterName) {
             switch (intent) {
             case "logos.repositories.manage":

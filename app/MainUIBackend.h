@@ -185,7 +185,9 @@ public slots:
     // Delegating one-liners, like the rest of this facade. The broker is
     // deliberately NOT exposed to the QML context: that would let any view
     // reach policy directly and break the single-surface contract.
-    Q_INVOKABLE void respondToShellIntent(const QString& requestId, bool ok,
+    // Returns whether the broker accepted the response — false means the
+    // dispatch already ended and nobody heard it.
+    Q_INVOKABLE bool respondToShellIntent(const QString& requestId, bool ok,
                                           const QVariant& data = QVariant(),
                                           const QString& error = QString());
     Q_INVOKABLE void resolveIntentChooser(const QString& dispatchId,
@@ -256,6 +258,12 @@ public slots:
     // App Launcher operations — delegated to UIPluginManager.
     void onAppLauncherClicked(const QString& appName);
     void setCurrentVisibleApp(const QString& pluginName);
+
+    // Pushed from OverlayDialogs.qml's anyDialogOpen binding. Read by the
+    // intent presenter, which declines to auto-return while a dialog owns the
+    // screen. Not a Q_PROPERTY: nothing binds to it, and a property would
+    // invite QML to start driving navigation policy.
+    Q_INVOKABLE void setOverlayActive(bool active);
 
     Q_INVOKABLE void refreshRepositories();
     Q_INVOKABLE void refreshAppCatalog();
@@ -402,6 +410,7 @@ private:
 
     // Navigation state — the only state this facade class holds.
     int m_currentActiveSectionIndex;
+    bool m_overlayActive = false;
 
     // Intents. Construction order in the ctor is what decides destruction
     // order — see the comment there.

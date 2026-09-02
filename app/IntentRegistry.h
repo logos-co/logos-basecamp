@@ -2,6 +2,7 @@
 
 #include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -74,10 +75,28 @@ public:
 
     // The same for `provides`, and the only legitimate source of a "logos.*"
     // name — any disk record claiming one is refused.
+    // `handoffIntents` is the subset of `intents` that leaves the user with the
+    // shell rather than returning them. Declared rather than inferred: the
+    // repositories intent does not auto-return today only because the broker
+    // skips presentApp for shell providers, which is the right behaviour by an
+    // unrelated route.
     void registerShellProvider(const QString& shellModuleName,
                                const QStringList& intents,
+                               const QStringList& handoffIntents,
                                const QString& displayName,
                                const QString& iconSource);
+
+    // Limit who may request `intent`. For capabilities where no third party has
+    // a legitimate use — removing another app's package, say — attribution in
+    // the dialog is not enough: the right answer to the prompt is always no, so
+    // the prompt should not exist. Survives rebuild(); it is code-declared
+    // policy, not something read off disk.
+    void restrictIntentToRequesters(const QString& intent,
+                                    const QStringList& requesters);
+
+    // True when `intent` is unrestricted, or `requesterName` is on its list.
+    bool requesterAllowed(const QString& intent,
+                          const QString& requesterName) const;
 
     Resolution resolve(const QString& intent) const;
 
@@ -90,6 +109,18 @@ public:
     // Each entry: { name, type, required, description }.
     QVariantList paramsSpecFor(const QString& moduleName,
                                const QString& intent) const;
+
+    // Does servicing this intent END, or does it hand the user off?
+    //
+    // A transaction returns control: the user acts, the provider answers, and
+    // the shell takes them back where they came from. A hand-off does not —
+    // the request's whole purpose was to put them somewhere and leave them
+    // there, so its `ok` means "I have taken you there", not "we are done".
+    //
+    // Same (provider, intent) key as paramsSpecFor, and for the same reason
+    // given there: two providers of one intent may legitimately differ, and
+    // there is no per-intent schema to appeal to. Absent means false.
+    bool isHandoff(const QString& moduleName, const QString& intent) const;
 
     // ── Installable providers — a SEPARATE table, deliberately ──────────
     //
@@ -140,7 +171,14 @@ private:
     // consulted by resolve().
     QHash<QString, QStringList> m_installable;
 
+    // intent -> requesters permitted to ask. Absent = unrestricted. Not cleared
+    // by reset(), like m_shellModuleName: declared in code, not read from disk.
+    QHash<QString, QStringList> m_restrictedIntents;
+
     // (moduleName, intent) -> [{name,type,required,description}]
     QHash<QString, QVariantList> m_paramsSpec;
+
+    // "moduleName/intent" for every provider entry declaring "handoff": true.
+    QSet<QString> m_handoff;
     QStringList m_diagnostics;
 };

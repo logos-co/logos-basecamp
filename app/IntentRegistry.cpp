@@ -118,6 +118,7 @@ void IntentRegistry::reset()
     m_provides.clear();
     m_uses.clear();
     m_paramsSpec.clear();
+    m_handoff.clear();
     m_entries.clear();
     m_diagnostics.clear();
 }
@@ -133,6 +134,11 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
                                                   : m_uses.value(shell);
     const ProviderEntry shellEntry = shell.isEmpty() ? ProviderEntry()
                                                      : m_entries.value(shell);
+    QStringList shellHandoff;
+    for (const QString& intent : shellIntents) {
+        if (m_handoff.contains(shell + QLatin1Char('/') + intent))
+            shellHandoff.append(intent);
+    }
 
     // Clear and refill. Never incremental: a half-updated index is worse than
     // a slightly stale one, and every caller re-resolves on every request.
@@ -144,6 +150,8 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
         m_provides.insert(shell, shellIntents);
         if (!shellUses.isEmpty()) m_uses.insert(shell, shellUses);
         m_entries.insert(shell, shellEntry);
+        for (const QString& intent : shellHandoff)
+            m_handoff.insert(shell + QLatin1Char('/') + intent);
     }
 
     for (auto it = plugins.cbegin(); it != plugins.cend(); ++it)
@@ -218,6 +226,24 @@ void IntentRegistry::ingestRecord(const QString& moduleName,
         }
         if (!specs.isEmpty())
             m_paramsSpec.insert(moduleName + QLatin1Char('/') + intent, specs);
+
+        // Refused rather than coerced. `"handoff": "true"` is a string, and
+        // QVariant::toBool() would read it as true — silently giving a
+        // transactional intent the opposite navigation from the one its author
+        // wrote down. A diagnostic and the default is the honest answer.
+        const QVariant handoff = entry.value(QStringLiteral("handoff"));
+        if (handoff.isValid()) {
+            if (handoff.typeId() == QMetaType::Bool) {
+                if (handoff.toBool())
+                    m_handoff.insert(moduleName + QLatin1Char('/') + intent);
+            } else {
+                m_diagnostics.append(
+                    QStringLiteral("%1: '%2' declares handoff as %3, not a boolean "
+                                   "— ignored, treated as false")
+                        .arg(moduleName, intent,
+                             QString::fromUtf8(handoff.typeName())));
+            }
+        }
     }
     const QStringList uses = parseIntentArray(onDisk.value(QStringLiteral("uses")),
                                               moduleName, QStringLiteral("uses"),
@@ -299,6 +325,12 @@ QVariantList IntentRegistry::paramsSpecFor(const QString& moduleName,
     return m_paramsSpec.value(moduleName + QLatin1Char('/') + intent);
 }
 
+bool IntentRegistry::isHandoff(const QString& moduleName,
+                               const QString& intent) const
+{
+    return m_handoff.contains(moduleName + QLatin1Char('/') + intent);
+}
+
 bool IntentRegistry::isShellProvider(const QString& moduleName) const
 {
     return !m_shellModuleName.isEmpty() && moduleName == m_shellModuleName;
@@ -331,6 +363,7 @@ void IntentRegistry::registerShellUses(const QString& shellModuleName,
 
 void IntentRegistry::registerShellProvider(const QString& shellModuleName,
                                            const QStringList& intents,
+                                           const QStringList& handoffIntents,
                                            const QString& displayName,
                                            const QString& iconSource)
 {
@@ -349,6 +382,17 @@ void IntentRegistry::registerShellProvider(const QString& shellModuleName,
         accepted.append(intent);
     }
 
+    // Only over intents that survived the grammar check: a hand-off flag on a
+    // name the registry refused would sit in the table describing nothing.
+    for (const QString& intent : handoffIntents) {
+        if (accepted.contains(intent))
+            m_handoff.insert(shellModuleName + QLatin1Char('/') + intent);
+        else
+            m_diagnostics.append(
+                QStringLiteral("shell: handoff declared for '%1', which is not a "
+                               "registered shell provider intent — ignored").arg(intent));
+    }
+
     m_provides.insert(shellModuleName, accepted);
 
     ProviderEntry entry;
@@ -358,6 +402,32 @@ void IntentRegistry::registerShellProvider(const QString& shellModuleName,
     m_entries.insert(shellModuleName, entry);
 
     emit changed();
+}
+
+void IntentRegistry::restrictIntentToRequesters(const QString& intent,
+                                                const QStringList& requesters)
+{
+    if (intent.isEmpty())
+        return;
+
+    // An empty list would read as "restricted to nobody" but store as
+    // "unrestricted" — refuse it rather than silently opening the intent up.
+    if (requesters.isEmpty()) {
+        m_diagnostics.append(
+            QStringLiteral("shell: refusing empty requester list for '%1'").arg(intent));
+        return;
+    }
+
+    m_restrictedIntents.insert(intent, requesters);
+}
+
+bool IntentRegistry::requesterAllowed(const QString& intent,
+                                      const QString& requesterName) const
+{
+    const auto it = m_restrictedIntents.constFind(intent);
+    if (it == m_restrictedIntents.cend())
+        return true;
+    return it.value().contains(requesterName);
 }
 
 IntentRegistry::Resolution IntentRegistry::resolve(const QString& intent) const

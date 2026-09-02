@@ -12,12 +12,14 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonParseError>
-#include <QJsonValue>
 #include <QPointer>
 #include <QTimer>
 
 #include <memory>
+
+#include "LogosIntent.h"
+
+#include <logos/semver.hpp>
 
 #include "logos_sdk.h"
 
@@ -157,118 +159,6 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
         });
     });
 
-    // Clear any pending action left over from a prior session that crashed
-    // mid-dialog. The module retains m_pendingAction across Basecamp restarts
-    // (it's non-persistent but survives our process death since it lives in
-    // package_manager's process); without this reset, the first request after
-    // a crash would get rejected with "another X is in progress".
-    logos.package_manager.resetPendingActionAsync([](QVariantMap){});
-
-    // Gated uninstall/upgrade events. package_manager emits these BEFORE any
-    // destructive work, with a 3s ack timer running; onBeforeUninstall /
-    // onBeforeUpgrade acks synchronously and — if the ack landed in time —
-    // drives the cascade confirmation dialog. See PackageCoordinator.h for the
-    // ack-gated protocol rationale.
-    logos.package_manager.on("beforeUninstall", [this](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        const QByteArray payload = data.first().toString().toUtf8();
-        QJsonParseError err{};
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            qWarning() << "beforeUninstall payload parse error:" << err.errorString();
-            return;
-        }
-        const QJsonObject obj = doc.object();
-        const QString name = obj.value("name").toString();
-        QStringList installedDeps;
-        for (const QJsonValue& v : obj.value("installedDependents").toArray()) {
-            if (v.isString()) installedDeps.append(v.toString());
-        }
-        onBeforeUninstall(name, installedDeps);
-    });
-
-    logos.package_manager.on("beforeUpgrade", [this](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        const QByteArray payload = data.first().toString().toUtf8();
-        QJsonParseError err{};
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            qWarning() << "beforeUpgrade payload parse error:" << err.errorString();
-            return;
-        }
-        const QJsonObject obj = doc.object();
-        const QString name       = obj.value("name").toString();
-        const QString releaseTag = obj.value("releaseTag").toString();
-        const int     mode       = obj.value("mode").toInt();
-        QStringList installedDeps;
-        for (const QJsonValue& v : obj.value("installedDependents").toArray()) {
-            if (v.isString()) installedDeps.append(v.toString());
-        }
-        // Transitive dep changes the initiator (PMU) resolved for this swap —
-        // opaque display data the dialog lists. Absent/empty on a bare upgrade.
-        const QVariantList depChanges = obj.value("depChanges").toArray().toVariantList();
-        onBeforeUpgrade(name, releaseTag, mode, installedDeps, depChanges);
-    });
-
-    // beforeInstall — the catalog-install gate. Same ack-then-dialog shape as
-    // beforeUpgrade, but with no dependents (a fresh install unloads nothing).
-    logos.package_manager.on("beforeInstall", [this](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        const QByteArray payload = data.first().toString().toUtf8();
-        QJsonParseError err{};
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            qWarning() << "beforeInstall payload parse error:" << err.errorString();
-            return;
-        }
-        const QJsonObject obj = doc.object();
-        const QString name       = obj.value("name").toString();
-        const QString releaseTag = obj.value("releaseTag").toString();
-        const QVariantList depChanges = obj.value("depChanges").toArray().toVariantList();
-        onBeforeInstall(name, releaseTag, depChanges);
-    });
-
-    // Multi-uninstall is a separate event so existing single-uninstall handlers
-    // don't have to peek at the payload shape to disambiguate.
-    logos.package_manager.on("beforeMultiUninstall", [this](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        const QByteArray payload = data.first().toString().toUtf8();
-        QJsonParseError err{};
-        const QJsonDocument doc = QJsonDocument::fromJson(payload, &err);
-        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-            qWarning() << "beforeMultiUninstall payload parse error:" << err.errorString();
-            return;
-        }
-        const QJsonObject obj = doc.object();
-        QStringList names;
-        for (const QJsonValue& v : obj.value("names").toArray()) {
-            if (v.isString()) names.append(v.toString());
-        }
-        QStringList installedDeps;
-        for (const QJsonValue& v : obj.value("installedDependents").toArray()) {
-            if (v.isString()) installedDeps.append(v.toString());
-        }
-        onBeforeMultiUninstall(names, installedDeps);
-    });
-
-    // The multi-uninstall cancellation counterpart. package_manager_ui
-    // subscribes to uninstallCancelled and toasts it, so the single-uninstall
-    // path is already covered on that surface — but nothing anywhere listens
-    // for the multi variant, and the App Manager now runs exclusively through
-    // it. Without this a 3s ack timeout (or a cancel that raced the dialog)
-    // is completely silent.
-    logos.package_manager.on("multiUninstallCancelled", [this](const QVariantList& data) {
-        if (data.isEmpty()) return;
-        const QJsonDocument doc =
-            QJsonDocument::fromJson(data.first().toString().toUtf8());
-        if (!doc.isObject()) return;
-        const QString reason = doc.object().value("reason").toString();
-        // A user-driven cancel already had a visible dialog; only surface the
-        // ones the user didn't ask for.
-        m_lastRequestedTargets.clear();
-        if (reason.contains(QStringLiteral("user cancelled"))) return;
-        qWarning() << "multiUninstallCancelled:" << reason;
-    });
 }
 
 void PackageCoordinator::subscribeToPackageDownloaderEvents()
@@ -349,22 +239,7 @@ void PackageCoordinator::uninstallUiModule(const QString& moduleName)
         return;
     }
 
-    // Kick off the gated request. The module:
-    //   1. Sets its pending slot, emits "beforeUninstall" with the installed-
-    //      dependents list, and starts the 3s ack timer.
-    //   2. We catch the event in onBeforeUninstall, ack, and show the cascade
-    //      dialog. Reentry protection lives in the module (global single-slot
-    //      pending) so a concurrent second click gets rejected synchronously.
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.requestUninstallAsync(
-        moduleName, [self, moduleName](QVariantMap result) {
-            if (!self) return;
-            if (result.value("success", false).toBool()) return;
-            const QString error = result.value("error").toString();
-            qWarning() << "requestUninstall rejected for" << moduleName << ":" << error;
-        });
+    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
 }
 
 void PackageCoordinator::uninstallApp(const QString& name, const QString& repositoryUrl)
@@ -416,22 +291,9 @@ void PackageCoordinator::performUninstallApp(const QString& name)
     qDebug() << "performUninstallApp:" << name << "batch=" << plan.batch;
 
     // Remembered only so the explain pass can flag which rows the user
-    // actually picked; the batch itself is recomputed on arrival.
+    // actually picked apart from what the batch dragged in.
     m_lastRequestedTargets = {name};
-    m_lastRequestKind      = QStringLiteral("app");
-
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    const QStringList batch = plan.batch;
-    logos.package_manager.requestMultiUninstallAsync(
-        batch, [self, batch](QVariantMap result) {
-            if (!self) return;
-            if (result.value("success", false).toBool()) return;
-            const QString error = result.value("error").toString();
-            qWarning() << "requestMultiUninstall rejected for" << batch << ":" << error;
-            self->m_lastRequestedTargets.clear();
-        });
+    beginLocalUninstall(plan.batch, QStringLiteral("app"));
 }
 
 void PackageCoordinator::cancelPendingUninstallApp(const QString& name)
@@ -443,21 +305,9 @@ void PackageCoordinator::cancelPendingUninstallApp(const QString& name)
 
 void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
 {
-    // Same flow as uninstallUiModule — requestUninstall is type-agnostic.
-    // The module's pending state is global so there's no type-specific
-    // bookkeeping to do here.
+    // Same flow as uninstallUiModule — removal is type-agnostic.
     qDebug() << "uninstallCoreModule:" << moduleName;
-
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.requestUninstallAsync(
-        moduleName, [self, moduleName](QVariantMap result) {
-            if (!self) return;
-            if (result.value("success", false).toBool()) return;
-            const QString error = result.value("error").toString();
-            qWarning() << "requestUninstall rejected for" << moduleName << ":" << error;
-        });
+    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
 }
 
 // ---------------------------------------------------------------------------
@@ -548,7 +398,8 @@ QVariantMap PackageCoordinator::buildLoadingPayload(const QString& name,
 QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
                                                  const QStringList& installedDependents,
                                                  const QString& kind,
-                                                 bool multi) const
+                                                 bool multi,
+                                                 const QString& requesterName) const
 {
     // Explain pass: the batch is already fixed, so it IS the target list and
     // no orphan expansion runs. Everything left in the closure lands in
@@ -607,6 +458,11 @@ QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
         {QStringLiteral("removable"),  removable},
         {QStringLiteral("kept"),       kept},
         {QStringLiteral("dependents"), dependents},
+        // Empty when the shell itself asked (Settings → Modules / Apps).
+        {QStringLiteral("requester"),  requesterName},
+        {QStringLiteral("requesterBundled"), requesterIsBundled(requesterName)},
+        {QStringLiteral("requesterDisplayName"),
+             requesterName.isEmpty() ? QString() : displayNameFor(requesterName)},
     };
 }
 
@@ -662,54 +518,39 @@ void PackageCoordinator::cascadeUnloadForPackage(const QString& moduleName)
 
 void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
 {
-    if ((m_pendingAction.op != PendingOp::UninstallCascade &&
-         m_pendingAction.op != PendingOp::UpgradeCascade)
+    if (m_pendingAction.op != PendingOp::UninstallCascade
         || m_pendingAction.name != moduleName) {
         qWarning() << "confirmUninstallCascade for" << moduleName
                    << "but pending action is" << m_pendingAction.name;
         return;
     }
 
-    // Snapshot before clearing — the callbacks below capture by value.
-    const bool    isUpgrade         = (m_pendingAction.op == PendingOp::UpgradeCascade);
-    const QString releaseTag        = m_pendingAction.releaseTag;
+    const QString requestId = m_pendingAction.intentRequestId;
+    const bool    isUpgrade = m_pendingAction.isUpgrade;
     m_pendingAction = {};
 
     QPointer<PackageCoordinator> selfDefer(this);
-    QMetaObject::invokeMethod(this,
-        [this, selfDefer, moduleName, isUpgrade, releaseTag]() {
+    QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade]() {
         if (!selfDefer) return;
 
-    cascadeUnloadForPackage(moduleName);
+        cascadeUnloadForPackage(moduleName);
 
-    // Hand the actual package-lifecycle work back to the module.
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    if (isUpgrade) {
-        // Upgrade — the module does the uninstall step + emits
-        // upgradeUninstallDone for PMU to drive the install of the new
-        // version (a catalog download, or the local .lgx it stashed).
-        logos.package_manager.confirmUpgradeAsync(moduleName, releaseTag,
-            [moduleName](QVariantMap r) {
-                if (!r.value("success", false).toBool()) {
-                    qWarning() << "confirmUpgrade rejected for" << moduleName
-                               << ":" << r.value("error").toString();
-                }
-            });
-    } else {
-        // Plain uninstall.
-        logos.package_manager.confirmUninstallAsync(moduleName,
-            [moduleName](QVariantMap r) {
-                if (!r.value("success", false).toBool()) {
-                    qWarning() << "confirmUninstall rejected for" << moduleName
-                               << ":" << r.value("error").toString();
-                }
-            });
-    }
+        // Answering is what tells the requester it may now remove files. If
+        // nobody heard — no intent, or a dispatch that already ended, including
+        // the case where the cascade just tore down the requester itself — the
+        // removal falls to us, or an uninstall would leave the package unloaded
+        // but still on disk with nothing to finish the job.
+        //
+        // NOT for an upgrade. There the requester was going to remove the old
+        // version and install the new one; doing only the removal ourselves
+        // would delete the package outright. Leave it installed (unloaded) —
+        // the requester has already told the user the action failed.
+        if (!finishIntent(requestId, true) && !isUpgrade)
+            performLocalRemoval({moduleName});
 
-    emit coreModulesChanged();
-    emit uiModulesChanged();
-    emit launcherAppsChanged();
+        emit coreModulesChanged();
+        emit uiModulesChanged();
+        emit launcherAppsChanged();
     }, Qt::QueuedConnection);  // run the cascade off the click stack
 }
 
@@ -748,226 +589,250 @@ void PackageCoordinator::remoteRefresh()
 
 void PackageCoordinator::cancelPendingAction(const QString& moduleName)
 {
-    if (m_pendingAction.op == PendingOp::None || m_pendingAction.name != moduleName) {
+    if (m_pendingAction.op != PendingOp::UninstallCascade
+        || m_pendingAction.name != moduleName) {
         // MainUIBackend fans out cancelPendingAction to both managers so one
         // of them is always a no-op — don't even warn here.
         return;
     }
     qDebug() << "Cancelling pending package action for" << moduleName;
-    const PendingOp op = m_pendingAction.op;
-    const QString   releaseTag = m_pendingAction.releaseTag;
+    const QString requestId = m_pendingAction.intentRequestId;
     m_pendingAction = {};
-
-    // Uninstall / Upgrade are gated by the module — tell it we bailed;
-    // otherwise its pending slot stays set and the next request is
-    // rejected with "another <op> is in progress".
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    if (op == PendingOp::UpgradeCascade) {
-        logos.package_manager.cancelUpgradeAsync(moduleName, releaseTag,
-            [](QVariantMap){});
-    } else {
-        logos.package_manager.cancelUninstallAsync(moduleName,
-            [](QVariantMap){});
-    }
+    finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
 // ---------------------------------------------------------------------------
-// Ack-gated cascade event handlers
+// Package-confirmation intents
 //
-// package_manager emits beforeUninstall / beforeUpgrade BEFORE any destructive
-// work, then starts a short (3s) ack timer. Our contract:
-//
-//   1. Call ackPendingActionAsync IMMEDIATELY — before any UI work — to
-//      cancel the module's ack timer and claim the pending slot.
-//   2. Only emit the cascade dialog if the ack SUCCEEDED. If it failed, the
-//      module already cancelled the request (timer fired, or another listener
-//      got there first); emitting the dialog would let the user "Continue"
-//      into a dead request.
-//
-// Once we own the slot, the user has unlimited time to decide. confirm* /
-// cancel* on the module ends the flow.
+// package_manager_ui asks; we draw the dialog, run the cascade-unload, and only
+// then answer. The response IS the permission — PMU deletes nothing until it
+// arrives, so the unload has always finished first.
 // ---------------------------------------------------------------------------
 
-void PackageCoordinator::onBeforeUninstall(const QString& name, const QStringList& installedDeps)
+bool PackageCoordinator::finishIntent(const QString& requestId, bool ok,
+                                      const QString& error)
+{
+    if (requestId.isEmpty()) return false;
+    if (!m_intentResponder) return false;
+    return m_intentResponder(requestId, ok, error);
+}
+
+void PackageCoordinator::beginLocalUninstall(const QStringList& names,
+                                             const QString& kind)
+{
+    if (names.isEmpty()) return;
+    if (m_pendingAction.op != PendingOp::None) {
+        qWarning() << "beginLocalUninstall: a confirmation is already open — ignoring";
+        return;
+    }
+    const bool multi = names.size() > 1;
+
+    // No intentRequestId: we asked ourselves, so the removal is ours to do.
+    m_pendingAction = multi
+        ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, {}}
+        : PendingAction{PendingOp::UninstallCascade, names.first(), {}, {}};
+
+    // Empty requester — the dialog says nothing about who asked, because the
+    // user is the one who clicked.
+    emit uninstallPlanRequested(
+        buildPlanPayload(names, dependentsOfBatch(names), kind, multi));
+    m_lastRequestedTargets.clear();
+}
+
+void PackageCoordinator::performLocalRemoval(const QStringList& names)
 {
     if (!m_logosAPI) return;
+    LogosModules logos(m_logosAPI);
+    for (const QString& name : names) {
+        logos.package_manager.uninstallPackageAsync(name, [name](QVariantMap r) {
+            if (!r.value("success", false).toBool())
+                qWarning() << "uninstallPackage failed for" << name << ":"
+                           << r.value("error").toString();
+        });
+    }
+}
 
-    // Last-line defence. The module now rejects empty names at requestUninstall
-    // (and PMU + QML filter them too), so this branch shouldn't fire in
-    // practice. Kept because an empty name here would open a cascade dialog
-    // titled "Uninstall ''?" — the user-reported symptom — and because it's
-    // cheaper than re-debugging it if a future caller bypasses the gate.
-    if (name.isEmpty()) {
-        qWarning() << "PackageCoordinator::onBeforeUninstall received empty name — ignoring";
+void PackageCoordinator::resolveDepChangesThen(const QString& name,
+                                               const QString& repositoryUrl,
+                                               const QString& version,
+                                               std::function<void(const QVariantList&)> then)
+{
+    // No repo to resolve against (every local .lgx), or no downloader — answer
+    // with an empty list immediately rather than leaving the dialog unopened.
+    if (repositoryUrl.isEmpty() || !m_logosAPI) {
+        then({});
         return;
     }
 
+    QVariantMap pins;
+    if (!version.isEmpty()) pins.insert(name, version);
+    const QString depsJson = buildResolverDepsJson(name, repositoryUrl, pins);
+
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
-    logos.package_manager.ackPendingActionAsync(name,
-        [self, name, installedDeps](QVariantMap result) {
-            if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                // The module already rejected us (ack timer fired, or the
-                // request was cancelled by another path). Do NOT show a
-                // dialog — package_manager already emitted uninstallCancelled
-                // to its listeners.
-                qWarning() << "ackPendingAction rejected for" << name << ":"
-                           << result.value("error").toString();
-                return;
+    logos.package_downloader.resolveDependenciesAsync(depsJson, buildInstalledPackagesJson(),
+        [self, then](QVariantList resolved) {
+            if (!self) return;   // we are gone; the pending intent dies with us
+            QVariantList changes;
+            for (const QVariant& v : resolved) {
+                const QVariantMap entry = v.toMap();
+                const QString entryName = entry.value("name").toString();
+                if (entryName.isEmpty()) continue;
+                // The resolver echoes the requested package back as topLevel.
+                // It is the subject of the dialog, not one of its dep changes.
+                if (entry.value("topLevel").toBool()) continue;
+                changes.append(changeFromResolverEntry(
+                    entry,
+                    self->m_installedVersionByName.value(entryName),
+                    self->m_installedHashByName.value(entryName)));
             }
-            self->m_pendingAction = {PendingOp::UninstallCascade, name, QString{}, 0};
-            // A batch of one. The single-uninstall gate is what
-            // package_manager_ui's trash icon and Settings → Modules use, so
-            // confirm/cancel route to the single slots — hence multi=false.
-            // Everything else (the Kept section, the dependent warning) is
-            // identical to the multi path.
-            const QVariantMap payload = self->buildPlanPayload(
-                {name}, installedDeps, QStringLiteral("packages"), /*multi=*/false);
-            self->m_lastRequestedTargets.clear();
-            emit self->uninstallPlanRequested(payload);
+            then(changes);
         });
 }
 
-void PackageCoordinator::onBeforeUpgrade(const QString& name, const QString& releaseTag,
-                                     int mode, const QStringList& installedDeps,
-                                     const QVariantList& depChanges)
+bool PackageCoordinator::requesterIsBundled(const QString& requesterName) const
 {
-    if (!m_logosAPI) return;
+    // Embedded means it came out of our own bundle — provenance the shell can
+    // actually vouch for, and stronger than any signature we could check today.
+    // Anything else, INCLUDING a user-installed package that has taken the
+    // bundled component's name, is not vouched for. Unknown counts as not
+    // bundled: the cache is empty until the first scan completes, and the safe
+    // default there is to say so rather than imply trust we have not checked.
+    return !requesterName.isEmpty()
+        && installType(requesterName) == QLatin1String("embedded");
+}
 
-    // Mirror of onBeforeUninstall — see rationale there.
-    if (name.isEmpty()) {
-        qWarning() << "PackageCoordinator::onBeforeUpgrade received empty name — ignoring";
-        return;
+QStringList PackageCoordinator::dependentsOfBatch(const QStringList& names) const
+{
+    // From OUR cache, never the payload: a caller-supplied list would let a
+    // removal be dressed up as harmless, which is the one thing this dialog
+    // exists to show honestly. Members of the batch are not their own casualties.
+    QStringList out;
+    for (const QString& n : names)
+        for (const QString& d : dependentsOf(n))
+            if (!out.contains(d) && !names.contains(d))
+                out.append(d);
+    return out;
+}
+
+bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
+                                                  const QString& intent,
+                                                  const QVariantMap& params,
+                                                  const QString& requesterName)
+{
+    // Shell-provided intents skip the chooser and dispatch straight through, so
+    // two really can arrive back-to-back (a bulk "Run Actions" fires one per
+    // row). Only one dialog can own the screen, so a second is refused — and
+    // refusing has to be an ANSWER, not a dropped dispatch, or the requester
+    // waits out the broker's full response deadline for a reply we already
+    // decided not to give.
+    const bool busy = !m_pendingInstallRequestId.isEmpty()
+                   || m_pendingAction.op != PendingOp::None;
+    if (busy) {
+        qWarning() << "PackageCoordinator: confirmation in flight, refusing" << intent;
+        finishIntent(dispatchId, false, logos::intent::errFailed());
+        return true;   // answered — do NOT let the broker time it out too
     }
 
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.ackPendingActionAsync(name,
-        [self, name, releaseTag, mode, installedDeps, depChanges](QVariantMap result) {
-            if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                qWarning() << "ackPendingAction rejected for" << name << ":"
-                           << result.value("error").toString();
-                return;
-            }
-            const QStringList loadedDeps = self->m_uiPluginManager
-                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
-                : QStringList{};
-            self->m_pendingAction = {PendingOp::UpgradeCascade, name, releaseTag, mode, {}};
-            // Distinct cascade signal for upgrade/downgrade/reinstall: same
-            // dependent-impact lists as the uninstall variant (the
-            // package_manager performs an uninstall step first), but the
-            // dialog needs the target version + UpgradeMode so it can lead
-            // with "Upgrade to vX.Y.Z" / "Downgrade to vX.Y.Z" /
-            // "Reinstall vX.Y.Z" instead of bare "Uninstall and Unload
-            // Dependents?" — which previously caused user confusion on
-            // downgrades that looked like a pure uninstall.
-            emit self->upgradeCascadeConfirmationRequested(
-                name, releaseTag, mode, installedDeps, loadedDeps, depChanges);
-        });
-}
+    const QString name    = params.value(QStringLiteral("name")).toString();
+    const QString version = params.value(QStringLiteral("version")).toString();
 
-void PackageCoordinator::onBeforeInstall(const QString& name, const QString& releaseTag,
-                                         const QVariantList& depChanges)
-{
-    if (!m_logosAPI) return;
-
-    if (name.isEmpty()) {
-        qWarning() << "PackageCoordinator::onBeforeInstall received empty name — ignoring";
-        return;
+    if (intent == QLatin1String("logos.packages.confirm_install")) {
+        if (name.isEmpty()) {
+            finishIntent(dispatchId, false, logos::intent::errBadRequest());
+            return true;
+        }
+        // A fresh install unloads nothing, so there is no cascade and no
+        // PendingAction — the dialog's answer is the whole flow.
+        m_pendingInstallRequestId = dispatchId;
+        m_pendingInstallName      = name;
+        resolveDepChangesThen(name, params.value(QStringLiteral("repositoryUrl")).toString(),
+            version, [this, name, version, requesterName](const QVariantList& changes) {
+                emit installGateConfirmationRequested(name, version, changes, requesterName,
+                                                     requesterIsBundled(requesterName));
+            });
+        return true;
     }
 
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.ackPendingActionAsync(name,
-        [self, name, releaseTag, depChanges](QVariantMap result) {
-            if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                qWarning() << "ackPendingAction rejected for" << name << ":"
-                           << result.value("error").toString();
-                return;
-            }
-            // No pending-slot / cascade work — a fresh install unloads nothing.
-            // The dialog's confirm/cancel forward straight to the module gate.
-            emit self->installGateConfirmationRequested(name, releaseTag, depChanges);
-        });
+    if (intent == QLatin1String("logos.packages.confirm_upgrade")) {
+        if (name.isEmpty()) {
+            finishIntent(dispatchId, false, logos::intent::errBadRequest());
+            return true;
+        }
+        const int mode = params.value(QStringLiteral("mode")).toInt();
+        const QStringList installedDeps = dependentsOfBatch({name});
+        const QStringList loadedDeps = m_uiPluginManager
+            ? m_uiPluginManager->intersectWithLoaded(installedDeps)
+            : QStringList{};
+        m_pendingAction = {PendingOp::UninstallCascade, name, {}, dispatchId,
+                           /*isUpgrade=*/true};
+        resolveDepChangesThen(name, params.value(QStringLiteral("repositoryUrl")).toString(),
+            version, [this, name, version, mode, installedDeps, loadedDeps, requesterName]
+            (const QVariantList& changes) {
+                emit upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
+                                                        loadedDeps, changes, requesterName,
+                                                        requesterIsBundled(requesterName));
+            });
+        return true;
+    }
+
+    if (intent == QLatin1String("logos.packages.confirm_uninstall")) {
+        QStringList names;
+        for (const QVariant& v : params.value(QStringLiteral("names")).toList()) {
+            const QString n = v.toString();
+            if (!n.isEmpty() && !names.contains(n)) names.append(n);
+        }
+        if (names.isEmpty()) {
+            finishIntent(dispatchId, false, logos::intent::errBadRequest());
+            return true;
+        }
+
+        const bool multi = names.size() > 1;
+        const QVariantMap plan =
+            buildPlanPayload(names, dependentsOfBatch(names),
+                             QStringLiteral("packages"), multi, requesterName);
+        if (plan.value(QStringLiteral("removable")).toList().isEmpty()) {
+            qWarning() << "PackageCoordinator: nothing removable in" << names
+                       << "— refusing" << intent;
+            finishIntent(dispatchId, false, logos::intent::errBadRequest());
+            return true;
+        }
+
+        m_pendingAction = multi
+            ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, dispatchId}
+            : PendingAction{PendingOp::UninstallCascade, names.first(), {}, dispatchId};
+
+        emit uninstallPlanRequested(plan);
+        return true;
+    }
+
+    qWarning() << "PackageCoordinator: unhandled package intent" << intent;
+    finishIntent(dispatchId, false, logos::intent::errFailed());
+    return true;
 }
 
+// A fresh install unloads nothing, so both of these are just the answer — but
+// only for the package the pending dialog actually names.
 void PackageCoordinator::confirmInstallGate(const QString& name)
 {
-    if (!m_logosAPI || name.isEmpty()) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.confirmInstallAsync(name, [self, name](QVariantMap result) {
-        if (!self) return;
-        if (!result.value("success", false).toBool())
-            qWarning() << "confirmInstallGate rejected for" << name << ":"
-                       << result.value("error").toString();
-    });
+    if (m_pendingInstallName != name) {
+        qWarning() << "confirmInstallGate for" << name
+                   << "but pending install is" << m_pendingInstallName;
+        return;
+    }
+    const QString requestId = m_pendingInstallRequestId;
+    m_pendingInstallRequestId.clear();
+    m_pendingInstallName.clear();
+    finishIntent(requestId, true);
 }
 
 void PackageCoordinator::cancelInstallGate(const QString& name)
 {
-    if (!m_logosAPI || name.isEmpty()) return;
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_manager.cancelInstallAsync(name, [self, name](QVariantMap result) {
-        if (!self) return;
-        if (!result.value("success", false).toBool())
-            qWarning() << "cancelInstallGate rejected for" << name << ":"
-                       << result.value("error").toString();
-    });
-}
-
-void PackageCoordinator::onBeforeMultiUninstall(const QStringList& names,
-                                                const QStringList& installedDeps)
-{
-    if (!m_logosAPI) return;
-    if (names.isEmpty()) {
-        qWarning() << "PackageCoordinator::onBeforeMultiUninstall received empty name list — ignoring";
-        return;
-    }
-
-    // Ack with any name from the batch — the module's ackPendingAction accepts
-    // any member of the pending batch's names for MultiUninstall (single-op
-    // ack still requires exact-match against m_pendingAction.name). Picking
-    // names.first() is convention; one ack closes the 3s timer for the whole
-    // batch.
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    const QString ackName = names.first();
-    logos.package_manager.ackPendingActionAsync(ackName,
-        [self, names, installedDeps, ackName](QVariantMap result) {
-            if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                qWarning() << "ackPendingAction (multi) rejected for" << ackName << ":"
-                           << result.value("error").toString();
-                // The module already cancelled; drop the remembered targets so
-                // they can't mislabel the next batch that comes through.
-                self->m_lastRequestedTargets.clear();
-                return;
-            }
-            self->m_pendingAction = {PendingOp::MultiUninstallCascade, QString{}, QString{}, 0, names};
-            // `kind` is "app" only when WE composed this batch from a single
-            // App Manager row; a batch we didn't originate (package_manager_ui
-            // bulk selection) is always "packages", and a stale target list
-            // that isn't part of the arriving batch is dropped rather than
-            // used to mislabel someone else's request.
-            QString kind = QStringLiteral("packages");
-            const QSet<QString> batchSet(names.cbegin(), names.cend());
-            bool targetsBelong = !self->m_lastRequestedTargets.isEmpty();
-            for (const QString& t : self->m_lastRequestedTargets)
-                if (!batchSet.contains(t)) targetsBelong = false;
-            if (targetsBelong) kind = self->m_lastRequestKind;
-            else               self->m_lastRequestedTargets.clear();
-
-            const QVariantMap payload =
-                self->buildPlanPayload(names, installedDeps, kind, /*multi=*/true);
-            self->m_lastRequestedTargets.clear();
-            emit self->uninstallPlanRequested(payload);
-        });
+    if (m_pendingInstallName != name) return;
+    const QString requestId = m_pendingInstallRequestId;
+    m_pendingInstallRequestId.clear();
+    m_pendingInstallName.clear();
+    finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
 void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleNames)
@@ -977,6 +842,7 @@ void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleN
         qWarning() << "confirmUninstallMultiCascade: no matching pending action — ignoring";
         return;
     }
+    const QString requestId = m_pendingAction.intentRequestId;
     m_pendingAction = {};
 
     // Mirror of confirmUninstallCascade's cascade-unload, looped over each
@@ -1019,22 +885,10 @@ void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleN
         }
     }
 
-    // Hand the destructive work back to the module under one confirm call.
-    // No rollback path on rejection: at this point the cascade-unload above
-    // has already run, so a `success: false` here means the modules are
-    // unloaded but their packages remain on disk. Rejection is rare in
-    // normal flow (we just acked, the module's pending state is ours) — most
-    // commonly it'd indicate a name-list mismatch we should never construct.
-    // The user can re-load via the Modules tab if they hit this.
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    logos.package_manager.confirmMultiUninstallAsync(moduleNames,
-        [moduleNames](QVariantMap r) {
-            if (!r.value("success", false).toBool()) {
-                qWarning() << "confirmMultiUninstall rejected:"
-                           << r.value("error").toString();
-            }
-        });
+    // Everything in the batch is unloaded — tell the requester it may remove
+    // them; if nobody heard, the removal falls to us.
+    if (!finishIntent(requestId, true))
+        performLocalRemoval(moduleNames);
 
     emit coreModulesChanged();
     emit uiModulesChanged();
@@ -1049,11 +903,9 @@ void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
         // path already cleared the slot — treat as no-op rather than warning.
         return;
     }
+    const QString requestId = m_pendingAction.intentRequestId;
     m_pendingAction = {};
-    if (!m_logosAPI) return;
-    LogosModules logos(m_logosAPI);
-    logos.package_manager.cancelMultiUninstallAsync(moduleNames,
-        [](QVariantMap){});
+    finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
 // ---------------------------------------------------------------------------
@@ -1580,7 +1432,12 @@ QString PackageCoordinator::depAction(const QString& installedVersion,
             return QStringLiteral("reinstall");
         return QStringLiteral("installed");
     }
-    return QStringLiteral("upgrade");
+    // Directional: a resolved version OLDER than the installed one is a
+    // downgrade, and labelling it "upgrade" understates what is about to happen.
+    return logos::semver::compare(resolvedVersion.toStdString(),
+                                  installedVersion.toStdString()) >= 0
+               ? QStringLiteral("upgrade")
+               : QStringLiteral("downgrade");
 }
 
 bool PackageCoordinator::installPluginSucceeded(const QVariantMap& installResult)
@@ -1606,6 +1463,11 @@ QVariantMap PackageCoordinator::changeFromResolverEntry(const QVariantMap& entry
         {QStringLiteral("toVersion"),     to},
         {QStringLiteral("fromVersion"),   installedVersion},
         {QStringLiteral("repositoryUrl"), entry.value("repositoryUrl").toString()},
+        // The dialog renders `repository`; without it every dep row lost its
+        // source label. Display name when the catalog knows one, else the URL.
+        {QStringLiteral("repository"),    entry.value("repositoryDisplayName").toString().isEmpty()
+                                              ? entry.value("repositoryUrl").toString()
+                                              : entry.value("repositoryDisplayName").toString()},
         {QStringLiteral("description"),   entry.value("description").toString()},
         {QStringLiteral("action"),        depAction(installedVersion, to, installedHash, toH)},
         {QStringLiteral("isTopLevel"),    entry.value("topLevel").toBool()},

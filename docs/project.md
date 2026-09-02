@@ -445,7 +445,7 @@ An app requests a capability by name; the shell decides who services it. Basecam
 | `app/IntentBridgeAdapter`, `app/ShellIntent*` | Bind each UI plugin's `LogosQmlBridge` to the broker; re-emit prompts as QML signals. |
 | `src/Basecamp/Shell/Intent*Dialog.qml` | The chooser and the install suggestion. |
 
-Flow: `logos.request` → bridge → broker → registry resolves → user chooses → provider raised and handed the request → result routed back to the requester alone.
+Flow: `logos.request` → bridge → broker → registry resolves → user chooses → provider raised and handed the request → result routed back to the requester alone → user returned to the requester, unless the provider declared the intent a hand-off (`"handoff": true`) or the request ended some way the user cannot see the cause of.
 
 The requester's own `requestId` never leaves its side; the broker mints a separate `dispatchId` and gives only that to the provider. A response is accepted only when the id is pending, the phase is `Dispatched`, and the responding endpoint is pointer-identical to the recorded provider.
 

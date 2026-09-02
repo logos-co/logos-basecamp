@@ -15,6 +15,9 @@ constexpr int kSweepIntervalMs = 250;
 // then vanished, long enough that a real person reading a dialog never hits it.
 // Reported as `cancelled`: from the requester's side that is what it looks like.
 constexpr int kChooserBackstopMs = 10 * 60 * 1000;
+// Auto-return timings.
+constexpr qint64 kReturnBreakerWindowMs   = 3 * 1000;
+constexpr int    kReturnBreakerLimit      = 5;
 
 QString mintDispatchId()
 {
@@ -52,6 +55,16 @@ void IntentBroker::setTimeouts(int activationMs, int responseMs, int errorFloorM
     m_activationTimeoutMs = activationMs;
     m_responseTimeoutMs = responseMs;
     m_errorFloorMs = errorFloorMs;
+}
+
+void IntentBroker::setReturnDwellFloorMs(int ms)
+{
+    m_returnDwellFloorMs = ms;
+}
+
+void IntentBroker::setReturnBreakerCooldownMs(int ms)
+{
+    m_returnBreakerCooldownMs = ms;
 }
 
 int IntentBroker::pendingCount() const
@@ -181,7 +194,19 @@ void IntentBroker::startRequest(const QString& dispatchId)
     // it is a fact about the caller's own manifest and leaks nothing about what
     // else is installed.
     if (requesterName.isEmpty() || !m_registry->declaresUse(requesterName, intent)) {
-        finish(dispatchId, false, QVariant(), logos::intent::errNotDeclared());
+        finish(dispatchId, false, QVariant(), logos::intent::errNotDeclared(),
+               CompletionPath::Rejected);
+        return;
+    }
+
+    // Restricted intent, wrong requester. Floored and merged with "nothing
+    // provides it" — the same reason `unavailable` covers denial: an app that
+    // could tell the two apart would learn the intent exists.
+    if (!m_registry->requesterAllowed(intent, requesterName)) {
+        qWarning().noquote()
+            << "IntentBroker: refusing" << intent << "from" << requesterName
+            << "— not a permitted requester";
+        failWithFloor(dispatchId, logos::intent::errUnavailable());
         return;
     }
 
@@ -350,8 +375,11 @@ void IntentBroker::cancelChooser(const QString& dispatchId)
     if (it == m_pending.end() || it->phase != Phase::AwaitingChoice)
         return;
 
-    // Indistinguishable from a provider-side cancel, deliberately.
-    finish(dispatchId, false, QVariant(), logos::intent::errCancelled());
+    // Indistinguishable from a provider-side cancel, deliberately. Rejected,
+    // not ProviderResponse: no dispatch happened, so the user never left the
+    // requester and there is nothing to return from.
+    finish(dispatchId, false, QVariant(), logos::intent::errCancelled(),
+           CompletionPath::Rejected);
 }
 
 void IntentBroker::chooseProvider(const QString& dispatchId, const QString& providerName)
@@ -520,11 +548,22 @@ void IntentBroker::dispatchTo(const QString& dispatchId)
     it->phase = Phase::Dispatched;
     it->phaseSinceMs = nowMs();
 
+    // SNAPSHOT, not a lookup at completion. rebuild() clears and refills the
+    // registry whenever plugins change, so reading this on the way out could
+    // answer differently from the declaration that was in force when the user
+    // was sent here — the navigation contract would change under a request in
+    // flight. Same reason `provider` above is a pointer taken now.
+    it->isHandoff = m_registry
+                 && m_registry->isHandoff(it->providerName, it->intent);
+
     // Not for the shell: it has no widget to raise, and its handler does its
     // own navigating (the repositories intent lands the user on Settings).
     // Calling presentApp here would either no-op or fight that.
-    if (m_presenter && !isShellProvider(it->providerName))
+    if (m_presenter && !isShellProvider(it->providerName)) {
         m_presenter->presentApp(it->providerName);
+        it->didNavigate = true;
+        it->navigatedAtMs = nowMs();
+    }
 
     const int receivers = provider->deliverRequest(dispatchId, it->intent,
                                                    it->params, it->requesterName);
@@ -542,7 +581,7 @@ void IntentBroker::dispatchTo(const QString& dispatchId)
 
 // ── Completion ───────────────────────────────────────────────────────────────
 
-void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchId,
+bool IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchId,
                                   bool ok, const QVariant& data, const QString& error)
 {
     auto it = m_pending.find(dispatchId);
@@ -555,7 +594,7 @@ void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchI
     else if (it->provider != from)        reject = "wrong endpoint";
     if (reject) {
         qWarning() << "IntentBroker: dropped response —" << reject;
-        return;
+        return false;
     }
 
     // A provider's response payload crosses back into the requester's engine, so
@@ -566,17 +605,20 @@ void IntentBroker::submitResponse(IntentEndpoint* from, const QString& dispatchI
         qWarning().noquote()
             << "IntentBroker: provider" << it->providerName
             << "answered" << it->intent << "with a non-canonical payload — dropped";
-        finish(dispatchId, false, QVariant(), logos::intent::errFailed());
-        return;
+        finish(dispatchId, false, QVariant(), logos::intent::errFailed(),
+               CompletionPath::ProviderResponse);
+        return false;
     }
 
     // A provider may only report cancelled / timeout / failed / bad_request.
     // Free text and the two broker-only codes are coerced here, at the boundary.
     const QString normalized = logos::intent::normalizeError(ok, error);
-    finish(dispatchId, ok, data, normalized);
+    finish(dispatchId, ok, data, normalized, CompletionPath::ProviderResponse);
+    return true;
 }
 
-void IntentBroker::failWithFloor(const QString& dispatchId, const QString& errorCode)
+void IntentBroker::failWithFloor(const QString& dispatchId, const QString& errorCode,
+                                 CompletionPath path)
 {
     auto it = m_pending.find(dispatchId);
     if (it == m_pending.end())
@@ -585,20 +627,22 @@ void IntentBroker::failWithFloor(const QString& dispatchId, const QString& error
     const qint64 elapsed = nowMs() - it->acceptedAtMs;
     const qint64 remaining = static_cast<qint64>(m_errorFloorMs) - elapsed;
     if (remaining <= 0) {
-        finish(dispatchId, false, QVariant(), errorCode);
+        finish(dispatchId, false, QVariant(), errorCode, path);
         return;
     }
 
     // Hold it. A caller that gets "no" instantly has learned that nothing is
     // installed without ever being allowed to ask what is.
-    QTimer::singleShot(static_cast<int>(remaining), this, [this, dispatchId, errorCode]() {
+    QTimer::singleShot(static_cast<int>(remaining), this,
+                       [this, dispatchId, errorCode, path]() {
         if (m_pending.contains(dispatchId))
-            finish(dispatchId, false, QVariant(), errorCode);
+            finish(dispatchId, false, QVariant(), errorCode, path);
     });
 }
 
 void IntentBroker::finish(const QString& dispatchId, bool ok,
-                          const QVariant& data, const QString& error)
+                          const QVariant& data, const QString& error,
+                          CompletionPath path)
 {
     auto it = m_pending.find(dispatchId);
     if (it == m_pending.end())
@@ -626,6 +670,11 @@ void IntentBroker::finish(const QString& dispatchId, bool ok,
         }
     }
 
+    // Before delivering: the result landing in the requester's callback may
+    // change what it draws, and it should be drawing into a view the user is
+    // on their way back to rather than one behind them.
+    maybeReturnToRequester(request, path);
+
     deliver(request, logos::intent::makeEnvelope(ok, data, error));
 
     // The dialog may have just come free. Anything queued behind it gets its
@@ -634,6 +683,115 @@ void IntentBroker::finish(const QString& dispatchId, bool ok,
 
     if (m_pending.isEmpty())
         m_sweepTimer->stop();
+}
+
+// The return trip. Dispatching already moved the user to the provider; this is
+// the same move backwards, and the asymmetry — willing to take someone
+// somewhere, unwilling to bring them back — was the actual bug.
+//
+// Every guard here exists to keep the motion EXPLAINABLE. A shell that moves
+// for a reason the user can see reads as consequence; one that moves otherwise
+// reads as a fault.
+void IntentBroker::maybeReturnToRequester(const PendingRequest& request,
+                                          CompletionPath path)
+{
+    if (!m_presenter)
+        return;
+
+    // A tripped breaker re-arms once things have been quiet. Whatever the loop
+    // was, it is long over by then, and leaving the feature dead for the rest
+    // of a session because of one burst punishes the user for the shell's
+    // mistake.
+    if (m_returnsDisabled) {
+        if (nowMs() - m_returnsDisabledAtMs < m_returnBreakerCooldownMs)
+            return;
+        m_returnsDisabled = false;
+        m_returnTimestamps.clear();
+    }
+
+    // Only a provider answering. The other five paths — deadlines, an endpoint
+    // dying, an abandon, a rejection — happen for reasons that never reach the
+    // screen. Four of them never navigated either, so they are already no-ops;
+    // this keeps that explicit rather than incidental.
+    if (path != CompletionPath::ProviderResponse)
+        return;
+
+    // Nothing to return from.
+    if (!request.didNavigate)
+        return;
+
+    // A destination, not a transaction. Its `ok` meant "I have taken you
+    // there" — bouncing the user out is the opposite of what was asked for.
+    if (request.isHandoff)
+        return;
+
+    // Already moved on. Their current business outranks a request they left.
+    if (!m_presenter->isAppFrontmost(request.providerName))
+        return;
+
+    // Self-dispatch: an app servicing its own capability is internal
+    // navigation, and provider == requester makes this a no-op anyway.
+    if (request.providerName == request.requesterName)
+        return;
+
+    if (!m_presenter->isAppLoaded(request.requesterName))
+        return;
+
+    // Never out from under a dialog. Close to unreachable — the user answered
+    // by clicking in the provider, which a modal shell overlay would have
+    // blocked — but a background-triggered gate can raise one at any moment,
+    // and if it does we decline rather than retry: the sidebar is the fallback.
+    if (m_presenter->anyDialogOpen())
+        return;
+
+    // A provider that answers before the user could plausibly have acted turns
+    // the round trip into a flicker. Hold the floor so it reads as motion.
+    // Not a semantic test — `handoff` above is the semantic test; this is only
+    // about what the eye can follow.
+    const qint64 dwell = nowMs() - request.navigatedAtMs;
+    if (dwell < m_returnDwellFloorMs) {
+        const QString requesterName = request.requesterName;
+        const QString providerName = request.providerName;
+        QTimer::singleShot(static_cast<int>(m_returnDwellFloorMs - dwell), this,
+                           [this, requesterName, providerName]() {
+            // Re-check on the way out: the user has had the floor's worth of
+            // time to go somewhere else, and going somewhere else means they
+            // are no longer owed a ride home.
+            if (!m_presenter || m_returnsDisabled) return;
+            if (!m_presenter->isAppFrontmost(providerName)) return;
+            if (!m_presenter->isAppLoaded(requesterName)) return;
+            if (m_presenter->anyDialogOpen()) return;
+            m_presenter->presentApp(requesterName);
+        });
+        noteReturn();
+        return;
+    }
+
+    m_presenter->presentApp(request.requesterName);
+    noteReturn();
+}
+
+// Circuit breaker. Nested requests legitimately produce a couple of returns in
+// a row; a stream of them is a shell navigating on its own, and no guard above
+// can rule that out because nothing detects intent cycles and a provider may
+// submit while handling one.
+void IntentBroker::noteReturn()
+{
+    const qint64 now = nowMs();
+    m_returnTimestamps.append(now);
+    while (!m_returnTimestamps.isEmpty()
+           && now - m_returnTimestamps.first() > kReturnBreakerWindowMs)
+        m_returnTimestamps.removeFirst();
+
+    if (!m_returnsDisabled && m_returnTimestamps.size() > kReturnBreakerLimit) {
+        m_returnsDisabled = true;
+        m_returnsDisabledAtMs = now;
+        qWarning() << "IntentBroker:" << m_returnTimestamps.size()
+                   << "auto-returns within" << kReturnBreakerWindowMs
+                   << "ms — pausing auto-return for"
+                   << (m_returnBreakerCooldownMs / 1000)
+                   << "s. Apps can still be reached from the sidebar.";
+    }
 }
 
 void IntentBroker::deliver(const PendingRequest& request, const QVariantMap& envelope)
@@ -661,7 +819,8 @@ void IntentBroker::abandon(IntentEndpoint* from, const QStringList& requestIds)
             continue;
 
         it->requester = nullptr;
-        finish(dispatchId, false, QVariant(), logos::intent::errCancelled());
+        finish(dispatchId, false, QVariant(), logos::intent::errCancelled(),
+               CompletionPath::Abandoned);
     }
     if (m_pending.isEmpty())
         m_sweepTimer->stop();
@@ -687,14 +846,16 @@ void IntentBroker::endpointDestroyed(IntentEndpoint* endpoint)
             // surface, so a later provider response is simply dropped as an
             // unknown id.
             it->requester = nullptr;
-            finish(dispatchId, false, QVariant(), logos::intent::errCancelled());
+            finish(dispatchId, false, QVariant(), logos::intent::errCancelled(),
+                   CompletionPath::EndpointGone);
             continue;
         }
 
         if (it->provider == endpoint) {
             // "unavailable", not "failed": distinguishing "was reached and
             // died" from "was never there" leaks install state.
-            failWithFloor(dispatchId, logos::intent::errUnavailable());
+            failWithFloor(dispatchId, logos::intent::errUnavailable(),
+                          CompletionPath::EndpointGone);
         }
     }
 
@@ -720,13 +881,15 @@ void IntentBroker::sweep()
             // is 30 s before any QML compile, and some apps add their own
             // readiness gate on top.
             if (inPhase > m_activationTimeoutMs)
-                failWithFloor(dispatchId, logos::intent::errUnavailable());
+                failWithFloor(dispatchId, logos::intent::errUnavailable(),
+                              CompletionPath::Deadline);
             break;
 
         case Phase::Dispatched:
             if (inPhase > (it->providerHadHandler ? kChooserBackstopMs
                                                   : m_responseTimeoutMs))
-                finish(dispatchId, false, QVariant(), logos::intent::errTimeout());
+                finish(dispatchId, false, QVariant(), logos::intent::errTimeout(),
+                       CompletionPath::Deadline);
             break;
 
         case Phase::AwaitingChoice:
@@ -736,14 +899,16 @@ void IntentBroker::sweep()
             // mounted and then went away (view torn down, shell reloaded),
             // leaving a request nobody will ever answer.
             if (inPhase > kChooserBackstopMs)
-                failWithFloor(dispatchId, logos::intent::errCancelled());
+                failWithFloor(dispatchId, logos::intent::errCancelled(),
+                              CompletionPath::Deadline);
             break;
 
         case Phase::Accepted:
             // Queued dispatch runs on the next event-loop turn; if a request is
             // still here after the activation budget, something ate the post.
             if (inPhase > m_activationTimeoutMs)
-                failWithFloor(dispatchId, logos::intent::errUnavailable());
+                failWithFloor(dispatchId, logos::intent::errUnavailable(),
+                              CompletionPath::Deadline);
             break;
         }
     }
