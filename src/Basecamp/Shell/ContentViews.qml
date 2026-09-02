@@ -9,11 +9,11 @@ import Basecamp.Backend
 Item {
     id: root
 
-    // Sidebar section indices (backend's m_sections list, defined by
-    // SidebarPanel.qml). 0 = Apps (WorkspaceArea), 1 = App Manager,
-    // 2 = Modules, 3 = Settings.
-    readonly property int sidebarAppManager: 1
-    readonly property int sidebarSettings:   3
+    // Section indices come from ShellSection (src/ShellSections.h), the single
+    // source of truth shared with MainContainer's C++ switch and
+    // SidebarPanel.qml's viewSections order.
+    readonly property int sidebarAppManager: ShellSection.AppManager
+    readonly property int sidebarSettings:   ShellSection.Settings
 
     // The App Manager's view of the catalog. Declared here rather than handed
     // over by the backend: a filter proxy is view configuration, so it belongs
@@ -31,9 +31,30 @@ Item {
         function onRepositoryOperationCompleted(operation, url, success, error) {
             settingsView.reportRepositoryResult(operation, url, success, error)
         }
-        function onNavigateToRepositoriesRequested() {
-            backend.setCurrentActiveSectionIndex(root.sidebarSettings)
-            settingsView.showRepositories()
+        // Capabilities the shell itself provides *that are pure navigation* —
+        // no state, no IPC, answerable on the spot. Adding the next one of
+        // those is one more `case`. Anything unrecognised must still be
+        // answered, or the requester waits out the full deadline for a reply
+        // never coming.
+        //
+        // NOT EVERY SHELL INTENT REACHES HERE. `logos.packages.confirm_*` is
+        // intercepted in C++ before this signal is emitted — see
+        // kPackageConfirmIntents in MainUIBackend.cpp. Those need the
+        // cascade-unload, the dependent caches and a pending dispatch id, and
+        // their dialogs live in OverlayDialogs rather than this layer. So the
+        // `unavailable` default below is not the whole story: check that list
+        // before concluding an intent is unhandled.
+        function onShellIntentRequested(requestId, intent, params, requesterName) {
+            switch (intent) {
+            case "logos.repositories.manage":
+                backend.setCurrentActiveSectionIndex(root.sidebarSettings)
+                settingsView.showRepositories()
+                backend.respondToShellIntent(requestId, true, ({}), "")
+                return
+            }
+            console.warn("ContentViews: unhandled shell intent", intent,
+                         "from", requesterName)
+            backend.respondToShellIntent(requestId, false, ({}), "unavailable")
         }
     }
 

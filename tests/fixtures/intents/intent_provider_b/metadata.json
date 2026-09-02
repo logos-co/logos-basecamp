@@ -1,0 +1,15 @@
+{
+  "name": "intent_provider_b",
+  "display_name": "Provider B",
+  "version": "1.0.0",
+  "description": "Intent test fixture (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": [],
+  "category": "misc",
+  "provides": [
+    {
+      "intent": "test.echo"
+    }
+  ]
+}

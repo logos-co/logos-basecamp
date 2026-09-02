@@ -1,0 +1,19 @@
+{
+  "name": "intent_provider_manual",
+  "display_name": "Manual Provider",
+  "version": "1.0.0",
+  "description": "Intent test fixture (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": [],
+  "category": "misc",
+  "provides": [
+    {
+      "intent": "test.manual"
+    },
+    {
+      "intent": "test.handoff",
+      "handoff": true
+    }
+  ]
+}

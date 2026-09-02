@@ -18,6 +18,23 @@ if(DEFINED LOGOS_PACKAGE_HEADERS)
     set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
 endif()
 
+# The intent classes include LogosIntent.h — the frozen vocabulary shared with
+# the view-module runtime. It is header-only and pulls in nothing but QtCore, so
+# adding the path costs the dependency-free harness nothing.
+if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
+    foreach(_candidate
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../logos-view-module-runtime"
+            "$ENV{LOGOS_VIEW_MODULE_RUNTIME_ROOT}")
+        if(EXISTS "${_candidate}/include/LogosIntent.h")
+            set(LOGOS_VIEW_MODULE_RUNTIME_ROOT "${_candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
+    set(LOGOS_INTENT_INCLUDE "${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include")
+endif()
+
 # -----------------------------------------------------------------------
 # Auto-discovery: any tests/*_test.cpp file is picked up automatically.
 # -----------------------------------------------------------------------
@@ -62,6 +79,7 @@ foreach(test_src IN LISTS TEST_SOURCES)
         ${BASECAMP_SRC}/interfaces
         ${BASECAMP_SHELL}
         ${LOGOS_PACKAGE_HEADERS_INCLUDE}
+        ${LOGOS_INTENT_INCLUDE}
     )
     target_link_libraries(${test_name} PRIVATE
         Qt6::Core

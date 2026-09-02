@@ -34,7 +34,7 @@ class QWidget;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Bump on ANY vtable change to IShellHost or IShellObserver.
-constexpr int IShellHost_abi = 1;
+constexpr int IShellHost_abi = 3;
 
 // Host → shell notifications. Implemented shell-side by MainContainer.
 //
@@ -52,7 +52,17 @@ public:
     // reparented into the shell's workspace; the shell must not delete it.
     virtual void onPluginWindowRequested(QWidget* widget, const QString& title) = 0;
     virtual void onPluginWindowRemoveRequested(QWidget* widget) = 0;
-    virtual void onPluginWindowActivateRequested(QWidget* widget) = 0;
+
+    // "Bring this app to the front" is two different actions depending on where
+    // the widget was mounted — raise a dock tab, or select a section for one
+    // hoisted into the content stack. Only the shell knows which, having made
+    // that call when the widget arrived, so the host asks for the outcome and
+    // the shell picks the mechanism.
+    //
+    // The widget pointer is the whole request: an app name would be a second,
+    // weaker way to ask the same question, and the shell already knows where it
+    // put each widget.
+    virtual void onPresentAppRequested(QWidget* widget) = 0;
 };
 
 // Shell → host operations. Implemented host-side by ShellHostAdapter.
