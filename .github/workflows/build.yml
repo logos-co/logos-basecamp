@@ -81,7 +81,9 @@ jobs:
   # path.
   build-windows:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
-    runs-on: ubuntu-latest
+    # Self-hosted when the WINDOWS_RUNNER repo variable holds a JSON label array
+    # (["self-hosted","linux","x64"]); clear it to fall back to GitHub-hosted.
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["ubuntu-latest"]') }}
 
     steps:
       - uses: actions/checkout@v4
