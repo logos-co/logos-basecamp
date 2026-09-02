@@ -14,7 +14,8 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { writeSync } from "node:fs";
-import { makeTest } from "./fixtures/harness.mjs";
+import { findByObjectName, makeTest } from "./fixtures/harness.mjs";
+import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -138,6 +139,7 @@ test("welcome: first launch shows the welcome page", async (app) => {
   }
 });
 
+const CI_MODE = process.argv.includes("--ci");
 // --- Welcome page (A2) — must run right after A1: navigating clicks the
 // welcome page away ---
 test('welcome: "Install now" navigates to Applications', async (app) => {
@@ -215,6 +217,138 @@ test('welcome: "Install now" navigates to Applications', async (app) => {
       `welcome page still visible: workspace visible=` +
       `${JSON.stringify(visible)} (expected false)`);
   }
+});
+
+// --- Workspace (A3) — opening an app replaces the welcome page with a dock ---
+// Runs after A2: it hides the welcome host and leaves a dock open, so it must
+// not sit between A1 and A2 (A2 asserts the pre-navigation welcome state).
+//
+// Fixture A (test_qml_only, spec §0.A) is pre-seeded into <user-dir>/plugins/
+// by nix/integration-test.nix, so in --ci mode its sidebar tile is guaranteed
+// to appear once launcherApps populates. When attached to a locally running
+// app without the fixture, spec §0.A says skip, not fail — --ci in argv is
+// how the two cases are told apart (see the integration-test invocation).
+//
+// The dock check uses WorkspaceArea's dockCount test hook rather than the
+// spec's workspace.dock.<name> objectName: DockCard's objectName is the
+// constant "dockCard" on this branch (src/WorkspaceArea.cpp:96).
+
+// Payload text rendered by fixture A's Main.qml (see qmlViewFor in
+// tests/fixtures/lgx.mjs) — derived from FIXTURE_A so it can't drift.
+const FIXTURE_A_TEXT =
+  `${FIXTURE_A.displayName} (${FIXTURE_A.name}) v${FIXTURE_A.version}`;
+
+// Welcome visibility lives on the hosting QQuickWidget —
+// WorkspaceArea::updateWelcomeVisibility() hides the widget, not the QML
+// item (the C++ unit tests assert isVisibleTo on the widget for the same
+// reason) — and that widget has no objectName. Locate it by source URL
+// among QQuickWidget instances; fall back to the item's Window attached
+// property (QQuickWidget mirrors widget show/hide onto its offscreen
+// window).
+async function welcomePageHidden(app, welcomeItemId) {
+  const byType = await app.inspector.send("findByType", { typeName: "QQuickWidget" });
+  for (const m of byType.matches ?? []) {
+    const props = await app.inspector.send("getProperties", { objectId: m.id });
+    const source = props.properties?.find((p) => p.name === "source")?.value;
+    if (typeof source === "string" && source.includes("WelcomePage.qml")) {
+      const visible = props.properties?.find((p) => p.name === "visible")?.value;
+      if (typeof visible === "boolean") return !visible;
+    }
+  }
+  const winRes = await app.inspector.send("evaluate", {
+    objectId: welcomeItemId, expression: "Window.visible",
+  });
+  if (typeof winRes.result === "boolean") return !winRes.result;
+  throw new Error(
+    "cannot determine welcome-page visibility: no QQuickWidget with a " +
+    "WelcomePage.qml source found, and Window.visible did not evaluate " +
+    "to a boolean");
+}
+
+test("workspace: opening an app replaces the welcome page with a dock", async (app) => {
+  // Stable evaluate anchor with `backend` in context. The sidebar tile
+  // cannot anchor the post-click waits: launching moves the app from the
+  // unloaded to the loaded Repeater, destroying the clicked delegate.
+  let welcome = null;
+  await app.waitFor(async () => {
+    welcome = await findWelcomePage(app);
+    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
+  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+
+  // App tiles render icon-only (name is a tooltip), so click by the
+  // §4.1 automation objectName, not by text.
+  let tile = null;
+  try {
+    await app.waitFor(async () => {
+      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
+    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
+        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
+      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
+  }
+
+  const workspace = await findByObjectName(app.inspector, "workspace");
+  if (!workspace) {
+    throw new Error('WorkspaceArea (objectName "workspace") not found');
+  }
+
+  const clicked = await app.inspector.send("callMethod", {
+    objectId: tile.id, method: "clicked",
+  });
+  if (clicked.error) {
+    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
+  }
+
+  // Gate: the backend reports the app front-most within 10 s.
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: welcome.id, expression: "backend.currentVisibleApp",
+    });
+    if (res.error) {
+      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${res.error}`);
+    }
+    if (res.result !== FIXTURE_A.name) {
+      throw new Error(
+        `backend.currentVisibleApp=${JSON.stringify(res.result)} ` +
+        `(expected "${FIXTURE_A.name}")`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: `currentVisibleApp to become "${FIXTURE_A.name}"` });
+
+  // A dock for it exists.
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: workspace.id, expression: "dockCount",
+    });
+    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
+    if (res.result !== 1) {
+      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 1)`);
+    }
+  }, { timeout: 10000, interval: 500, description: "workspace dockCount to reach 1" });
+
+  // The welcome page is no longer visible…
+  await app.waitFor(async () => {
+    if ((await welcomePageHidden(app, welcome.id)) !== true) {
+      throw new Error("welcome page is still visible after the dock opened");
+    }
+  }, { timeout: 5000, interval: 250, description: "welcome page to hide" });
+
+  // …and fixture A's payload text renders — the app actually loaded.
+  await app.waitFor(
+    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
+    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
+  );
+
+  // Leave the dock open: the A4 follow-up owns close-the-dock coverage
+  // (workspace.closeDock), and no later test asserts welcome-page state.
 });
 // Click options that pin a click to a sidebar SECTION button and nothing else.
 //
