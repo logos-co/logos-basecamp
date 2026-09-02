@@ -350,9 +350,16 @@ signals:
     // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
     // target version; depChanges is the resolved transitive set the single
     // basecamp dialog lists.
+    // Carries every argument PackageCoordinator emits. It used to declare
+    // only the first three, and Qt truncates silently on connect — so the QML
+    // handler's requesterName / requesterBundled arrived undefined and the
+    // "who asked" line never rendered.
     void installGateConfirmationRequested(const QString& name,
                                           const QString& releaseTag,
-                                          const QVariantList& depChanges);
+                                          const QVariantList& depChanges,
+                                          const QString& requesterName,
+                                          bool requesterBundled,
+                                          bool depChangesResolved);
 
     // MDI coordination (re-emitted from UIPluginManager).
     void pluginWindowRequested(QWidget* widget, const QString& title);

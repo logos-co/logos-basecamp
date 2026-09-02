@@ -398,7 +398,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_failpath_qml' v0.1.1. No other packages need to change."
+                - "Install 'test_failpath_qml' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
 
             - name: "It is the install gate — and the error notice stayed closed"
