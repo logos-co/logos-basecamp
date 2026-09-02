@@ -184,6 +184,20 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         refreshRepositories();
         refresh();
     });
+
+    // Live byte progress for whatever is downloading. Payload is
+    // [packageName, received, total]
+    logos.package_downloader.on("downloadProgress", [this](const QVariantList& data) {
+        if (!m_installRegistry) return;
+        if (data.size() < 3) {
+            qWarning() << "PackageCoordinator: package_downloader.downloadProgress "
+                          "expected [name, received, total], got" << data.size() << "args";
+            return;
+        }
+        m_installRegistry->setDownloadProgress(data.at(0).toString(),
+                                               data.at(1).toULongLong(),
+                                               data.at(2).toULongLong());
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1704,8 +1718,29 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
         return;
     }
 
-    m_installRegistry->begin(name, /*targetVersion=*/{}, /*targetHash=*/{},
-                        /*startedByTopLevel=*/name);
+    // Register the plan up front, so the app's tile can show
+    // aggregate progress across everything this install downloads..
+    {
+        QList<InstallRegistry::PlannedPackage> plan;
+        for (const QVariant& v : m_lastResolvedRawByName.value(name)) {
+            const QVariantMap m = v.toMap();
+            const QString rowName = m.value("name").toString();
+            // Error rows carry no download.
+            if (rowName.isEmpty() || !m.value("error").toString().isEmpty())
+                continue;
+            plan.append({rowName,
+                         m.value("version").toString(),
+                         m.value("rootHash").toString(),
+                         m.value("size").toULongLong()});
+        }
+        if (!plan.isEmpty()) {
+            m_installRegistry->beginPlan(name, plan);
+        } else {
+            m_installRegistry->begin(name, /*targetVersion=*/{}, /*targetHash=*/{},
+                                     /*startedByTopLevel=*/name);
+        }
+    }
+
     emit catalogInstallStageChanged(name, InstallStage::Downloading);
 
     const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);

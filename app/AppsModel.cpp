@@ -98,6 +98,21 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
                             : static_cast<int>(InstallStage::None);
     case InstallErrorRole:
         return m_installRegistry ? m_installRegistry->error(r.name) : QString();
+    case DownloadReceivedRole:
+        return QVariant::fromValue(
+            m_installRegistry ? m_installRegistry->downloadReceived(r.name) : quint64(0));
+    case DownloadTotalRole:
+        return QVariant::fromValue(
+            m_installRegistry ? m_installRegistry->downloadTotal(r.name) : quint64(0));
+    case PlanDownloadReceivedRole:
+        return QVariant::fromValue(
+            m_installRegistry ? m_installRegistry->planDownloadReceived(r.name) : quint64(0));
+    case PlanDownloadTotalRole:
+        return QVariant::fromValue(
+            m_installRegistry ? m_installRegistry->planDownloadTotal(r.name) : quint64(0));
+    case PlanInstallStageRole:
+        return m_installRegistry ? m_installRegistry->planStage(r.name)
+                                 : static_cast<int>(InstallStage::None);
     }
     return {};
 }
@@ -129,6 +144,11 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {ResolverErrorRole,    "resolverError"},
         {InstallStageRole,     "installStage"},
         {InstallErrorRole,     "installError"},
+        {DownloadReceivedRole,     "downloadReceived"},
+        {DownloadTotalRole,        "downloadTotal"},
+        {PlanDownloadReceivedRole, "planDownloadReceived"},
+        {PlanDownloadTotalRole,    "planDownloadTotal"},
+        {PlanInstallStageRole,     "planInstallStage"},
     };
 }
 
@@ -559,7 +579,8 @@ void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
     if (!m_installRegistry) return;
 
     auto refresh = [this](const QString& name) {
-        const QList<int> roles{InstallStageRole, InstallErrorRole, ActionRole};
+        const QList<int> roles{InstallStageRole, InstallErrorRole, ActionRole,
+                               PlanInstallStageRole};
         for (int idx : m_indicesByName.values(name)) {
             const QModelIndex mi = index(idx);
             emit dataChanged(mi, mi, roles);
@@ -569,6 +590,27 @@ void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
             [refresh](const QString& name, InstallStage::Value) { refresh(name); });
     connect(m_installRegistry, &InstallRegistry::errorChanged, this,
             [refresh](const QString& name, const QString&) { refresh(name); });
+    // Narrower role set than `refresh`: this fires several times a second
+    // per download, and re-evaluating ActionRole with it would churn every
+    // binding on the row for no reason.
+    connect(m_installRegistry, &InstallRegistry::planStageChanged, this,
+            [this](const QString& topLevel) {
+                const QList<int> roles{PlanInstallStageRole};
+                for (int idx : m_indicesByName.values(topLevel)) {
+                    const QModelIndex mi = index(idx);
+                    emit dataChanged(mi, mi, roles);
+                }
+            });
+    connect(m_installRegistry, &InstallRegistry::downloadProgressChanged, this,
+            [this](const QString& name) {
+                const QList<int> roles{DownloadReceivedRole, DownloadTotalRole,
+                                       PlanDownloadReceivedRole, PlanDownloadTotalRole,
+                                       PlanInstallStageRole};
+                for (int idx : m_indicesByName.values(name)) {
+                    const QModelIndex mi = index(idx);
+                    emit dataChanged(mi, mi, roles);
+                }
+            });
 }
 
 // ── Mutation: resolver overlay ─────────────────────────────────────────────

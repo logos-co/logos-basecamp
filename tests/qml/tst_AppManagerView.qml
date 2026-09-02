@@ -21,6 +21,8 @@ TestCase {
         compare(InstallStage.Installing,  3);
         compare(InstallStage.Installed,   4);
         compare(InstallStage.Failed,      5);
+        // Appended, so every value above keeps its number.
+        compare(InstallStage.Downloaded,  6);
     }
 
     function test_AppsFilterProxy_QML_instantiable_with_defaults() {
