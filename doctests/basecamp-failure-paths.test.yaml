@@ -425,7 +425,7 @@ sections:
               action: click_object
               find_by: "objectName"
               find_value: "confirmationDialog.installGate.cancel"
-              text: "Nothing gets installed in this spec — cancel flows back through the module gate and PMU drops its stashed path. The user-dir ends the run as empty as it began."
+              text: "Nothing gets installed in this spec — cancel is returned as the intent's answer and PMU drops its stashed path. The user-dir ends the run as empty as it began."
 
             - name: "Let the dialog close"
               action: sleep

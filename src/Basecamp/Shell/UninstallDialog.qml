@@ -30,6 +30,16 @@ LogosWarningDialog {
         readonly property var dependents: (root.plan && root.plan.dependents) ? root.plan.dependents : []
         readonly property var batch:      (root.plan && root.plan.batch)      ? root.plan.batch      : []
         readonly property string kind:    (root.plan && root.plan.kind) ? root.plan.kind : "packages"
+        // Host-attested. Empty when the user acted through the shell's own UI.
+        readonly property string requester:
+            (root.plan && root.plan.requester) ? root.plan.requester : ""
+        readonly property bool requesterBundled:
+            !!(root.plan && root.plan.requesterBundled)
+        // Resolved by the shell; falls back to the module id when the catalog
+        // knows no friendlier label.
+        readonly property string requesterLabel:
+            (root.plan && root.plan.requesterDisplayName)
+                ? root.plan.requesterDisplayName : d.requester
         readonly property bool loading:   root.plan && root.plan.loading === true
         readonly property string loadingLabel:
             root.plan && root.plan.targetName ? root.plan.targetName : ""
@@ -129,6 +139,26 @@ LogosWarningDialog {
                 color: Theme.palette.textSecondary
                 text: qsTr("Preparing removal plan…")
             }
+        }
+
+        // ─── Who asked ── only when the request crossed an app boundary.
+        // The package name, never the self-declared display name.
+        LogosText {
+            objectName: "uninstallDialog.requester"
+            Layout.fillWidth: true
+            visible: d.requester.length > 0
+            wrapMode: Text.Wrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            // See ConfirmationDialog for why bundled shows the label alone and
+            // everything else shows both.
+            text: d.requesterBundled
+                  ? qsTr("Requested by %1, which ships with Logos.").arg(d.requesterLabel)
+                  : (d.requesterLabel === d.requester
+                     ? qsTr("Requested by %1 — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
+                         .arg(d.requesterLabel)
+                     : qsTr("Requested by %1 (%2) — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
+                         .arg(d.requesterLabel).arg(d.requester))
         }
 
         // ─── Body ───

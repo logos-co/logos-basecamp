@@ -1,0 +1,29 @@
+{
+  "name": "intent_provider_a",
+  "display_name": "Provider A",
+  "version": "1.0.0",
+  "description": "Intent test fixture (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": [],
+  "category": "misc",
+  "provides": [
+    {
+      "intent": "test.echo"
+    },
+    {
+      "intent": "test.solo",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "description": "The text to echo back"
+        }
+      ]
+    },
+    {
+      "intent": "test.roundtrip"
+    }
+  ]
+}
