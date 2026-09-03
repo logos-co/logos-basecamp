@@ -17,12 +17,14 @@ public:
         Installing,
         Installed,
         Failed,
+        Downloaded,
     };
     Q_ENUM(Value)
 
     static QString toString(Value v) {
         switch (v) {
         case Downloading: return QStringLiteral("downloading");
+        case Downloaded:  return QStringLiteral("downloaded");
         case Queued:      return QStringLiteral("queued");
         case Installing:  return QStringLiteral("installing");
         case Installed:   return QStringLiteral("installed");
@@ -34,6 +36,7 @@ public:
 
     static Value fromString(const QString& s) {
         if (s == QStringLiteral("downloading")) return Downloading;
+        if (s == QStringLiteral("downloaded"))  return Downloaded;
         if (s == QStringLiteral("queued"))      return Queued;
         if (s == QStringLiteral("installing"))  return Installing;
         if (s == QStringLiteral("installed"))   return Installed;

@@ -21,6 +21,9 @@ TestCase {
             InstallStage.Installing,
             InstallStage.Installed,
             InstallStage.Failed,
+            // Appended rather than placed in lifecycle order so the values
+            // above stay pinned — see InstallEnums.h.
+            InstallStage.Downloaded,
         ];
         for (var i = 0; i < values.length; ++i)
             compare(values[i], i, "stage[" + i + "] is " + i);

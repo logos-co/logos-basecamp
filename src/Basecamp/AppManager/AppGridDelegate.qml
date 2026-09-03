@@ -26,13 +26,33 @@ ItemDelegate {
                 ? root.appData.installStatus
                 : InstallStatus.NotInstalled
         readonly property int installStage:
-            root.appData && root.appData.installStage !== undefined
-                ? root.appData.installStage
+            root.appData && root.appData.planInstallStage !== undefined
+                ? root.appData.planInstallStage
                 : InstallStage.None
         readonly property bool isInstalling:
             d.installStage === InstallStage.Downloading
+            || d.installStage === InstallStage.Downloaded
             || d.installStage === InstallStage.Queued
             || d.installStage === InstallStage.Installing
+
+        // Live download bytes — rendered as a percentage here rather than
+        // two byte counts, because the tile badge is too narrow for them.
+        readonly property real dlReceived:
+            root.appData ? (root.appData.planDownloadReceived || 0) : 0
+        readonly property real dlTotal:
+            root.appData ? (root.appData.planDownloadTotal || 0) : 0
+        readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        // A determinate bar claims a FRACTION, so it needs a real sample.
+        // dlTotal is seeded from the catalog when the plan is registered —
+        // before any transfer — so gating on it alone parked the bar at 0%.
+        readonly property bool hasProgress:
+            d.installStage === InstallStage.Downloading && d.dlTotal > 0
+            && d.dlReceived > 0 && !d.downloadDone
+        // Nothing measurable yet: no bytes, or no size from transport or
+        // catalog. Sweep rather than sit still.
+        readonly property bool indeterminateProgress:
+            d.installStage === InstallStage.Downloading && !d.downloadDone
+            && (d.dlReceived <= 0 || d.dlTotal <= 0)
 
         readonly property string nameText:      root.appData ? (root.appData.name || "") : ""
         readonly property string displayName:   root.appData ? (root.appData.displayName || root.appData.name || "") : ""
@@ -114,11 +134,13 @@ ItemDelegate {
                     anchors.bottom: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottomMargin: Theme.spacing.tiny
+                    width: (d.hasProgress || d.indeterminateProgress) ? 64 : implicitWidth
                     visible: d.isInstalling
                              || d.installStage === InstallStage.Failed
                              || (d.installStatus !== InstallStatus.Installed
                                  && (d.isInstalled || root.hovered))
-                    text: d.isInstalling                                      ? qsTr("Installing…")
+                    text: d.hasProgress ? DownloadFormat.percent(d.dlReceived, d.dlTotal)
+                        : d.isInstalling                                      ? qsTr("Installing…")
                         : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                         : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
                         : d.installStatus === InstallStatus.DowngradeAvailable    ? qsTr("Downgrade")
@@ -134,6 +156,28 @@ ItemDelegate {
                     backgroundColor: Theme.palette.surfaceRaised
                     radius: Theme.spacing.radiusXlarge
                     Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText
+
+                    LogosProgressBar {
+                        parent: stateBadge.backgroundItem
+                        visible: d.hasProgress || d.indeterminateProgress
+                        anchors.left: parent ? parent.left : undefined
+                        anchors.right: parent ? parent.right : undefined
+                        anchors.bottom: parent ? parent.bottom : undefined
+                        anchors.margins: stateBadge.borderWidth + 1
+                        height: 3
+
+                        from: 0
+                        to: d.dlTotal > 0 ? d.dlTotal : 1
+                        value: d.dlReceived
+                        indeterminate: d.indeterminateProgress
+
+                        trackColor: "transparent"
+                        fillColor: Theme.colors.getColor(Theme.palette.warning, 0.95)
+
+                        Behavior on value {
+                            NumberAnimation { duration: 180; easing.type: Easing.OutQuad }
+                        }
+                    }
                 }
             }
 

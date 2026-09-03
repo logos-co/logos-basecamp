@@ -64,6 +64,8 @@ set_source_files_properties(Basecamp/Icons/BasecampIcons.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(Basecamp/AppManager/AppColors.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(Basecamp/AppManager/DownloadFormat.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(basecamp_backend_qml
     URI Basecamp.Backend
@@ -122,6 +124,7 @@ qt_add_qml_module(basecamp_appmanager_qml
         Basecamp/AppManager/PackageRowDelegate.qml
         Basecamp/AppManager/AddApplicationDialog.qml
         Basecamp/AppManager/AppColors.qml
+        Basecamp/AppManager/DownloadFormat.qml
 )
 
 qt_add_qml_module(basecamp_settings_qml
