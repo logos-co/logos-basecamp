@@ -294,6 +294,23 @@ Rectangle {
                                 onAppManageRequested: (name, url) => root.manageAppRequested(name, url)
                                 onAppUninstallRequested: (name, url) => root.uninstallAppRequested(name, url)
                             }
+
+                            // Empty-search state — every section above hides
+                            // itself when the search matches nothing, so fill
+                            // the viewport with feedback instead of a blank
+                            // panel. Search-only: an empty search keeps the
+                            // no-repos EmptyView / category filtering as-is.
+                            EmptyView {
+                                objectName: "appManager.emptyView"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: gridScroll.height
+                                visible: d.searchText.length > 0
+                                         && root.appsProxy !== null
+                                         && root.appsProxy.visibleCount === 0
+
+                                title: qsTr("No apps match your search.")
+                                subtitle: qsTr("Try a different search term.")
+                            }
                         }
                     }
                 }
