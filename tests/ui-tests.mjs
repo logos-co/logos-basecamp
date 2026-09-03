@@ -990,8 +990,13 @@ test("sidebar: active tile follows currentVisibleApp across section switches", a
 // description embeds that underscored form, so neither contains the spaced
 // display name.
 //
-// Offline the grid has no catalog rows, so fixture A's local row is the only
-// one; appManager.localAppsProxy chains matchLocalOnly on top of the OUTER
+// Offline the grid has no catalog rows, so every row is a local install:
+// fixture A plus whatever else the harness staged into <user-dir>/plugins/
+// (integration-test.nix also stages the four intent fixtures from
+// tests/fixtures/intents/stage.sh, each with a manifest.json, so they list as
+// installed user apps too). The only assumption is that fixture A is the sole
+// row whose display name matches the query, which the narrowing legs prove.
+// appManager.localAppsProxy chains matchLocalOnly on top of the OUTER
 // searched proxy (AppManagerView.qml:69-75), so its visibleCount tracks the
 // search. The spec's non-match gate "backend.uiAppsProxy.rowCount() === 0"
 // reads that outer proxy — uiAppsProxy is a ContentViews.qml id, not a
@@ -1046,31 +1051,31 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
   }
   if (initialText !== "") await setSearch("");
 
-  // PRECONDITION (spec gate): fixture A's local row is the one grid row.
-  // If it never shows, the seeding produced no user-install row — that is a
-  // hard failure in --ci (integration-test pre-seeds fixture A at boot) and
+  // PRECONDITION (spec gate): at least one local row is in the grid. Whether
+  // fixture A is among them is proven by step 1, which narrows to exactly it.
+  // If nothing ever shows, the seeding produced no user-install row — that is
+  // a hard failure in --ci (integration-test pre-seeds fixture A at boot) and
   // a spec-§0.A skip against a local app without the fixture.
   try {
     await app.waitFor(async () => {
       const count = await evalOn(app, proxyId, "visibleCount");
-      if (count !== 1) {
+      if (typeof count !== "number" || count < 1) {
         throw new Error(
-          `localAppsProxy.visibleCount=${count} ` +
-          `(expected exactly 1: fixture A's local row)`);
+          `localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
       }
     }, { timeout: 10000, interval: 500,
-         description: "fixture A's local row to be the one grid row" });
+         description: "at least one local row to be in the grid" });
   } catch (e) {
     if (!CI_MODE) {
       console.log(
-        `    SKIP: A8 precondition localAppsProxy.visibleCount === 1 not met ` +
-        `— fixture A (${FIXTURE_A.name}) is not the sole local row in this ` +
+        `    SKIP: A8 precondition localAppsProxy.visibleCount >= 1 not met ` +
+        `— no local row (fixture A ${FIXTURE_A.name} or otherwise) in this ` +
         `app instance (spec §0.A: skip, not fail, outside --ci)`);
       return;
     }
     throw new Error(
-      `A8 precondition failed — the seeding produced no user-install row ` +
-      `(fixture A's local row never became the one grid row): ${e.message}`);
+      `A8 precondition failed — the seeding produced no user-install row: ` +
+      `${e.message}`);
   }
 
   // Record the pre-search values; the post-clear gate compares against these.
@@ -1081,10 +1086,12 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
       `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
   }
 
-  // Step 1 — the display name in deliberately wrong case: count stays put and
-  // the text round-trips (match is case-insensitive over name/displayName/
-  // description). Guard that upper-casing actually changed the case — an
-  // already-uppercase display name would make this leg assert nothing.
+  // Step 1 — the display name in deliberately wrong case: the grid narrows to
+  // exactly fixture A (the other staged fixtures' names, display names and
+  // descriptions do not contain it) and the text round-trips (match is
+  // case-insensitive over name/displayName/description). Guard that
+  // upper-casing actually changed the case — an already-uppercase display
+  // name would make this leg assert nothing.
   const matchQuery = FIXTURE_A.displayName.toUpperCase();
   if (matchQuery === FIXTURE_A.displayName) {
     throw new Error(
@@ -1100,14 +1107,21 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
         `(expected ${JSON.stringify(matchQuery)})`);
     }
     const count = await evalOn(app, proxyId, "visibleCount");
-    if (count !== preLocal) {
+    if (count !== 1) {
       throw new Error(
         `localAppsProxy.visibleCount=${count} with wrong-case display-name ` +
-        `search (expected it to stay ${preLocal} — search must be ` +
-        `case-insensitive)`);
+        `search (expected exactly 1: fixture A — search must be ` +
+        `case-insensitive and narrow away the other ${preLocal - 1} local ` +
+        `row(s))`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== 1) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} with wrong-case ` +
+        `display-name search (expected exactly 1: fixture A)`);
     }
   }, { timeout: 5000, interval: 250,
-       description: "wrong-case display-name search to keep fixture A visible" });
+       description: "wrong-case display-name search to narrow to fixture A" });
 
   // Step 2 — append a non-matching suffix: the grid empties, all the way down
   // to the outer proxy (the spec's uiAppsProxy — localAppsProxy.sourceModel).
