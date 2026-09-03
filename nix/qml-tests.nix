@@ -1,5 +1,5 @@
 # Builds and runs basecamp's QML component tests (Qt Quick Test).
-{ pkgs, src, logosPackageHeaders }:
+{ pkgs, src, logosPackageHeaders, logosDesignSystem }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-qml-tests";
@@ -16,6 +16,10 @@ pkgs.stdenv.mkDerivation {
   buildInputs = [
     pkgs.qt6.qtbase
     pkgs.qt6.qtdeclarative   # QQuickTest / QML engine
+    # Shell components (the intent dialogs) are real Logos.Controls consumers.
+    # The design system ships STATIC qt_add_qml_module targets, so there is no
+    # import path to point at — it has to be linked.
+    logosDesignSystem
   ];
 
   dontUseCmakeConfigure = true;
@@ -23,7 +27,8 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     cmake -S tests/qml -B build-qml-tests -GNinja -DCMAKE_BUILD_TYPE=Debug \
-      -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include"
+      -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include" \
+      -DCMAKE_PREFIX_PATH="${logosDesignSystem}"
     cmake --build build-qml-tests
     runHook postBuild
   '';

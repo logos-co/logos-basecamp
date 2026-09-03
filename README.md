@@ -147,6 +147,23 @@ The nix build system is organized into modular files in the `/nix` directory:
 - `nix/app.nix` - The application build
 - `nix/main-ui.nix` - The `main_ui` UI shell plugin
 
+## App-to-app intents
+
+Apps ask for a *capability*, not for each other. A chat app can offer "send funds" the day a wallet is installed — no release, no dependency, no agreement between the two teams beyond the name `wallet.send`:
+
+```js
+logos.request("wallet.send", { to: "0xabc", amount: 12.5 }, function (res) {
+    if (res.ok) console.log("sent", res.data.txHash)
+    else        console.log("did not happen:", res.error)
+})
+```
+
+Basecamp resolves the capability to an app that declared it, asks you which one, brings it forward, and routes the answer back to the caller alone. The calling app never names a provider and never learns what you have installed.
+
+Declare capabilities in your app's `metadata.json` — `provides` for what it can service, `uses` for what it may request.
+
+**Nothing is signed yet**, so a provider's name and label are claims rather than identity. Read `docs/app-to-app-intents.md` before depending on this.
+
 ## Modules
 
 ### Blockchain

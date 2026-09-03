@@ -44,6 +44,14 @@ jobs:
       - name: Build bin-appimage
         run: nix build .#bin-appimage
 
+      # A library staged twice must be the same build: macOS binds to lib/,
+      # Linux to the sibling. Reached #361 as a package_manager crash with
+      # every Linux job green. Here because this job already built the bundle.
+      - name: Duplicate-library link gate
+        run: |
+          nix build .#link-gate --no-link -L
+          nix build .#link-gate-negative --no-link -L
+
       - name: Smoke test
         run: |
           nix build .#smoke-test --out-link result-smoke -L
@@ -73,7 +81,9 @@ jobs:
   # path.
   build-windows:
     environment: ${{ github.ref == 'refs/heads/master' && 'public-cache' || '' }}
-    runs-on: ubuntu-latest
+    # Self-hosted when the WINDOWS_RUNNER repo variable holds a JSON label array
+    # (["self-hosted","linux","x64"]); clear it to fall back to GitHub-hosted.
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '["ubuntu-latest"]') }}
 
     steps:
       - uses: actions/checkout@v4
@@ -145,6 +155,14 @@ jobs:
 
       - name: Build bin-macos-app
         run: nix build .#bin-macos-app
+
+      # A library staged twice must be the same build: macOS binds to lib/,
+      # Linux to the sibling. Reached #361 as a package_manager crash with
+      # every Linux job green. Here because this job already built the bundle.
+      - name: Duplicate-library link gate
+        run: |
+          nix build .#link-gate --no-link -L
+          nix build .#link-gate-negative --no-link -L
 
       - name: Smoke test
         run: |

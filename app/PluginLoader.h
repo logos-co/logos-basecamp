@@ -17,6 +17,7 @@ class QWidget;
 class QQuickWidget;
 class ViewModuleHost;
 class LogosQmlBridge;
+class IntentBridgeAdapter;
 class CoreModuleManager;
 
 enum class UIPluginType {
@@ -45,6 +46,15 @@ public:
     // Used here to load a ui plugin's core dependencies before the ui plugin
     // itself mounts. Not owned — the PluginLoader's parent (PluginManager)
     // holds a sibling pointer to the same CoreModuleManager.
+
+    
+    // Set by UIPluginManager once MainUIBackend has built it. Null is
+    // survivable: bridges never become intent-capable and requests from them are
+    // answered `unavailable`. The adapter rather than the bare
+    // LogosIntentRouter, because attaching is basecamp's concern — the runtime's
+    // router treats bridge POINTERS as identity and has no registration method.
+    void setIntentAdapter(IntentBridgeAdapter* adapter) { m_intentAdapter = adapter; }
+
     explicit PluginLoader(LogosAPI* logosAPI,
                           CoreModuleManager* coreModuleManager,
                           QObject* parent = nullptr);
@@ -110,6 +120,8 @@ private:
     logos::ConsumerIdentity consumerFor(const QString& name);
 
     LogosAPI* m_logosAPI;
+
+    IntentBridgeAdapter* m_intentAdapter = nullptr;
     CoreModuleManager* m_coreModuleManager;   // not owned
 
     // name -> that plugin's admitted identity (its LogosAPI is parented to

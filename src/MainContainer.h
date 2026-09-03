@@ -37,7 +37,9 @@ public:
     void onNavigateToApps() override;
     void onPluginWindowRequested(QWidget* widget, const QString& title) override;
     void onPluginWindowRemoveRequested(QWidget* widget) override;
-    void onPluginWindowActivateRequested(QWidget* widget) override;
+    // Presentation seam. Branches on the widget pointer because this class
+    // decided where each widget was mounted.
+    void onPresentAppRequested(QWidget* widget) override;
 
 protected:
     // Keeps the overlay sized to the full MainContainer: it floats over both

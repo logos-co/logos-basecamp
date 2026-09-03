@@ -8,8 +8,8 @@ intro: |
   **entire lifecycle** inside the real, shippable Basecamp bundle:
 
   1. **Install** a local `.lgx` (v0.1.1) — the Package Manager app inspects the
-     file and asks the `package_manager` module to gate the install; Basecamp
-     acks the module's `beforeInstall` event and shows the **install gate**
+     file and raises `logos.packages.confirm_install`; Basecamp services it
+     and shows the **install gate**
      dialog (name, version, dependency changes). Confirming lets the Package
      Manager install the file, and after a reload the app appears in the
      sidebar. (The reload is a workaround for a current stack bug: the
@@ -18,23 +18,23 @@ intro: |
      spec marks the affected steps inline.)
   2. **Upgrade** it with a second `.lgx` (v0.2.1) — the same entry point detects
      the package is already installed and routes through the **upgrade gate**
-     (`beforeUpgrade`) instead: the dialog leads with "Upgrade … to v0.2.1".
+     (`confirm_upgrade`) instead: the dialog leads with "Upgrade … to v0.2.1".
      Confirming removes the old version, installs the new one, and opening the
      app renders the **new** version's view.
-  3. **Uninstall** it through the Package Manager — the gated uninstall
-     confirmation appears (Basecamp acks the module's `beforeUninstall`
-     event, then asks the user), and confirming removes the package: the
-     package manager no longer knows it.
+  3. **Uninstall** it through the Package Manager — the confirmation appears
+     (Basecamp services PMU's `confirm_uninstall` intent and asks the user),
+     and confirming removes the package: the package manager no longer knows it.
 
   Basecamp initiates no installs of its own — the `package_manager_ui` plugin
   does, for both catalog downloads and local `.lgx` picks. The exercised
-  machinery is the ack-gated handshake between the two: PMU's
-  `installLocalPackage` → `inspectPackage` → `requestInstall` /
-  `requestUpgrade`, the module's `beforeInstall` / `beforeUpgrade` /
-  `beforeUninstall` events, `PackageCoordinator` acking each within 3s and
-  raising the matching dialog (`installGate`, `upgradeCascade`,
-  `uninstallCascade`), and the confirm/cancel decision flowing back through
-  the module gate so PMU performs (or aborts) the actual file operation.
+  machinery is the app-to-app confirmation between the two: PMU's
+  `installLocalPackage` → `inspectPackage` → one of the three
+  `logos.packages.confirm_*` intents, `PackageCoordinator` raising the
+  matching dialog (`installGate`, `upgradeCascade`, `uninstallCascade`), and
+  the confirm/cancel decision returned as the intent's answer so PMU performs
+  (or aborts) the actual file operation. For a removal that answer is also the
+  permission: Basecamp unloads whatever depends on the package first, and PMU
+  deletes nothing until it arrives.
 
   The **lifecycle itself is hermetic**: the two fixture packages are
   hand-crafted in the spec itself (an `.lgx` is just a gzipped tar with a
@@ -53,10 +53,10 @@ what_you_build: |
 
 what_you_learn:
   - What an `.lgx` package for a QML-only (`ui_qml`) app contains, and how to build one by hand
-  - Why every install is routed through the `package_manager_ui` plugin, and how Basecamp's install gate confirms it (`beforeInstall` → ack → dialog → `confirmInstallGate`)
+  - Why every install is routed through the `package_manager_ui` plugin, and how Basecamp's install gate confirms it (`confirm_install` intent → dialog → `confirmInstallGate`)
   - How the same local-file entry point becomes an upgrade gate when the package is already installed, and how the dialog leads with the target version
   - How an installed app appears in the sidebar and as a "local" row in the Package Manager
-  - How the gated uninstall works — the package manager emits `beforeUninstall`, Basecamp acks within 3s and shows the confirmation, and only a user confirm destroys files
+  - How the confirmed uninstall works — PMU raises `confirm_uninstall`, Basecamp shows the confirmation and unloads dependents before answering, and only a user confirm destroys files
   - How to drive install/upgrade/uninstall headlessly with logos-qt-mcp (stable objectNames + `call_method`, not text clicks)
 
 prerequisites:
@@ -348,7 +348,7 @@ sections:
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
               args: ["file:///tmp/basecamp-pkglife/test_qml_only-0.1.1.lgx"]
-              text: "PMU inspects the LGX first — nothing touches disk yet. The manifest tells it the package isn't installed, so it calls the `package_manager` module's `requestInstall` gate. The module emits `beforeInstall`; Basecamp acks it within the 3-second window and opens the install gate dialog."
+              text: "PMU inspects the LGX first — nothing touches disk yet. The manifest tells it the package isn't installed, so it raises the `logos.packages.confirm_install` intent. Basecamp services it and opens the install gate dialog; the request stays open until the user decides."
 
             # The dialog title + body are exact texts. The name renders as
             # the raw module name (not the display name) because the
@@ -358,16 +358,16 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
-              text: "The gate presents exactly what would be installed: `test_qml_only` v0.1.1, with no transitive dependency changes. Until this dialog is confirmed, no files have been written."
+              text: "The gate presents what would be installed: `test_qml_only` v0.1.1. It says the dependencies could not be determined rather than claiming there are none — this package came from a local file, so there is no repository for the gate to resolve against, and a consent dialog must not report an absence of knowledge as an absence of consequences. Until this dialog is confirmed, no files have been written."
               screenshot: "pkglife-install-dialog.png"
 
             - name: "Confirm the install"
               action: click_object
               find_by: "objectName"
               find_value: "confirmationDialog.installGate.confirm"
-              text: "The decision flows back through the module gate (`confirmInstallGate`), the module approves the pending install, and PMU — seeing its stashed local path for this name — installs the file straight from disk, no download."
+              text: "The decision is returned as the intent's answer (`confirmInstallGate`), and PMU — seeing its stashed local path for this name — installs the file straight from disk, no download."
 
             # WORKAROUND — remove once the stack bug is fixed: for a QML-only
             # package (`main` empty in the manifest), logos-package-manager's
@@ -417,7 +417,7 @@ sections:
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
               args: ["file:///tmp/basecamp-pkglife/test_qml_only-0.2.1.lgx"]
-              text: "Same entry point, different route: `inspectPackage` reports the package as already installed at 0.1.1, so PMU calls `requestUpgrade` instead — the module emits `beforeUpgrade` and Basecamp raises the upgrade gate."
+              text: "Same entry point, different route: `inspectPackage` reports the package as already installed at 0.1.1, so PMU raises `logos.packages.confirm_upgrade` instead and Basecamp raises the upgrade gate."
 
             - name: "The upgrade gate leads with the target version"
               action: wait_for
@@ -479,9 +479,16 @@ sections:
             # catalog publishes no `test_qml_only`) collapses the proxy to
             # exactly the one local row, making row 0 deterministic for the
             # index-based uninstall call below (the same slot the row's
-            # Uninstall action pill invokes). Both calls travel the same
-            # ordered replica channel, so the filter is applied before the
-            # uninstall resolves its row.
+            # Uninstall action pill invokes).
+            #
+            # The filter has to be OBSERVED to have landed, not merely sent:
+            # `uninstallPackage(i)` resolves the row on the PMU side, out of
+            # the replica's own cached model, so a filter still in flight to
+            # the source leaves row 0 pointing at whatever the UNFILTERED
+            # catalog sorted first. `totalCount` mirrors the paging proxy's
+            # filtered row count back over the same channel and is published
+            # after the reslice, so seeing it settle at 1 is proof the new row
+            # set reached the replica before the index is used.
             - name: "Filter the list down to the fixture package"
               action: call_method
               find_by: "objectName"
@@ -489,13 +496,25 @@ sections:
               method: "setSearchText"
               args: ["test_qml_only"]
 
+            - name: "Let the filter reach the model"
+              action: sleep
+              ms: 5000
+
+            - name: "Exactly one row survives the filter"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.BackendStore"
+              property: "totalCount"
+              value: 1
+              text: "One row left, so row 0 is the fixture package and nothing else. The check is the ordering guarantee, not a formality: the row behind an index is resolved in the Package Manager's own process, and an index picked before the filter arrives there names the wrong package."
+
             - name: "Ask the Package Manager to uninstall it"
               action: call_method
               find_by: "objectName"
               find_value: "pmui.BackendStore"
               method: "uninstallPackage"
               args: [0]
-              text: "This starts the **gated** uninstall: PMU asks the `package_manager` module, which emits `beforeUninstall` and starts a 3-second ack timer. Basecamp acks immediately and only then shows the confirmation — no files have been touched."
+              text: "This starts the **confirmed** uninstall: PMU raises `logos.packages.confirm_uninstall` and Basecamp shows the confirmation. No files have been touched — and none will be until Basecamp answers, which it does only after unloading whatever depends on the package."
 
             - name: "The gated uninstall confirmation appears"
               action: wait_for
@@ -520,8 +539,8 @@ sections:
             # ── Closing proof: the package manager forgot the app ──────────
             # Hand the v0.1.1 LGX over again. If the uninstall really removed
             # the package, inspectPackage reports it as NOT installed and the
-            # flow routes through requestInstall → the FRESH install gate.
-            # Stale state would route through requestUpgrade instead and open
+            # flow routes through confirm_install → the FRESH install gate.
+            # Stale state would route through confirm_upgrade instead and open
             # the upgradeCascade dialog ("Downgrade Package?").
             #
             # The proof asserts the installGate dialog's `visible` property,
@@ -553,7 +572,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. No other packages need to change."
+                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               text: "The package manager no longer knows `test_qml_only` — the same LGX that would have been a *reinstall* a minute ago gates as a *fresh install* again, greeted by its raw name because the display-name cache forgot it too. That's positive proof the uninstall removed both the files and the package record."
               screenshot: "pkglife-reinspect.png"
@@ -578,10 +597,10 @@ sections:
           One green run walked a package through its whole life inside the real
           shippable bundle, along the only install path the app has — the
           Package Manager plugin gated by Basecamp's confirmations: **inspect →
-          `beforeInstall` ack → install gate → install from disk → sidebar**,
-          **inspect → `beforeUpgrade` ack → upgrade gate → payload swap → the
+          `confirm_install` → install gate → install from disk → sidebar**,
+          **inspect → `confirm_upgrade` → upgrade gate → payload swap → the
           running view prints the new version**, and **request →
-          `beforeUninstall` ack → gated confirm → files gone → the package
+          `confirm_uninstall` → confirm → files gone → the package
           manager gates the same LGX as a fresh install again**. Every
           confirmation dialog on that path (`installGate` in fresh and
           post-uninstall runs, `upgradeCascade`, and the gated

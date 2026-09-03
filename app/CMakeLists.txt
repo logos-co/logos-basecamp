@@ -235,6 +235,8 @@ set(PROJECT_SOURCES
     utils/LogRedirector.cpp
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
+    utils/DependencyBlocker.h
+    utils/DependencyEntry.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
@@ -242,6 +244,7 @@ set(PROJECT_SOURCES
     interfaces/IShellHost.h
     interfaces/IShellView.h
     interfaces/InstallEnums.h
+    interfaces/ShellSections.h
     interfaces/BasecampModelRoles.h
     resources.qrc
 
@@ -250,6 +253,10 @@ set(PROJECT_SOURCES
     ShellHostAdapter.cpp
 
     MainUIBackend.cpp
+    IntentRegistry.cpp
+    IntentBroker.cpp
+    IntentBridgeAdapter.cpp
+    UIPluginPresenter.cpp
     CoreModuleManager.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
