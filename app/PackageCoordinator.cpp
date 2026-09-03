@@ -1,4 +1,5 @@
 #include "PackageCoordinator.h"
+#include "ResolverRequest.h"
 #include "InstallRegistry.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
@@ -655,22 +656,30 @@ void PackageCoordinator::performLocalRemoval(const QStringList& names)
 void PackageCoordinator::resolveDepChangesThen(const QString& name,
                                                const QString& repositoryUrl,
                                                const QString& version,
-                                               std::function<void(const QVariantList&)> then)
+                                               std::function<void(bool, const QVariantList&)> then)
 {
-    // No repo to resolve against (every local .lgx), or no downloader — answer
-    // with an empty list immediately rather than leaving the dialog unopened.
+    // No repo to resolve against (every local .lgx), or no downloader. Answer
+    // immediately rather than leaving the dialog unopened — but as UNRESOLVED,
+    // so it says the dependencies are unknown instead of claiming there are
+    // none.
     if (repositoryUrl.isEmpty() || !m_logosAPI) {
-        then({});
+        then(false, {});
         return;
     }
 
     QVariantMap pins;
     if (!version.isEmpty()) pins.insert(name, version);
-    const QString depsJson = buildResolverDepsJson(name, repositoryUrl, pins);
+    const QString depsJson =
+        logos::gateResolverRequest(name, repositoryUrl, version);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
-    logos.package_downloader.resolveDependenciesAsync(depsJson, buildInstalledPackagesJson(),
+    logos.package_manager.getInstalledPackagesAsync(
+        [self, depsJson, then](QVariantList installed) {
+        if (!self) return;
+        LogosModules logos(self->m_logosAPI);
+        logos.package_downloader.resolveDependenciesAsync(
+            depsJson, logos::installedPackagesJson(installed),
         [self, then](QVariantList resolved) {
             if (!self) return;   // we are gone; the pending intent dies with us
             QVariantList changes;
@@ -686,8 +695,9 @@ void PackageCoordinator::resolveDepChangesThen(const QString& name,
                     self->m_installedVersionByName.value(entryName),
                     self->m_installedHashByName.value(entryName)));
             }
-            then(changes);
+            then(true, changes);
         });
+    });
 }
 
 bool PackageCoordinator::requesterIsBundled(const QString& requesterName) const
@@ -747,9 +757,11 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         m_pendingInstallRequestId = dispatchId;
         m_pendingInstallName      = name;
         resolveDepChangesThen(name, params.value(QStringLiteral("repositoryUrl")).toString(),
-            version, [this, name, version, requesterName](const QVariantList& changes) {
+            version, [this, name, version, requesterName](bool resolved,
+                                                          const QVariantList& changes) {
                 emit installGateConfirmationRequested(name, version, changes, requesterName,
-                                                     requesterIsBundled(requesterName));
+                                                     requesterIsBundled(requesterName),
+                                                     resolved);
             });
         return true;
     }
@@ -768,7 +780,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
                            /*isUpgrade=*/true};
         resolveDepChangesThen(name, params.value(QStringLiteral("repositoryUrl")).toString(),
             version, [this, name, version, mode, installedDeps, loadedDeps, requesterName]
-            (const QVariantList& changes) {
+            (bool /*resolved*/, const QVariantList& changes) {
                 emit upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
                                                         loadedDeps, changes, requesterName,
                                                         requesterIsBundled(requesterName));
@@ -1361,28 +1373,6 @@ QString PackageCoordinator::buildResolverDepsJson(const QString& name,
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
-QString PackageCoordinator::buildInstalledPackagesJson() const
-{
-    QJsonArray arr;
-    for (const QVariant& v : m_installedPackagesCache) {
-        const QVariantMap m = v.toMap();
-        // package_manager rows expose both `name` and `moduleName`; the
-        // resolver wants the module name. Fall back to `name` when the
-        // module-name field is empty (older index shape).
-        const QString name = m.value("moduleName").toString().isEmpty()
-                             ? m.value("name").toString()
-                             : m.value("moduleName").toString();
-        const QString version = m.value("version").toString();
-        if (name.isEmpty() || version.isEmpty()) continue;
-        QJsonObject o;
-        o.insert(QStringLiteral("name"), name);
-        o.insert(QStringLiteral("version"), version);
-        const QString rootHash = m.value("hashes").toMap().value("root").toString();
-        if (!rootHash.isEmpty()) o.insert(QStringLiteral("rootHash"), rootHash);
-        arr.append(o);
-    }
-    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
-}
 
 QVariantMap nameAndRepo(const QString& name, const QString& repo)
 {

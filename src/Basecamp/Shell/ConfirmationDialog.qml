@@ -92,6 +92,11 @@ Dialog {
     //               app, and a caller-supplied list would let it script this
     //               dialog. Empty = nothing else needs to change.
     property var depChanges: []
+    // Whether `depChanges` is a CONCLUSION or just an absence. An empty list
+    // means "nothing needs to change" only when the resolver actually ran;
+    // when it could not (no repository to resolve against, or the call
+    // failed) the gate knows nothing, and must not say otherwise.
+    property bool depChangesResolved: true
 
     property string errorMessage: ""
 
@@ -169,8 +174,12 @@ Dialog {
     // simply confirms the install and lists the transitive `depChanges`.
     // Continue / Cancel still flow through continueClicked / cancelClicked;
     // the backend routes those to confirmInstallGate / cancelInstallGate.
-    function openWithInstallGate(name_, version_, depChanges_, requester_, requesterBundled_) {
+    function openWithInstallGate(name_, version_, depChanges_, requester_, requesterBundled_,
+                                depChangesResolved_) {
         root.mode = "installGate";
+        // Defaults to true so existing callers keep today's meaning.
+        root.depChangesResolved = depChangesResolved_ === undefined
+                                  ? true : !!depChangesResolved_;
         root.moduleName = name_ || "";
         root.upgradeTargetVersion = version_ || "";
         root.items = [];
@@ -350,8 +359,14 @@ Dialog {
                     // The dep-change list below spells out the transitive set.
                     // When it's empty, say so plainly so a bare install still
                     // reads as a deliberate, complete confirmation.
-                    if ((root.depChanges || []).length === 0)
+                    if ((root.depChanges || []).length === 0) {
+                        // Only a resolved empty set licenses the claim.
+                        if (!root.depChangesResolved)
+                            return iHead + " Its dependencies could not be "
+                                 + "determined, so other packages may be "
+                                 + "installed as well.";
                         return iHead + " No other packages need to change.";
+                    }
                     return iHead + " Installing it also applies the dependency "
                                  + "changes listed below:";
                 }

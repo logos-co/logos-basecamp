@@ -259,9 +259,11 @@ Item {
         // Install gate (package_manager_ui-initiated). releaseTag is the
         // target version; depChanges is the resolved transitive set.
         function onInstallGateConfirmationRequested(name, releaseTag, depChanges,
-                                                    requesterName, requesterBundled) {
+                                                    requesterName, requesterBundled,
+                                                    depChangesResolved) {
             installGateDialog.openWithInstallGate(name, releaseTag, depChanges,
-                                                  requesterName, requesterBundled);
+                                                  requesterName, requesterBundled,
+                                                  depChangesResolved);
         }
 
         function onInstallFailureNoticeRequested(name, errorMessage) {
