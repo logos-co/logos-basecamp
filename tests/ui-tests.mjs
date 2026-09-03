@@ -1630,6 +1630,250 @@ test("app manager: search tolerates regex/special/unicode input", async (app) =>
   assertNoRegexWarnings('"" (clear)');
 });
 
+// --- App Manager (A11) — selecting a category filters the grid ---
+//
+// Spec §2.A A11 (amended 2026-08-28, operator-confirmed): Applications →
+// click a non-"All" category cell (obj: appManager.category.<name>). Gates:
+// appsProxy.categoryFilter equals that category's name · every row remaining
+// in the grid carries that category role (equivalently: the outer count
+// equals the pre-click snapshot rows with that category) · clicking the "All"
+// cell clears the filter and restores the unfiltered count.
+//
+// Selection is asserted via appsProxy.categoryFilter, NOT
+// d.selectedCategoryIndex: object-scoped evaluate resolves only the anchor's
+// OWN properties, never file-internal ids like AppManagerView's `d` QtObject.
+// appsProxy is reached as localAppsProxy.sourceModel — the proven A8/A10
+// anchor path; they are the same AppsFilterProxy instance
+// (AppManagerView.qml:72) — so the filter reads as sourceModel.categoryFilter,
+// an own-property chain, one primitive per evaluate call. The index effect is
+// asserted through the delegates' `highlighted` (binds ListView.isCurrentItem,
+// which tracks d.selectedCategoryIndex via the view's currentIndex).
+//
+// The clicked category is "Testing" — fixture A's manifest category is
+// "testing" (tests/fixtures/lgx.mjs manifestFor), first-letter-uppercased by
+// AppsFilterProxy::categories() (AppsFilterProxy.cpp:164-191). The --ci build
+// seeds fixture A at boot, so the cell is guaranteed there (hard failure if
+// not); against a local app without the fixture the cell may be absent —
+// spec-§0.A skip with a log line. The expected filtered count is NOT
+// hardcoded: the outer model also holds the hermetic default catalog, so the
+// test SNAPSHOTS every outer row's CategoryRole (Qt.UserRole + 5,
+// BasecampModelRoles.h) with no filter applied and computes the expectation
+// as the rows whose capitalized category is "Testing" — mirroring
+// filterAcceptsRow's capitalizeFirst comparison (AppsFilterProxy.cpp:311-316).
+//
+// Cells are clicked via evaluate("clicked()") on the objectName-found
+// delegate — the same handler chain a pointer click drives (onClicked:
+// d.selectedCategoryIndex = index). Cells are re-found inside every waitFor
+// pass: the proxy's row changes re-emit categoriesChanged, and the resulting
+// (equal) list re-assignment can rebuild the ListView's delegates. Cleanup:
+// the test ends on the "All" cell with the filter cleared and the recorded
+// unfiltered count restored.
+
+test("app manager: selecting a category filters the grid", async (app) => {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+
+  let proxyId = null;
+  await app.waitFor(async () => {
+    proxyId = await findLocalAppsProxy(app);
+    if (proxyId === null) {
+      throw new Error("appManager.localAppsProxy not found in QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
+
+  const CATEGORY = "Testing";
+  // Mirror of AppsFilterProxy's capitalizeFirst — first char only, rest as-is.
+  const capitalizeFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+  const findCategoryCell = (name) =>
+    findByObjectName(app.inspector, `appManager.category.${name}`);
+  const clickCell = async (name) => {
+    const cell = await findCategoryCell(name);
+    if (!cell) {
+      throw new Error(`appManager.category.${name} cell not in the QML tree`);
+    }
+    const res = await app.inspector.send("evaluate", {
+      objectId: cell.id, expression: "clicked()",
+    });
+    if (res.error) {
+      throw new Error(
+        `clicking the "${name}" category cell failed: ${res.error}`);
+    }
+  };
+
+  // Normalize: the snapshot below must be unfiltered. Nothing before A11
+  // touches the category (the boot value is "All" — AppManagerView.qml:42-51)
+  // and A10 ends with the search cleared, but a leftover value in either
+  // would skew the recording. The search is cleared through the field, as in
+  // A8 — writing the proxy directly would desync it from d.searchText.
+  const initialFilter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
+  if (typeof initialFilter !== "string") {
+    throw new Error(
+      `sourceModel.categoryFilter=${JSON.stringify(initialFilter)} ` +
+      `(expected string)`);
+  }
+  if (initialFilter !== "" && initialFilter !== "All") {
+    await clickCell("All");
+    await app.waitFor(async () => {
+      const f = await evalOn(app, proxyId, "sourceModel.categoryFilter");
+      if (f !== "All") {
+        throw new Error(
+          `sourceModel.categoryFilter=${JSON.stringify(f)} (expected "All")`);
+      }
+    }, { timeout: 5000, interval: 100,
+         description: 'category filter to normalize to "All"' });
+  }
+  const initialSearch = await evalOn(app, proxyId, "sourceModel.searchText");
+  if (initialSearch !== "") {
+    const field = await findByObjectName(app.inspector, "appManager.searchField");
+    if (!field) throw new Error("appManager.searchField not in the QML tree");
+    const res = await app.inspector.send("evaluate", {
+      objectId: field.id, expression: 'text = ""',
+    });
+    if (res.error) throw new Error(`clearing the search failed: ${res.error}`);
+    await app.waitFor(async () => {
+      const s = await evalOn(app, proxyId, "sourceModel.searchText");
+      if (s !== "") {
+        throw new Error(
+          `sourceModel.searchText=${JSON.stringify(s)} (expected "")`);
+      }
+    }, { timeout: 5000, interval: 100,
+         description: "search to normalize to empty" });
+  }
+
+  // PRECONDITION (spec gate): the "Testing" category cell exists. Fixture A's
+  // category guarantees it in --ci (hard failure there); spec-§0.A skip
+  // against a local app without a testing-category row.
+  try {
+    await app.waitFor(async () => {
+      const cell = await findCategoryCell(CATEGORY);
+      if (!cell) {
+        throw new Error(
+          `appManager.category.${CATEGORY} not in the QML tree`);
+      }
+    }, { timeout: 10000, interval: 500,
+         description: `the "${CATEGORY}" category cell to exist` });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: A11 precondition not met — the "${CATEGORY}" category ` +
+        `cell is absent (no ${CATEGORY.toLowerCase()}-category rows in this ` +
+        `app instance; spec §0.A: skip, not fail, outside --ci)`);
+      return;
+    }
+    throw new Error(
+      `A11 precondition failed — the "${CATEGORY}" category cell never ` +
+      `appeared although fixture A's manifest category is "testing": ` +
+      `${e.message}`);
+  }
+
+  // Record the unfiltered count and SNAPSHOT every outer row's category —
+  // one primitive per evaluate call, as in A10's search-field snapshot.
+  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (typeof preOuterRows !== "number") {
+    throw new Error(
+      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
+  }
+  const CATEGORY_ROLE = "Qt.UserRole + 5"; // AppsModelRoles::CategoryRole
+  const rowCategory = (i) => evalOn(
+    app, proxyId,
+    `String(sourceModel.data(sourceModel.index(${i}, 0), ${CATEGORY_ROLE}) || "")`);
+  const snapshot = [];
+  for (let i = 0; i < preOuterRows; i += 1) {
+    const value = await rowCategory(i);
+    snapshot.push(typeof value === "string" ? value : "");
+  }
+  // Mirror of filterAcceptsRow's category leg: capitalizeFirst(row) == filter.
+  const expectedFiltered =
+    snapshot.filter((c) => capitalizeFirst(c) === CATEGORY).length;
+  if (expectedFiltered < 1) {
+    throw new Error(
+      `snapshot found 0 "${CATEGORY}"-category rows in ${preOuterRows} outer ` +
+      `rows although the "${CATEGORY}" cell renders — the category snapshot ` +
+      `and AppsFilterProxy::categories() disagree`);
+  }
+
+  // Click "Testing": the filter lands on the proxy, only that category's rows
+  // survive, and the selection (index effect) moves to the clicked cell.
+  await clickCell(CATEGORY);
+  await app.waitFor(async () => {
+    const filter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
+    if (filter !== CATEGORY) {
+      throw new Error(
+        `sourceModel.categoryFilter=${JSON.stringify(filter)} after clicking ` +
+        `"${CATEGORY}" (expected "${CATEGORY}")`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== expectedFiltered) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} with the "${CATEGORY}" ` +
+        `filter (expected ${expectedFiltered} — the snapshot rows with that ` +
+        `category)`);
+    }
+    // The spec's stronger per-row form of the count gate: every surviving
+    // row carries the category role.
+    for (let i = 0; i < outerRows; i += 1) {
+      const c = await rowCategory(i);
+      if (capitalizeFirst(typeof c === "string" ? c : "") !== CATEGORY) {
+        throw new Error(
+          `filtered row ${i} has category ${JSON.stringify(c)} ` +
+          `(expected "${CATEGORY}")`);
+      }
+    }
+    const testingCell = await findCategoryCell(CATEGORY);
+    if (!testingCell) {
+      throw new Error(`appManager.category.${CATEGORY} not in the QML tree`);
+    }
+    const testingHighlighted = await evalOn(app, testingCell.id, "highlighted");
+    if (testingHighlighted !== true) {
+      throw new Error(
+        `"${CATEGORY}" cell highlighted=${testingHighlighted} after its ` +
+        `click (expected true)`);
+    }
+    const allCell = await findCategoryCell("All");
+    if (!allCell) throw new Error("appManager.category.All not in the QML tree");
+    const allHighlighted = await evalOn(app, allCell.id, "highlighted");
+    if (allHighlighted !== false) {
+      throw new Error(
+        `"All" cell highlighted=${allHighlighted} while "${CATEGORY}" is ` +
+        `selected (expected false)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description:
+         `the "${CATEGORY}" category to filter the grid to ` +
+         `${expectedFiltered} row(s)` });
+
+  // Clear: clicking "All" resets the filter, restores the recorded
+  // unfiltered count and moves the selection back — the required end state.
+  await clickCell("All");
+  await app.waitFor(async () => {
+    const filter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
+    if (filter !== "All") {
+      throw new Error(
+        `sourceModel.categoryFilter=${JSON.stringify(filter)} after clicking ` +
+        `"All" (expected "All")`);
+    }
+    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
+    if (outerRows !== preOuterRows) {
+      throw new Error(
+        `outer apps proxy rowCount()=${outerRows} after clearing the ` +
+        `category (expected the recorded unfiltered ${preOuterRows})`);
+    }
+    const allCell = await findCategoryCell("All");
+    if (!allCell) throw new Error("appManager.category.All not in the QML tree");
+    const allHighlighted = await evalOn(app, allCell.id, "highlighted");
+    if (allHighlighted !== true) {
+      throw new Error(
+        `"All" cell highlighted=${allHighlighted} after the reset click ` +
+        `(expected true)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: 'the "All" category to restore the unfiltered grid' });
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
