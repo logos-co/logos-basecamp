@@ -36,7 +36,7 @@ const QStringList kRestrictedToPackageManagerUi = {
 
 } // namespace
 
-MainUIBackend::MainUIBackend(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QObject* parent)
+MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* parent)
     : QObject(parent)
     , m_currentActiveSectionIndex(0)
     , m_logosAPI(logosAPI)
@@ -767,5 +767,11 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
+
+// Read the environment rather than a compile-time flag.
+bool         MainUIBackend::isMockBackend() const
+{
+    return qEnvironmentVariableIsSet("LOGOS_MOCK_FIXTURE");
+}
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
 

@@ -126,10 +126,30 @@ endif()
 
 message(STATUS "Using logos-qt-sdk (seam headers) at: ${LOGOS_QT_SDK_ROOT}")
 
-# ── logos-liblogos (provides liblogos_core library and logos_host binary) ─────
+# ── Backend selection: real liblogos, or the mock ────────────────────────────
+option(LOGOS_USE_MOCK_BACKEND
+       "Link the fixture-backed mock instead of liblogos_core (see mock/README.md)"
+       OFF)
+
+# Resolved before the backend branch below: the real path needs it for
+# logos_core, and nix/app.nix stages runtime libraries from it either way.
 if(NOT DEFINED LOGOS_LIBLOGOS_ROOT)
     set(LOGOS_LIBLOGOS_ROOT "${REAL_SOURCE_DIR}/../../logos-liblogos")
 endif()
+
+if(LOGOS_USE_MOCK_BACKEND)
+    message(WARNING
+        "LOGOS_USE_MOCK_BACKEND=ON — building against the MOCK backend. "
+        "This binary serves fixture data and contains no Logos runtime. "
+        "Do not ship it.")
+    # REAL_SOURCE_DIR is app/ (hence the ../../ used for sibling repos below),
+    # so mock/ is one level up, at the repo root.
+    add_subdirectory(${REAL_SOURCE_DIR}/../mock ${CMAKE_CURRENT_BINARY_DIR}/mock)
+
+    # logos_mock_backend carries FixtureCoreRuntime, the ICoreRuntime
+    set(LOGOS_CORE_TARGET logos_mock_backend)
+else()
+    set(LOGOS_CORE_TARGET logos_core)
 
 set(_liblogos_found FALSE)
 if(EXISTS "${LOGOS_LIBLOGOS_ROOT}/src/logos_core/logos_core.h")
@@ -153,6 +173,8 @@ if(_liblogos_is_source)
 else()
     link_directories(${LOGOS_LIBLOGOS_ROOT}/lib)
 endif()
+
+endif() # LOGOS_USE_MOCK_BACKEND
 
 # ── logos-view-module-runtime (provides ViewModuleHost.h + the ui-host lib) ───
 # Load-bearing: UIPluginManager/PluginLoader compile into the exe.
@@ -227,10 +249,28 @@ if(DEFINED LOGOS_CPP_SDK_ROOT)
     # second static copy for a shim to suppress.
 endif()
 
+# QtLogosCoreRuntime is the ONLY file in the app that names the Logos core, so
+# a core rework lands there and nowhere else. It is compiled ONLY for the real
+# backend: under LOGOS_USE_MOCK_BACKEND nothing links liblogos_core, so
+# compiling it would leave every logos_core_* symbol undefined at link time.
+#
+# That it can simply be dropped is the clearest statement of what the seam buys
+# — the mock build does not merely avoid CALLING the core, it never compiles a
+# line that names it.
+set(CORE_RUNTIME_SOURCES)
+if(NOT LOGOS_USE_MOCK_BACKEND)
+    list(APPEND CORE_RUNTIME_SOURCES QtLogosCoreRuntime.h QtLogosCoreRuntime.cpp)
+endif()
+
 set(PROJECT_SOURCES
     main.cpp
     window.h
     window.cpp
+
+    # The seam Basecamp owns. ICoreRuntime is what the app codes against;
+    # it sits with IShellHost/IShellView, the other boundaries this app
+    # defines rather than inherits.
+    interfaces/ICoreRuntime.h
     utils/LogRedirector.h
     utils/LogRedirector.cpp
     utils/AccessPolicyOption.h
@@ -290,6 +330,7 @@ endif()
 option(LOGOS_PORTABLE_BUILD "Build as a portable/distributed app (no /nix/store dependencies at runtime)" OFF)
 
 qt_add_executable(LogosBasecamp
+    ${CORE_RUNTIME_SOURCES}
     ${PROJECT_SOURCES}
 )
 
@@ -379,8 +420,17 @@ target_link_libraries(LogosBasecamp PRIVATE
     # references — LogosAPIClient::whenObjectAvailable / ::eventSubscriptionState
     # / ::pendingEventSubscriptions and logos::qvariantToNlohmann — despite all
     # four being in liblogos_core.dll's export table and its .dll.a.
-    logos_core
+    #
+    # LOGOS_CORE_TARGET is `logos_core`, or `logos_mock_backend` under
+    # LOGOS_USE_MOCK_BACKEND. The mock is a static archive too, so it keeps this
+    # same last position for the same GNU ld reason.
+    ${LOGOS_CORE_TARGET}
 )
+
+if(LOGOS_USE_MOCK_BACKEND)
+    # Set explicitly rather than relying on PUBLIC propagation from the target.
+    target_compile_definitions(LogosBasecamp PRIVATE LOGOS_MOCK_BACKEND=1)
+endif()
 
 if(APPLE)
     target_link_libraries(LogosBasecamp PRIVATE "-framework Cocoa" "-framework QuartzCore")

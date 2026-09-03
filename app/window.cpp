@@ -31,7 +31,7 @@
     #include "macWindowStyle.h"
 #endif
 
-Window::Window(LogosAPI* logosAPI, logos::qt::QtLogosCore* core, QWidget *parent)
+Window::Window(LogosAPI* logosAPI, ICoreRuntime* core, QWidget *parent)
     : QMainWindow(parent)
     , m_logosAPI(logosAPI)
     , m_core(core)
@@ -132,11 +132,12 @@ void Window::setupUi()
         qFatal("Failed to load the main UI plugin from %s: %s",
                qUtf8Printable(mainUiPluginPath), qUtf8Printable(loader.errorString()));
     }
+    QObject* mainUiInstance = loader.instance();
 
     // A real cast, not QMetaObject::invokeMethod("createWidget"): the string
     // form is a silent-failure path — change an argument type and both sides
     // still compile, then miss at runtime.
-    m_shellView = qobject_cast<IShellView*>(loader.instance());
+    m_shellView = qobject_cast<IShellView*>(mainUiInstance);
     if (!m_shellView) {
         qFatal("main_ui at %s does not implement IShellView",
                qUtf8Printable(mainUiPluginPath));

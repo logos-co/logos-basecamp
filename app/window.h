@@ -1,6 +1,8 @@
 #ifndef WINDOW_H
 #define WINDOW_H
 
+#include "ICoreRuntime.h"
+
 #include <QMainWindow>
 #include <QSystemTrayIcon>
 // QPointer<QScreen> needs QScreen COMPLETE -- QPointer static_asserts that its
@@ -21,9 +23,6 @@ class QResizeEvent;
 class QShowEvent;
 class QWidget;
 
-// The process-wide core facade, created and owned by main(). Threaded down to
-// CoreModuleManager, which is the only thing here that calls it.
-namespace logos { namespace qt { class QtLogosCore; } }
 
 class Window : public QMainWindow
 {
@@ -31,7 +30,7 @@ class Window : public QMainWindow
 
 public:
     explicit Window(LogosAPI* logosAPI,
-                    logos::qt::QtLogosCore* core,
+                    ICoreRuntime* core,
                     QWidget *parent = nullptr);
     ~Window();
 
@@ -78,7 +77,7 @@ private:
 #endif
 
     LogosAPI* m_logosAPI;
-    logos::qt::QtLogosCore* m_core; // not owned; owned by main()
+    ICoreRuntime* m_core; // not owned; owned by main()
 
     // Ownership of the UI backend lives HERE, not in the shell. The shell
     // borrows it through m_hostAdapter and can be torn down independently —

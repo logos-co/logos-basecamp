@@ -1,6 +1,5 @@
 #include "CoreModuleManager.h"
 
-#include "logos_qt_host_core.h"
 
 #include <QDebug>
 #include <QJsonArray>
@@ -53,7 +52,7 @@ QJsonValue variantToJsonValue(const QVariant& value)
 }
 
 CoreModuleManager::CoreModuleManager(LogosAPI* logosAPI,
-                                     logos::qt::QtLogosCore* core,
+                                     ICoreRuntime* core,
                                      QObject* parent)
     : QObject(parent)
     , m_logosAPI(logosAPI)
@@ -64,7 +63,7 @@ CoreModuleManager::CoreModuleManager(LogosAPI* logosAPI,
     // a null dereference on the first stats tick, 2 seconds after startup and
     // far from the cause. main() owns the object and must pass it down.
     if (!m_core) {
-        qFatal("CoreModuleManager requires a QtLogosCore instance");
+        qFatal("CoreModuleManager requires an ICoreRuntime instance");
     }
 
     connect(m_statsTimer, &QTimer::timeout,

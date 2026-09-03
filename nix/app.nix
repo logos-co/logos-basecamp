@@ -1,5 +1,9 @@
 # Builds the logos-basecamp standalone application.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true }:
+# useMockBackend: link mock/'s logos_mock_backend instead of liblogos_core,
+# producing a Basecamp that serves fixture data and contains no Logos runtime.
+# Exposed only via the .#app-mock output — never from a release target.
+# See mock/README.md.
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -612,6 +616,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
       -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
+      -DLOGOS_USE_MOCK_BACKEND=${if useMockBackend then "ON" else "OFF"} \
       -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
       ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
 
@@ -692,6 +697,7 @@ WRAPPER_EOF
       fi
     done
 
+    ${pkgs.lib.optionalString (!useMockBackend) ''
     # Copy the core binaries from liblogos
     for _x in "" ".exe"; do
       if [ -f "${logosLiblogos}/bin/logoscore$_x" ]; then
@@ -707,6 +713,23 @@ WRAPPER_EOF
         break
       fi
     done
+    ''}
+    ${pkgs.lib.optionalString useMockBackend ''
+    # Mock build: no MODULE runtime. logoscore and logos_host exist to run
+    # modules, and there are none — every module answer comes from the fixture.
+    #
+    # ui-host is deliberately KEPT: it hosts a ui_qml app's backend, which is
+    # real code that still needs somewhere to run. It reads LOGOS_MOCK_FIXTURE
+    # (exported by MockBackendFixture, inherited through QProcess) and serves
+    # that backend's own outbound calls from the same fixture.
+    for _f in "$out/bin/logos_host" "$out/bin/logoscore"; do
+      if [ -e "$_f" ]; then
+        echo "ERROR: mock build staged a module-runtime binary: $_f" >&2
+        exit 1
+      fi
+    done
+    echo "Mock backend: no logoscore / logos_host staged (ui-host kept)"
+    ''}
 
     # Copy shared libraries from liblogos (includes logos_core and its dependency
     # package_manager_lib).
@@ -729,6 +752,20 @@ WRAPPER_EOF
     for f in "${logosLiblogos}/lib/"*.dylib "${logosLiblogos}/lib/"*.so "${logosLiblogos}/lib/"*.dll; do
       # A non-matching glob stays literal, so test before copying.
       if [ -f "$f" ]; then
+        ${pkgs.lib.optionalString useMockBackend ''
+        # Mock build: take everything EXCEPT liblogos_core.
+        #
+        # The distinction matters and is easy to get wrong. liblogos_protocol
+        # and liblogos_qt_host own the runtime TYPES (TokenManager,
+        # LogosAPIClient, LogosAPI) and the app links them directly — dropping
+        # them makes the binary fail to start with "cannot open shared object
+        # file". liblogos_core is the MODULE runtime, the thing that scans
+        # directories and spawns logos_host, and that is the only piece the mock
+        # replaces.
+        case "$(basename "$f")" in
+          liblogos_core.*) echo "Mock backend: skipping $(basename "$f")"; continue ;;
+        esac
+        ''}
         cp -L "$f" "$_libdest/" || true
         _copied=$((_copied + 1))
       fi
@@ -741,6 +778,16 @@ WRAPPER_EOF
       ls -la "${logosLiblogos}/lib" >&2 || true
       exit 1
     fi
+    ${pkgs.lib.optionalString useMockBackend ''
+    # The claim of this output is "no MODULE runtime". Verify it.
+    for _f in "$_libdest/"liblogos_core.*; do
+      if [ -e "$_f" ]; then
+        echo "ERROR: mock build staged liblogos_core: $_f" >&2
+        exit 1
+      fi
+    done
+    echo "Mock backend: verified liblogos_core is absent"
+    ''}
 
     # Copy SDK library if it exists
     # Test each candidate, do not `ls` the glob. With nullglob set (it is, in
