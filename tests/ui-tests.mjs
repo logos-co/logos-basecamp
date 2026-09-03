@@ -1466,7 +1466,7 @@ test("app manager: search tolerates regex/special/unicode input", async (app) =>
     if (!appLogPath) return;
     let tail = "";
     try {
-      tail = readFileSync(appLogPath, "utf-8").slice(appLogBaseline);
+      tail = readFileSync(appLogPath).subarray(appLogBaseline).toString("utf-8");
     } catch {
       return; // log vanished — nothing to assert against
     }
