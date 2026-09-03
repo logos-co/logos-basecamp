@@ -22,10 +22,12 @@
 
 #include "CoreModuleManager.h"
 #include "IComponent.h"
+#include "IntentBridgeAdapter.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
 #include "logos_consumer.h"
 #include "restricted/QmlSandbox.h"
+#include "utils/DependencyEntry.h"
 #include <ViewModuleHost.h>
 
 PluginLoader::PluginLoader(LogosAPI* logosAPI,
@@ -121,9 +123,26 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
     // Every core-plugin load goes through CoreModuleManager so the logos_core_*
     // C API is centralised in one place.
     for (const QVariant& dep : request.coreDependencies) {
-        QString depName = dep.toString();
-        if (depName.isEmpty())
-            continue;
+        // Bare name or {"name": …, "version": …, "signer": …} — either way we
+        // need the name. See utils/DependencyEntry.h for why this must not be
+        // a bare dep.toString().
+        const logos::DependencyEntry entry = logos::readDependencyEntry(dep);
+        if (entry.kind == logos::DependencyEntryKind::Unrecognised) {
+            // No name means no way to honour the declaration. Refuse rather
+            // than continue: mounting the plugin with a declared dependency
+            // silently unloaded surfaces later as a missing method or a dead
+            // endpoint, with nothing in the log pointing here.
+            qWarning() << "Unrecognised core dependency entry" << dep
+                       << "for" << request.name
+                       << "- expected a module name, or an object with a "
+                          "string \"name\"; refusing to load";
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Unrecognised dependency entry in ")
+                    + request.name + QStringLiteral("'s manifest"));
+            return;
+        }
+        const QString depName = entry.name;
         if (!m_coreModuleManager) {
             qWarning() << "Failed to load core dependency" << depName
                        << "for" << request.name;
@@ -413,6 +432,15 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
                                    ViewModuleHost* viewHost)
 {
     bridge->setParent(qmlWidget);
+
+    // Attach BEFORE setSource() below, which is where QML actually runs: an app
+    // calling logos.request() from Component.onCompleted would otherwise be an
+    // unknown bridge and get `unavailable` from its own shell.
+    // The single funnel for every ui_qml app — the QML-only and backend paths
+    // both converge here.
+    if (m_intentAdapter)
+        m_intentAdapter->attach(request.name, bridge);
+
     qmlWidget->rootContext()->setContextProperty("logos", bridge);
     qmlWidget->rootContext()->setContextProperty("isActiveTab", true);
     qmlWidget->setSource(QUrl::fromLocalFile(request.qmlViewPath));

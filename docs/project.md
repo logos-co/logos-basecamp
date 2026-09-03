@@ -434,6 +434,25 @@ QML UI App code: logos.callModule("storage_module", "getFiles", ["/data"])
      └─ Serialize QVariant result to JSON string → return to QML
 ```
 
+## App-to-App Intents
+
+An app requests a capability by name; the shell decides who services it. Basecamp owns the replaceable half — resolution, consent, dispatch. The frozen QML surface (`logos.request` / `logos.respond` / `intentRequested`, the six error codes, the payload rules) lives in `logos-view-module-runtime/include/LogosIntent.h`, so an app compiled today keeps working when this half is replaced.
+
+| Component | Role |
+|---|---|
+| `app/IntentRegistry` | Who declares what, read from each installed app's `metadata.json` (`provides`, `uses`, `provides[].params`). `ui_qml` only. Reserves `logos.*`. |
+| `app/IntentBroker` | Resolution, consent, dispatch, deadlines, and the anti-spoofing guards. Reaches the world only through four seams, so it is testable without a UI. |
+| `app/IntentBridgeAdapter`, `app/ShellIntent*` | Bind each UI plugin's `LogosQmlBridge` to the broker; re-emit prompts as QML signals. |
+| `src/Basecamp/Shell/Intent*Dialog.qml` | The chooser and the install suggestion. |
+
+Flow: `logos.request` → bridge → broker → registry resolves → user chooses → provider raised and handed the request → result routed back to the requester alone → user returned to the requester, unless the provider declared the intent a hand-off (`"handoff": true`) or the request ended some way the user cannot see the cause of.
+
+The requester's own `requestId` never leaves its side; the broker mints a separate `dispatchId` and gives only that to the provider. A response is accepted only when the id is pending, the phase is `Dispatched`, and the responding endpoint is pointer-identical to the recorded provider.
+
+`unavailable` deliberately merges "nothing installed" with "denied" and is held to a 400 ms floor, so an app cannot enumerate the user's installed apps by asking or by timing.
+
+See `docs/app-to-app-intents.md` for the full design, the six error codes, and known limitations.
+
 ## Component Directory Resolution
 
 Logos Modules and UI Apps are discovered from separate directories, reflecting their different management layers.
@@ -641,3 +660,6 @@ step. (This replaced a hand-rolled install-Nix + cachix pair.)
 1. **No workspace persistence** — The set of loaded modules and tab layout is not saved across application restarts.
 2. **No module updates** — There is no mechanism to detect or install module updates automatically.
 4. **QML inspector in release** — The inspector is disabled in release builds and cannot be enabled at runtime.
+5. **Nothing is signed** — No published package carries a signature and `trustedSigners` is empty, so a package's name and display name are self-declared claims. Two packages can advertise the same capability under the same label, and the intent chooser cannot tell the user which is which.
+6. **No "always use this app"** — every ambiguous request raises the chooser. Remembering a pick needs a settings screen to review and revoke from, and a way to mark intents that must never be remembered; until both exist it is deliberately not offered.
+7. **Intents do not return the user to the requesting app** — the provider is brought forward and stays there. Navigating back is the user's job.

@@ -339,13 +339,13 @@ sections:
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
               args: ["file:///tmp/basecamp-persist/test_persist_qml-0.1.1.lgx"]
-              text: "PMU inspects the LGX, sees it isn't installed, and calls the `package_manager` module's `requestInstall` gate; the module emits `beforeInstall` and Basecamp raises the install gate."
+              text: "PMU inspects the LGX, sees it isn't installed, and raises the `logos.packages.confirm_install` intent; Basecamp services it and raises the install gate."
 
             - name: "Basecamp's install gate asks for confirmation"
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_persist_qml' v0.1.1. No other packages need to change."
+                - "Install 'test_persist_qml' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               screenshot: "persist-install-dialog.png"
 
@@ -353,7 +353,7 @@ sections:
               action: click_object
               find_by: "objectName"
               find_value: "confirmationDialog.installGate.confirm"
-              text: "The decision flows back through the module gate and PMU installs the file straight from disk into the user-dir."
+              text: "The decision is returned as the intent's answer and PMU installs the file straight from disk into the user-dir."
 
             # WORKAROUND — same stack bug the package-lifecycle doc-test
             # flags: `uiPluginFileInstalled` isn't emitted for QML-only
@@ -405,7 +405,7 @@ sections:
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
               args: ["file:///tmp/basecamp-persist/test_fullapi_cpp.lgx"]
-              text: "The same `installLocalPackage` → `inspectPackage` → `requestInstall` route as the app — a core module is just an `.lgx` whose payload happens to be compiled code."
+              text: "The same `installLocalPackage` → `inspectPackage` → `confirm_install` route as the app — a core module is just an `.lgx` whose payload happens to be compiled code."
 
             # The runner's text matching is exact-match, so this wait needs
             # the dialog's full one-line message — deterministic because the
@@ -414,7 +414,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_fullapi_cpp' v0.0.1. No other packages need to change."
+                - "Install 'test_fullapi_cpp' v0.0.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               screenshot: "persist-module-install-dialog.png"
 

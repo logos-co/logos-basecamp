@@ -398,7 +398,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_failpath_qml' v0.1.1. No other packages need to change."
+                - "Install 'test_failpath_qml' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
 
             - name: "It is the install gate — and the error notice stayed closed"
@@ -425,7 +425,7 @@ sections:
               action: click_object
               find_by: "objectName"
               find_value: "confirmationDialog.installGate.cancel"
-              text: "Nothing gets installed in this spec — cancel flows back through the module gate and PMU drops its stashed path. The user-dir ends the run as empty as it began."
+              text: "Nothing gets installed in this spec — cancel is returned as the intent's answer and PMU drops its stashed path. The user-dir ends the run as empty as it began."
 
             - name: "Let the dialog close"
               action: sleep

@@ -1,4 +1,5 @@
 #include "MainContainer.h"
+#include "ShellSections.h"
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "ShortcutBridge.h"
@@ -133,7 +134,7 @@ MainContainer::MainContainer(IShellHost* host, QWidget* parent)
 
     // WelcomePage "Install now" CTA → jump to Applications view.
     connect(m_workspaceArea, &WorkspaceArea::installClicked, this, [this]() {
-        m_host->setCurrentSectionIndex(1);
+        m_host->setCurrentSectionIndex(ShellSection::AppManager);
     });
 
     // Connect to QML signals from SidebarPanel.
@@ -348,15 +349,21 @@ void MainContainer::onSectionIndexChanged(int index)
     //   2 (Package Manager)  → package_manager_ui (preloaded in background)
     //   3 (Settings)         → ContentViews.qml (StackLayout picks the page)
     switch (sectionIndex) {
-    case 0: m_contentStack->setCurrentIndex(kAppsStackIndex);    break;
-    case 1: m_contentStack->setCurrentIndex(kContentStackIndex); break;
-    case 2:
+    case ShellSection::Workspace:
+        m_contentStack->setCurrentIndex(kAppsStackIndex);
+        break;
+    case ShellSection::AppManager:
+        m_contentStack->setCurrentIndex(kContentStackIndex);
+        break;
+    case ShellSection::PackageManager:
         if (!m_pmuiWidget) {
             m_host->loadUiModule(QStringLiteral("package_manager_ui"));
         }
         m_contentStack->setCurrentIndex(kModulesStackIndex);
         break;
-    case 3: m_contentStack->setCurrentIndex(kContentStackIndex); break;
+    case ShellSection::Settings:
+        m_contentStack->setCurrentIndex(kContentStackIndex);
+        break;
     default: break;
     }
 }
@@ -372,7 +379,7 @@ void MainContainer::onNavigateToApps()
     }
 
     // This is called when an app is loaded and we need to switch to Apps view
-    m_host->setCurrentSectionIndex(0);
+    m_host->setCurrentSectionIndex(ShellSection::Workspace);
 }
 
 void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& title)
@@ -424,10 +431,23 @@ void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
         m_workspaceArea->removePluginDock(widget);
 }
 
-void MainContainer::onPluginWindowActivateRequested(QWidget* widget)
+void MainContainer::onPresentAppRequested(QWidget* widget)
 {
-    if (widget && widget == m_pmuiWidget) return;
-    if (m_workspaceArea && widget)
-        m_workspaceArea->activatePluginDock(widget);
+    if (!widget) return;
+
+    // Hoisted into the content stack, not docked, so "to the front" means
+    // selecting its section rather than raising a tab.
+    if (widget == m_pmuiWidget) {
+        m_host->setCurrentSectionIndex(ShellSection::PackageManager);
+        return;
+    }
+
+    if (!m_workspaceArea) return;
+
+    // Switch section before raising the tab, or the tab becomes current behind
+    // whatever the user is actually looking at.
+    onNavigateToApps();
+    m_workspaceArea->activatePluginDock(widget);
 }
+
 

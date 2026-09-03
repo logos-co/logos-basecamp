@@ -37,6 +37,18 @@ pkgs.runCommand "logos-basecamp-integration-test" {
     export LD_LIBRARY_PATH="${pkgs.libGL}/lib:${pkgs.libglvnd}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   ''}
 
+  # Stage the app-to-app intent fixtures into the throwaway user dir.
+  #
+  # Hand-written app directories — no nix build, no .lgx, no catalog, no
+  # network. Two of them declare the SAME intent, which is the only way to
+  # reach the ambiguous branch and the chooser: no two shipping apps provide
+  # the same capability, and the real duplicate (wallet_ui) cannot be
+  # co-installed.
+  #
+  # Without this the intent cases in ui-tests.mjs find no requester and skip
+  # themselves, which reads as a pass.
+  ${pkgs.bash}/bin/bash ${src}/tests/fixtures/intents/stage.sh "$LOGOS_USER_DIR"
+
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 
@@ -60,6 +72,31 @@ pkgs.runCommand "logos-basecamp-integration-test" {
     ${pkgs.nodejs}/bin/node ${src}/tests/ui-tests.mjs --ci "$PWD/app-with-log.sh" --verbose
   elapsed=$(( $(date +%s) - start ))
   echo "$elapsed" > $out/elapsed-seconds
+
+  # A green suite is not evidence the UI is error-free: a QML TypeError fires
+  # per-frame, prints to the app's stdout, and satisfies every assertion in this
+  # file, because the assertions look at properties rather than at whether the
+  # engine complained. That exact case shipped — a binding dereferencing an
+  # absent field on every collapsed chooser row — and 74 tests passed over it.
+  #
+  # Reads $BASECAMP_APP_LOG rather than capturing the runner's own output: the
+  # app-with-log.sh wrapper above already tees the app's stdout AND stderr there,
+  # and it lands in $out, so a failing run can be read after the fact.
+  #
+  # SCRIPT errors only. Every one is a QML expression that threw, which means a
+  # binding did not produce a value — always a bug, never environmental.
+  # Deliberately NOT every qWarning: this run also emits QSettings and Fontconfig
+  # complaints from the sandbox, and a pre-existing implicitWidth binding loop in
+  # package_manager_ui's TableHeader. Failing on those would make the guard noise
+  # and it would be switched off within a week.
+  echo "Checking for QML script errors..."
+  if grep -nE "(TypeError|ReferenceError|SyntaxError):|Unable to assign|is not a function" \
+       "$BASECAMP_APP_LOG"; then
+    echo ""
+    echo "FAIL: the app logged QML script errors above."
+    echo "The suite passed, which is the point: these do not fail assertions."
+    exit 1
+  fi
 
   echo "Integration tests passed in ''${elapsed}s (budget: ''${MCP_TEST_BUDGET_SECONDS}s for both PR-gate suites combined)"
   if [ "$elapsed" -gt "$MCP_TEST_BUDGET_SECONDS" ]; then

@@ -13,12 +13,22 @@
     logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager";
+    # liblogos_core links libpackage_manager_lib, so liblogos otherwise puts
+    # its OWN older liblgx in the bundle's flat lib/ — where the module's
+    # newer copy can never win on macOS, and package_manager crashes.
+    logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    # The UI otherwise brings its own package_manager and package_downloader,
+    # so the closure carries two of each and the UI that drives installs sits
+    # on the older one — the one with no VersionMismatch, and without the
+    # signer-binding fix.
+    logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
+    logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
@@ -430,6 +440,20 @@
             inherit pkgs; appPkg = app; negativeControl = true;
           };
 
+          # One library name staged twice -- lib/ and beside a module -- must
+          # mean the same build: macOS binds to lib/, Linux to the sibling.
+          # Over the BUNDLE, since the duplication is the bundler's doing.
+          # Build: nix build .#link-gate  (CI: build-appimage, build-macos-app)
+          link-gate = import ./nix/link-gate.nix {
+            inherit pkgs; bundlePkg = binBundleDir;
+          };
+
+          # Negative control for the above. Ship both or neither.
+          # Build: nix build .#link-gate-negative
+          link-gate-negative = import ./nix/link-gate.nix {
+            inherit pkgs; bundlePkg = binBundleDir; negativeControl = true;
+          };
+
           # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
           # builds a real malicious QML plugin and asserts the production sandbox
           # refuses to load it. Build: nix build .#sandbox-test
@@ -440,10 +464,13 @@
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
             inherit pkgs src logosPackageHeaders;
+            logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
           # QML component tests (Qt Quick Test)
-          qml-tests = import ./nix/qml-tests.nix { inherit pkgs src logosPackageHeaders; };
+          qml-tests = import ./nix/qml-tests.nix {
+            inherit pkgs src logosPackageHeaders logosDesignSystem;
+          };
 
           # Coverage report for the unit-test suite: same targets as
           # .#unit-tests, compiled with --coverage and reported via gcovr.
@@ -452,6 +479,7 @@
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
             inherit pkgs src logosPackageHeaders;
+            logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };
 
@@ -532,6 +560,9 @@
         host-services-test = self.packages.${system}.host-services-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
+      } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+        link-gate = self.packages.${system}.link-gate;
+        link-gate-negative = self.packages.${system}.link-gate-negative;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {

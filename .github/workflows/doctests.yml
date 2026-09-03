@@ -30,6 +30,11 @@ name: basecamp Doc-Tests
 #   https://<owner>.github.io/<repo>/                  links to the latest reports
 # instead of 404ing.
 #
+# The gh-pages branch is rebuilt wholesale on every publish (single orphan
+# commit, no history) and holds only main/ plus the reports for open PRs and
+# PRs closed within REPORT_RETENTION_DAYS. A report link in the comment on a
+# PR closed longer ago than that will 404 — re-run the workflow to restore it.
+#
 # Note: pull requests opened from forks get a read-only GITHUB_TOKEN, so the
 # Pages push and PR comment are skipped for them — the downloadable artifact is
 # still produced. PRs from branches in this repo get the full clickable links.
@@ -140,6 +145,13 @@ jobs:
           #     core-module dependency exists nowhere, then asserts the sidebar
           #     red-cross marker and the Missing Dependencies dialog raised by
           #     the load gate (hermetic: hand-written user-dir fixture).
+          #   basecamp-dependency-gate — the same load gate across its whole
+          #     verdict vocabulary: seven seeded ui_qml apps pin one real
+          #     signed fixture module (and one embedded module) seven ways, and
+          #     the run asserts a satisfied range, a satisfied signer pin and an
+          #     uncheckable signer pin all LOAD, while an absent dependency, a
+          #     rejected version and a foreign publisher are each refused with
+          #     their own dialog (hermetic: keys, module and fixtures built here).
           #   basecamp-failure-paths — hands a truncated .lgx and a fake .lgx
           #     to the Package Manager and asserts Basecamp's Install Failed
           #     notice surfaces each error (then proves the intact package
@@ -168,6 +180,7 @@ jobs:
             doctests/basecamp-shortcut-bridge.test.yaml \
             doctests/basecamp-package-lifecycle.test.yaml \
             doctests/basecamp-missing-deps.test.yaml \
+            doctests/basecamp-dependency-gate.test.yaml \
             doctests/basecamp-failure-paths.test.yaml \
             doctests/basecamp-persistence.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
@@ -198,7 +211,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -231,6 +244,85 @@ jobs:
           path: artifacts
           # No `name:` → downloads every artifact into artifacts/<name>/...
 
+      # ── Rebuild the whole site each run ────────────────────────────────────
+      # `force_orphan: true` on the deploy step republishes gh-pages as a single
+      # commit containing exactly `publish_dir`, so `publish_dir` has to be the
+      # WHOLE site rather than just this run's report — hence seeding site/ from
+      # what is already published.
+      #
+      # peaceiris' `keep_files` cannot do this job alongside force_orphan: it
+      # checks out an orphan branch into an empty directory and copies
+      # publish_dir over it, so there are no pre-existing files left to keep
+      # (peaceiris/actions-gh-pages#455 — open since 2020, despite the README
+      # saying v4 would fix it). Doing the merge here also gives us somewhere to
+      # reap from, which `keep_files` never had: it only ever added, so
+      # `pr-<N>/` directories accumulated forever (119 directories / 1.1 GB at
+      # the tip, 116 of them for long-closed PRs, on top of ~1 GB of superseded
+      # snapshots in the branch history).
+      #
+      # `filter: blob:none` keeps this cheap: git fetches the tree listing and
+      # then lazily fetches only the blobs actually copied below, so the reaped
+      # directories are never downloaded at all.
+      #
+      # The job-level `gh-pages-publish` concurrency group is load-bearing now
+      # that we force-push: it serializes seed-and-publish as a unit, so two
+      # runs can't both seed from the same tip and have the second clobber the
+      # first.
+      - name: Check out the published site
+        id: live
+        continue-on-error: true      # gh-pages doesn't exist on the very first run
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: live
+          fetch-depth: 1
+          filter: blob:none
+
+      - name: Seed site/ from the published site, reaping stale reports
+        if: steps.live.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Reports outlive their PR by this long, so a link in a just-merged
+          # PR's comment still resolves. Lower it to shrink the branch further.
+          REPORT_RETENTION_DAYS: 14
+        run: |
+          set -euo pipefail
+          mkdir -p site
+
+          # main/ and the root landing page are only regenerated on pushes to the
+          # default branch, so a PR run has to carry them across or it would
+          # publish a site whose root 404s.
+          for keep in main index.html .nojekyll; do
+            if [ -e "live/$keep" ]; then cp -R "live/$keep" site/; fi
+          done
+
+          # Keep: open PRs, and PRs closed recently enough to still be read.
+          gh pr list --repo "$GITHUB_REPOSITORY" --state all --limit 1000 \
+            --json number,state,closedAt \
+            | jq -r --argjson days "$REPORT_RETENTION_DAYS" '
+                .[]
+                | select(.state == "OPEN"
+                         or (.closedAt != null
+                             and now - (.closedAt | fromdate) < $days * 86400))
+                | "pr-\(.number)"
+              ' \
+            | sort -u > keep.txt
+
+          kept=0
+          reaped=0
+          for dir in live/pr-*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            if grep -qxF "$name" keep.txt; then
+              cp -R "$dir" "site/$name"
+              kept=$((kept + 1))
+            else
+              reaped=$((reaped + 1))
+            fi
+          done
+          echo "Carried over $kept report(s); reaped $reaped stale report(s)."
+
       - name: Arrange site directory
         id: arrange
         shell: bash
@@ -243,6 +335,10 @@ jobs:
           fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
+          # This run's report is authoritative for $BASE — drop any copy carried
+          # over by the seed step, so a report for an OS that didn't produce one
+          # this time doesn't linger and get linked from the landing page below.
+          rm -rf "site/$BASE"
           mkdir -p "site/$BASE"
           found=""
           for os in ubuntu-latest macos-latest; do
@@ -274,7 +370,7 @@ jobs:
           # index.html at the Pages root, that URL 404s even though the per-ref
           # reports exist under main/ and pr-<N>/. Regenerate it on pushes to the
           # default branch (BASE=main) so the home page always points at the
-          # latest main/ report. keep_files:true preserves it across PR runs.
+          # latest main/ report. PR runs preserve it via the seed step above.
           if [ "$BASE" = "main" ]; then
             {
               echo "<!doctype html><meta charset=utf-8>"
@@ -302,7 +398,11 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
-          keep_files: true          # don't wipe other PRs' directories
+          # site/ is the complete site (seeded above), so republish the branch as
+          # a single orphan commit. This replaces keep_files: it keeps the branch
+          # permanently at one commit instead of appending a full snapshot of an
+          # ever-growing tree on every one of the ~15 publishes a day.
+          force_orphan: true
           commit_message: "Publish basecamp doc-test report for ${{ steps.arrange.outputs.base }} (${{ github.sha }})"
 
       - name: Comment on PR with report links
