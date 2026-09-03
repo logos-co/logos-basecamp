@@ -1051,30 +1051,35 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
   }
   if (initialText !== "") await setSearch("");
 
-  // PRECONDITION (spec gate): at least one local row is in the grid. Whether
-  // fixture A is among them is proven by step 1, which narrows to exactly it.
-  // If nothing ever shows, the seeding produced no user-install row — that is
-  // a hard failure in --ci (integration-test pre-seeds fixture A at boot) and
-  // a spec-§0.A skip against a local app without the fixture.
+  // PRECONDITION (spec gate): fixture A is installed and at least one local
+  // row is in the grid. The tile check matters outside --ci: a developer
+  // instance with some other local app but no fixture A would otherwise pass
+  // this gate and then time out in step 1's exact-one assertion instead of
+  // taking the spec-§0.A skip. In --ci both are hard failures (integration-test
+  // pre-seeds fixture A at boot).
   try {
     await app.waitFor(async () => {
+      const fixtureTile = await findByObjectName(
+        app.inspector, `sidebar.app.${FIXTURE_A.name}`);
+      if (!fixtureTile) {
+        throw new Error(`fixture A (${FIXTURE_A.name}) is not installed`);
+      }
       const count = await evalOn(app, proxyId, "visibleCount");
       if (typeof count !== "number" || count < 1) {
         throw new Error(
           `localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
       }
     }, { timeout: 10000, interval: 500,
-         description: "at least one local row to be in the grid" });
+         description: "fixture A and at least one local row to be present" });
   } catch (e) {
     if (!CI_MODE) {
       console.log(
-        `    SKIP: A8 precondition localAppsProxy.visibleCount >= 1 not met ` +
-        `— no local row (fixture A ${FIXTURE_A.name} or otherwise) in this ` +
-        `app instance (spec §0.A: skip, not fail, outside --ci)`);
+        `    SKIP: A8 precondition not met — ${e.message} ` +
+        `(spec §0.A: skip, not fail, outside --ci)`);
       return;
     }
     throw new Error(
-      `A8 precondition failed — the seeding produced no user-install row: ` +
+      `A8 precondition failed — fixture A missing or no user-install row: ` +
       `${e.message}`);
   }
 
