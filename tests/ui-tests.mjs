@@ -1191,9 +1191,9 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
 // character is inert data, not a pattern. Gates: appManager.emptyView is
 // visible with a non-empty message · the outer searched proxy (the spec's
 // uiAppsProxy — localAppsProxy.sourceModel, same access path as A8) reports
-// rowCount() 0 · localAppsProxy.visibleCount is 0 · no visible "local"
-// section header remains · clearing hides the empty view and restores the
-// recorded pre-search counts.
+// rowCount() 0 · localAppsProxy.visibleCount is 0 · no AppRepoSection (repo
+// or synthetic local) is visible · no visible "local" section header remains
+// · clearing hides the empty view and restores the recorded pre-search counts.
 //
 // First assertion for the empty-search element: its `visible` binds on
 // d.searchText.length > 0 && appsProxy.visibleCount === 0
@@ -1202,12 +1202,26 @@ test("app manager: search narrows the grid to matching apps", async (app) => {
 // (LogosText), whichever round-trips non-empty — one property per evaluate
 // call, primitives only.
 //
+// "Every section hides" is checked on the sections themselves, not only on
+// the model: findByType("AppRepoSection") enumerates every section instance
+// (the Repeater's repo delegates plus the always-instantiated synthetic
+// local one — so zero matches is an inspector failure, not an empty grid),
+// and each must report visible === false. The `visible` bindings live in
+// AppManagerView.qml (repoFilter.visibleCount > 0 / localFilter.visibleCount
+// > 0), so a section that stayed on screen with zero rows would fail here
+// even though the model gates above pass.
+//
 // The "local" header probe mirrors the header-invariant test late in this
 // file: findByProperty(text === "local"), then getProperties visible per
 // match. No fixture precondition: with zero rows pre-search the no-match
 // search still flips the empty view on, and the restore gates compare
 // against the recorded (possibly zero) counts. Cleanup: the search ends
 // cleared, so the empty view ends hidden.
+//
+// Baseline is taken only after appManager.loadingOverlay is hidden: the
+// subtitle/search/proxy objects exist while appsLoading is still true, and
+// a catalog refresh landing mid-test would both cover the empty view and
+// move the model counts the restore gate compares against.
 
 test("app manager: search with no match shows the empty view", async (app) => {
   await app.click("Applications");
@@ -1215,6 +1229,19 @@ test("app manager: search with no match shows the empty view", async (app) => {
     async () => { await app.expectTexts(["Install and manage applications."]); },
     { timeout: 10000, interval: 500, description: "Applications view to render" }
   );
+
+  // Settle: the loading overlay (visible: root.loading) must be gone before
+  // any baseline is recorded — see the header comment.
+  await app.waitFor(async () => {
+    const overlay = await findByObjectName(app.inspector, "appManager.loadingOverlay");
+    if (!overlay) throw new Error("appManager.loadingOverlay not in the QML tree");
+    const visible = await evalOn(app, overlay.id, "visible");
+    if (visible !== false) {
+      throw new Error(
+        `appManager.loadingOverlay visible=${visible} (expected false — apps ` +
+        `still loading)`);
+    }
+  }, { timeout: 30000, interval: 500, description: "apps loading overlay to hide" });
 
   let proxyId = null;
   await app.waitFor(async () => {
@@ -1264,17 +1291,46 @@ test("app manager: search with no match shows the empty view", async (app) => {
 
   // Visible "local" section headers (label is the lowercase synthetic-bucket
   // title — same probe as the 'local'-header invariant test later in this file).
+  // Inspector failures throw (inside a waitFor step that means retry, then
+  // fail) — they must never read as "no header visible".
   const visibleLocalHeaderCount = async () => {
     const hits = await app.inspector.send("findByProperty", {
       property: "text", value: "local",
     });
+    if (hits.error) {
+      throw new Error(`findByProperty(text="local") failed: ${hits.error}`);
+    }
     let count = 0;
     for (const m of (hits.matches ?? [])) {
-      try {
-        const props = await app.inspector.send("getProperties", { objectId: m.id });
-        const visibleProp = props.properties?.find((p) => p.name === "visible");
-        if (visibleProp && visibleProp.value === true) count += 1;
-      } catch { /* ignore per-match failures */ }
+      // getProperties (not evaluate): a text="local" match that is not a
+      // visual Item has no `visible` and simply doesn't count, whereas a
+      // failed inspector round-trip must surface.
+      const props = await app.inspector.send("getProperties", { objectId: m.id });
+      if (props.error) {
+        throw new Error(`getProperties(${m.id}) failed: ${props.error}`);
+      }
+      const visibleProp = props.properties?.find((p) => p.name === "visible");
+      if (visibleProp && visibleProp.value === true) count += 1;
+    }
+    return count;
+  };
+
+  // Every AppRepoSection instance (repo delegates + the synthetic local
+  // section). The local section is a plain child of gridColumn, so at least
+  // one match always exists — zero means the type probe itself broke.
+  const visibleRepoSectionCount = async () => {
+    const hits = await app.inspector.send("findByType", { typeName: "AppRepoSection" });
+    if (hits.error) throw new Error(`findByType(AppRepoSection) failed: ${hits.error}`);
+    const matches = hits.matches ?? [];
+    if (matches.length === 0) {
+      throw new Error(
+        "findByType(AppRepoSection) returned no instances — the synthetic " +
+        "local section is always instantiated, so the probe is broken");
+    }
+    let count = 0;
+    for (const m of matches) {
+      const visible = await evalOn(app, m.id, "visible");
+      if (visible === true) count += 1;
     }
     return count;
   };
@@ -1287,7 +1343,26 @@ test("app manager: search with no match shows the empty view", async (app) => {
     throw new Error(
       `search field text=${JSON.stringify(initialText)} (expected string)`);
   }
-  if (initialText !== "") await setSearch("");
+  if (initialText !== "") {
+    await setSearch("");
+    // The filter re-evaluates asynchronously: don't record the baseline until
+    // the clear has landed (field empty, empty view hidden), or the "pre"
+    // counts would still reflect the leftover filter.
+    await app.waitFor(async () => {
+      const text = await evalOn(app, field.id, "text");
+      if (text !== "") {
+        throw new Error(
+          `search text=${JSON.stringify(text)} after normalizing clear (expected "")`);
+      }
+      const emptyVisible = await evalOn(app, emptyView.id, "visible");
+      if (emptyVisible !== false) {
+        throw new Error(
+          `appManager.emptyView visible=${emptyVisible} after normalizing ` +
+          `clear (expected false)`);
+      }
+    }, { timeout: 5000, interval: 250,
+         description: "normalizing clear to round-trip before baseline" });
+  }
 
   const preLocal = await evalOn(app, proxyId, "visibleCount");
   if (typeof preLocal !== "number") {
@@ -1334,6 +1409,12 @@ test("app manager: search with no match shows the empty view", async (app) => {
       throw new Error(
         "appManager.emptyView carries no message — neither title nor text " +
         "is a non-empty string");
+    }
+    const sections = await visibleRepoSectionCount();
+    if (sections !== 0) {
+      throw new Error(
+        `${sections} visible AppRepoSection(s) with no-match search ` +
+        `(expected 0 — every section must hide)`);
     }
     const headers = await visibleLocalHeaderCount();
     if (headers !== 0) {
