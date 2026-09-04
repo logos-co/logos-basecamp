@@ -2035,6 +2035,336 @@ test("app manager: reload shows the loading state then settles", async (app) => 
   }
 });
 
+// --- App Manager — context-menu / Details-dialog helpers ---
+//
+// Helpers for driving an app's context menu from the Applications view
+// and for the Add Application dialog its Details item opens: open the
+// Applications view and anchor on appManager.localAppsProxy, find an
+// AppContextMenu instance, read rows from the outer model, open the menu
+// for a row via openFor(<plain-object snapshot>), trigger a menu item by
+// objectName, and find, text-check and close the single
+// AddApplicationDialog instance.
+//
+// The menu is driven through the exact path the delegate's right-click
+// TapHandler uses (AppGridDelegate.qml:73-76): openFor(<plain-object
+// snapshot>), invoked via inspector evaluate scoped to an AppContextMenu
+// instance — openFor is a declared function on the menu, so object-scoped
+// evaluate resolves it. callMethod is never used here: it mis-converts
+// arguments. Every delegate instantiates its own AppContextMenu and openFor
+// overwrites the instance's appData, so ANY instance works — the first
+// type match is used. The appData object carries exactly the fields the
+// menu consumes (AppContextMenu.qml:12-16), populated from a snapshot of
+// the outer model's rows — role numbers from BasecampModelRoles.h
+// AppsModelRoles, one primitive per evaluate call (evaluate returns
+// primitives only; objects come back as an opaque "<QJSValue>").
+//
+// Menu items are addressed through the SAME menu instance with a
+// menu-scoped evaluate over its own count/itemAt, keyed by objectName. A
+// tree-wide objectName find would be ambiguous: on every unopened menu
+// (appData {}) the install item IS visible and the details item's
+// triggered() would emit detailsRequested with an empty name.
+//
+// Details rides a fully declarative chain: AppContextMenu → delegate →
+// AppGrid.appDetailsRequested → AppRepoSection.appManageRequested →
+// ContentViews' onManageAppRequested → backend.openApp(name, repo, {},
+// false), which emits requestOpenAddApplicationDialog, and OverlayDialogs
+// opens its single AddApplicationDialog instance (OverlayDialogs.qml:147).
+// Emitting triggered() directly bypasses the menu's own auto-close, so the
+// menu is closed explicitly right after. The dialog has NO objectName — it
+// is found by type — and it lives in the transparent overlay QQuickWidget,
+// so its texts are asserted with a dialog-scoped hasText walk over
+// contentItem returned as one JSON string, never with expectTexts. Its
+// buttons (addApplicationDialog.primaryButton / uninstallButton /
+// closeButton) ARE unique tree-wide (one dialog instance), so
+// findByObjectName is safe for them, unlike the per-delegate menu items.
+// Every close path runs onClosed: backend.notifyAddApplicationDialogClosed()
+// (OverlayDialogs.qml:150), so a close click + visible === false is the
+// whole runtime check — no spy needed.
+
+// Outer-model roles the menu's appData contract consumes. Role numbers
+// follow BasecampModelRoles.h's AppsModelRoles; kind picks the primitive
+// coercion so each evaluate returns a plain value.
+const APPS_ROW_FIELDS = [
+  ["name",          "Qt.UserRole + 1",  "string"], // NameRole
+  ["repositoryUrl", "Qt.UserRole + 2",  "string"], // RepositoryUrlRole
+  ["displayName",   "Qt.UserRole + 3",  "string"], // DisplayNameRole
+  ["isInstalled",   "Qt.UserRole + 14", "bool"],   // IsInstalledRole
+  ["installStatus", "Qt.UserRole + 16", "number"], // InstallStatusRole
+  ["installType",   "Qt.UserRole + 17", "string"], // InstallTypeRole
+  ["installStage",  "Qt.UserRole + 22", "number"], // InstallStageRole
+];
+
+// Opens the Applications view and returns the appManager.localAppsProxy id.
+async function openApplicationsWithProxy(app) {
+  await app.click("Applications");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Install and manage applications."]); },
+    { timeout: 10000, interval: 500, description: "Applications view to render" }
+  );
+  let proxyId = null;
+  await app.waitFor(async () => {
+    proxyId = await findLocalAppsProxy(app);
+    if (proxyId === null) {
+      throw new Error("appManager.localAppsProxy not found in QML tree");
+    }
+  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
+  return proxyId;
+}
+
+// Returns the id of the first AppContextMenu instance in the tree.
+async function findAppContextMenu(app) {
+  let menuId = null;
+  await app.waitFor(async () => {
+    const res = typeof app.findByType === "function"
+      ? await app.findByType("AppContextMenu")
+      : await app.inspector.send("findByType", { typeName: "AppContextMenu" });
+    if (res.error) throw new Error(`findByType(AppContextMenu) failed: ${res.error}`);
+    menuId = (res.matches ?? [])[0]?.id ?? null;
+    if (menuId === null) {
+      throw new Error("no AppContextMenu instance in the QML tree");
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "an AppContextMenu instance to exist" });
+  return menuId;
+}
+
+async function outerRowCount(app, proxyId) {
+  const rowCount = await evalOn(app, proxyId, "sourceModel.rowCount()");
+  if (typeof rowCount !== "number") {
+    throw new Error(
+      `outer proxy rowCount()=${JSON.stringify(rowCount)} (expected number)`);
+  }
+  return rowCount;
+}
+
+// Reads one primitive role of outer-model row `i`.
+async function outerRowField(app, proxyId, i, roleExpr, kind) {
+  const data = `sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr})`;
+  const expr = kind === "string" ? `String(${data} || "")`
+    : kind === "bool" ? `${data} === true`
+    : `Number(${data} || 0)`;
+  return evalOn(app, proxyId, expr);
+}
+
+// Full appData-contract snapshot of outer-model row `i`.
+async function readOuterRow(app, proxyId, i) {
+  const row = {};
+  for (const [key, roleExpr, kind] of APPS_ROW_FIELDS) {
+    row[key] = await outerRowField(app, proxyId, i, roleExpr, kind);
+  }
+  return row;
+}
+
+// Snapshot of every outer-model row.
+async function snapshotOuterRows(app, proxyId) {
+  const rowCount = await outerRowCount(app, proxyId);
+  const rows = [];
+  for (let i = 0; i < rowCount; i += 1) rows.push(await readOuterRow(app, proxyId, i));
+  return rows;
+}
+
+// Fixture A's row only — scans names first and reads the remaining roles
+// for the one match, or returns null.
+async function findFixtureARow(app, proxyId) {
+  const rowCount = await outerRowCount(app, proxyId);
+  for (let i = 0; i < rowCount; i += 1) {
+    const name = await outerRowField(app, proxyId, i, "Qt.UserRole + 1", "string");
+    if (name === FIXTURE_A.name) return readOuterRow(app, proxyId, i);
+  }
+  return null;
+}
+
+// PRECONDITION (spec gate): fixture A's installed row is in the model —
+// hard failure in --ci (integration-test pre-seeds it at boot), spec-§0.A
+// skip otherwise. `probe` must resolve to a truthy value once the row is
+// present and throw while it is not; its value is returned, or null when
+// the test should skip (already logged).
+async function requireFixtureARow(app, label, probe) {
+  let value = null;
+  try {
+    await app.waitFor(async () => { value = await probe(); },
+      { timeout: 10000, interval: 500,
+        description: "fixture A's installed row to appear in the model" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(
+        `    SKIP: fixture A (${FIXTURE_A.name}) has no installed row in ` +
+        `this app instance (spec §0.A: skip, not fail, outside --ci)`);
+      return null;
+    }
+    throw new Error(
+      `${label} precondition failed — fixture A's installed row never ` +
+      `appeared: ${e.message}`);
+  }
+  return value;
+}
+
+// The delegate TapHandler's path: openFor(snapshot) — same field set as
+// AppGridDelegate's d.snapshot(); JSON.stringify emits it as the object
+// literal the scoped evaluate passes through. Waits for the menu to show.
+async function openContextMenuFor(app, menuId, row, label) {
+  const appData = {
+    name: row.name, displayName: row.displayName,
+    repositoryUrl: row.repositoryUrl, isInstalled: row.isInstalled,
+    installStage: row.installStage, installStatus: row.installStatus,
+    installType: row.installType,
+  };
+  const res = await app.inspector.send("evaluate", {
+    objectId: menuId, expression: `openFor(${JSON.stringify(appData)})`,
+  });
+  if (res.error) {
+    throw new Error(`openFor for the ${label} row failed: ${res.error}`);
+  }
+  await app.waitFor(async () => {
+    const menuVisible = await evalOn(app, menuId, "visible");
+    if (menuVisible !== true) {
+      throw new Error(
+        `AppContextMenu visible=${menuVisible} after openFor (expected true)`);
+    }
+  }, { timeout: 5000, interval: 100, description: "the context menu to open" });
+}
+
+// close() on the menu instance, then assert it hid (cleanup guarantee).
+async function closeContextMenu(app, menuId, label) {
+  const res = await app.inspector.send("evaluate", {
+    objectId: menuId, expression: "close()",
+  });
+  if (res.error) {
+    throw new Error(`close() after ${label} failed: ${res.error}`);
+  }
+  await app.waitFor(async () => {
+    const visible = await evalOn(app, menuId, "visible");
+    if (visible !== false) {
+      throw new Error(
+        `AppContextMenu visible=${visible} after close() (expected false)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: `the menu to close after ${label}` });
+}
+
+// Emits triggered() on THIS menu's item found by objectName among its own
+// count/itemAt — never tree-wide (wrong-instance hazard, see header).
+async function triggerContextMenuItem(app, menuId, objectName) {
+  const trig = await app.inspector.send("evaluate", {
+    objectId: menuId,
+    expression: `(() => {
+      for (let i = 0; i < count; i += 1) {
+        const item = itemAt(i);
+        if (!item || item.objectName !== ${JSON.stringify(objectName)}) continue;
+        if (item.visible !== true) return "item not visible";
+        item.triggered();
+        return "triggered";
+      }
+      return "item not found";
+    })()`,
+  });
+  if (trig.error) throw new Error(`evaluate(trigger ${objectName}) failed: ${trig.error}`);
+  if (trig.result !== "triggered") {
+    throw new Error(`triggering ${objectName} failed: ${trig.result}`);
+  }
+}
+
+// Waits for the single AddApplicationDialog instance to be visible and
+// returns its id.
+async function waitForAddApplicationDialog(app) {
+  let dialogId = null;
+  await app.waitFor(async () => {
+    const res = typeof app.findByType === "function"
+      ? await app.findByType("AddApplicationDialog")
+      : await app.inspector.send("findByType", { typeName: "AddApplicationDialog" });
+    if (res.error) {
+      throw new Error(`findByType(AddApplicationDialog) failed: ${res.error}`);
+    }
+    dialogId = (res.matches ?? [])[0]?.id ?? null;
+    if (dialogId === null) {
+      throw new Error("no AddApplicationDialog instance in the QML tree");
+    }
+    const visible = await evalOn(app, dialogId, "visible");
+    if (visible !== true) {
+      throw new Error(
+        `AddApplicationDialog visible=${visible} (expected true)`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "the Add Application dialog to open" });
+  return dialogId;
+}
+
+// Dialog-scoped recursive text walk over contentItem, returned as one
+// JSON string. Returns the subset of `texts` that is NOT rendered.
+async function missingDialogTexts(app, dialogId, texts) {
+  const res = await app.inspector.send("evaluate", {
+    objectId: dialogId,
+    expression: `(() => {
+      const hasText = (node, expected) => {
+        if (!node) return false;
+        if (typeof node.text === "string" && node.text.includes(expected)) return true;
+        if (!node.children || typeof node.children.length !== "number") return false;
+        for (let i = 0; i < node.children.length; i += 1) {
+          if (hasText(node.children[i], expected)) return true;
+        }
+        return false;
+      };
+      const wanted = ${JSON.stringify(texts)};
+      return JSON.stringify(wanted.filter((t) => !hasText(contentItem, t)));
+    })()`,
+  });
+  if (res.error) throw new Error(`evaluate(dialog texts) failed: ${res.error}`);
+  return JSON.parse(res.result);
+}
+
+// Clicks addApplicationDialog.closeButton (unique — one dialog instance)
+// signal-level as everywhere in the A-series, and waits for the dialog to
+// hide. onClosed → backend.notifyAddApplicationDialogClosed() is
+// declarative wiring, so visible === false is the whole runtime check.
+async function closeAddApplicationDialog(app, dialogId) {
+  const closeButton =
+    await findByObjectName(app.inspector, "addApplicationDialog.closeButton");
+  if (!closeButton) {
+    throw new Error("addApplicationDialog.closeButton not found in the QML tree");
+  }
+  const clicked = await app.inspector.send("callMethod", {
+    objectId: closeButton.id, method: "clicked",
+  });
+  if (clicked.error) {
+    throw new Error(
+      `clicking addApplicationDialog.closeButton failed: ${clicked.error}`);
+  }
+  await app.waitFor(async () => {
+    const visible = await evalOn(app, dialogId, "visible");
+    if (visible !== false) {
+      throw new Error(
+        `AddApplicationDialog visible=${visible} after the close click ` +
+        `(expected false)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: "the dialog to close after the close click" });
+}
+
+// Opens fixture A's Details dialog: Applications → fixture A's row →
+// context menu → appContextMenu.details → explicit menu close → dialog
+// visible. Returns the dialog id with no menu left open, or null when the
+// fixture-A precondition skipped (already logged; the caller returns).
+async function openFixtureADetailsDialog(app, label) {
+  const proxyId = await openApplicationsWithProxy(app);
+  const menuId = await findAppContextMenu(app);
+  const fixtureRow = await requireFixtureARow(app, label, async () => {
+    const row = await findFixtureARow(app, proxyId);
+    if (!row || row.isInstalled !== true) {
+      throw new Error(
+        `no installed row named "${FIXTURE_A.name}" in the outer model`);
+    }
+    return row;
+  });
+  if (fixtureRow === null) return null;
+
+  await openContextMenuFor(app, menuId, fixtureRow, "fixture A");
+  await triggerContextMenuItem(app, menuId, "appContextMenu.details");
+  // Direct signal emission skipped the menu's auto-close — close it now so
+  // the dialog gates run with no menu open.
+  await closeContextMenu(app, menuId, "Details");
+  return waitForAddApplicationDialog(app);
+}
+
 // --- App Manager (A13) — the context menu offers actions by install state ---
 //
 // Spec §2.A A13 (amended 2026-08-28, operator-confirmed): open the context
@@ -2053,137 +2383,32 @@ test("app manager: reload shows the loading state then settles", async (app) => 
 // not-installed rows — see A10); if genuinely absent it is skipped with a
 // log line, per the amended spec.
 //
-// The menu is driven through the exact path the delegate's right-click
-// TapHandler uses (AppGridDelegate.qml:73-76): openFor(<plain-object
-// snapshot>), invoked via inspector evaluate scoped to an AppContextMenu
-// instance — openFor is a declared function on the menu, so object-scoped
-// evaluate resolves it. callMethod is never used here: it mis-converts
-// arguments. The appData object carries exactly the fields the menu
-// consumes (AppContextMenu.qml:12-16), populated from a pre-menu snapshot
-// of the outer model's rows over the proven A8/A10 anchor path — role
-// numbers from BasecampModelRoles.h, one primitive per evaluate call.
-//
 // Item state is read through the SAME menu instance with a menu-scoped
-// evaluate over its own count/itemAt (returned as one JSON string — the A1
-// IIFE technique; evaluate returns primitives only), keyed by the items'
-// objectNames. A tree-wide objectName find would be ambiguous: every
-// delegate instantiates its own AppContextMenu, and on all the unopened
-// ones (appData {}) the install item IS visible, so a global
-// "appContextMenu.install" lookup could land on the wrong instance. Hidden
-// items also collapse to height 0, but visible is the spec's assertion.
-// Both halves reuse one menu instance; each closes via evaluate close() and
-// asserts the menu hidden, so no menu is left open.
+// evaluate over its own count/itemAt (returned as one JSON string; evaluate
+// returns primitives only), keyed by the items' objectNames — see the
+// helper header above for why a tree-wide find would be ambiguous.
+// Hidden items also collapse to height 0, but visible is the spec's
+// assertion. Both halves reuse one menu instance; each closes via close()
+// and asserts the menu hidden, so no menu is left open.
 
 test("app manager: context menu offers actions by install state", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
+  const proxyId = await openApplicationsWithProxy(app);
+  const menuId = await findAppContextMenu(app);
 
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  // The menu instance both openFor calls are scoped to. Every delegate owns
-  // one and openFor overwrites its appData, so any instance works — the
-  // first match serves both halves.
-  let menuId = null;
-  await app.waitFor(async () => {
-    const res = typeof app.findByType === "function"
-      ? await app.findByType("AppContextMenu")
-      : await app.inspector.send("findByType", { typeName: "AppContextMenu" });
-    if (res.error) throw new Error(`findByType(AppContextMenu) failed: ${res.error}`);
-    menuId = (res.matches ?? [])[0]?.id ?? null;
-    if (menuId === null) {
-      throw new Error("no AppContextMenu instance in the QML tree");
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "an AppContextMenu instance to exist" });
-
-  // SNAPSHOT every outer row's menu-relevant fields — the exact appData
-  // contract — before any menu opens. Role numbers follow
-  // BasecampModelRoles.h's AppsModelRoles.
-  const ROW_FIELDS = [
-    ["name",          "Qt.UserRole + 1",  "string"], // NameRole
-    ["repositoryUrl", "Qt.UserRole + 2",  "string"], // RepositoryUrlRole
-    ["displayName",   "Qt.UserRole + 3",  "string"], // DisplayNameRole
-    ["isInstalled",   "Qt.UserRole + 14", "bool"],   // IsInstalledRole
-    ["installStatus", "Qt.UserRole + 16", "number"], // InstallStatusRole
-    ["installType",   "Qt.UserRole + 17", "string"], // InstallTypeRole
-    ["installStage",  "Qt.UserRole + 22", "number"], // InstallStageRole
-  ];
-  const snapshotRows = async () => {
-    const rowCount = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (typeof rowCount !== "number") {
+  // SNAPSHOT every outer row's menu-relevant fields before any menu opens.
+  const rows = await requireFixtureARow(app, "A13", async () => {
+    const snapshot = await snapshotOuterRows(app, proxyId);
+    if (!snapshot.some((r) => r.name === FIXTURE_A.name && r.isInstalled === true)) {
       throw new Error(
-        `outer proxy rowCount()=${JSON.stringify(rowCount)} (expected number)`);
+        `no installed row named "${FIXTURE_A.name}" among ${snapshot.length} ` +
+        `outer row(s)`);
     }
-    const rows = [];
-    for (let i = 0; i < rowCount; i += 1) {
-      const row = {};
-      for (const [key, roleExpr, kind] of ROW_FIELDS) {
-        const data = `sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr})`;
-        const expr = kind === "string" ? `String(${data} || "")`
-          : kind === "bool" ? `${data} === true`
-          : `Number(${data} || 0)`;
-        row[key] = await evalOn(app, proxyId, expr);
-      }
-      rows.push(row);
-    }
-    return rows;
-  };
-
-  // PRECONDITION (spec gate): fixture A's installed row is in the model —
-  // hard failure in --ci (integration-test pre-seeds it at boot), spec-§0.A
-  // skip otherwise.
-  let rows = [];
-  try {
-    await app.waitFor(async () => {
-      rows = await snapshotRows();
-      if (!rows.some((r) => r.name === FIXTURE_A.name && r.isInstalled === true)) {
-        throw new Error(
-          `no installed row named "${FIXTURE_A.name}" among ${rows.length} ` +
-          `outer row(s)`);
-      }
-    }, { timeout: 10000, interval: 500,
-         description: "fixture A's installed row to appear in the model" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) has no installed row in ` +
-        `this app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `A13 precondition failed — fixture A's installed row never appeared: ` +
-      `${e.message}`);
-  }
+    return snapshot;
+  });
+  if (rows === null) return;
   const installedRow =
     rows.find((r) => r.name === FIXTURE_A.name && r.isInstalled === true);
   const catalogRow = rows.find((r) => r.isInstalled === false);
-
-  // The delegate TapHandler's path: openFor(snapshot) — same field set as
-  // AppGridDelegate's d.snapshot(); JSON.stringify emits it as the object
-  // literal the scoped evaluate passes through.
-  const openMenuFor = async (row, label) => {
-    const appData = {
-      name: row.name, displayName: row.displayName,
-      repositoryUrl: row.repositoryUrl, isInstalled: row.isInstalled,
-      installStage: row.installStage, installStatus: row.installStatus,
-      installType: row.installType,
-    };
-    const res = await app.inspector.send("evaluate", {
-      objectId: menuId, expression: `openFor(${JSON.stringify(appData)})`,
-    });
-    if (res.error) {
-      throw new Error(`openFor for the ${label} row failed: ${res.error}`);
-    }
-  };
 
   const ITEM_NAMES = [
     "appContextMenu.open", "appContextMenu.details",
@@ -2229,32 +2454,10 @@ test("app manager: context menu offers actions by install state", async (app) =>
     }
   };
 
-  const closeMenu = async (label) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: menuId, expression: "close()",
-    });
-    if (res.error) {
-      throw new Error(`close() after the ${label} row failed: ${res.error}`);
-    }
-    await app.waitFor(async () => {
-      const visible = await evalOn(app, menuId, "visible");
-      if (visible !== false) {
-        throw new Error(
-          `AppContextMenu visible=${visible} after close() (expected false)`);
-      }
-    }, { timeout: 5000, interval: 100,
-         description: `the menu to close after the ${label} row` });
-  };
-
   // Half 1 — fixture A's installed row: open/details/uninstall offered,
   // install hidden.
-  await openMenuFor(installedRow, "installed");
+  await openContextMenuFor(app, menuId, installedRow, "installed");
   await app.waitFor(async () => {
-    const menuVisible = await evalOn(app, menuId, "visible");
-    if (menuVisible !== true) {
-      throw new Error(
-        `AppContextMenu visible=${menuVisible} after openFor (expected true)`);
-    }
     const states = await menuItemStates();
     assertItem(states, "appContextMenu.open",    { visible: true },  "installed");
     assertItem(states, "appContextMenu.details", { visible: true },  "installed");
@@ -2263,7 +2466,7 @@ test("app manager: context menu offers actions by install state", async (app) =>
                { visible: true, enabled: true }, "installed");
   }, { timeout: 5000, interval: 100,
        description: "the installed row's menu to offer open/details/uninstall" });
-  await closeMenu("installed");
+  await closeContextMenu(app, menuId, "the installed row");
 
   // Half 2 — a catalog-only (not installed) row: only install offered. Its
   // enabled is not asserted (it stays true regardless of state).
@@ -2274,13 +2477,8 @@ test("app manager: context menu offers actions by install state", async (app) =>
       `menu for (amended spec: log and skip when genuinely absent)`);
     return;
   }
-  await openMenuFor(catalogRow, "catalog-only");
+  await openContextMenuFor(app, menuId, catalogRow, "catalog-only");
   await app.waitFor(async () => {
-    const menuVisible = await evalOn(app, menuId, "visible");
-    if (menuVisible !== true) {
-      throw new Error(
-        `AppContextMenu visible=${menuVisible} after openFor (expected true)`);
-    }
     const states = await menuItemStates();
     assertItem(states, "appContextMenu.install",   { visible: true },  "catalog-only");
     assertItem(states, "appContextMenu.open",      { visible: false }, "catalog-only");
@@ -2288,7 +2486,7 @@ test("app manager: context menu offers actions by install state", async (app) =>
     assertItem(states, "appContextMenu.uninstall", { visible: false }, "catalog-only");
   }, { timeout: 5000, interval: 100,
        description: "the catalog-only row's menu to offer install alone" });
-  await closeMenu("catalog-only");
+  await closeContextMenu(app, menuId, "the catalog-only row");
 });
 
 // --- App Manager (A14) — Details opens the Add Application dialog ---
@@ -2300,226 +2498,26 @@ test("app manager: context menu offers actions by install state", async (app) =>
 // "Required Packages" all present · eval: dialog.installStage === 0 · after
 // the close click: dialog visible === false.
 //
-// The menu opens over A13's proven route: openFor(<plain-object snapshot>)
-// via a menu-scoped evaluate (callMethod mis-converts arguments). Details is
-// then triggered on the SAME menu instance — a menu-scoped count/itemAt walk
-// keyed by the item's objectName, emitting triggered(). A tree-wide
-// "appContextMenu.details" lookup could land on another delegate's unopened
-// menu whose appData is {} (see A13), which would emit detailsRequested with
-// an empty name. Emitting the signal bypasses the menu's own auto-close, so
-// the menu is closed explicitly right after the trigger.
-//
-// detailsRequested rides a fully declarative chain: AppContextMenu →
-// delegate → AppGrid.appDetailsRequested → AppRepoSection.appManageRequested
-// → ContentViews' onManageAppRequested → backend.openApp(name, repo, {},
-// false), which emits requestOpenAddApplicationDialog, and OverlayDialogs
-// opens its single AddApplicationDialog instance (OverlayDialogs.qml:147).
-// That dialog has NO objectName — it is found by type. Its four fixed texts
-// ("Add Application" :285, the display name :330, "Description" :346,
-// "Required Packages" :456 in AddApplicationDialog.qml) all live under
-// contentItem, and the dialog is hosted in the transparent overlay
-// QQuickWidget, so presence is asserted with a dialog-scoped hasText walk
-// (the A1 IIFE technique) rather than expectTexts. installStage is a plain
-// int (AddApplicationDialog.qml:14) compared against the literal 0 =
+// The dialog is opened via openFixtureADetailsDialog (see the helper
+// header above). Its four fixed texts ("Add Application" :285, the display
+// name :330, "Description" :346, "Required Packages" :456 in
+// AddApplicationDialog.qml) all live under contentItem. installStage is a
+// plain int (AddApplicationDialog.qml:14) compared against the literal 0 =
 // InstallStage.None (enum pinned in tests/qml/tst_AppManagerView.qml:17-24);
 // with no install op in flight InstallRegistry::stage returns None.
-//
-// Closing goes through the real button — addApplicationDialog.closeButton,
-// unique because there is exactly one dialog instance — clicked
-// signal-level as everywhere in the A-series. The backend notification is
-// declaratively wired: every close path runs onClosed:
-// backend.notifyAddApplicationDialogClosed() (OverlayDialogs.qml:150), so no
-// runtime spy is needed — the close click + visible === false is the whole
-// runtime assertion. Cleanup: ends with the dialog closed and no menu open.
+// Cleanup: ends with the dialog closed and no menu open.
 
 test("app manager: context menu Details opens the Add Application dialog", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  // Any AppContextMenu instance works — openFor overwrites its appData (A13).
-  let menuId = null;
-  await app.waitFor(async () => {
-    const res = typeof app.findByType === "function"
-      ? await app.findByType("AppContextMenu")
-      : await app.inspector.send("findByType", { typeName: "AppContextMenu" });
-    if (res.error) throw new Error(`findByType(AppContextMenu) failed: ${res.error}`);
-    menuId = (res.matches ?? [])[0]?.id ?? null;
-    if (menuId === null) {
-      throw new Error("no AppContextMenu instance in the QML tree");
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "an AppContextMenu instance to exist" });
-
-  // Fixture A's row over the proven A8/A10 anchor path — same appData
-  // contract and role numbers as A13 (BasecampModelRoles.h AppsModelRoles),
-  // one primitive per evaluate call.
-  const ROW_FIELDS = [
-    ["repositoryUrl", "Qt.UserRole + 2",  "string"], // RepositoryUrlRole
-    ["displayName",   "Qt.UserRole + 3",  "string"], // DisplayNameRole
-    ["isInstalled",   "Qt.UserRole + 14", "bool"],   // IsInstalledRole
-    ["installStatus", "Qt.UserRole + 16", "number"], // InstallStatusRole
-    ["installType",   "Qt.UserRole + 17", "string"], // InstallTypeRole
-    ["installStage",  "Qt.UserRole + 22", "number"], // InstallStageRole
-  ];
-  const findFixtureRow = async () => {
-    const rowCount = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (typeof rowCount !== "number") {
-      throw new Error(
-        `outer proxy rowCount()=${JSON.stringify(rowCount)} (expected number)`);
-    }
-    for (let i = 0; i < rowCount; i += 1) {
-      const name = await evalOn(app, proxyId,
-        `String(sourceModel.data(sourceModel.index(${i}, 0), Qt.UserRole + 1) || "")`);
-      if (name !== FIXTURE_A.name) continue;
-      const row = { name };
-      for (const [key, roleExpr, kind] of ROW_FIELDS) {
-        const data = `sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr})`;
-        const expr = kind === "string" ? `String(${data} || "")`
-          : kind === "bool" ? `${data} === true`
-          : `Number(${data} || 0)`;
-        row[key] = await evalOn(app, proxyId, expr);
-      }
-      return row;
-    }
-    return null;
-  };
-
-  // PRECONDITION (spec gate): fixture A's installed row is in the model —
-  // hard failure in --ci (integration-test pre-seeds it at boot), spec-§0.A
-  // skip otherwise.
-  let fixtureRow = null;
-  try {
-    await app.waitFor(async () => {
-      fixtureRow = await findFixtureRow();
-      if (!fixtureRow || fixtureRow.isInstalled !== true) {
-        throw new Error(
-          `no installed row named "${FIXTURE_A.name}" in the outer model`);
-      }
-    }, { timeout: 10000, interval: 500,
-         description: "fixture A's installed row to appear in the model" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) has no installed row in ` +
-        `this app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `A14 precondition failed — fixture A's installed row never appeared: ` +
-      `${e.message}`);
-  }
-
-  // Open the menu for fixture A — the delegate TapHandler's exact path.
-  const appData = {
-    name: fixtureRow.name, displayName: fixtureRow.displayName,
-    repositoryUrl: fixtureRow.repositoryUrl, isInstalled: fixtureRow.isInstalled,
-    installStage: fixtureRow.installStage, installStatus: fixtureRow.installStatus,
-    installType: fixtureRow.installType,
-  };
-  const opened = await app.inspector.send("evaluate", {
-    objectId: menuId, expression: `openFor(${JSON.stringify(appData)})`,
-  });
-  if (opened.error) {
-    throw new Error(`openFor for fixture A's row failed: ${opened.error}`);
-  }
-  await app.waitFor(async () => {
-    const menuVisible = await evalOn(app, menuId, "visible");
-    if (menuVisible !== true) {
-      throw new Error(
-        `AppContextMenu visible=${menuVisible} after openFor (expected true)`);
-    }
-  }, { timeout: 5000, interval: 100, description: "the context menu to open" });
-
-  // Trigger Details on THIS menu's item, found by objectName among its own
-  // count/itemAt — never tree-wide (wrong-instance hazard, see header).
-  const trig = await app.inspector.send("evaluate", {
-    objectId: menuId,
-    expression: `(() => {
-      for (let i = 0; i < count; i += 1) {
-        const item = itemAt(i);
-        if (!item || item.objectName !== "appContextMenu.details") continue;
-        if (item.visible !== true) return "details item not visible";
-        item.triggered();
-        return "triggered";
-      }
-      return "details item not found";
-    })()`,
-  });
-  if (trig.error) throw new Error(`evaluate(trigger Details) failed: ${trig.error}`);
-  if (trig.result !== "triggered") {
-    throw new Error(`triggering appContextMenu.details failed: ${trig.result}`);
-  }
-
-  // Direct signal emission skipped the menu's auto-close — close it now so
-  // the dialog gates run with no menu open (also the cleanup guarantee).
-  const menuClosed = await app.inspector.send("evaluate", {
-    objectId: menuId, expression: "close()",
-  });
-  if (menuClosed.error) {
-    throw new Error(`close() after Details failed: ${menuClosed.error}`);
-  }
-  await app.waitFor(async () => {
-    const visible = await evalOn(app, menuId, "visible");
-    if (visible !== false) {
-      throw new Error(
-        `AppContextMenu visible=${visible} after close() (expected false)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: "the menu to close after Details" });
-
-  // Gate 1: the single AddApplicationDialog instance is visible within 10 s.
-  let dialogId = null;
-  await app.waitFor(async () => {
-    const res = typeof app.findByType === "function"
-      ? await app.findByType("AddApplicationDialog")
-      : await app.inspector.send("findByType", { typeName: "AddApplicationDialog" });
-    if (res.error) {
-      throw new Error(`findByType(AddApplicationDialog) failed: ${res.error}`);
-    }
-    dialogId = (res.matches ?? [])[0]?.id ?? null;
-    if (dialogId === null) {
-      throw new Error("no AddApplicationDialog instance in the QML tree");
-    }
-    const visible = await evalOn(app, dialogId, "visible");
-    if (visible !== true) {
-      throw new Error(
-        `AddApplicationDialog visible=${visible} (expected true)`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "the Add Application dialog to open" });
+  // Gate 1: the dialog is visible within 10 s (openFixtureADetailsDialog
+  // asserts it).
+  const dialogId = await openFixtureADetailsDialog(app, "A14");
+  if (dialogId === null) return;
 
   // Gate 2: the four fixed texts, checked inside the dialog's contentItem.
   await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: dialogId,
-      expression: `(() => {
-        const hasText = (node, expected) => {
-          if (!node) return false;
-          if (typeof node.text === "string" && node.text.includes(expected)) return true;
-          if (!node.children || typeof node.children.length !== "number") return false;
-          for (let i = 0; i < node.children.length; i += 1) {
-            if (hasText(node.children[i], expected)) return true;
-          }
-          return false;
-        };
-        const wanted = ["Add Application", ${JSON.stringify(FIXTURE_A.displayName)},
-                        "Description", "Required Packages"];
-        return JSON.stringify(wanted.filter((t) => !hasText(contentItem, t)));
-      })()`,
-    });
-    if (res.error) throw new Error(`evaluate(dialog texts) failed: ${res.error}`);
-    const missing = JSON.parse(res.result);
+    const missing = await missingDialogTexts(app, dialogId, [
+      "Add Application", FIXTURE_A.displayName, "Description", "Required Packages",
+    ]);
     if (missing.length > 0) {
       throw new Error(`dialog texts missing: ${missing.join(", ")}`);
     }
@@ -2534,30 +2532,87 @@ test("app manager: context menu Details opens the Add Application dialog", async
       `(expected 0 = InstallStage.None)`);
   }
 
-  // Gate 4: the close button dismisses the dialog. onClosed →
-  // backend.notifyAddApplicationDialogClosed() is declarative wiring
-  // (OverlayDialogs.qml:150) — visible === false is the whole runtime check.
-  const closeButton =
-    await findByObjectName(app.inspector, "addApplicationDialog.closeButton");
-  if (!closeButton) {
-    throw new Error("addApplicationDialog.closeButton not found in the QML tree");
-  }
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: closeButton.id, method: "clicked",
-  });
-  if (clicked.error) {
-    throw new Error(
-      `clicking addApplicationDialog.closeButton failed: ${clicked.error}`);
+  // Gate 4: the close button dismisses the dialog.
+  await closeAddApplicationDialog(app, dialogId);
+});
+
+// --- App Manager (A15) — dialog wording for an already-installed app ---
+//
+// Spec §2.A A15 (amended 2026-08-28, operator-confirmed): Details on
+// test_qml_only. Gates: obj: addApplicationDialog.primaryButton text is
+// exactly "Reinstall" or "Launch" · never "will be installed." · Uninstall
+// button (addApplicationDialog.uninstallButton) visible && enabled.
+//
+// The dialog is opened via openFixtureADetailsDialog (see the helper
+// header above).
+//
+// Why the wording is deterministic here: fixture A is a user install with
+// no catalog entry, so its installStatus is InstallStatus.Installed and
+// actionMode resolves to "launch" (AddApplicationDialog.qml:84-93) — the
+// button text binding d.actionText reads "Launch" (:101,425). The spec's
+// "Reinstall" arm belongs to InstallStatus.DifferentHash, which cannot
+// arise for fixture A; the disjunction is the spec's allowance, and the
+// test pins the stricter deterministic value. "%1 will be installed." is
+// emitted only by buildFooterText's "install" arm (:170); launch mode
+// returns "" (:163), so the phrase must be absent — asserted with the
+// dialog-scoped text walk. Uninstall visibility keys on d.canUninstall
+// (:106-115): installedVersion non-empty && !installing && installType
+// !== "embedded" && name !== "main_ui" — all true for fixture A; the
+// button declares no enabled binding, so enabled stays default-true.
+// Cleanup: close via addApplicationDialog.closeButton, no menu left open.
+
+test("app manager: dialog wording for an already-installed app", async (app) => {
+  const dialogId = await openFixtureADetailsDialog(app, "A15");
+  if (dialogId === null) return;
+
+  // Gate 1 (spec): the primary button reads exactly "Launch" — the
+  // deterministic arm of the spec's "Reinstall"-or-"Launch" allowance for
+  // this Installed, catalog-less fixture (see header).
+  const primaryButton =
+    await findByObjectName(app.inspector, "addApplicationDialog.primaryButton");
+  if (!primaryButton) {
+    throw new Error("addApplicationDialog.primaryButton not found in the QML tree");
   }
   await app.waitFor(async () => {
-    const visible = await evalOn(app, dialogId, "visible");
-    if (visible !== false) {
+    const text = await evalOn(app, primaryButton.id, "text");
+    if (text !== "Launch") {
       throw new Error(
-        `AddApplicationDialog visible=${visible} after the close click ` +
-        `(expected false)`);
+        `primaryButton text=${JSON.stringify(text)} (expected exactly "Launch")`);
     }
   }, { timeout: 5000, interval: 100,
-       description: "the dialog to close after the close click" });
+       description: 'the primary button to read "Launch"' });
+
+  // Gate 2 (spec): "will be installed." never renders — launch mode
+  // produces no install phrasing (AddApplicationDialog.qml:163,170).
+  // Checked after Gate 1 has settled the action-mode bindings.
+  await app.waitFor(async () => {
+    const missing = await missingDialogTexts(app, dialogId, ["will be installed."]);
+    if (missing.length !== 1) {
+      throw new Error(`"will be installed." found in the dialog (expected absent)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: "no install phrasing in the dialog" });
+
+  // Gate 3 (spec): the Uninstall button is visible && enabled.
+  const uninstallButton =
+    await findByObjectName(app.inspector, "addApplicationDialog.uninstallButton");
+  if (!uninstallButton) {
+    throw new Error(
+      "addApplicationDialog.uninstallButton not found in the QML tree");
+  }
+  await app.waitFor(async () => {
+    const visible = await evalOn(app, uninstallButton.id, "visible");
+    const enabled = await evalOn(app, uninstallButton.id, "enabled");
+    if (visible !== true || enabled !== true) {
+      throw new Error(
+        `uninstallButton visible=${visible} enabled=${enabled} ` +
+        `(expected both true)`);
+    }
+  }, { timeout: 5000, interval: 100,
+       description: "the Uninstall button to be visible and enabled" });
+
+  // Cleanup: close through the real button (unique — one dialog instance).
+  await closeAddApplicationDialog(app, dialogId);
 });
 
 // --- Package Manager ---
