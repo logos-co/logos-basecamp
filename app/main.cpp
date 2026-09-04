@@ -173,6 +173,14 @@ int main(int argc, char *argv[])
         }
     }
 
+    // Make the owning Basecamp profile explicit for out-of-process UI
+    // backends. ViewModuleHost starts ui-host with an inherited environment;
+    // without this export, an ordinary launch lets the child derive a
+    // machine-wide `ui-host` AppDataLocation from its own application name.
+    // This must happen before any ViewModuleHost can be constructed.
+    const QString resolvedBaseDirectory =
+        LogosBasecampPaths::resolveAndExportBaseDirectory();
+
     // Redirect stdout/stderr to a rotating per-session log file under
     // <baseDirectory>/logs. Must happen after setOrganizationName/setApplicationName
     // and after the --user-dir override is applied so baseDirectory() resolves
@@ -187,7 +195,7 @@ int main(int argc, char *argv[])
     // Print build metadata (version, dev/portable, commit hashes) so the
     // per-session log captures exactly which sources produced this binary.
     LogosBasecampBuildInfo::logStartupBanner();
-    qInfo().noquote() << "Base data directory:" << LogosBasecampPaths::baseDirectory();
+    qInfo().noquote() << "Base data directory:" << resolvedBaseDirectory;
 
 #ifdef LOGOS_MOCK_BACKEND
     MockBackendFixture::install();
