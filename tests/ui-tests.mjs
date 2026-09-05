@@ -2615,6 +2615,175 @@ test("app manager: dialog wording for an already-installed app", async (app) => 
   await closeAddApplicationDialog(app, dialogId);
 });
 
+// --- Settings (A16): Dashboard shows version, build type and commits ---
+//
+// Spec §2.A A16: Settings → Dashboard. Gates: text equal to
+// backend.buildVersion present (non-empty string) · "Commits" present ·
+// commit-row count equals backend.buildCommits.length and ≥ 1 · the first
+// row shows buildCommits[0].name and buildCommits[0].commit · build-type
+// text is "Portable build" iff backend.isPortableBuild, else "Dev build",
+// never both.
+//
+// Expectations are DERIVED from the backend, never hardcoded (A6's rule):
+// nix builds bake "0.0.0-dev" so the version row renders in the gate build
+// (DashboardView.qml:35 hides it only for an empty buildVersion), but the
+// assertion compares against whatever backend.buildVersion reports.
+//
+// DashboardView carries no objectNames, so the rendered-state gates run as
+// one JS tree walk over the DashboardView subtree (the proven A1/A15
+// pattern). Commit rows are located structurally: the Repeater parents its
+// delegates onto the "Commits" column (DashboardView.qml:73-100), so the
+// rows are that column's children holding exactly two text nodes,
+// modelData.name then modelData.commit, in declaration order. Scoping the
+// walk to the view also keeps the build-type gate away from the sidebar
+// footer, which renders its own "Dev"/"Portable" token (see A6); exact
+// node-text equality pins never-both to the single ternary LogosText
+// (DashboardView.qml:54).
+//
+// Read-only: opens no dialogs and changes no state, nothing to restore.
+
+test("settings: Dashboard shows version, build type and commit list", async (app) => {
+  // Settings section button by text + type, the A7-proven route; the
+  // view-section buttons carry no objectName (§4.1 skipped them).
+  await app.click("Settings", sidebarSection);
+  await app.waitFor(
+    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
+    { timeout: 10000, interval: 500, description: "Settings entries to render" }
+  );
+  await app.click("Dashboard", { type: "LogosItemDelegate" });
+
+  // SettingsView instantiates DashboardView eagerly inside its StackLayout
+  // (SettingsView.qml:184-189), so mere existence proves nothing; visible
+  // flips true only once the Dashboard entry is the selected sub-view.
+  let dashboard = null;
+  await app.waitFor(async () => {
+    const res = await app.inspector.send("findByType", { typeName: "DashboardView" });
+    if (res.error) throw new Error(`findByType(DashboardView) failed: ${res.error}`);
+    dashboard = (res.matches ?? [])[0] || null;
+    if (!dashboard) throw new Error("no DashboardView instance in the QML tree");
+    const visible = await evalOn(app, dashboard.id, "visible");
+    if (visible !== true) {
+      throw new Error(`DashboardView visible=${visible} (expected true)`);
+    }
+  }, { timeout: 10000, interval: 500, description: "Dashboard view to become visible" });
+
+  // Expected values from the backend context property, one primitive per
+  // evaluate call (see evalOn).
+  const buildVersion = await evalOn(app, dashboard.id, "backend.buildVersion");
+  if (typeof buildVersion !== "string" || buildVersion.length === 0) {
+    throw new Error(
+      `backend.buildVersion=${JSON.stringify(buildVersion)} ` +
+      `(expected non-empty string)`);
+  }
+  const commitCount = await evalOn(app, dashboard.id, "backend.buildCommits.length");
+  if (typeof commitCount !== "number" || commitCount < 1) {
+    throw new Error(
+      `backend.buildCommits.length=${JSON.stringify(commitCount)} (expected ≥ 1)`);
+  }
+  const firstName = await evalOn(app, dashboard.id, "backend.buildCommits[0].name");
+  const firstCommit = await evalOn(app, dashboard.id, "backend.buildCommits[0].commit");
+  if (typeof firstName !== "string" || firstName.length === 0 ||
+      typeof firstCommit !== "string" || firstCommit.length === 0) {
+    throw new Error(
+      `backend.buildCommits[0] name=${JSON.stringify(firstName)} ` +
+      `commit=${JSON.stringify(firstCommit)} (expected non-empty strings)`);
+  }
+  const isPortable = await evalOn(app, dashboard.id, "backend.isPortableBuild");
+  if (typeof isPortable !== "boolean") {
+    throw new Error(
+      `backend.isPortableBuild=${JSON.stringify(isPortable)} (expected boolean)`);
+  }
+
+  // One walk per attempt: rendered texts + the structural commit rows,
+  // returned as a single JSON string (evaluate only round-trips primitives).
+  const snapshotDashboard = async () => {
+    const res = await app.inspector.send("evaluate", {
+      objectId: dashboard.id,
+      expression: `(() => {
+        const out = {
+          hasVersion: false, hasCommits: false,
+          hasPortable: false, hasDev: false, rows: null,
+        };
+        const walk = (node) => {
+          if (!node) return;
+          if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
+          if (node.text === "Portable build") out.hasPortable = true;
+          if (node.text === "Dev build") out.hasDev = true;
+          const kids = node.children;
+          if (!kids || typeof kids.length !== "number") return;
+          let hasHeading = false;
+          for (let i = 0; i < kids.length; i += 1) {
+            if (kids[i] && kids[i].text === "Commits") hasHeading = true;
+          }
+          if (hasHeading) {
+            out.hasCommits = true;
+            out.rows = [];
+            for (let i = 0; i < kids.length; i += 1) {
+              const k = kids[i];
+              const two =
+                k && k.children && k.children.length === 2 ? k.children : null;
+              if (two && typeof two[0].text === "string" &&
+                  typeof two[1].text === "string") {
+                out.rows.push({ name: two[0].text, commit: two[1].text });
+              }
+            }
+            return;
+          }
+          for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+        };
+        walk(this);
+        return JSON.stringify(out);
+      })()`,
+    });
+    if (res.error) throw new Error(`evaluate(dashboard snapshot) failed: ${res.error}`);
+    return JSON.parse(res.result);
+  };
+
+  const expectedType = isPortable ? "Portable build" : "Dev build";
+  const otherType = isPortable ? "Dev build" : "Portable build";
+  await app.waitFor(async () => {
+    const snap = await snapshotDashboard();
+
+    // Gate 1 (spec): the buildVersion string is rendered.
+    if (snap.hasVersion !== true) {
+      throw new Error(
+        `no text equal to buildVersion=${JSON.stringify(buildVersion)} ` +
+        `in the Dashboard view`);
+    }
+
+    // Gate 2 (spec): the "Commits" heading is rendered.
+    if (snap.hasCommits !== true) {
+      throw new Error('"Commits" heading not found in the Dashboard view');
+    }
+
+    // Gate 3 (spec): row count equals backend.buildCommits.length (≥ 1
+    // was asserted on the backend value above).
+    if (!Array.isArray(snap.rows) || snap.rows.length !== commitCount) {
+      throw new Error(
+        `${Array.isArray(snap.rows) ? snap.rows.length : "no"} commit rows ` +
+        `rendered (expected backend.buildCommits.length=${commitCount})`);
+    }
+
+    // Gate 4 (spec): the first row shows buildCommits[0].name + .commit.
+    if (snap.rows[0].name !== firstName || snap.rows[0].commit !== firstCommit) {
+      throw new Error(
+        `first commit row=${JSON.stringify(snap.rows[0])} (expected ` +
+        `name=${JSON.stringify(firstName)} commit=${JSON.stringify(firstCommit)})`);
+    }
+
+    // Gate 5 (spec): the matching build-type text and never the other one.
+    const hasExpected = isPortable ? snap.hasPortable : snap.hasDev;
+    const hasOther = isPortable ? snap.hasDev : snap.hasPortable;
+    if (hasExpected !== true || hasOther !== false) {
+      throw new Error(
+        `build-type texts: "${expectedType}"=${hasExpected} ` +
+        `"${otherType}"=${hasOther} (isPortableBuild=${isPortable} — ` +
+        `expected the matching one alone, never both)`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "Dashboard to render version, build type and commit rows" });
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
