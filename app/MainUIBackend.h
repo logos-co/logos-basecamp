@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include "InstallEnums.h"
@@ -21,6 +22,7 @@ class QWidget;
 class UIPluginManager;
 class IntentRegistry;
 class IntentBroker;
+class LinkRequestCoordinator;
 class IntentBridgeAdapter;
 class UIPluginPresenter;
 class ShellIntentEndpoint;
@@ -389,6 +391,18 @@ signals:
     // Presentation seam — see IShellHost::onPresentAppRequested.
     void presentAppRequested(QWidget* widget);
 
+    // A `basecamp://` link could not be opened. Developer-facing text only —
+    // never anything the URL supplied, since a browser is a requester with no
+    // identity the shell can vouch for and rendering its string would be the
+    // spoofing surface the chooser is careful to avoid.
+    void linkFailed(const QString& reason);
+
+public:
+    // Handed down from main() through Window — see Window::setLinkRaiseHandler.
+    void setLinkRaiseHandler(std::function<void()> raise);
+
+signals:
+
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void appsLoadingChanged();
@@ -419,6 +433,12 @@ private:
     void showPackageDetailsFallback(const QString& packageName);
     int beginAppLaunch(const QString& dispatchId, const QVariantMap& params);
 
+    // A link named an app that is not installed. Raises the SHELL's install
+    // offer if the catalog knows the name, and does nothing at all if it does
+    // not — so a hostile URL cannot make the shell draw a prompt quoting a
+    // string it chose.
+    void offerInstallForUnknownApp(const QString& appName);
+
 private slots:
     // Rebuild the inspectors' models from the current manager state. Each
     // is wired to the corresponding *Changed signal on the underlying
@@ -445,6 +465,10 @@ private:
     // Intents. Construction order in the ctor is what decides destruction
     // order — see the comment there.
     IntentRegistry*      m_intentRegistry  = nullptr;
+    LinkRequestCoordinator* m_linkRequests = nullptr;
+    // False until wireIntents() has done its bootstrap rebuild, so the
+    // cold-start link gate opens on a registry that has actually seen disk.
+    bool m_intentRegistryBootstrapped = false;
     IntentBroker*        m_intentBroker    = nullptr;
     IntentBridgeAdapter* m_intentAdapter   = nullptr;
     UIPluginPresenter*   m_intentPresenter = nullptr;

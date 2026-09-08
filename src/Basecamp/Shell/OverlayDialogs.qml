@@ -190,6 +190,18 @@ Item {
         }
     }
 
+    LogosToast {
+        id: linkFailedToast
+        objectName: "linkFailedToast"
+        parent: root
+        anchors.horizontalCenter: root.horizontalCenter
+        anchors.bottom: root.bottom
+        anchors.bottomMargin: Theme.spacing.large
+        width: Math.min(root.width - Theme.spacing.large * 2, 480)
+        severity: LogosNotice.Error
+        title: qsTr("Link could not be opened")
+    }
+
     LogosToolTip {
         id: sidebarTip
         parent: root
@@ -205,6 +217,10 @@ Item {
     Connections {
         target: backend
         ignoreUnknownSignals: true
+
+        function onLinkFailed(reason) {
+            linkFailedToast.show(undefined, reason);
+        }
 
         function onIntentInstallOffered(intent, candidates, details) {
             intentInstallDialog.openWith(intent, candidates, details);

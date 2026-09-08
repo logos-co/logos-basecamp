@@ -123,6 +123,11 @@ Load-bearing invariants, all covered by tests:
 - **One dialog at a time.** A second request queues rather than repointing a chooser under the user's cursor — that would be a consent swap.
 - **Only a provider's own answer moves the user.** Answering returns them to the requester; the other five `finish()` paths (deadlines, endpoint death, abandon, refusals) never navigate, because nothing on screen would explain it. `"handoff": true` on a `provides` entry opts out entirely — the request existed to take the user somewhere and leave them there. It governs navigation only; when the provider answers (on arrival, or when the user marks the action done) is independent.
 
+### Deep links (`app/links/`)
+A `basecamp://` URL from a browser becomes an intent. `SingleInstanceGuard` (socket keyed on the **resolved** user dir, so `--user-dir` still isolates), `LinkUrlInbox` (where argv, the macOS `QFileOpenEvent` and the socket all land), `LinkUrl` (the parser — pure, and the only fully attacker-controlled surface), `LinkRequestCoordinator` (parks until the first registry rebuild, caps one in flight), `SchemeRegistrar` (Linux `.desktop` + Windows `HKCU`; macOS is the plist).
+
+Two invariants, both tested: a link submits under **its own** requester name, never `main_ui`, or the broker would skip the chooser and every web link would dispatch with no consent; and an app's capability is unreachable from a URL until its author sets `"web": true` on the `provides` entry.
+
 Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `Shell/OverlayDialogs.qml`, fixtures in `tests/fixtures/intents/`. Full design and known limitations: `docs/app-to-app-intents.md`.
 
 ### Construction & Destruction Order

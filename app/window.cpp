@@ -576,3 +576,12 @@ void Window::quitApplication()
     // Quit the application
     QApplication::quit();
 } 
+
+void Window::setLinkRaiseHandler(std::function<void()> raise)
+{
+    // Straight through to the backend's coordinator. Window keeps m_backend
+    // private and main() has no route to it, so this one-line forward is the
+    // seam rather than widening that ownership.
+    if (m_backend)
+        m_backend->setLinkRaiseHandler(std::move(raise));
+}

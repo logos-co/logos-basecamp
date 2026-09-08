@@ -127,6 +127,7 @@ void IntentRegistry::reset()
     m_handoff.clear();
     m_entries.clear();
     m_diagnostics.clear();
+    m_webReachable.clear();
 }
 
 void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
@@ -134,6 +135,8 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
                              const IconFn& iconFor)
 {
     const QString shell = m_shellModuleName;
+    const QString link = m_linkModuleName;
+    const QStringList shellWeb = m_shellWebIntents;
     const QStringList shellIntents = shell.isEmpty() ? QStringList()
                                                      : m_provides.value(shell);
     const QStringList shellUses = shell.isEmpty() ? QStringList()
@@ -150,7 +153,10 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
     // a slightly stale one, and every caller re-resolves on every request.
     reset();
 
-    // The shell's registration is code, not disk, so it survives the wipe.
+    // Both the shell's and the link requester's registrations are code, not
+    // disk, so they survive the wipe.
+    m_linkModuleName = link;
+    m_shellWebIntents = shellWeb;
     if (!shell.isEmpty()) {
         m_shellModuleName = shell;
         m_provides.insert(shell, shellIntents);
@@ -162,6 +168,30 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
 
     for (auto it = plugins.cbegin(); it != plugins.cend(); ++it)
         ingestRecord(it.key(), it.value(), labelFor, iconFor);
+
+    // The link requester's `uses` is DERIVED, never stored: the union of the
+    // shell's own web-reachable intents and every disk record that opted in
+    // with `"web": true`. Recomputed here, after the ingest loop, so it cannot
+    // go stale against what is actually installed — and so there is no second
+    // place to update when an app is added or removed.
+    //
+    // This is what makes the broker's existing `declaresUse` gate do the work:
+    // a link naming an intent nobody published fails `not_declared` at the
+    // first gate, with no bypass anywhere in the broker.
+    if (!m_linkModuleName.isEmpty()) {
+        QStringList reachable = m_shellWebIntents;
+        for (const QString& key : m_webReachable) {
+            // Keys are "<module>/<intent>"; `uses` is a set of intent NAMES.
+            const int slash = key.indexOf(QLatin1Char('/'));
+            if (slash < 0) continue;
+            const QString intent = key.mid(slash + 1);
+            if (!reachable.contains(intent))
+                reachable.append(intent);
+        }
+        std::sort(reachable.begin(), reachable.end());
+        if (!reachable.isEmpty())
+            m_uses.insert(m_linkModuleName, reachable);
+    }
 
     emit changed();
 }
@@ -180,6 +210,17 @@ void IntentRegistry::ingestRecord(const QString& moduleName,
         m_diagnostics.append(
             QStringLiteral("%1: an installed package may not use the shell's "
                            "module name — skipped").arg(moduleName));
+        return;
+    }
+
+    // Nor the link requester's, for a sharper reason: that name's `uses` is the
+    // set of web-reachable intents, so a package answering to it could add
+    // itself entries and make its own capabilities reachable from a URL without
+    // ever declaring `"web": true`.
+    if (!m_linkModuleName.isEmpty() && moduleName == m_linkModuleName) {
+        m_diagnostics.append(
+            QStringLiteral("%1: an installed package may not use the link "
+                           "requester's module name — skipped").arg(moduleName));
         return;
     }
 
@@ -248,6 +289,29 @@ void IntentRegistry::ingestRecord(const QString& moduleName,
                                    "— ignored, treated as false")
                         .arg(moduleName, intent,
                              QString::fromUtf8(handoff.typeName())));
+            }
+        }
+
+        // OPT-IN, PER INTENT, BY THE PROVIDER. Without this every entry in
+        // every app's `provides` would silently become a web entry point the
+        // moment link support shipped. `uses` cannot gate a link — there is no
+        // manifest on the calling side — so reachability has to be declared by
+        // the side that will service it.
+        //
+        // Strict bool for the same reason as handoff, and it matters more here:
+        // `"web": "false"` read as true would publish a capability its author
+        // was explicitly declining to publish.
+        const QVariant web = entry.value(QStringLiteral("web"));
+        if (web.isValid()) {
+            if (web.typeId() == QMetaType::Bool) {
+                if (web.toBool())
+                    m_webReachable.insert(moduleName + QLatin1Char('/') + intent);
+            } else {
+                m_diagnostics.append(
+                    QStringLiteral("%1: '%2' declares web as %3, not a boolean "
+                                   "— ignored, treated as false")
+                        .arg(moduleName, intent,
+                             QString::fromUtf8(web.typeName())));
             }
         }
     }
@@ -478,4 +542,74 @@ bool IntentRegistry::declaresProvide(const QString& moduleName, const QString& i
 QStringList IntentRegistry::diagnostics() const
 {
     return m_diagnostics;
+}
+
+void IntentRegistry::registerLinkRequester(const QString& linkModuleName,
+                                           const QStringList& shellWebIntents)
+{
+    if (linkModuleName.isEmpty())
+        return;
+
+    // A link is neither the shell nor an app, and needs its own identity for
+    // both halves of that. Not the shell: isShellProvider() is what makes the
+    // broker skip the chooser, and a URL must never inherit that. Not an app:
+    // there is no metadata.json on the calling side, so its `uses` has to come
+    // from somewhere else — see the derivation in rebuild().
+    m_linkModuleName = linkModuleName;
+
+    QStringList accepted;
+    for (const QString& intent : shellWebIntents) {
+        if (!logos::intent::isValidName(intent)) {
+            m_diagnostics.append(
+                QStringLiteral("link: shell web intent '%1' fails the name "
+                               "grammar — ignored").arg(intent));
+            continue;
+        }
+        accepted.append(intent);
+    }
+    m_shellWebIntents = accepted;
+
+    emit changed();
+}
+
+bool IntentRegistry::isLinkRequester(const QString& moduleName) const
+{
+    return !m_linkModuleName.isEmpty() && moduleName == m_linkModuleName;
+}
+
+bool IntentRegistry::isWebReachable(const QString& moduleName,
+                                    const QString& intent) const
+{
+    // PER PROVIDER, like handoff, and for a sharper reason. Keyed on the intent
+    // name alone, one app declaring `"web": true` would publish EVERY
+    // provider's implementation of that name — including apps that deliberately
+    // left the flag off. The opt-in is the author's statement about their own
+    // app, so it has to be recorded against their own app.
+    if (isShellProvider(moduleName))
+        return m_shellWebIntents.contains(intent);
+    return m_webReachable.contains(moduleName + QLatin1Char('/') + intent);
+}
+
+IntentRegistry::Resolution IntentRegistry::resolveFor(const QString& requesterName,
+                                                      const QString& intent) const
+{
+    Resolution resolution = resolve(intent);
+    if (!isLinkRequester(requesterName))
+        return resolution;
+
+    // A link may only ever reach a provider that opted in. The `uses` gate
+    // upstream is a union across every installed app, so on its own it decides
+    // only that SOMETHING published this name — not that the app about to be
+    // offered did.
+    //
+    // Filtered here rather than in the broker so the broker learns nothing
+    // about links: it passes the requester name it already holds, and which
+    // requesters are constrained stays policy, in the disposable half.
+    for (int i = resolution.found.size() - 1; i >= 0; --i) {
+        if (!isWebReachable(resolution.found.at(i).moduleName, intent))
+            resolution.found.removeAt(i);
+    }
+    resolution.status = resolution.found.isEmpty() ? None
+                      : (resolution.found.size() == 1 ? Ok : Ambiguous);
+    return resolution;
 }

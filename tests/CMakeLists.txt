@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Qml Test Widgets Quick QuickWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Qml Test Widgets Quick QuickWidgets)
 
 # Third-party libraries a test may declare with `// libdeps: <cmake targets>`.
 # Probed rather than REQUIRED so the tests that need neither still configure

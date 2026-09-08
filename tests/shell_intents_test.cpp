@@ -26,6 +26,7 @@ class TestShellIntents : public QObject
 private slots:
     void testNavigationIntentsAreProvidedAndHandoff();
     void testNavigationIntentsAreNavigationOnly();
+    void testWebReachableIntentsAreASafeSubset();
     void testEveryShellIntentIsAValidReservedName();
     void testAppLaunchTakesTheAppNameAsAParameter();
     void testPreRenameNamesAreGone();
@@ -64,6 +65,8 @@ void TestShellIntents::testNavigationIntentsAreProvidedAndHandoff()
         QStringLiteral("basecamp.settings.open")));
     QVERIFY(ShellIntents::kNavigationIntents.contains(
         QStringLiteral("basecamp.apps.open")));
+    QVERIFY(ShellIntents::kNavigationIntents.contains(
+        QStringLiteral("basecamp.packages.open")));
 }
 
 void TestShellIntents::testNavigationIntentsAreNavigationOnly()
@@ -81,12 +84,51 @@ void TestShellIntents::testNavigationIntentsAreNavigationOnly()
     }
 }
 
+void TestShellIntents::testWebReachableIntentsAreASafeSubset()
+{
+    QObject owner;
+    IntentRegistry* registry = freshRegistry(&owner);
+
+    // kWebReachableIntents used to be `= kNavigationIntents`. It is now spelled
+    // out, which removes the silent-publication footgun but introduces the
+    // opposite one: two lists that can drift. These assertions are what the
+    // alias used to give for free.
+    //
+    // This list is dispatched to a web page's URL with NO consent dialog — the
+    // broker skips the chooser when the shell is the provider — so it is the
+    // entire boundary, and every property below is load-bearing.
+    for (const QString& intent : ShellIntents::kWebReachableIntents) {
+        // Nothing that acts. A confirm intent here would let a page install or
+        // remove a package with nobody asked.
+        QVERIFY2(!ShellIntents::kPackageConfirmIntents.contains(intent),
+                 qPrintable(QStringLiteral("%1 is a confirm intent and must not "
+                                           "be web-reachable").arg(intent)));
+        QVERIFY2(!ShellIntents::kRestrictedToPackageManagerUi.contains(intent),
+                 qPrintable(QStringLiteral("%1 is restricted and must not be "
+                                           "web-reachable").arg(intent)));
+
+        // Navigation, and only navigation. Web-reachable is a SUBSET of
+        // navigation, never a superset: anything outside that list has not been
+        // through the "does this merely move the user?" review.
+        QVERIFY2(ShellIntents::kNavigationIntents.contains(intent),
+                 qPrintable(QStringLiteral("%1 is web-reachable but is not a "
+                                           "navigation intent").arg(intent)));
+
+        // Dead config otherwise — a name nothing provides is a link that always
+        // fails, which reads identically to the feature being broken.
+        QVERIFY2(registry->declaresProvide(QStringLiteral("main_ui"), intent),
+                 qPrintable(QStringLiteral("%1 is web-reachable but the shell "
+                                           "does not provide it").arg(intent)));
+    }
+}
+
 void TestShellIntents::testEveryShellIntentIsAValidReservedName()
 {
     // A name that fails the grammar is dropped by registerShellProvider with
     // only a diagnostic, so a typo would silently unregister a capability.
     QStringList all = ShellIntents::kNavigationIntents;
     all += ShellIntents::kPackageConfirmIntents;
+    all += ShellIntents::kWebReachableIntents;
 
     for (const QString& intent : all) {
         QVERIFY2(logos::intent::isValidName(intent), qPrintable(intent));

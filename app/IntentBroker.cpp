@@ -210,7 +210,13 @@ void IntentBroker::startRequest(const QString& dispatchId)
         return;
     }
 
-    const IntentRegistry::Resolution resolution = m_registry->resolve(intent);
+    // resolveFor, not resolve: the registry narrows the candidate set to what
+    // THIS requester may reach. For every app requester that is the full set;
+    // for a clicked link it is the providers that opted in. The broker holds no
+    // opinion about which requesters are constrained — it passes the name it
+    // already has and the policy stays in the registry.
+    const IntentRegistry::Resolution resolution =
+        m_registry->resolveFor(requesterName, intent);
 
     if (resolution.status == IntentRegistry::None) {
         // Nothing installed services this, but the catalog might know a package

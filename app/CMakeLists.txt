@@ -302,6 +302,15 @@ set(PROJECT_SOURCES
 
     MainUIBackend.cpp
     ShellIntents.cpp
+
+    # Deep links: basecamp:// from a browser. LinkUrl.cpp is the parser and is
+    # deliberately free of everything else, since it is the one part of this
+    # feature that is entirely attacker-controlled.
+    links/LinkUrl.cpp
+    links/LinkUrlInbox.cpp
+    links/LinkRequestCoordinator.cpp
+    links/SchemeRegistrar.cpp
+    links/SingleInstanceGuard.cpp
     IntentRegistry.cpp
     IntentBroker.cpp
     IntentBridgeAdapter.cpp

@@ -1,6 +1,13 @@
 [Desktop Entry]
 Type=Application
 Name=Logos Basecamp
-Exec=LogosBasecamp
+Exec=LogosBasecamp --uri=%u
 Icon=logos-basecamp
+Terminal=false
 Categories=Utility;
+# Deep links. This copy ships inside the AppImage, where the system never reads
+# it — SchemeRegistrar writes an equivalent entry with an absolute Exec into
+# ~/.local/share/applications on first run, which is what actually registers the
+# scheme. Kept in sync here so a distro package installing this file directly
+# gets the same behaviour.
+MimeType=x-scheme-handler/basecamp;

@@ -9,9 +9,11 @@
 #include "ShellIntentInstaller.h"
 #include "ShellIntentEndpoint.h"
 #include "ShellIntents.h"
+#include "links/LinkRequestCoordinator.h"
 #include "UIPluginPresenter.h"
 #include "AppsModel.h"
 #include "BasecampModelRoles.h"
+#include "ShellSections.h"
 #include "CoreModuleManager.h"
 #include "ModuleInstanceModel.h"
 #include "UIPluginManager.h"
@@ -476,7 +478,24 @@ void MainUIBackend::wireIntents()
         QStringLiteral("Logos"),
         QStringLiteral("qrc:/qt/qml/Basecamp/Icons/assets/settings.svg"));
 
+    // The synthetic requester a clicked URL submits under. Registered as a
+    // REQUESTER ONLY — never through registerShellProvider — because the broker
+    // skips the chooser when the shell is either party, and a URL inheriting
+    // that would dispatch with no consent at all.
+    //
+    // Its `uses` is derived on every rebuild from these plus every app that
+    // opted in with `"web": true`, so the broker's ordinary `declaresUse` gate
+    // is what enforces web reachability. No link-shaped special case exists
+    // anywhere inside the broker.
+    m_intentRegistry->registerLinkRequester(
+        LinkRequestCoordinator::requesterName(), ShellIntents::kWebReachableIntents);
+
+    m_linkRequests = new LinkRequestCoordinator(m_intentBroker, m_intentRegistry, this);
+    connect(m_linkRequests, &LinkRequestCoordinator::linkFailed,
+            this, &MainUIBackend::linkFailed);
+
     rebuildIntentRegistry();
+    m_intentRegistryBootstrapped = true;
 }
 
 void MainUIBackend::rebuildIntentRegistry()
@@ -495,6 +514,23 @@ void MainUIBackend::rebuildIntentRegistry()
     const QStringList problems = m_intentRegistry->diagnostics();
     for (const QString& problem : problems)
         qWarning().noquote() << "IntentRegistry:" << problem;
+
+    // THE COLD-START GATE, and it must skip the bootstrap call above.
+    //
+    // A URL that launched the app has been sitting in the inbox since main().
+    // Replaying it needs the registry to know what is INSTALLED, which the
+    // constructor-time rebuild does not — its snapshot is empty because the
+    // plugin scan has not run. Opening the gate there made shell intents work
+    // (they are registered in code) while `basecamp://app/<name>` silently did
+    // nothing: the name was absent from an empty snapshot, so it fell through
+    // to the install branch and there was nothing to install it with either.
+    //
+    // uiPluginMetadataChanged is emitted unconditionally once the scan
+    // completes — including with nothing installed, which is still a truthful
+    // "here is what is on disk" — so this cannot strand a link on a clean
+    // machine. The coordinator's park deadline remains the backstop.
+    if (m_intentRegistryBootstrapped && m_linkRequests)
+        m_linkRequests->onRegistryReady();
 }
 
 void MainUIBackend::rebuildInstallableProviders()
@@ -666,21 +702,56 @@ bool MainUIBackend::m_registryDeclares(const QString& intent) const
         && m_intentRegistry->resolve(intent).status != IntentRegistry::None;
 }
 
+void MainUIBackend::offerInstallForUnknownApp(const QString& appName)
+{
+    if (appName.isEmpty() || !m_appsModel)
+        return;
+
+    const QVariantMap row = m_appsModel->rowDataByName(appName, QString());
+    if (row.isEmpty())
+        return;
+
+    const QVariantList detailed{ QVariantMap{
+        { QStringLiteral("moduleName"),    appName },
+        { QStringLiteral("displayName"),   displayNameFor(appName) },
+        { QStringLiteral("repositoryUrl"), repositoryUrlFor(appName) },
+    } };
+
+    emit intentInstallOffered(kAppLaunchIntent, QStringList{ appName }, detailed);
+}
+
 int MainUIBackend::beginAppLaunch(const QString& dispatchId,
                                   const QVariantMap& params)
 {
+    // The shell's `provides` carries no `params` — registerShellProvider takes
+    // no spec — so nothing upstream has type-checked this. Validate here, and
+    // treat a bad payload exactly like a missing app: same answer, same floor.
+    // Reporting `bad_request` would leak that the name was well-formed but
+    // absent, which is half the oracle back.
     const QVariant raw = params.value(kAppLaunchParam);
     const QString appName =
         raw.typeId() == QMetaType::QString ? raw.toString().trimmed() : QString();
 
-    if (!appName.isEmpty() && m_intentPresenter) {
-        if (m_uiPluginManager
-            && m_uiPluginManager->uiPluginMetadataSnapshot().contains(appName)) {
-            m_intentPresenter->ensureAppLoaded(appName);
-            m_intentPresenter->presentApp(appName);
-        } else {
-            requestPackageInstall(appName);
-        }
+    // ALWAYS ATTEMPT THE LAUNCH; the snapshot only decides whether to ALSO
+    // offer an install.
+    //
+    // Gating the launch on the snapshot made this silently do nothing whenever
+    // the snapshot was empty or stale — the name was absent, so it fell to the
+    // install branch, and with nothing to install it with the click vanished.
+    // onAppLauncherClicked/activateApp already no-op on a name they do not
+    // recognise, so trying first and asking questions after is both simpler and
+    // strictly harder to break.
+    const bool known = m_uiPluginManager
+                    && m_uiPluginManager->uiPluginMetadataSnapshot().contains(appName);
+
+    if (appName == kPackageManagerAppName) {
+        setCurrentActiveSectionIndex(ShellSection::PackageManager);
+    } else if (!appName.isEmpty() && m_intentPresenter) {
+        m_intentPresenter->ensureAppLoaded(appName);
+        m_intentPresenter->presentApp(appName);
+
+        if (!known)
+            offerInstallForUnknownApp(appName);
     }
 
     constexpr int kLaunchAnswerFloorMs = 400;
@@ -807,3 +878,9 @@ bool         MainUIBackend::isMockBackend() const
 }
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
 
+
+void MainUIBackend::setLinkRaiseHandler(std::function<void()> raise)
+{
+    if (m_linkRequests)
+        m_linkRequests->setRaiseHandler(std::move(raise));
+}

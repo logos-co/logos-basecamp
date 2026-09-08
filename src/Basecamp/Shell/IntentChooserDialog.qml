@@ -110,7 +110,8 @@ IntentDialog {
             "basecamp.repositories.manage": qsTr("manage package repositories"),
             "basecamp.settings.open":       qsTr("open Settings"),
             "basecamp.apps.open":           qsTr("open the App Manager"),
-            "basecamp.apps.launch":         qsTr("open an app")
+            "basecamp.apps.launch":         qsTr("open an app"),
+            "basecamp.packages.open":       qsTr("open the Package Manager")
         })
 
         readonly property string intentLabel:

@@ -18,6 +18,7 @@ Item {
     // SidebarPanel.qml's viewSections order.
     readonly property int sidebarAppManager: ShellSection.AppManager
     readonly property int sidebarSettings:   ShellSection.Settings
+    readonly property int sidebarPackages:   ShellSection.PackageManager
 
     // The App Manager's view of the catalog. Declared here rather than handed
     // over by the backend: a filter proxy is view configuration, so it belongs
@@ -61,6 +62,10 @@ Item {
                 return
             case "basecamp.apps.open":
                 backend.setCurrentActiveSectionIndex(root.sidebarAppManager)
+                backend.respondToShellIntent(requestId, true, ({}), "")
+                return
+            case "basecamp.packages.open":
+                backend.setCurrentActiveSectionIndex(root.sidebarPackages)
                 backend.respondToShellIntent(requestId, true, ({}), "")
                 return
             }

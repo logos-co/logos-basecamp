@@ -42,6 +42,12 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
   export LOGOS_USER_DIR="$out/app-data"
   mkdir -p "$LOGOS_USER_DIR"
 
+  # Never take over the machine's basecamp:// handler from a test. On Linux
+  # registration also writes into $HOME and spawns update-desktop-database —
+  # neither of which a nix build sandbox wants, and the second is a detached
+  # child process appearing in the middle of runs that assert on process exit.
+  export LOGOS_NO_SCHEME_REGISTER=1
+
   export QT_QPA_PLATFORM=offscreen
   export QT_FORCE_STDERR_LOGGING=1
   export QT_LOGGING_RULES="qt.*.debug=false;default.debug=true"
