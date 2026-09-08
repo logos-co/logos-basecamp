@@ -5,6 +5,10 @@
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
+#include "links/LinkUrl.h"
+#include "links/LinkUrlInbox.h"
+#include "links/SchemeRegistrar.h"
+#include "links/SingleInstanceGuard.h"
 #ifdef ENABLE_QML_INSPECTOR
 #include "inspectorserver.h"
 #endif
@@ -101,8 +105,31 @@ int main(int argc, char *argv[])
     // plugin upgrades physically immune to that class of staleness
     qputenv("QML_DISABLE_DISK_CACHE", "1");
 
+    // Keep Qt's own messages on stderr, where LogSink can capture them.
+    //
+    // nixpkgs' qtbase links libsystemd, and with journald support compiled in
+    // the default message handler routes to the journal INSTEAD of stderr
+    // whenever stderr is not a tty — i.e. every launch that is not from a
+    // terminal. LogSink captures fd 1 and fd 2, so the session log then holds
+    // only what liblogos and the module hosts write directly, with every
+    // qInfo/qWarning from the app itself missing and nothing anywhere saying so.
+    //
+    // Set before Qt logs anything: the tty check behind this is memoised on
+    // first use. Left alone if the environment already has an opinion.
+    if (!qEnvironmentVariableIsSet("QT_FORCE_STDERR_LOGGING"))
+        qputenv("QT_FORCE_STDERR_LOGGING", "1");
+
     // Create QApplication first
     QApplication app(argc, argv);
+
+    // BEFORE ANYTHING ELSE that can take time. On macOS a `basecamp://` click
+    // that launches the app delivers the URL as a QFileOpenEvent very early;
+    // a filter installed after the core is up misses it, and then the macOS
+    // cold path needs a second mechanism the other platforms do not have.
+    // Installing here is what lets every source — this filter, argv, and the
+    // single-instance socket — funnel into one inbox.
+    LinkUrlInbox::installEventFilter(&app);
+
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
     app.styleHints()->setTabFocusBehavior(Qt::TabFocusAllControls);
@@ -111,6 +138,10 @@ int main(int argc, char *argv[])
     // nothing (enforcement off) — Basecamp's default, unchanged. See the
     // logos_core_set_access_policy call further down.
     QByteArray accessPolicyJson;
+
+    // A `basecamp://` URL this process was launched with, read out of the
+    // parser block below. Empty for an ordinary launch.
+    QString launchUri;
 
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against
@@ -133,6 +164,15 @@ int main(int argc, char *argv[])
                            "file, or inline JSON."),
             QStringLiteral("enforce|path|json"));
         parser.addOption(accessPolicyOption);
+        // An explicit option, not a bare positional: the value comes from a
+        // scheme handler and is attacker-influenced, and one that happened to
+        // look like a flag must not be read as one. Matches what the Windows
+        // registry command and the Linux desktop entry pass.
+        QCommandLineOption uriOption(QStringLiteral("uri"),
+            QStringLiteral("A basecamp:// URL to open. Set by the OS scheme "
+                           "handler; not normally typed by hand."),
+            QStringLiteral("url"));
+        parser.addOption(uriOption);
         if (!parser.parse(app.arguments())) {
             std::cerr << parser.errorText().toStdString() << std::endl;
             return 1;
@@ -172,7 +212,43 @@ int main(int argc, char *argv[])
             }
             qputenv("LOGOS_USER_DIR", absUserDir.toUtf8());
         }
+
+        launchUri = parser.value(uriOption);
     }
+
+    // The resolved session directory. Read once, here, because two separate
+    // things key off it and they must agree: the single-instance socket name
+    // below, and the logs the sink writes underneath it.
+    const QString sessionDir = LogosBasecampPaths::baseDirectory();
+
+    // ── Single instance, per user directory ─────────────────────────────
+    //
+    // AFTER the --user-dir block, because the socket name is derived from the
+    // RESOLVED base directory: --user-dir exists so instances can run side by
+    // side deliberately, and a global lock would break exactly that.
+    //
+    // BEFORE the log sink starts, because a secondary instance lives for about
+    // twenty milliseconds and should not leave a rotated per-session log file
+    // behind for every link the user clicks.
+    //
+    // One call, two outcomes. Nobody listening ⇒ this process is the app and
+    // starts listening. Someone answers ⇒ the URL has been handed over and
+    // there is nothing left to do.
+    auto guard = std::make_unique<SingleInstanceGuard>();
+    if (guard->acquire(sessionDir, launchUri) == SingleInstanceGuard::Secondary) {
+        return 0;
+    }
+
+    // This process owns the socket, so it owns the URL it was launched with.
+    // Into the inbox rather than acted on: the registry does not know what any
+    // app provides until PackageCoordinator's first refresh, seconds from now.
+    if (!launchUri.isEmpty())
+        LinkUrlInbox::instance().post(launchUri);
+
+    QObject::connect(guard.get(), &SingleInstanceGuard::urlReceived,
+                     &app, [](const QString& url) {
+                         LinkUrlInbox::instance().post(url);
+                     });
 
     // Capture stdout/stderr — this process's and its module hosts' — into a
     // rotating per-session log file, configured by <session>/config.yaml. Must
@@ -180,7 +256,6 @@ int main(int argc, char *argv[])
     // --user-dir override is applied, so the session directory resolves to the
     // right place. Terminal output is preserved by mirroring to the original
     // stdout.
-    const QString sessionDir = LogosBasecampPaths::baseDirectory();
     const LogosBasecampLog::ConfigLoad config = LogosBasecampLog::loadConfig(sessionDir);
 
     LogosBasecampLog::LogSink::Options logOptions;
@@ -349,6 +424,38 @@ int main(int argc, char *argv[])
     // destruction ordering explicitly during shutdown (see below).
     auto mainWindow = std::make_unique<Window>(&logosAPI, core.get());
     mainWindow->show();
+
+    // Tell the OS that `basecamp://` means this executable. This is what makes
+    // the COLD path work — with nothing running, the OS looks up a command line
+    // and launches it; the single-instance socket only ever covers the warm
+    // path. A no-op on macOS, where Info.plist's CFBundleURLTypes does it.
+    //
+    // After show() so a first run does not pay for it before anything is on
+    // screen, and because a failure here must not stop the app starting.
+    if (!SchemeRegistrar::registerScheme()) {
+        qWarning() << "Failed to register the" << LinkUrl::scheme()
+                   << "URL scheme; links will not open this app.";
+    }
+
+    // A second launch — with a URL or not — brings this window forward, so a
+    // click that appears to do nothing at least produces motion. Same reason
+    // Status calls makeStatusAppActive() on secondInstanceDetected.
+    QObject::connect(guard.get(), &SingleInstanceGuard::secondInstanceDetected,
+                     mainWindow.get(), [w = mainWindow.get()]() {
+                         w->show();
+                         w->raise();
+                         w->activateWindow();
+                     });
+
+    // Bare `basecamp://` raises and nothing else, and a link that DOES carry an
+    // intent raises before the consent dialog — the user clicked in a browser
+    // and is looking at it, so a dialog on a window that never came forward is
+    // worse than a window that then asks.
+    mainWindow->setLinkRaiseHandler([w = mainWindow.get()]() {
+        w->show();
+        w->raise();
+        w->activateWindow();
+    });
 
 #ifdef ENABLE_QML_INSPECTOR
     // Start QML Inspector server (controlled by QML_INSPECTOR_PORT env var, default 3768)

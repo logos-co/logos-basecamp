@@ -122,6 +122,17 @@ public:
     // there is no per-intent schema to appeal to. Absent means false.
     bool isHandoff(const QString& moduleName, const QString& intent) const;
 
+    // ── The link requester ──────────────────────────────────────────────
+    void registerLinkRequester(const QString& linkModuleName,
+                               const QStringList& shellWebIntents);
+    bool isLinkRequester(const QString& moduleName) const;
+    bool isWebReachable(const QString& moduleName, const QString& intent) const;
+
+    // resolve(), narrowed to what `requesterName` is allowed to reach. Identical
+    // to resolve() for every requester except the link one, whose candidates are
+    // filtered to providers that opted in with `"web": true`.
+    Resolution resolveFor(const QString& requesterName, const QString& intent) const;
+
     // ── Installable providers — a SEPARATE table, deliberately ──────────
     //
     // What the CATALOG says could service an intent if installed. Sourced from
@@ -181,4 +192,8 @@ private:
     // "moduleName/intent" for every provider entry declaring "handoff": true.
     QSet<QString> m_handoff;
     QStringList m_diagnostics;
+
+    QString     m_linkModuleName;
+    QStringList m_shellWebIntents;   // code-declared, survives rebuild()
+    QSet<QString> m_webReachable;    // from disk records, rebuilt each time
 };

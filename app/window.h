@@ -10,6 +10,7 @@
 #include <QPointer>
 #include <QScreen>
 #include <QSize>
+#include <functional>
 #include <QWindow>
 
 class LogosAPI;
@@ -33,6 +34,11 @@ public:
                     ICoreRuntime* core,
                     QWidget *parent = nullptr);
     ~Window();
+
+    // How a clicked `basecamp://` link brings this window forward. Set from
+    // main(), which owns the window; forwarded to the backend's link
+    // coordinator, which is several layers down and has no view of the shell.
+    void setLinkRaiseHandler(std::function<void()> raise);
 
 protected:
     void changeEvent(QEvent *event) override;

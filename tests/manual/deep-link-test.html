@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Basecamp deep-link test page</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#14161a; color:#e6e8eb; font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         margin:0; padding:2.5rem 1.5rem; }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 .25rem; }
+  h2 { font-size:1.05rem; margin:2.25rem 0 .6rem; padding-bottom:.35rem;
+       border-bottom:1px solid #2a2f37; }
+  p.sub { color:#9aa3ad; margin:0 0 1.5rem; }
+  code, .u { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.86em; }
+  .note { background:#1b1f25; border-left:3px solid #4a7dbd; padding:.85rem 1rem;
+          margin:1rem 0; border-radius:0 4px 4px 0; }
+  .warn { border-left-color:#c9973f; }
+  table { border-collapse:collapse; width:100%; margin:.5rem 0 0; }
+  th, td { text-align:left; padding:.6rem .7rem; border-bottom:1px solid #23272e;
+           vertical-align:top; font-size:.92rem; }
+  th { color:#9aa3ad; font-weight:600; font-size:.8rem; text-transform:uppercase;
+       letter-spacing:.04em; }
+  td:first-child { width:34%; }
+  a.try { display:inline-block; background:#22303f; color:#8fc0ff; text-decoration:none;
+          padding:.4rem .7rem; border-radius:5px; border:1px solid #2f4256;
+          font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem;
+          word-break:break-all; }
+  a.try:hover { background:#2a3c4f; }
+  a.try:focus-visible { outline:2px solid #8fc0ff; outline-offset:2px; }
+  .bad a.try { background:#3a2529; color:#ffa8a8; border-color:#573037; }
+  .bad a.try:hover { background:#472c31; }
+  pre { background:#0e1013; border:1px solid #23272e; border-radius:6px;
+        padding:.8rem 1rem; overflow-x:auto; font-size:.84rem; }
+  ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+<main>
+
+<h1>Basecamp deep-link test page</h1>
+<p class="sub">Open this file in a browser with Basecamp installed. Each link is the
+same thing a real page would do — nothing here is faked with JavaScript.</p>
+
+<div class="note warn">
+  <strong>This page cannot tell you whether anything worked.</strong> There is no
+  channel back from Basecamp to the browser — deliberately, so a page cannot
+  discover what you have installed. Every verdict below comes from watching the
+  Basecamp window and its log. Keep the log tailing in a terminal while you click.
+</div>
+
+<h2>Before you start</h2>
+<ol>
+  <li>Launch Basecamp once from Finder so LaunchServices registers the scheme.</li>
+  <li>Tail the log (the installed build is <em>portable</em>, so no <code>Dev</code> suffix):
+    <pre>tail -f ~/Library/Application\ Support/Logos/LogosBasecamp/logs/*.log | grep -i link</pre>
+  </li>
+  <li>Note which apps you actually have installed. <code>basecamp://app/&lt;name&gt;</code>
+    only brings forward something that is installed — and by design it reports success
+    either way, so a wrong name looks exactly like a right one from here.</li>
+</ol>
+
+<h2>1 &middot; Warm start &mdash; Basecamp already running</h2>
+<table>
+  <tr><th>Click</th><th>Expected</th></tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://">basecamp://</a></td>
+    <td>Window comes forward. Nothing else. No intent is submitted, so the log stays quiet.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/package_manager_ui">basecamp://app/package_manager_ui</a></td>
+    <td>Package Manager comes forward, with <strong>no dialog</strong>.
+      Routed to a <em>section switch</em>, not the app launcher — the Package
+      Manager is hoisted into the section stack rather than docked, so the
+      launcher has nothing to raise. Same mechanism as the Welcome page&rsquo;s
+      &ldquo;manage packages&rdquo; button.
+      Log: <code>dispatching link request … for intent basecamp.apps.launch</code></td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.settings.open">basecamp://intent/basecamp.settings.open</a></td>
+    <td>Switches to Settings, no dialog. The shell is the only provider, so the chooser is skipped.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.apps.open">basecamp://intent/basecamp.apps.open</a></td>
+    <td>Switches to the App Manager.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.packages.open">basecamp://intent/basecamp.packages.open</a></td>
+    <td>Switches to the <strong>Package Manager</strong>. Use this rather than
+      <code>basecamp://app/package_manager_ui</code>: the Package Manager is
+      shell chrome hoisted into the section stack. Both links now reach it —
+      this one says so explicitly, and <code>basecamp://app/package_manager_ui</code>
+      is redirected to the same section switch.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.repositories.manage">basecamp://intent/basecamp.repositories.manage</a></td>
+    <td>Settings, on the <em>Repositories</em> page — one level deeper than
+      <code>settings.open</code>. This is the intent the Package Manager raises from
+      its own “Manage Repositories” button.</td>
+  </tr>
+</table>
+
+<h2>1b &middot; Real apps from the Logos catalog</h2>
+<p class="sub">Install these from the Package Manager first — they are ordinary
+catalog apps, not fixtures. Names verified against
+<code>logos-modules-release</code>&rsquo;s <code>index.json</code>.</p>
+
+<div class="note">
+  <strong>Install before clicking, or you prove nothing.</strong>
+  <code>basecamp.apps.launch</code> answers <em>ok</em> whether or not the app
+  exists — deliberately, so a web page cannot discover what you have installed
+  by trying names. A link to a missing app is indistinguishable from a link to
+  an installed one, <em>from the browser</em>. The difference is only visible in
+  Basecamp.
+</div>
+
+<table>
+  <tr><th>Click</th><th>Expected once installed</th></tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/blockchain_ui">basecamp://app/blockchain_ui</a></td>
+    <td>Blockchain comes forward. Pulls in <code>blockchain_module</code> as a
+      dependency, so give the first launch a moment.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/chat_ui">basecamp://app/chat_ui</a></td>
+    <td>Chat comes forward (needs <code>chat_module</code>, <code>delivery_module</code>).</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/storage_ui">basecamp://app/storage_ui</a></td>
+    <td>Storage comes forward.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/lez_wallet_ui">basecamp://app/lez_wallet_ui</a></td>
+    <td>LEZ Wallet comes forward.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/amm_ui">basecamp://app/amm_ui</a></td>
+    <td>Logos DEX App comes forward.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/definitely_not_installed">basecamp://app/definitely_not_installed</a></td>
+    <td><strong>Control.</strong> Nothing visible happens — and note it looks
+      exactly like a success from here. If Basecamp offers to install something,
+      that is the catalog suggestion, which is between the shell and you and is
+      never reported back to the page.</td>
+  </tr>
+</table>
+
+<p class="sub">The log line is the real verdict for every row above:<br>
+<code>LinkRequestCoordinator: dispatching link request &hellip; for intent basecamp.apps.launch</code></p>
+
+<h2>2 &middot; Cold start &mdash; quit Basecamp first</h2>
+<div class="note">
+  Quit fully (<code>⌘Q</code>, or <code>osascript -e 'quit app "LogosBasecamp"'</code>),
+  then click. The OS launches the app from the registered command.
+  <strong>Expect several seconds of nothing</strong> — the URL is parked until the
+  intent registry finishes its first build. That delay is the design, not a hang:
+  acting sooner would answer every cold-start link “unavailable”.
+</div>
+<table>
+  <tr><th>Click (with Basecamp quit)</th><th>Expected</th></tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/package_manager_ui">basecamp://app/package_manager_ui</a></td>
+    <td>Basecamp starts, finishes scanning, <em>then</em> Package Manager comes forward on its own.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.settings.open">basecamp://intent/basecamp.settings.open</a></td>
+    <td>Basecamp starts and lands on Settings.</td>
+  </tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://app/blockchain_ui">basecamp://app/blockchain_ui</a></td>
+    <td>The interesting cold case: Basecamp starts, scans, loads
+      <code>blockchain_module</code>, <em>then</em> Blockchain appears. Longest
+      wait of any link here, and the one most likely to look broken while it is
+      simply working.</td>
+  </tr>
+</table>
+
+<h2>3 &middot; Things that must <em>not</em> work</h2>
+<p class="sub">The negative cases matter as much as the positive ones: a build where
+every link worked would pass section 1 just as happily.</p>
+<table>
+  <tr><th>Click</th><th>Expected</th></tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.packages.confirm_uninstall">…confirm_uninstall</a></td>
+    <td><strong>Nothing happens. No dialog, nothing removed.</strong> Not in the shell’s
+      web-reachable set, so the link requester never declared it — refused at the
+      broker’s first gate, before any provider is consulted.</td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/basecamp.packages.confirm_install">…confirm_install</a></td>
+    <td>Also nothing. Installing is not reachable from a web page either.</td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/Wallet.Send">basecamp://intent/Wallet.Send</a></td>
+    <td>Rejected by the name grammar (uppercase). Log: <code>fails the intent-name grammar</code></td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://launch/package_manager_ui">basecamp://launch/…</a></td>
+    <td>Unknown form — only <code>app</code> and <code>intent</code> are accepted.</td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/wallet.send?p=!!!notbase64">…?p=!!!notbase64</a></td>
+    <td>Rejected before anything is submitted. Log: <code>not valid base64url</code></td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/wallet.send?params=e30">…?params=e30</a></td>
+    <td>Unknown query key. Refused rather than ignored, so a typo is visible instead of
+      surfacing later as an empty payload.</td>
+  </tr>
+</table>
+
+<h2>4 &middot; A typed payload</h2>
+<p class="sub"><code>p</code> is base64url of a JSON object. Types survive the round trip,
+which is why it is not query pairs — the broker type-checks against the provider’s
+declared params, and <code>?amount=12.5</code> would arrive as the string “12.5”.</p>
+<table>
+  <tr><th>Click</th><th>Expected</th></tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/wallet.send?p=eyJ0byI6IjB4YWJjIiwiYW1vdW50IjoxMi41fQ">wallet.send with {to:"0xabc", amount:12.5}</a></td>
+    <td>With no wallet installed: nothing visible, and the log shows the request was
+      refused for want of a provider. With one installed <em>that opted in</em> via
+      <code>"web": true</code>: the chooser appears. An installed wallet that did
+      <strong>not</strong> opt in must never be offered.</td>
+  </tr>
+</table>
+
+<h2>What “it works” looks like</h2>
+<pre>LinkRequestCoordinator: dispatching link request link-1 for intent basecamp.settings.open</pre>
+<p class="sub">That line is the only proof the running instance acted. On a warm click the
+second process forwards and exits silently — “forwarded” and “received” are
+indistinguishable from outside without it.</p>
+
+</main>

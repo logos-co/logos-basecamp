@@ -1,0 +1,707 @@
+name: "Deep links: opening Basecamp, and an app inside it, from a browser"
+output: basecamp-deep-links.md
+release: ""
+
+intro: |
+  A link on a web page opens Basecamp — and if the app it names is installed,
+  Basecamp brings that app forward.
+
+  ```html
+  <a href="basecamp://app/wallet_ui">Open in Basecamp</a>
+  ```
+
+  There are two paths behind that one click, and they are genuinely different:
+
+  - **Cold** — Basecamp is not running. The OS looks up the registered
+    handler and **launches the app**, with the URL on its command line.
+  - **Warm** — Basecamp is already running. On Linux and Windows the OS
+    launches a *second process* anyway, because it has no notion of "hand this
+    to the running one". That process forwards the URL over a local socket and
+    exits. (macOS is the exception: LaunchServices delivers straight into the
+    live process as a `QFileOpenEvent`.)
+
+  This doc-test drives both, with no browser involved — because a browser adds
+  nothing a shell cannot do. Clicking a link *is* the OS running a command with
+  a URL on it, which is exactly what the steps below do.
+
+what_you_build: |
+  The inspector-enabled Basecamp bundle, the logos-qt-mcp UI driver, the same
+  hand-written fixture apps the intents doc-test uses, one headless run proving
+  a cold-start URL launches the named app, and a two-process run proving a
+  second launch hands its URL to the first instead of starting a second
+  Basecamp.
+
+what_you_learn:
+  - Why a deep link needs both an OS registration and a single-instance socket, and which one covers which path
+  - Why the URL is parked until the intent registry is built rather than acted on when the window appears
+  - Why the single-instance socket is keyed on the resolved user directory rather than being global
+  - Why a link is not the shell, and what would break if it were
+  - Why an app's capability is not reachable from a URL until its author opts in with `"web": true`
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+sections:
+  - title: "What registers the scheme, and what the socket is for"
+    text: |
+      These are two separate mechanisms and it is worth being clear which does
+      what, because it is easy to build one and think the feature works.
+
+      | | Cold (nothing running) | Warm (already running) |
+      | --- | --- | --- |
+      | macOS | `CFBundleURLTypes` in `Info.plist` | same — LaunchServices delivers a `QFileOpenEvent` |
+      | Linux | `MimeType=x-scheme-handler/basecamp` + `Exec=… --uri=%u` | second process → local socket → first |
+      | Windows | `HKCU\Software\Classes\basecamp` | same as Linux |
+
+      **The registration is what makes cold start work at all.** With nothing
+      running there is no socket to talk to, so the OS reads a command line and
+      runs it. The socket only ever covers the warm path.
+
+      On Linux the shipped artifact is an AppImage, and the desktop file
+      embedded inside it is never seen by the system — so Basecamp writes an
+      equivalent entry into `~/.local/share/applications` on first run, using
+      `$APPIMAGE` rather than its own `applicationFilePath()`, which points into
+      a temporary mount that disappears when the app exits.
+
+      > Set `LOGOS_NO_SCHEME_REGISTER=1` to skip that write. The steps below do,
+      > because a doc-test should not take over your desktop's handler for
+      > `basecamp://`.
+
+  - title: "The socket is keyed on the user directory"
+    text: |
+      `--user-dir` exists so several Basecamps can run side by side against
+      isolated data trees. A global single-instance lock would break exactly
+      that, so the socket name is derived from the **resolved** base directory —
+      which is also why the guard runs after `--user-dir` is applied and before
+      anything else touches a path.
+
+      Two instances with different user dirs never see each other. Two with the
+      same one do, and the second forwards its URL and exits.
+
+  - title: "Build the UI test driver"
+    step: true
+    text: |
+      [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) connects to the
+      app's QML inspector and drives it.
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+  - title: "Build the Basecamp bundle"
+    step: true
+    text: |
+      The portable bundle, with the inspector compiled in.
+    steps:
+      - title: "Build the bundle"
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        code_block: |
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
+
+  - title: "Seed a link target"
+    step: true
+    text: |
+      `basecamp://app/<name>` only brings forward an app that is actually
+      installed, so the run needs one on disk. A hand-written QML-only app is
+      enough — no build, no `.lgx`, no catalog.
+
+      Two files matter, and different things read them: `manifest.json` is what
+      the package scanner lists installed packages from, and `metadata.json` is
+      what `IntentRegistry` reads capabilities out of. An app missing from the
+      manifest never reaches the registry at all.
+    steps:
+      - title: "Write the fixture app into a throwaway user dir"
+        run: |
+          chmod -R u+w testdata/links-user 2>/dev/null || true
+          rm -rf testdata/links-user
+          APP=testdata/links-user/plugins/link_target_demo
+          mkdir -p "$APP" testdata/links-user/modules
+
+          cat > "$APP/metadata.json" <<'JSON'
+          {
+            "name": "link_target_demo",
+            "display_name": "Link Target",
+            "version": "1.0.0",
+            "description": "Deep-link test fixture (test artifact, not a real app)",
+            "type": "ui_qml",
+            "view": "Main.qml",
+            "dependencies": [],
+            "category": "misc"
+          }
+          JSON
+
+          cat > "$APP/manifest.json" <<'JSON'
+          {
+            "author": "",
+            "category": "testing",
+            "dependencies": [],
+            "description": "Deep-link test fixture (test artifact, not a real app)",
+            "display_name": "Link Target",
+            "icon": "",
+            "main": {},
+            "manifestVersion": "0.3.0",
+            "name": "link_target_demo",
+            "type": "ui_qml",
+            "version": "1.0.0",
+            "view": "Main.qml"
+          }
+          JSON
+
+          cat > "$APP/Main.qml" <<'QML'
+          import QtQuick
+
+          // Deliberately plain: this app exists to be NAVIGATED TO, so all the
+          // assertions need is a string on screen that appears nowhere else.
+          Rectangle {
+              anchors.fill: parent
+              color: "#101318"
+              Text {
+                  anchors.centerIn: parent
+                  color: "white"
+                  font.pixelSize: 22
+                  text: "LINK TARGET READY"
+              }
+          }
+          QML
+
+          cat > "$APP/qmldir" <<'QMLDIR'
+          module link_target_demo
+          QMLDIR
+
+          ls "$APP"
+        expect_contains:
+          - "metadata.json"
+          - "manifest.json"
+          - "Main.qml"
+
+  - title: "Cold start: the link launches the app"
+    step: true
+    text: |
+      This is the click that happens when Basecamp is closed. The OS would run
+      the registered command with the URL appended; the step below runs exactly
+      that command.
+
+      `--uri` is an explicit option rather than a bare positional argument, and
+      that is deliberate: the value comes from a scheme handler and is
+      attacker-influenced, so one that happened to look like a flag must not be
+      read as one.
+
+      **Watch what has to happen in order.** The URL is on the command line
+      before `logos_core_start()`, but nothing can resolve it until
+      `IntentRegistry` has read every installed app's `metadata.json` — which is
+      seconds later, after the package manager's first refresh. So the URL is
+      parked, and replayed on the first successful registry rebuild. Gating on
+      the window appearing instead would be too early, and every cold-start link
+      would answer `unavailable`.
+    steps:
+      - title: "Launch with a basecamp:// URL, as the OS would"
+        ui_test:
+          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://app/link_target_demo"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The bundle launches headless against the seeded user-dir. At this point the URL is sitting in the inbox, parked: the registry does not yet know that `link_target_demo` is installed."
+
+            - name: "The fixture apps are listed"
+              action: wait_for
+              texts: ["Link Target"]
+              timeout: 60000
+              text: "The package scan found them in `plugins/`, and `IntentRegistry` has now read their `metadata.json` files. This rebuild is the gate — it is what releases the parked URL."
+
+            - name: "…and the link brought the app forward on its own"
+              action: wait_for
+              texts: ["LINK TARGET READY"]
+              timeout: 60000
+              text: "Nobody clicked anything. `basecamp://app/link_target_demo` became a `basecamp.apps.launch` intent carrying `{\"app\": \"link_target_demo\"}`, the shell serviced it, and the presenter raised the app — the same seam the broker uses when a user picks a provider from the chooser."
+              screenshot: "deeplink-cold.png"
+
+        post_text: |
+          Two things that run is quietly proving.
+
+          **The app name is a parameter, not part of the intent name.**
+          `basecamp://app/<name>` becomes `basecamp.apps.launch` with
+          `{"app": "<name>"}`. The alternative — `basecamp.launch.<appName>` —
+          fails three ways: app names are not bound by the intent-name grammar,
+          so anything with a hyphen or a capital is silently dropped; `provides`
+          would need re-registering on every install; and a caller's `uses`
+          would have to name each app it might launch, which is exactly the
+          "a request names a capability, never a provider" line the whole
+          mechanism rests on.
+
+          **The answer is the same whether or not the app exists.** Ask for an
+          app that is not installed and the request still reports `ok`, on the
+          same timing floor. "Launch X, tell me if it worked" is otherwise an
+          installed-app enumeration oracle: iterate plausible names, read the
+          answers, recover the user's whole app list from a web page.
+
+  - title: "The registered command, run the way the OS runs it"
+    step: true
+    text: |
+      Every step above launches the binary with `--uri=` written out by hand.
+      That is what the OS ends up running, but *nothing so far has checked that*
+      — the string came from this document, not from the registration.
+
+      It is a gap worth closing precisely because everything downstream of it
+      still works. A desktop entry whose `Exec` ends in a bare `%u` registers
+      fine, the browser finds it, the app launches, and the URL sits unread in
+      `argv` because `main()` takes it only from `--uri` — an explicit option
+      rather than a positional, because a scheme handler's value is
+      attacker-influenced and one that happened to look like a flag must not be
+      read as one. Nothing fails; the click just does nothing.
+
+      So this step reads the entry the registrar actually wrote and runs *that*,
+      substituting the URL for the field code exactly as a launcher does.
+
+      **The same gap exists on macOS, in a different file.** Nothing is written
+      at runtime there — `CFBundleURLTypes` in the bundle's `Info.plist` is what
+      LaunchServices reads — so the step asserts the shipped `.app` really
+      declares the `basecamp` scheme, then drives the bundle's own binary. The
+      scheme name is defined once, in `LinkUrl::scheme()`, and the plist is the
+      one place that can silently drift from it.
+    steps:
+      - title: "Register, then launch from the generated Exec line"
+        run: |
+          set -u
+          export QT_QPA_PLATFORM=offscreen
+
+          # The one step that must let the registrar run. Every other step here
+          # sets LOGOS_NO_SCHEME_REGISTER so a doc-test does not take over the
+          # machine's basecamp:// handler; this one redirects where the entry
+          # is written instead, which gets the same protection and still
+          # exercises the real code path.
+          unset LOGOS_NO_SCHEME_REGISTER || true
+          export XDG_DATA_HOME="$PWD/testdata/links-xdg"
+          rm -rf "$XDG_DATA_HOME"
+          mkdir -p "$XDG_DATA_HOME"
+
+          BIN="$PWD/result-bundle/bin/LogosBasecamp"
+          DESKTOP="$XDG_DATA_HOME/applications/logos-basecamp.desktop"
+
+          # Its own user-dir — same reason as the warm-path step below: a
+          # leftover instance on the shared one would make this step's launches
+          # forward to it instead of starting.
+          USER_DIR="$PWD/testdata/links-user-register"
+          chmod -R u+w "$USER_DIR" 2>/dev/null || true
+          rm -rf "$USER_DIR"
+          cp -a "$PWD/testdata/links-user" "$USER_DIR"
+
+          # A launch whose only job is to register and go away. Registration
+          # runs after the window is up, so this waits on the file rather than
+          # on a fixed interval.
+          URL="basecamp://app/link_target_demo"
+
+          # THE TWO PLATFORMS REGISTER BY DIFFERENT MECHANISMS, and this step
+          # used to assert only the Linux one — on both. SchemeRegistrar writes
+          # nothing at all on macOS (CFBundleURLTypes in the bundle's Info.plist
+          # is what LaunchServices reads), so the wait below could never find a
+          # .desktop file there and macOS failed this step every single run.
+          if [ "$(uname -s)" = "Darwin" ]; then
+            # The shipped .app, not result-bundle — the dir bundle has no plist.
+            # Already built by the build-macos-app job, so this is a cache hit.
+            # {release} is what pins this to the commit under test — the same
+            # form the result-bundle prerequisite uses. Without it this would
+            # quietly assert the plist of the default branch.
+            nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-macos-app" \
+              -o result-app || { echo "MACOS_APP_BUILD_FAILED"; exit 1; }
+            PLIST="result-app/LogosBasecamp.app/Contents/Info.plist"
+
+            SCHEMES=$(plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes json \
+                        -o - "$PLIST" 2>/dev/null || true)
+            echo "REGISTERED_SCHEMES=${SCHEMES}"
+            case "$SCHEMES" in
+              *'"basecamp"'*) echo "SCHEME_HANDLER_DECLARED" ;;
+              *) echo "NO_SCHEME_IN_INFO_PLIST"; exit 1 ;;
+            esac
+
+            # The delivery half. LaunchServices is not drivable in CI, so run
+            # the bundle's own binary the way the plist says the OS would.
+            "result-app/LogosBasecamp.app/Contents/MacOS/LogosBasecamp" \
+              --uri="$URL" --user-dir "$USER_DIR" >/tmp/link-fromentry.log 2>&1 &
+            LAUNCHED=$!
+          else
+            "$BIN" --user-dir "$USER_DIR" >/tmp/link-register.log 2>&1 &
+            REG=$!
+            WAITED=0
+            while [ "$WAITED" -lt 90 ] && [ ! -f "$DESKTOP" ]; do
+              sleep 1
+              WAITED=$((WAITED + 1))
+            done
+            kill "$REG" 2>/dev/null || true
+            wait "$REG" 2>/dev/null || true
+
+            if [ ! -f "$DESKTOP" ]; then
+              echo "NO_DESKTOP_ENTRY_WRITTEN"
+              exit 1
+            fi
+            echo "DESKTOP_ENTRY_WRITTEN"
+
+            EXEC_LINE=$(grep '^Exec=' "$DESKTOP" || true)
+            echo "REGISTERED_EXEC=${EXEC_LINE#Exec=}"
+
+            # Asserted here rather than left to expect_contains, so that losing
+            # it fails with a sentence instead of an absent substring. A bare
+            # `%u` hands the URL over positionally and main() reads it only from
+            # --uri, so every layer works and nothing consumes the URL.
+            case "$EXEC_LINE" in
+              *--uri=%u*) echo "SCHEME_HANDLER_DECLARED" ;;
+              *) echo "EXEC_LINE_DOES_NOT_PASS_THE_URL_AS_URI"; exit 1 ;;
+            esac
+
+            # The field code substitution a desktop launcher performs. `%u` is
+            # replaced by the URL and the rest of the command line is left alone.
+            COMMAND=$(printf '%s' "${EXEC_LINE#Exec=}" | sed "s|%u|$URL|")
+
+            # eval, because the Exec line quotes the path the way the entry does
+            # and the shell has to unpick that the same way a launcher would.
+            eval "$COMMAND --user-dir \"$USER_DIR\"" >/tmp/link-fromentry.log 2>&1 &
+            LAUNCHED=$!
+          fi
+
+          # Cold start: the URL is parked until the registry's first rebuild.
+          WAITED=0
+          while [ "$WAITED" -lt 90 ]; do
+            grep -q "dispatching link request" /tmp/link-fromentry.log && break
+            kill -0 "$LAUNCHED" 2>/dev/null || break
+            sleep 1
+            WAITED=$((WAITED + 1))
+          done
+
+          if grep -q "for intent basecamp.apps.launch" /tmp/link-fromentry.log; then
+            echo "REGISTERED_COMMAND_DELIVERED_THE_URL"
+          else
+            echo "REGISTERED_COMMAND_DROPPED_THE_URL"
+            echo "--- tail of the launched instance's log ---"
+            tail -40 /tmp/link-fromentry.log
+            echo "--- end ---"
+          fi
+
+          kill "$LAUNCHED" 2>/dev/null || true
+          wait "$LAUNCHED" 2>/dev/null || true
+        expect_contains:
+          # Platform-neutral, because the two mechanisms have nothing textual in
+          # common. The mechanism-specific assertions (`--uri=%u` on Linux, the
+          # plist's CFBundleURLSchemes on macOS) exit 1 in the script above,
+          # where a failure can say which one broke.
+          - "SCHEME_HANDLER_DECLARED"
+          - "REGISTERED_COMMAND_DELIVERED_THE_URL"
+        post_text: |
+          `REGISTERED_EXEC` is echoed rather than only asserted on, because the
+          shape of that one line is the whole feature on Linux — and a reader
+          comparing it against their own `~/.local/share/applications` entry is
+          the fastest way to explain a link that does nothing on a machine that
+          upgraded from a build which wrote the old form.
+
+  - title: "The shell's own web-reachable intents"
+    step: true
+    text: |
+      `basecamp://app/<name>` is sugar. The general form names an intent
+      directly, and the shell provides four that a link may reach — all
+      navigation, all hand-offs.
+
+      **Why navigation and nothing else.** The broker skips the chooser when
+      the shell is the only provider, so every entry in this set is something a
+      web page can cause *without a consent dialog*. That is right for moving
+      between the shell's own sections: nothing crosses a boundary, nothing is
+      destructive, and confirming a navigation the user just asked for is a
+      dialog answering itself. It stops being right the moment an entry mutates
+      state — which is why the three `basecamp.packages.confirm_*` intents are
+      deliberately absent, and must stay absent.
+
+      Each launch below is a separate cold start, because the OS hands a URL to
+      one process invocation.
+    steps:
+      - title: "basecamp.settings.open"
+        ui_test:
+          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.settings.open"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The URL is parked in the inbox while the app boots."
+
+            - name: "…and the link landed on Settings with no dialog in the way"
+              action: wait_for
+              texts: ["Apps Inspector", "Module Inspector"]
+              timeout: 60000
+              text: "Nobody clicked anything. The shell is the only provider, so the broker dispatched without raising a chooser — and the request is a hand-off, so the user is left here rather than being returned anywhere."
+              screenshot: "deeplink-settings.png"
+
+      - title: "basecamp.apps.open"
+        ui_test:
+          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.apps.open"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "Same cold start, a different intent."
+
+            - name: "…and the link landed on the App Manager"
+              action: wait_for
+              texts: ["Link Target"]
+              timeout: 60000
+              text: "The App Manager lists the installed fixture. Reached by URL alone."
+              screenshot: "deeplink-apps.png"
+
+      - title: "basecamp.repositories.manage"
+        ui_test:
+          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.repositories.manage"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The intent the Package Manager raises from its own Manage Repositories button — here reached from a link instead, which is the same shell provider by a different requester."
+
+            - name: "…and the link landed on Settings → Package Repositories"
+              action: wait_for
+              texts: ["Add a repository", "Paste the URL of a logos-repo.json index."]
+              timeout: 60000
+              text: "Asserted on strings from the Repositories PAGE, not its entry in the Settings nav — the nav label is visible from any Settings section, so matching it would pass even if the deeper navigation silently did nothing. This intent goes one level further than `basecamp.settings.open`, and the assertion has to be able to tell them apart."
+              screenshot: "deeplink-repositories.png"
+
+      - title: "An intent outside that set is refused"
+        ui_test:
+          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.packages.confirm_uninstall"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "The app starts normally"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "A link naming a package-removal intent gets nowhere. It is not in the shell's web-reachable set, so the link requester never declared it and the broker refuses at its first gate — `not_declared`, before any provider is consulted. Separately, the requester allow-list on that intent names only `package_manager_ui`, so it would be refused a second time."
+
+            - name: "…and nothing was removed or prompted"
+              action: wait_for
+              texts: ["Link Target"]
+              timeout: 60000
+              text: "The fixture is still installed and no confirmation dialog appeared. The negative control matters as much as the positive ones: a test that only proves links work would pass just as happily if every link worked."
+              screenshot: "deeplink-refused.png"
+
+  - title: "Warm: a second launch hands over its URL"
+    step: true
+    text: |
+      Now the click that happens while Basecamp is already up. On Linux the OS
+      starts a second process regardless — it has no way to know one is running
+      — so that process has to find the first and hand over.
+
+      The script below is the whole warm path with nothing mocked: one instance
+      running, a second invoked exactly as a scheme handler would invoke it.
+      What we assert is that the second **exits immediately** rather than
+      booting a second runtime against the same `plugins/` and `module_data/`.
+    steps:
+      - title: "Start one instance, then click a link at it"
+        run: |
+          set -u
+          export LOGOS_NO_SCHEME_REGISTER=1
+          # Offscreen, or there is no display on a CI runner and the first
+          # instance dies before it can listen — which reads as "the guard is
+          # broken" rather than "there is no X server". The ui_test steps get
+          # this from the harness; a raw shell step does not.
+          export QT_QPA_PLATFORM=offscreen
+          BIN=./result-bundle/bin/LogosBasecamp
+
+          # ITS OWN USER-DIR, not the shared one. The guard keys its socket on
+          # the resolved user-dir, so sharing one couples every step that starts
+          # an instance: the harness gives a terminating app 10s and then moves
+          # on regardless, and one that outlives that still holds the socket.
+          # The next step's "instance 1" then forwards to it and exits 0 —
+          # indistinguishable from a crash through `kill -0`, which is exactly
+          # how this step failed.
+          USER_DIR="$PWD/testdata/links-user-warm"
+          chmod -R u+w "$USER_DIR" 2>/dev/null || true
+          rm -rf "$USER_DIR"
+          cp -a "$PWD/testdata/links-user" "$USER_DIR"
+
+          # Instance 1: the running app.
+          "$BIN" --user-dir "$USER_DIR" >/tmp/link-first.log 2>&1 &
+          FIRST=$!
+          sleep 25
+
+          if ! kill -0 "$FIRST" 2>/dev/null; then
+            echo "FIRST_INSTANCE_DIED"
+            # WHY it died, because "FIRST_INSTANCE_DIED" alone is unreadable
+            # from a CI log and this branch used to print nothing else.
+            #
+            # The likely cause is not a crash at all. Every step in this file
+            # shares one user-dir, the harness gives a terminating app 10s and
+            # then moves on regardless, and a Basecamp that outlives that window
+            # still holds the guard's socket. This process then probes it,
+            # becomes a SECONDARY, and main() returns 0 — an orderly exit that
+            # looks identical to a crash through `kill -0`.
+            wait "$FIRST" 2>/dev/null
+            echo "FIRST_INSTANCE_EXIT_CODE=$?"
+            if grep -q "Logos Core started successfully" /tmp/link-first.log; then
+              echo "FIRST_INSTANCE_BOOTED_THEN_DIED"
+            else
+              echo "FIRST_INSTANCE_NEVER_BOOTED_A_RUNTIME (became a secondary?)"
+            fi
+            echo "--- tail of the first instance's log ---"
+            tail -40 /tmp/link-first.log
+            echo "--- end ---"
+            exit 1
+          fi
+
+          # Instance 2: what the OS runs when the link is clicked. It should
+          # forward and exit, NOT become a second Basecamp.
+          START=$(date +%s)
+          "$BIN" --user-dir "$USER_DIR" --uri=basecamp://app/link_target_demo \
+            >/tmp/link-second.log 2>&1
+          SECOND_RC=$?
+          ELAPSED=$(( $(date +%s) - START ))
+
+          echo "SECOND_EXIT_CODE=$SECOND_RC"
+          echo "SECOND_ELAPSED=${ELAPSED}s"
+
+          # A forwarding secondary lives for about as long as a socket
+          # round-trip. Anything near a real startup means it booted instead.
+          if [ "$SECOND_RC" -eq 0 ] && [ "$ELAPSED" -lt 10 ]; then
+            echo "SECOND_INSTANCE_FORWARDED_AND_EXITED"
+          fi
+
+          # It must not have started a runtime of its own.
+          if grep -q "Logos Core started successfully" /tmp/link-second.log; then
+            echo "SECOND_INSTANCE_BOOTED_A_RUNTIME"
+          else
+            echo "SECOND_INSTANCE_STARTED_NO_RUNTIME"
+          fi
+
+          # The half that matters, and the one it is easy to forget to assert:
+          # the second process exiting quietly proves it FORWARDED, not that
+          # anybody RECEIVED. Both look identical from outside the first
+          # instance, so we go and look inside it.
+          #
+          # Polled rather than slept on. The socket read and the 400 ms answer
+          # floor are quick, but a link that arrives before the registry's
+          # first rebuild is parked until it lands — correct behaviour, and on
+          # a loaded runner it can be well past any fixed interval that looks
+          # generous on a developer's machine.
+          WAITED=0
+          while [ "$WAITED" -lt 60 ]; do
+            grep -q "dispatching link request" /tmp/link-first.log && break
+            sleep 1
+            WAITED=$((WAITED + 1))
+          done
+
+          if grep -q "dispatching link request" /tmp/link-first.log; then
+            echo "FIRST_INSTANCE_HANDLED_THE_LINK"
+          else
+            echo "FIRST_INSTANCE_NEVER_SAW_THE_LINK"
+            # Without this the failure reads "the link was not handled" and
+            # says nothing about why — and the receiving instance's output is
+            # the only place the answer lives.
+            echo "--- tail of the first instance's log ---"
+            tail -40 /tmp/link-first.log
+            echo "--- end ---"
+          fi
+
+          # And it must be the intent the URL named — not merely *a* dispatch.
+          if grep -q "for intent basecamp.apps.launch" /tmp/link-first.log; then
+            echo "FIRST_INSTANCE_GOT_THE_RIGHT_INTENT"
+          fi
+
+          kill "$FIRST" 2>/dev/null || true
+          wait "$FIRST" 2>/dev/null || true
+        expect_contains:
+          - "SECOND_EXIT_CODE=0"
+          - "SECOND_INSTANCE_FORWARDED_AND_EXITED"
+          - "SECOND_INSTANCE_STARTED_NO_RUNTIME"
+          - "FIRST_INSTANCE_HANDLED_THE_LINK"
+          - "FIRST_INSTANCE_GOT_THE_RIGHT_INTENT"
+        post_text: |
+          The second process connected to the socket the first is listening on,
+          wrote one newline-terminated URL, and exited — before creating a
+          `QApplication` full of modules or touching the shared user directory.
+          And the first instance dispatched the intent that URL named, which is
+          the assertion that separates "forwarded" from "delivered": those two
+          are indistinguishable from outside, and only the second one is the
+          feature working.
+
+          A detail worth knowing if you go reading the code: the first instance
+          reads that socket **asynchronously**. The obvious version calls
+          `waitForReadyRead()` on the GUI thread, which freezes the running app
+          for the whole timeout whenever something connects and sends nothing —
+          trivial to trigger, and it looks like a hang rather than a link bug.
+
+  - title: "Why a link is not the shell"
+    text: |
+      The shell provides capabilities of its own, and the broker skips the
+      chooser when the shell is either party to a request — confirming a
+      navigation the user just asked for is a dialog answering itself.
+
+      A URL submits under its **own** requester identity, never the shell's.
+      That one line is what keeps the consent step in the path for links into
+      installed apps: if a link were treated as the shell, every web link would
+      dispatch into an app with no dialog at all. Nothing else would look wrong,
+      and no other test would fail — which is why there is one whose entire
+      purpose is that a link faces the chooser.
+
+      The one thing the shell cannot honestly do here is say **who** is asking.
+      A browser does not tell us the originating page, and any origin carried
+      *in* the URL is written by whoever wrote the URL. So the dialog says a
+      link was clicked and nothing more; it must not render an attacker-supplied
+      string as if it were an identity.
+
+  - title: "Why an app's capability is not reachable until it opts in"
+    text: |
+      `uses` cannot gate a link — there is no manifest on the calling side — so
+      reachability is declared by the **provider**, per intent:
+
+      ```json
+      "provides": [
+        { "intent": "wallet.send", "web": true, "params": [ … ] }
+      ]
+      ```
+
+      Without that flag, every entry in every installed app's `provides` would
+      silently have become a web entry point the day link support shipped.
+
+      The shell's own web-reachable set is navigation only — opening Settings,
+      the App Manager, repositories, and launching an app. The package
+      confirmation intents are deliberately absent: a web page must not be able
+      to raise a prompt to install or remove a package.
+
+      A non-boolean is refused rather than coerced. `"web": "false"` is a
+      *string*, and reading it through the usual conversion gives `true` — which
+      would publish a capability whose author was explicitly declining to
+      publish it.
+
+  - title: "What this does not do"
+    text: |
+      **No browser will tell a page whether Basecamp is installed.** It is a
+      fingerprinting vector and it is blocked deliberately. The usual fallback —
+      navigate, then show a download link if nothing happened within a second or
+      two — is a heuristic that misfires whenever the app is merely slow to
+      start, which is precisely the cold path above.
+
+      Worth saying plainly to anyone who asks for this: *"open it if they have
+      it, otherwise offer the download"* sounds like one feature and is two, of
+      which the second is guesswork. The honest arrangement is to make
+      `https://…/i/<intent>` and `basecamp://intent/<intent>` the same link, so
+      "not installed" lands on a real page that offers the download.
+
+      **Nothing goes back to the browser.** There is no channel. Every failure —
+      a malformed URL, an intent nobody published, a user dismissing the chooser
+      — surfaces inside Basecamp and in the log. That is also why no error code
+      here can leak anything: there is nobody on the far side to read it.
