@@ -10,6 +10,10 @@
     "package_manager",
     "package_downloader"
   ],
+  "optional_dependencies": [
+    "storage_module",
+    "modules_state"
+  ],
   "category": "ui",
   "build": {
     "type": "cmake",
