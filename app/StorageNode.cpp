@@ -94,7 +94,9 @@ void StorageNode::start()
         qWarning() << "StorageNode: failed to subscribe to module_state_changed events";
     }
 
-    setStorageReady(logos.modules_state.is_ready(QStringLiteral("storage_module")));
+    if (logos.modules_state.is_ready(QStringLiteral("storage_module"))) {
+        setStorageReady(true);
+    }
 }
 
 void StorageNode::setStorageReady(bool ready)
@@ -223,6 +225,8 @@ void StorageNode::shutdown()
 
     LogosModules logos(m_logosAPI);
 
+    m_nodeStopped = false;
+
     const LogosResult stopResult = logos.storage_module.stop();
 
     if (!stopResult.success) {
@@ -230,10 +234,12 @@ void StorageNode::shutdown()
         return;
     }
 
-    QEventLoop loop;
-    connect(this, &StorageNode::stopped, &loop, &QEventLoop::quit);
-    QTimer::singleShot(kStopTimeoutMs, &loop, &QEventLoop::quit);
-    loop.exec();
+    if (!m_nodeStopped) {
+        QEventLoop loop;
+        connect(this, &StorageNode::stopped, &loop, &QEventLoop::quit);
+        QTimer::singleShot(kStopTimeoutMs, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
 
     if (!m_nodeStopped) {
         // If the node cannot be stopped, leave the storage context alone, we should
