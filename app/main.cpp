@@ -4,6 +4,7 @@
 #include "LogosBasecampPaths.h"
 #include "LogSink.h"
 #include "LoggingConfig.h"
+#include "StorageNode.h"
 #include "AccessPolicyOption.h"
 #include "links/LinkUrl.h"
 #include "links/LinkUrlInbox.h"
@@ -424,6 +425,15 @@ int main(int argc, char *argv[])
         qWarning() << "Failed to load package_manager module by default.";
     }
 
+    // Before its consumers: liblogos only feeds it once it is loaded.
+    if (!core->loadModule(QStringLiteral("modules_state"))) {
+        qWarning() << "Failed to load modules_state by default.";
+    }
+
+    if (!core->loadModule(QStringLiteral("storage_module"))) {
+        qWarning() << "Failed to load storage_module by default.";
+    }
+
     bool downloaderLoaded = core->loadModule(QStringLiteral("package_downloader"),
                                              LoadPolicy::RequiredAndOptional);
     if (downloaderLoaded) {
@@ -446,6 +456,12 @@ int main(int argc, char *argv[])
     }
 
     LogosAPI logosAPI("core", nullptr);
+
+    // One storage node per process, started here and shared with the Storage UI.
+#ifndef LOGOS_MOCK_BACKEND
+    StorageNode storageNode(&logosAPI);
+    storageNode.start();
+#endif
 
     // Set application icon.
 #ifdef Q_OS_LINUX
@@ -540,6 +556,10 @@ int main(int argc, char *argv[])
         // Restore the original handler now that all deferred work is done.
         QAccessible::installUpdateHandler(previousHandler);
     }
+
+#ifndef LOGOS_MOCK_BACKEND
+    storageNode.shutdown();
+#endif
 
     // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
     // logos_core_cleanup(); this reset() is what pins it to exactly here,
