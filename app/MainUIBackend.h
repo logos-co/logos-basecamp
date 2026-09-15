@@ -211,6 +211,19 @@ public slots:
                                           const QString& providerName);
     Q_INVOKABLE void cancelIntentChooser(const QString& dispatchId);
 
+    // Catalog packages that could service `intent` but are not installed. The
+    // chooser lists these alongside the real providers so the mixed case stops
+    // looking identical to "this is the only app that can do this" — which it
+    // did, because nothing else in the UI surfaces what a package provides.
+    Q_INVOKABLE QVariantList installableProvidersFor(const QString& intent) const;
+
+    // Raise the install offer for one of them. The dialog answers the request
+    // `cancelled` first: an uninstalled package cannot be dispatched to, and
+    // holding the request open across a download would put the install's
+    // duration into its lifetime.
+    Q_INVOKABLE void offerInstallFor(const QString& intent,
+                                     const QString& moduleName);
+
     // Install suggestion. The request that prompted it is already finished, so
     // there is no dispatch id and nothing to answer — just an ordinary install.
     Q_INVOKABLE void beginIntentInstall(const QString& providerName);
@@ -419,6 +432,7 @@ private:
     void rebuildIntentRegistry();
     void rebuildInstallableProviders();
     QString repositoryUrlFor(const QString& packageName) const;
+    QVariantMap installCandidateDetails(const QString& name) const;
 
 public:
     // What the chooser shows when a user expands a provider row. Resolved
