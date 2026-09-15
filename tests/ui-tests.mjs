@@ -69,75 +69,200 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
   );
 }
 
-// --- Welcome page (A1) — must run FIRST: asserts the pre-interaction state ---
-async function findWelcomePage(app) {
-  const res = typeof app.findByType === "function"
-    ? await app.findByType("WelcomePage")
-    : await app.inspector.send("findByType", { typeName: "WelcomePage" });
-  if (res.error) throw new Error(`findByType(WelcomePage) failed: ${res.error}`);
-  return (res.matches ?? [])[0] || null;
+// --- Shared helpers ---------------------------------------------------------
+//
+// Clicks are signal-level (callMethod "clicked" / evaluate "clicked()"): the
+// QML lives in offscreen QQuickWindows where coordinate hit-testing is
+// unreliable, and the onClicked handler chain is the same. callMethod cannot
+// marshal QString arguments, so methods taking one (closeDock, openFor) go
+// through evaluate. evaluate round-trips primitives only: one property per
+// call, JSON for anything structured.
+
+const CI_MODE = process.argv.includes("--ci");
+
+// Pins a click to a sidebar SECTION button. findAndClick substring-matches
+// `text` breadth-first and a QWidget click never fails, so a bare
+// app.click("Package Manager") lands on MainContainer's shallower
+// "Loading Package Manager…" placeholder label and reports success.
+const sidebarSection = { exact: true, type: "SidebarCircleButton" };
+
+function assertEq(actual, expected, what) {
+  if (actual !== expected) {
+    throw new Error(
+      `${what}=${JSON.stringify(actual)} (expected ${JSON.stringify(expected)})`);
+  }
 }
 
-test("welcome: first launch shows the welcome page", async (app) => {
+function assertType(value, type, what) {
+  if (typeof value !== type) {
+    throw new Error(`${what}=${JSON.stringify(value)} (expected ${type})`);
+  }
+  return value;
+}
+
+async function findByType(app, typeName) {
+  const res = await app.inspector.send("findByType", { typeName });
+  if (res.error) throw new Error(`findByType(${typeName}) failed: ${res.error}`);
+  return res.matches ?? [];
+}
+
+// Waits for an objectName to appear; returns the match.
+async function requireObject(app, objectName, timeout = 10000) {
+  let obj = null;
+  await app.waitFor(async () => {
+    obj = await findByObjectName(app.inspector, objectName);
+    if (!obj) throw new Error(`${objectName} not in the QML tree`);
+  }, { timeout, interval: 500, description: `${objectName} to exist` });
+  return obj;
+}
+
+// Which of `texts` no descendant of `rootExpr` renders, evaluated in the
+// object's own scope.
+async function missingTexts(app, objectId, rootExpr, texts) {
+  return JSON.parse(await evalOn(app, objectId, `(() => {
+    const hasText = (node, expected) => {
+      if (!node) return false;
+      if (typeof node.text === "string" && node.text.includes(expected)) return true;
+      if (!node.children || typeof node.children.length !== "number") return false;
+      for (let i = 0; i < node.children.length; i += 1) {
+        if (hasText(node.children[i], expected)) return true;
+      }
+      return false;
+    };
+    return JSON.stringify(${JSON.stringify(texts)}.filter((t) => !hasText(${rootExpr}, t)));
+  })()`));
+}
+
+// QQuickWidget hosts carry no objectName; identify them by source URL.
+async function quickWidgetHosts(app) {
+  const hosts = [];
+  for (const m of await findByType(app, "QQuickWidget")) {
+    const props = await app.inspector.send("getProperties", { objectId: m.id });
+    const prop = (name) => props.properties?.find((p) => p.name === name)?.value;
+    hosts.push({ id: m.id, source: prop("source"), visible: prop("visible") });
+  }
+  return hosts;
+}
+
+async function findWelcomePage(app) {
+  return (await findByType(app, "WelcomePage"))[0] || null;
+}
+
+// The welcome page is the evaluate anchor with `backend` in scope that
+// survives dock teardown and sidebar delegate churn.
+async function requireWelcomePage(app) {
   let welcome = null;
   await app.waitFor(async () => {
     welcome = await findWelcomePage(app);
     if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
   }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+  return welcome;
+}
 
-  const visRes = await app.inspector.send("evaluate", {
-    objectId: welcome.id, expression: "visible",
-  });
-  if (visRes.error) throw new Error(`evaluate(visible) failed: ${visRes.error}`);
-  if (visRes.result !== true) {
-    throw new Error(`WelcomePage visible=${visRes.result} (expected true)`);
+const requireWorkspace = (app) => requireObject(app, "workspace");
+
+// Welcome visibility lives on the hosting QQuickWidget, not the QML item: the
+// page is a permanent tab, and QMainWindow hides its widget when another
+// dock is raised. Falls back to the item's Window attached property.
+async function welcomePageHidden(app, welcomeItemId) {
+  for (const host of await quickWidgetHosts(app)) {
+    if (typeof host.source === "string" && host.source.includes("WelcomePage.qml")
+        && typeof host.visible === "boolean") {
+      return !host.visible;
+    }
   }
+  const winVisible = await evalOn(app, welcomeItemId, "Window.visible");
+  if (typeof winVisible === "boolean") return !winVisible;
+  throw new Error(
+    "cannot determine welcome-page visibility: no QQuickWidget sourced from " +
+    "WelcomePage.qml, and Window.visible is not a boolean");
+}
 
-  // launcherApps populates asynchronously — check length + greeting in one retried step.
+// Fixture A (tests/fixtures/lgx.mjs) is pre-seeded by nix/integration-test.nix,
+// so in --ci its absence is a failure. Against a local app it is a skip:
+// logs and returns null.
+async function requireFixtureA(app, label, probe, description) {
+  let value = null;
+  try {
+    await app.waitFor(async () => { value = await probe(); },
+      { timeout: 10000, interval: 500, description });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(`    SKIP: ${label} — fixture A precondition not met: ${e.message}`);
+      return null;
+    }
+    throw new Error(
+      `${label} precondition failed (fixture A is pre-seeded in --ci): ${e.message}`);
+  }
+  return value;
+}
+
+const FIXTURE_A_TILE = `sidebar.app.${FIXTURE_A.name}`;
+
+// Launching moves the tile from the unloaded to the loaded Repeater (same
+// objectName, new object), so callers re-find it instead of caching.
+async function findFixtureATile(app) {
+  const tile = await findByObjectName(app.inspector, FIXTURE_A_TILE);
+  if (!tile) throw new Error(`${FIXTURE_A_TILE} not in the tree`);
+  return tile;
+}
+
+const clickFixtureATile = async (app) =>
+  invoke(app, (await findFixtureATile(app)).id, "clicked", `clicking ${FIXTURE_A_TILE}`);
+
+// Payload text rendered by fixture A's Main.qml (qmlViewFor in lgx.mjs).
+const FIXTURE_A_TEXT =
+  `${FIXTURE_A.displayName} (${FIXTURE_A.name}) v${FIXTURE_A.version}`;
+
+async function waitForDockCount(app, workspaceId, expected, description, timeout = 10000) {
   await app.waitFor(async () => {
-    const lenRes = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression: "backend.launcherApps.length",
-    });
-    if (lenRes.error) {
-      throw new Error(`evaluate(backend.launcherApps.length) failed: ${lenRes.error}`);
-    }
-    if (typeof lenRes.result !== "number") {
-      throw new Error(
-        `backend.launcherApps.length=${JSON.stringify(lenRes.result)} (expected number)`);
-    }
-    const expected = lenRes.result === 0 ? "Welcome to Basecamp!" : "Welcome Back,";
-    await app.expectTexts([expected]);
+    assertEq(await evalOn(app, workspaceId, "dockCount"), expected, "WorkspaceArea.dockCount");
+  }, { timeout, interval: 250, description });
+}
+
+async function waitForVisibleApp(app, anchorId, expected, description) {
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, anchorId, "backend.currentVisibleApp"), expected,
+             "backend.currentVisibleApp");
+  }, { timeout: 10000, interval: 500, description });
+}
+
+// Clicks fixture A's tile and waits for its dock to be open and front-most.
+// Returns false when the fixture is absent outside --ci (already logged).
+async function openFixtureA(app, label, welcomeId, workspaceId) {
+  const tile = await requireFixtureA(app, label, () => findFixtureATile(app),
+                                     "fixture A sidebar tile to appear");
+  if (tile === null) return false;
+  await invoke(app, tile.id, "clicked", `clicking ${FIXTURE_A_TILE}`);
+  await waitForDockCount(app, workspaceId, 1, "fixture A dock to open");
+  await waitForVisibleApp(app, welcomeId, FIXTURE_A.name, "fixture A to become front-most");
+  return true;
+}
+
+// Closing the last dock also unloads the module (WorkspaceArea::pluginClosed).
+async function closeFixtureADock(app, workspaceId, description) {
+  await evalOn(app, workspaceId, `closeDock(${JSON.stringify(FIXTURE_A.name)})`);
+  await waitForDockCount(app, workspaceId, 0, description, 5000);
+}
+
+// --- Welcome page (A1) — runs first: asserts the pre-interaction state ---
+
+test("welcome: first launch shows the welcome page", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  assertEq(await evalOn(app, welcome.id, "visible"), true, "WelcomePage visible");
+
+  // launcherApps populates asynchronously; count and greeting are read together.
+  await app.waitFor(async () => {
+    const count = assertType(await evalOn(app, welcome.id, "backend.launcherApps.length"),
+                             "number", "backend.launcherApps.length");
+    await app.expectTexts([count === 0 ? "Welcome to Basecamp!" : "Welcome Back,"]);
   }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
 
-  const greetingRes = await app.inspector.send("evaluate", {
-    objectId: welcome.id,
-    expression: `(() => {
-      const hasText = (node, expected) => {
-        if (!node) return false;
-        if (typeof node.text === "string" && node.text.includes(expected)) return true;
-        if (!node.children || typeof node.children.length !== "number") return false;
-        for (let i = 0; i < node.children.length; i += 1) {
-          if (hasText(node.children[i], expected)) return true;
-        }
-        return false;
-      };
-      // The inspector serializes object results as "<QJSValue>" — return JSON.
-      return JSON.stringify({
-        hasFirstLaunch: hasText(this, "Welcome to Basecamp!"),
-        hasWelcomeBack: hasText(this, "Welcome Back,"),
-      });
-    })()`,
-  });
-  if (greetingRes.error) {
-    throw new Error(`evaluate(greeting presence) failed: ${greetingRes.error}`);
-  }
-  const greeting = JSON.parse(greetingRes.result);
-  const hasFirstLaunch = greeting?.hasFirstLaunch === true;
-  const hasWelcomeBack = greeting?.hasWelcomeBack === true;
-  if (hasFirstLaunch === hasWelcomeBack) {
-    throw new Error(
-      `greeting texts present: "Welcome to Basecamp!"=${hasFirstLaunch}, ` +
-      `"Welcome Back,"=${hasWelcomeBack} (expected exactly one)`);
+  const missing = await missingTexts(app, welcome.id, "this",
+                                     ["Welcome to Basecamp!", "Welcome Back,"]);
+  if (missing.length !== 1) {
+    throw new Error(`greetings missing from the welcome page: ${JSON.stringify(missing)} ` +
+                    "(expected exactly one of the two)");
   }
 });
 
@@ -279,51 +404,26 @@ test("welcome: the page declares a ⌘K shortcut for the bridge to mirror", asyn
   }
 });
 
-const CI_MODE = process.argv.includes("--ci");
-// --- Welcome page (A2) — must run right after A1: navigating clicks the
-// welcome page away ---
+// --- Welcome page (A2) — runs right after A1: navigating clicks the page away ---
+
 test('welcome: "Discover Applications" navigates to Applications', async (app) => {
-  // Typed before navigating, asserted after: the welcome search is INVOCATION
-  // search — summoned, used, left — so it must not survive the page going
-  // away. Checked here rather than in its own test because navigation is
-  // one-way; by the time a later test ran, the welcome page would be gone.
-  //
-  // This is the one regression only a real app can catch. WorkspaceArea drives
-  // the clear from hideEvent, because the QML cannot see it happen: the root
-  // Item's `visible` stays true inside the offscreen QQuickWidget host (see the
-  // "workspace" assertion at the end of this test). A QML onVisibleChanged
-  // handler is silently dead, and the unit suite cannot tell — rootObject() is
-  // null there, since the QML module is not linked into that binary.
+  // Typed before navigating, asserted cleared after: the welcome search must
+  // not survive the page going away. WorkspaceArea clears it from hideEvent
+  // because the root Item's `visible` stays true inside the offscreen host,
+  // so only a real app can catch this regression.
   await setQmlProperty(app, "welcomePage.search", 'text = "waku"');
 
-  let button = null;
-  await app.waitFor(async () => {
-    const byName = await app.findByProperty(
-      "objectName", "welcomePage.discoverApplications");
-    button = (byName.matches ?? [])[0] || null;
-    if (!button) {
-      throw new Error('"Discover Applications" block not found on the welcome page');
-    }
-  }, { timeout: 10000, interval: 500,
-       description: '"Discover Applications" block to exist' });
-
-  // Signal-level click — coordinate hit-testing on offscreen is fragile
-  // (see installViaPmu); the onClicked handler chain is identical.
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: button.id, method: "clicked",
-  });
-  if (clicked.error) throw new Error(`callMethod(clicked) failed: ${clicked.error}`);
-
+  const button = await requireObject(app, "welcomePage.discoverApplications");
+  await invoke(app, button.id, "clicked", 'clicking "Discover Applications"');
   await app.waitFor(
     async () => { await app.expectTexts(["Install and manage applications."]); },
     { timeout: 10000, interval: 500, description: "Applications view to render" }
   );
 
-  // The sidebar "Applications" button carries the section index it activates
-  // (onClicked passes _d.workspaceSections.length + index) — read it from the
-  // delegate's context instead of hard-coding the sidebar layout. Only
-  // objects in SidebarPanel's delegate scope can resolve the expression, so
-  // it also disambiguates the button from same-text headers.
+  // The sidebar "Applications" delegate knows the section index it activates
+  // (onClicked passes _d.workspaceSections.length + index); only objects in
+  // SidebarPanel's delegate scope resolve that expression, which also tells
+  // the button apart from same-text headers.
   const sidebarHits = await app.findByProperty("text", "Applications");
   let appsButtonId = null;
   let applicationsIndex = null;
@@ -340,1988 +440,219 @@ test('welcome: "Discover Applications" navigates to Applications', async (app) =
   if (appsButtonId === null) {
     throw new Error('sidebar "Applications" button (with section index in scope) not found');
   }
-
   await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: appsButtonId, expression: "backend.currentActiveSectionIndex",
-    });
-    if (res.error) {
-      throw new Error(`evaluate(backend.currentActiveSectionIndex) failed: ${res.error}`);
-    }
-    if (res.result !== applicationsIndex) {
-      throw new Error(
-        `backend.currentActiveSectionIndex=${res.result} ` +
-        `(expected Applications index ${applicationsIndex})`);
-    }
+    assertEq(await evalOn(app, appsButtonId, "backend.currentActiveSectionIndex"),
+             applicationsIndex, "backend.currentActiveSectionIndex");
   }, { timeout: 10000, interval: 500, description: "active section to become Applications" });
 
-  // WelcomePage's own QML `visible` stays true inside its offscreen
-  // QQuickWidget host; what observably hides it is that host — WorkspaceArea
-  // (objectName "workspace"), the stack page the section switch left.
-  const wsHits = await app.findByProperty("objectName", "workspace");
-  const workspace = (wsHits.matches ?? [])[0];
-  if (!workspace) throw new Error("workspace area (welcome page host) not found");
-  const props = await app.inspector.send("getProperties", { objectId: workspace.id });
-  const visible = props.properties?.find((p) => p.name === "visible")?.value;
-  if (visible !== false) {
-    throw new Error(
-      `welcome page still visible: workspace visible=` +
-      `${JSON.stringify(visible)} (expected false)`);
-  }
+  // What observably hides the welcome page is its host, WorkspaceArea.
+  const workspace = await requireWorkspace(app);
+  assertEq(await evalOn(app, workspace.id, "visible"), false, "workspace visible");
 
-  // ...and the query typed at the top of this test died with the page.
-  const field = await findByObjectName(app.inspector, "welcomePage.search");
-  if (!field) throw new Error("welcome search field not found after navigating");
-  const text = await app.inspector.send("evaluate", {
-    objectId: field.id, expression: "text",
-  });
-  if (text.error) throw new Error(`evaluate(text) failed: ${text.error}`);
-  if (text.result !== "") {
+  const field = await requireObject(app, "welcomePage.search");
+  const text = await evalOn(app, field.id, "text");
+  if (text !== "") {
     throw new Error(
-      `welcome search still holds ${JSON.stringify(text.result)} after ` +
-      "navigating away — WorkspaceArea::clearWelcomeSearch did not run");
+      `welcome search still holds ${JSON.stringify(text)} after navigating away ` +
+      "(WorkspaceArea::clearWelcomeSearch did not run)");
   }
 });
 
 // --- Workspace (A3) — opening an app replaces the welcome page with a dock ---
-// Runs after A2: it hides the welcome host and leaves a dock open, so it must
-// not sit between A1 and A2 (A2 asserts the pre-navigation welcome state).
-//
-// Fixture A (test_qml_only, spec §0.A) is pre-seeded into <user-dir>/plugins/
-// by nix/integration-test.nix, so in --ci mode its sidebar tile is guaranteed
-// to appear once launcherApps populates. When attached to a locally running
-// app without the fixture, spec §0.A says skip, not fail — --ci in argv is
-// how the two cases are told apart (see the integration-test invocation).
-//
-// The dock check uses WorkspaceArea's dockCount test hook rather than the
-// spec's workspace.dock.<name> objectName: DockCard's objectName is the
-// constant "dockCard" on this branch (src/WorkspaceArea.cpp:96).
-
-// Payload text rendered by fixture A's Main.qml (see qmlViewFor in
-// tests/fixtures/lgx.mjs) — derived from FIXTURE_A so it can't drift.
-const FIXTURE_A_TEXT =
-  `${FIXTURE_A.displayName} (${FIXTURE_A.name}) v${FIXTURE_A.version}`;
-
-// Welcome visibility lives on the hosting QQuickWidget, not the QML item (the
-// C++ unit tests assert isVisibleTo on the widget for the same reason). The
-// welcome page is now a permanent tab, so it is QMainWindow that hides it:
-// tabified docks show only the raised one. The widget has no objectName, so
-// locate it by source URL
-// among QQuickWidget instances; fall back to the item's Window attached
-// property (QQuickWidget mirrors widget show/hide onto its offscreen
-// window).
-async function welcomePageHidden(app, welcomeItemId) {
-  const byType = await app.inspector.send("findByType", { typeName: "QQuickWidget" });
-  for (const m of byType.matches ?? []) {
-    const props = await app.inspector.send("getProperties", { objectId: m.id });
-    const source = props.properties?.find((p) => p.name === "source")?.value;
-    if (typeof source === "string" && source.includes("WelcomePage.qml")) {
-      const visible = props.properties?.find((p) => p.name === "visible")?.value;
-      if (typeof visible === "boolean") return !visible;
-    }
-  }
-  const winRes = await app.inspector.send("evaluate", {
-    objectId: welcomeItemId, expression: "Window.visible",
-  });
-  if (typeof winRes.result === "boolean") return !winRes.result;
-  throw new Error(
-    "cannot determine welcome-page visibility: no QQuickWidget with a " +
-    "WelcomePage.qml source found, and Window.visible did not evaluate " +
-    "to a boolean");
-}
+// Runs after A2 and leaves fixture A's dock open for A4.
 
 test("workspace: opening an app replaces the welcome page with a dock", async (app) => {
-  // Stable evaluate anchor with `backend` in context. The sidebar tile
-  // cannot anchor the post-click waits: launching moves the app from the
-  // unloaded to the loaded Repeater, destroying the clicked delegate.
-  let welcome = null;
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  if (!(await openFixtureA(app, "A3", welcome.id, workspace.id))) return;
+
   await app.waitFor(async () => {
-    welcome = await findWelcomePage(app);
-    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
-
-  // App tiles render icon-only (name is a tooltip), so click by the
-  // §4.1 automation objectName, not by text.
-  let tile = null;
-  try {
-    await app.waitFor(async () => {
-      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
-        `app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
-      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
-  }
-
-  const workspace = await findByObjectName(app.inspector, "workspace");
-  if (!workspace) {
-    throw new Error('WorkspaceArea (objectName "workspace") not found');
-  }
-
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: tile.id, method: "clicked",
-  });
-  if (clicked.error) {
-    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
-  }
-
-  // Gate: the backend reports the app front-most within 10 s.
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression: "backend.currentVisibleApp",
-    });
-    if (res.error) {
-      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${res.error}`);
-    }
-    if (res.result !== FIXTURE_A.name) {
-      throw new Error(
-        `backend.currentVisibleApp=${JSON.stringify(res.result)} ` +
-        `(expected "${FIXTURE_A.name}")`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: `currentVisibleApp to become "${FIXTURE_A.name}"` });
-
-  // A dock for it exists.
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
-    if (res.result !== 1) {
-      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 1)`);
-    }
-  }, { timeout: 10000, interval: 500, description: "workspace dockCount to reach 1" });
-
-  // The welcome page is no longer visible…
-  await app.waitFor(async () => {
-    if ((await welcomePageHidden(app, welcome.id)) !== true) {
+    if (!(await welcomePageHidden(app, welcome.id))) {
       throw new Error("welcome page is still visible after the dock opened");
     }
   }, { timeout: 5000, interval: 250, description: "welcome page to hide" });
 
-  // …and fixture A's payload text renders — the app actually loaded.
   await app.waitFor(
     async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
     { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
   );
-
-  // Leave the dock open: the A4 follow-up owns close-the-dock coverage
-  // (workspace.closeDock), and no later test asserts welcome-page state.
 });
-// Click options that pin a click to a sidebar SECTION button and nothing else.
-//
-// qt-mcp's findAndClick is a breadth-first walk that SUBSTRING-matches the
-// `text` property and stops at the first object cmdClick accepts — and
-// cmdClick on a QWidget can never fail, it just posts a mouse event at the
-// widget's centre and reports success. MainContainer's PMUI placeholder is a
-// QLabel reading "Loading Package Manager…", which contains "Package Manager"
-// and sits SHALLOWER in that walk than the sidebar's QML button
-// (MainContainer > contentArea > QStackedWidget > placeholder > QLabel, vs
-// the sidebar's Control > contentItem > ColumnLayout > delegate).
-//
-// So `app.click("Package Manager")` clicked the placeholder label, reported
-// success, and left the section index untouched. Measured, before this fix:
-//
-//   clicked -> {"matchedText":"Loading Package Manager…","matchedType":"QLabel"}
-//   MainContainer: Active section index changed to 1 / 3   (never 2)
-//   ...no "Loading UI module: package_manager_ui", no ui-host, ever
-//
-// With { exact: true, type: "SidebarCircleButton" } it resolves to the real
-// button and the section actually opens:
-//
-//   clicked -> {"matchedText":"Package Manager","matchedType":"SidebarCircleButton_QMLTYPE_<n>"}
-//   MainContainer: Active section index changed to 2
-//   Loading UI module: "package_manager_ui" -> ViewModuleHost: spawning ui-host
-//   -> Successfully loaded UI module: "package_manager_ui"
-const sidebarSection = { exact: true, type: "SidebarCircleButton" };
 
 // --- Workspace (A4) — closing the last dock brings the welcome page back ---
-//
-// Spec §2.A A4: from A3 state, close fixture A's dock. Closing the last dock
-// also unloads the module by design (WorkspaceArea::pluginClosed →
-// unloadUiModule), so the gates double as a regression guard for the
-// currentVisibleApp clear on unload of the visible app.
-//
-// closeDock is invoked through the inspector's evaluate, NOT callMethod:
-// callMethod does not marshal the QString argument correctly (logos-qt-mcp
-// limitation), while the evaluate path's JS engine converts it fine.
 
 test("workspace: closing the last dock brings the welcome page back", async (app) => {
-  // Same stable evaluate anchor as A3 — has `backend` in context and
-  // survives the dock teardown.
-  let welcome = null;
-  await app.waitFor(async () => {
-    welcome = await findWelcomePage(app);
-    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
 
-  const workspace = await findByObjectName(app.inspector, "workspace");
-  if (!workspace) {
-    throw new Error('WorkspaceArea (objectName "workspace") not found');
+  // A3 leaves the dock open; open it here if not, so the test stands alone.
+  if ((await evalOn(app, workspace.id, "dockCount")) !== 1) {
+    if (!(await openFixtureA(app, "A4", welcome.id, workspace.id))) return;
   }
+  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
 
-  // Establish the A3 end state without assuming A3 left it: fixture A's
-  // dock must be open before we can close it.
-  const preCount = await app.inspector.send("evaluate", {
-    objectId: workspace.id, expression: "dockCount",
-  });
-  if (preCount.error) throw new Error(`evaluate(dockCount) failed: ${preCount.error}`);
-  if (preCount.result !== 1) {
-    let tile = null;
-    try {
-      await app.waitFor(async () => {
-        tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-        if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-      }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
-    } catch (e) {
-      if (!CI_MODE) {
-        console.log(
-          `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
-          `app instance (spec §0.A: skip, not fail, outside --ci)`);
-        return;
-      }
-      throw new Error(
-        `no dock open and fixture A sidebar tile never appeared — ` +
-        `integration-test pre-seeds ${FIXTURE_A.name} at boot, so this is ` +
-        `a real failure: ${e.message}`);
-    }
-    const clicked = await app.inspector.send("callMethod", {
-      objectId: tile.id, method: "clicked",
-    });
-    if (clicked.error) {
-      throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
-    }
-  }
+  await closeFixtureADock(app, workspace.id, "workspace dockCount to reach 0");
+
   await app.waitFor(async () => {
-    const count = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
-    if (count.result !== 1) {
-      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
-    }
-    const visibleApp = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression: "backend.currentVisibleApp",
-    });
-    if (visibleApp.error) {
-      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
-    }
-    if (visibleApp.result !== FIXTURE_A.name) {
-      throw new Error(
-        `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
-        `(expected "${FIXTURE_A.name}")`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: `fixture A dock to be open and front-most` });
-
-  // Close the dock.
-  const closed = await app.inspector.send("evaluate", {
-    objectId: workspace.id,
-    expression: `closeDock(${JSON.stringify(FIXTURE_A.name)})`,
-  });
-  if (closed.error) throw new Error(`evaluate(closeDock) failed: ${closed.error}`);
-
-  // Gate: dock count reaches 0 within 5 s.
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
-    if (res.result !== 0) {
-      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 0)`);
-    }
-  }, { timeout: 5000, interval: 250, description: "workspace dockCount to reach 0" });
-
-  // Gate: the welcome page is visible again…
-  await app.waitFor(async () => {
-    if ((await welcomePageHidden(app, welcome.id)) !== false) {
+    if (await welcomePageHidden(app, welcome.id)) {
       throw new Error("welcome page is still hidden after closing the last dock");
     }
   }, { timeout: 5000, interval: 250, description: "welcome page to reappear" });
 
-  // …with the installed-apps greeting — closing unloads fixture A but does
-  // not uninstall it, so launcherApps stays non-empty and the greeting is
-  // "Welcome Back,", not the first-launch text.
+  // Closing unloads fixture A but does not uninstall it, so the greeting is
+  // the installed-apps one.
   await app.waitFor(
     async () => { await app.expectTexts(["Welcome Back,"]); },
     { timeout: 5000, interval: 250, description: '"Welcome Back," greeting to render' }
   );
-
-  // Gate: the backend no longer reports a front-most app.
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression: "backend.currentVisibleApp",
-    });
-    if (res.error) {
-      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${res.error}`);
-    }
-    if (res.result !== "") {
-      throw new Error(
-        `backend.currentVisibleApp=${JSON.stringify(res.result)} (expected "")`);
-    }
-  }, { timeout: 5000, interval: 250, description: "currentVisibleApp to clear" });
+  await waitForVisibleApp(app, welcome.id, "", "currentVisibleApp to clear");
 });
 
 // --- Workspace (A5) — re-clicking an open app does not create a second dock ---
-//
-// Spec §2.A A5: click sidebar.app.test_qml_only twice, 500 ms apart. The
-// first click opens the dock (A4 left the workspace empty); the second must
-// activate the existing dock, not spawn another.
-//
-// "Exactly one instance of fixture A's root item type in the tree" cannot be
-// checked literally on this branch: the fixture's root is a plain Rectangle
-// (qmlViewFor in tests/fixtures/lgx.mjs), a type the shell instantiates all
-// over. Each instantiation of the fixture's root document lives in exactly
-// one host QQuickWidget whose source is <installDir>/Main.qml
-// (PluginLoader.cpp:367) and renders exactly one Text with the unique
-// payload string — so those two counts stand in for the root-type count.
 
 test("workspace: re-clicking an open app does not create a second dock", async (app) => {
-  // Same stable evaluate anchor as A3/A4 — has `backend` in context and
-  // survives sidebar delegate churn.
-  let welcome = null;
-  await app.waitFor(async () => {
-    welcome = await findWelcomePage(app);
-    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  if (!(await openFixtureA(app, "A5", welcome.id, workspace.id))) return;
 
-  const workspace = await findByObjectName(app.inspector, "workspace");
-  if (!workspace) {
-    throw new Error('WorkspaceArea (objectName "workspace") not found');
-  }
-
-  // Click #1 — opens the dock.
-  let tile = null;
-  try {
-    await app.waitFor(async () => {
-      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
-        `app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
-      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
-  }
-  const firstClick = await app.inspector.send("callMethod", {
-    objectId: tile.id, method: "clicked",
-  });
-  if (firstClick.error) {
-    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${firstClick.error}`);
-  }
-
-  // Wait until the app is actually open — the spec's 500 ms spacing assumes
-  // the first click's dock exists before the re-click; on a slow-loading run
-  // a blind 500 ms click would test click-while-loading instead.
-  await app.waitFor(async () => {
-    const count = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
-    if (count.result !== 1) {
-      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
-    }
-    const visibleApp = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression: "backend.currentVisibleApp",
-    });
-    if (visibleApp.error) {
-      throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
-    }
-    if (visibleApp.result !== FIXTURE_A.name) {
-      throw new Error(
-        `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
-        `(expected "${FIXTURE_A.name}")`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "fixture A dock to open after the first click" });
-
-  // Click #2, 500 ms later. Loading moved the delegate from the unloaded to
-  // the loaded Repeater (same objectName, new object), so re-find inside the
-  // retry loop — a delegate mid-churn just retries, and a duplicate
-  // activation click is harmless (activation is what A5 exercises).
+  // Second click 500 ms after the dock exists. Re-found inside the retry:
+  // the delegate may be mid-move between Repeaters, and a duplicate
+  // activation click is harmless.
   await sleep(500);
-  await app.waitFor(async () => {
-    const loadedTile =
-      await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-    if (!loadedTile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    const clicked = await app.inspector.send("callMethod", {
-      objectId: loadedTile.id, method: "clicked",
-    });
-    if (clicked.error) {
-      throw new Error(`re-clicking sidebar.app.${FIXTURE_A.name} failed: ${clicked.error}`);
-    }
-  }, { timeout: 10000, interval: 500, description: "second click on fixture A tile" });
+  await app.waitFor(() => clickFixtureATile(app),
+    { timeout: 10000, interval: 500, description: "second click on fixture A tile" });
 
-  // Gate: dock count STAYS 1 — poll across a settle window rather than one
-  // instant-passing read, so an asynchronously created second dock (the
-  // load path defers through singleShot timers) cannot slip in unseen.
+  // dockCount must stay 1 across a settle window: the load path defers
+  // through singleShot timers, so a single read could miss a second dock.
   const settleDeadline = Date.now() + 2000;
   for (;;) {
-    const count = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
-    if (count.result !== 1) {
-      throw new Error(
-        `WorkspaceArea.dockCount=${count.result} after re-click ` +
-        `(expected it to stay 1)`);
-    }
+    assertEq(await evalOn(app, workspace.id, "dockCount"), 1,
+             "WorkspaceArea.dockCount after re-click");
     if (Date.now() >= settleDeadline) break;
     await sleep(250);
   }
+  assertEq(await evalOn(app, welcome.id, "backend.currentVisibleApp"), FIXTURE_A.name,
+           "backend.currentVisibleApp after re-click");
 
-  // Gate: fixture A is still the front-most app.
-  const visibleApp = await app.inspector.send("evaluate", {
-    objectId: welcome.id, expression: "backend.currentVisibleApp",
-  });
-  if (visibleApp.error) {
-    throw new Error(`evaluate(backend.currentVisibleApp) failed: ${visibleApp.error}`);
-  }
-  if (visibleApp.result !== FIXTURE_A.name) {
-    throw new Error(
-      `backend.currentVisibleApp=${JSON.stringify(visibleApp.result)} ` +
-      `(expected "${FIXTURE_A.name}")`);
-  }
-
-  // Gate: exactly one instantiation of fixture A's root document — one host
-  // QQuickWidget sourced from the fixture's Main.qml…
-  const byType = await app.inspector.send("findByType", { typeName: "QQuickWidget" });
-  if (byType.error) throw new Error(`findByType(QQuickWidget) failed: ${byType.error}`);
-  const fixtureHosts = [];
-  for (const m of byType.matches ?? []) {
-    const props = await app.inspector.send("getProperties", { objectId: m.id });
-    const source = props.properties?.find((p) => p.name === "source")?.value;
-    if (typeof source === "string"
-        && source.includes(`/${FIXTURE_A.name}/`)
-        && source.endsWith("Main.qml")) {
-      fixtureHosts.push(source);
-    }
-  }
+  // Fixture A's root is a plain Rectangle, so "one instance" is checked via
+  // its host QQuickWidget's source and its unique payload text.
+  const fixtureHosts = (await quickWidgetHosts(app))
+    .map((h) => h.source)
+    .filter((s) => typeof s === "string"
+                   && s.includes(`/${FIXTURE_A.name}/`) && s.endsWith("Main.qml"));
   if (fixtureHosts.length !== 1) {
     throw new Error(
-      `${fixtureHosts.length} QQuickWidget(s) sourced from fixture A's ` +
-      `Main.qml (expected exactly 1): ${JSON.stringify(fixtureHosts)}`);
+      `${fixtureHosts.length} QQuickWidget(s) sourced from fixture A's Main.qml ` +
+      `(expected exactly 1): ${JSON.stringify(fixtureHosts)}`);
   }
+  const textHits = await app.findByProperty("text", FIXTURE_A_TEXT);
+  if (textHits.error) throw new Error(`findByProperty(text=payload) failed: ${textHits.error}`);
+  assertEq((textHits.matches ?? []).length, 1, "instances of fixture A's payload text");
 
-  // …and exactly one render of its unique payload text.
-  const textHits = await app.inspector.send("findByProperty", {
-    property: "text", value: FIXTURE_A_TEXT,
-  });
-  if (textHits.error) {
-    throw new Error(`findByProperty(text=payload) failed: ${textHits.error}`);
-  }
-  const payloadCount = (textHits.matches ?? []).length;
-  if (payloadCount !== 1) {
-    throw new Error(
-      `${payloadCount} instance(s) of fixture A's payload text in the tree ` +
-      `(expected exactly 1)`);
-  }
-
-  // Cleanup: close the dock so the rest of the suite starts from the same
-  // no-docks baseline A4 established (close also unloads the module —
-  // same evaluate path as A4; callMethod can't marshal the QString arg).
-  const closed = await app.inspector.send("evaluate", {
-    objectId: workspace.id,
-    expression: `closeDock(${JSON.stringify(FIXTURE_A.name)})`,
-  });
-  if (closed.error) throw new Error(`evaluate(closeDock) failed: ${closed.error}`);
-  await app.waitFor(async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (res.error) throw new Error(`evaluate(dockCount) failed: ${res.error}`);
-    if (res.result !== 0) {
-      throw new Error(`WorkspaceArea.dockCount=${res.result} (expected 0)`);
-    }
-  }, { timeout: 5000, interval: 250, description: "cleanup: fixture A dock to close" });
+  await closeFixtureADock(app, workspace.id, "cleanup: fixture A dock to close");
 });
 
 // --- Sidebar (A6) — footer shows the build type, with the version when present ---
 //
-// Spec §2.A A6 (amended 2026-08-28). Expectations are DERIVED from
-// backend.buildVersion / backend.isPortableBuild, never hardcoded — nix
-// builds bake "0.0.0-dev" when VERSION is absent (buildVersion is never
-// empty there), but a non-nix build can legitimately have an empty
-// buildVersion, in which case the footer is the build-type token alone.
-//
-// The assertion is scoped to the one footer element (SidebarPanel.qml's
-// LogosSelectableText, objectName "sidebar.buildLabel"), not a page-wide
-// text search: DashboardView renders its own "Dev build" string, so a
-// tree-wide substring match could pass against the wrong element.
-//
-// Read-only against the sidebar — no clicks, no workspace/dock changes.
+// Expectations are derived from backend.buildVersion / backend.isPortableBuild:
+// nix builds bake "0.0.0-dev" when VERSION is absent, but a non-nix build can
+// have an empty buildVersion, leaving the build-type token alone. Scoped to
+// sidebar.buildLabel because DashboardView renders its own "Dev build".
 
 test("sidebar: footer shows the build type, with the version when present", async (app) => {
-  let footer = null;
-  await app.waitFor(async () => {
-    footer = await findByObjectName(app.inspector, "sidebar.buildLabel");
-    if (!footer) throw new Error("sidebar.buildLabel not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "sidebar build-label footer to exist" });
+  const footer = await requireObject(app, "sidebar.buildLabel");
+  const buildVersion = assertType(await evalOn(app, footer.id, "backend.buildVersion"),
+                                  "string", "backend.buildVersion");
+  const isPortable = assertType(await evalOn(app, footer.id, "backend.isPortableBuild"),
+                                "boolean", "backend.isPortableBuild");
+  const text = assertType(await evalOn(app, footer.id, "text"), "string", "footer text");
 
-  const versionRes = await app.inspector.send("evaluate", {
-    objectId: footer.id, expression: "backend.buildVersion",
-  });
-  if (versionRes.error) {
-    throw new Error(`evaluate(backend.buildVersion) failed: ${versionRes.error}`);
-  }
-  const buildVersion = versionRes.result;
-  if (typeof buildVersion !== "string") {
-    throw new Error(
-      `backend.buildVersion=${JSON.stringify(buildVersion)} (expected string)`);
-  }
-
-  const portableRes = await app.inspector.send("evaluate", {
-    objectId: footer.id, expression: "backend.isPortableBuild",
-  });
-  if (portableRes.error) {
-    throw new Error(`evaluate(backend.isPortableBuild) failed: ${portableRes.error}`);
-  }
-  const isPortable = portableRes.result;
-  if (typeof isPortable !== "boolean") {
-    throw new Error(
-      `backend.isPortableBuild=${JSON.stringify(isPortable)} (expected boolean)`);
-  }
-
-  const textRes = await app.inspector.send("evaluate", {
-    objectId: footer.id, expression: "text",
-  });
-  if (textRes.error) throw new Error(`evaluate(text) failed: ${textRes.error}`);
-  const text = textRes.result;
-  if (typeof text !== "string") {
-    throw new Error(`footer text=${JSON.stringify(text)} (expected string)`);
-  }
-
-  // Gate: the footer is a pure function of (buildVersion, isPortableBuild) —
-  // see SidebarPanel.qml's buildLabel binding — so compare against the
-  // exact expected string. This pins the " · " separator and rejects
-  // stray suffixes, which token-containment checks would let through.
-  const expectedToken = isPortable ? "Portable" : "Dev";
-  const expectedText = buildVersion.length > 0
-    ? `${buildVersion} · ${expectedToken}`
-    : expectedToken;
-  if (text !== expectedText) {
-    throw new Error(
-      `footer text=${JSON.stringify(text)} (expected ${JSON.stringify(expectedText)}; ` +
-      `buildVersion=${JSON.stringify(buildVersion)}, isPortableBuild=${isPortable})`);
-  }
+  // Exact comparison pins the " · " separator and rejects stray suffixes.
+  const token = isPortable ? "Portable" : "Dev";
+  assertEq(text, buildVersion.length > 0 ? `${buildVersion} · ${token}` : token,
+           `footer text (buildVersion=${JSON.stringify(buildVersion)}, ` +
+           `isPortableBuild=${isPortable})`);
 });
 
 // --- Sidebar (A7) — the active tile follows currentVisibleApp ---
 //
-// Spec §2.A A7 (amended 2026-08-28): open fixture A, click Settings, then
-// re-click the tile. The tile's highlight is
-// `checked: modelData.name === (backend.currentVisibleApp || "")`
-// (SidebarPanel.qml:131), so it must stay lit while Settings is front-most:
-// a section click only flips the content stack
-// (MainContainer::onViewIndexChanged), never currentVisibleApp. The re-click
-// goes through launchUIModule → navigateToApps →
-// setCurrentActiveSectionIndex(0), returning to the workspace.
-//
-// The Settings-active gate uses the button's own checked
-// (`backend.currentActiveSectionIndex - 1 === index`) plus "section index is
-// no longer the workspace 0" — never a hardcoded section number, the sidebar
-// layout owns the numbering. The view-section SidebarCircleButtons carry no
-// objectName (§4.1 skipped them), so the button is located by text + type.
-//
-// A5's cleanup closed fixture A's dock, so the "open" step here is a genuine
-// open; if a dock were already open the click merely re-activates (A5 pinned
-// that as dock-count-neutral) and every gate below still holds. Per the
-// amended spec this test ENDS with the dock OPEN — workspace section active,
-// dockCount 1, tile lit. No later test asserts welcome-page or dock state,
-// and the section-walk tests re-click their own sections regardless.
+// The tile's highlight binds `checked: modelData.name === backend.currentVisibleApp`
+// and a section click only flips the content stack, so the tile stays lit
+// while Settings is front-most. Re-clicking it goes through launchUIModule →
+// navigateToApps, back to workspace section 0. Ends with the dock open.
 
 test("sidebar: active tile follows currentVisibleApp across section switches", async (app) => {
-  // Same stable evaluate anchor as A3–A5 — has `backend` in context and
-  // survives sidebar delegate churn and section switches.
-  let welcome = null;
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  const evalOnWelcome = (expression) => evalOn(app, welcome.id, expression);
+  // Only the loaded Repeater's delegate carries the checked binding, so
+  // every read re-finds the tile.
+  const tileChecked = async () => evalOn(app, (await findFixtureATile(app)).id, "checked");
+
+  if (!(await openFixtureA(app, "A7", welcome.id, workspace.id))) return;
   await app.waitFor(async () => {
-    welcome = await findWelcomePage(app);
-    if (!welcome) throw new Error("no WelcomePage instance in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "WelcomePage instance to exist" });
+    assertEq(await evalOnWelcome("backend.currentActiveSectionIndex"), 0,
+             "backend.currentActiveSectionIndex after open");
+    assertEq(await tileChecked(), true, "tile checked after open");
+  }, { timeout: 5000, interval: 250, description: "workspace section active and tile lit" });
 
-  const workspace = await findByObjectName(app.inspector, "workspace");
-  if (!workspace) {
-    throw new Error('WorkspaceArea (objectName "workspace") not found');
-  }
-
-  const evalOnWelcome = async (expression) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: welcome.id, expression,
-    });
-    if (res.error) throw new Error(`evaluate(${expression}) failed: ${res.error}`);
-    return res.result;
-  };
-
-  // Loading moves the tile from the unloaded to the loaded Repeater (same
-  // objectName, new object — and only the loaded delegate carries the
-  // checked binding), so every checked read re-finds the delegate.
-  const tileChecked = async () => {
-    const t = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-    if (!t) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    const res = await app.inspector.send("evaluate", {
-      objectId: t.id, expression: "checked",
-    });
-    if (res.error) throw new Error(`evaluate(tile checked) failed: ${res.error}`);
-    return res.result;
-  };
-
-  // Step 1 — open fixture A (CI-skip contract as in A3/A5).
-  let tile = null;
-  try {
-    await app.waitFor(async () => {
-      tile = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-      if (!tile) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    }, { timeout: 10000, interval: 500, description: "fixture A sidebar tile to appear" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) is not installed in this ` +
-        `app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `fixture A sidebar tile never appeared — integration-test pre-seeds ` +
-      `${FIXTURE_A.name} at boot, so this is a real failure: ${e.message}`);
-  }
-  const opened = await app.inspector.send("callMethod", {
-    objectId: tile.id, method: "clicked",
-  });
-  if (opened.error) {
-    throw new Error(`clicking sidebar.app.${FIXTURE_A.name} failed: ${opened.error}`);
-  }
-
-  await app.waitFor(async () => {
-    const count = await app.inspector.send("evaluate", {
-      objectId: workspace.id, expression: "dockCount",
-    });
-    if (count.error) throw new Error(`evaluate(dockCount) failed: ${count.error}`);
-    if (count.result !== 1) {
-      throw new Error(`WorkspaceArea.dockCount=${count.result} (expected 1)`);
-    }
-    const visibleApp = await evalOnWelcome("backend.currentVisibleApp");
-    if (visibleApp !== FIXTURE_A.name) {
-      throw new Error(
-        `backend.currentVisibleApp=${JSON.stringify(visibleApp)} ` +
-        `(expected "${FIXTURE_A.name}")`);
-    }
-    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
-    if (section !== 0) {
-      throw new Error(
-        `backend.currentActiveSectionIndex=${section} ` +
-        `(expected workspace index 0 after open)`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "fixture A to open front-most in the workspace" });
-
-  // Gate: tile lit after open. Inside a waitFor — during the load the find
-  // can transiently hit the outgoing unloaded delegate (default unchecked).
-  await app.waitFor(async () => {
-    if ((await tileChecked()) !== true) {
-      throw new Error("tile checked=false after open (expected true)");
-    }
-  }, { timeout: 5000, interval: 250, description: "tile to light up after open" });
-
-  // Step 2 — click the Settings section button. Located by text + type: a
-  // bare text click can land on a shallower same-text widget (see the
-  // sidebarSection note above), and we need the button object anyway to read its
-  // checked. Signal-level click, as everywhere else in the A-series.
+  // Section buttons carry no objectName: locate Settings by text + type.
   let settingsButton = null;
   await app.waitFor(async () => {
     const hits = await app.findByProperty("text", "Settings");
     settingsButton = (hits.matches ?? [])
       .find((m) => (m.type ?? "").includes("SidebarCircleButton")) || null;
-    if (!settingsButton) {
-      throw new Error('sidebar "Settings" SidebarCircleButton not found');
-    }
+    if (!settingsButton) throw new Error('sidebar "Settings" SidebarCircleButton not found');
   }, { timeout: 10000, interval: 500, description: '"Settings" sidebar button to exist' });
+  const settingsChecked = () => evalOn(app, settingsButton.id, "checked");
 
-  const settingsChecked = async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: settingsButton.id, expression: "checked",
-    });
-    if (res.error) {
-      throw new Error(`evaluate(Settings button checked) failed: ${res.error}`);
-    }
-    return res.result;
-  };
-
-  const clickedSettings = await app.inspector.send("callMethod", {
-    objectId: settingsButton.id, method: "clicked",
-  });
-  if (clickedSettings.error) {
-    throw new Error(`clicking the Settings button failed: ${clickedSettings.error}`);
-  }
-
+  await invoke(app, settingsButton.id, "clicked", "clicking the Settings button");
   await app.waitFor(async () => {
-    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
-    if (section === 0) {
+    if ((await evalOnWelcome("backend.currentActiveSectionIndex")) === 0) {
       throw new Error("still on workspace section 0 after the Settings click");
     }
-    if ((await settingsChecked()) !== true) {
-      throw new Error("Settings button checked=false with Settings active");
-    }
+    assertEq(await settingsChecked(), true, "Settings button checked");
   }, { timeout: 10000, interval: 500, description: "Settings section to become active" });
 
-  // Gate: currentVisibleApp untouched by the section switch, tile STILL lit.
-  // Single-shot reads on purpose — a retried wait would mask a transient
-  // un-light, and "STILL true" is exactly what this test pins down.
-  const visibleInSettings = await evalOnWelcome("backend.currentVisibleApp");
-  if (visibleInSettings !== FIXTURE_A.name) {
-    throw new Error(
-      `backend.currentVisibleApp=${JSON.stringify(visibleInSettings)} after ` +
-      `the Settings click (expected it to stay "${FIXTURE_A.name}")`);
-  }
-  if ((await tileChecked()) !== true) {
-    throw new Error(
-      "tile checked=false while Settings is active — the tile must track " +
-      "currentVisibleApp, not the active section");
-  }
+  // Single-shot reads: a retried wait would mask a transient un-light.
+  assertEq(await evalOnWelcome("backend.currentVisibleApp"), FIXTURE_A.name,
+           "backend.currentVisibleApp while Settings is active");
+  assertEq(await tileChecked(), true, "tile checked while Settings is active");
 
-  // Step 3 — re-click the tile: back to the workspace. Re-find inside the
-  // retry loop as in A5 — a duplicate activation click is harmless.
+  await app.waitFor(() => clickFixtureATile(app),
+    { timeout: 10000, interval: 500, description: "re-click on fixture A tile" });
   await app.waitFor(async () => {
-    const t = await findByObjectName(app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-    if (!t) throw new Error(`sidebar.app.${FIXTURE_A.name} not in the tree`);
-    const reclicked = await app.inspector.send("callMethod", {
-      objectId: t.id, method: "clicked",
-    });
-    if (reclicked.error) {
-      throw new Error(`re-clicking sidebar.app.${FIXTURE_A.name} failed: ${reclicked.error}`);
-    }
-  }, { timeout: 10000, interval: 500, description: "re-click on fixture A tile" });
-
-  await app.waitFor(async () => {
-    const section = await evalOnWelcome("backend.currentActiveSectionIndex");
-    if (section !== 0) {
-      throw new Error(
-        `backend.currentActiveSectionIndex=${section} ` +
-        `(expected 0 after re-clicking the tile)`);
-    }
+    assertEq(await evalOnWelcome("backend.currentActiveSectionIndex"), 0,
+             "backend.currentActiveSectionIndex after re-click");
   }, { timeout: 10000, interval: 500, description: "workspace section to reactivate" });
 
-  // Gates after the re-click: tile still lit, Settings button unchecked,
-  // and the suite-visible end state — dockCount still 1, fixture A still
-  // front-most in the workspace section.
-  if ((await tileChecked()) !== true) {
-    throw new Error("tile checked=false after returning to the workspace (expected true)");
-  }
-  if ((await settingsChecked()) !== false) {
-    throw new Error("Settings button still checked after returning to the workspace");
-  }
-  const finalCount = await app.inspector.send("evaluate", {
-    objectId: workspace.id, expression: "dockCount",
-  });
-  if (finalCount.error) throw new Error(`evaluate(dockCount) failed: ${finalCount.error}`);
-  if (finalCount.result !== 1) {
-    throw new Error(
-      `WorkspaceArea.dockCount=${finalCount.result} at test end (expected 1)`);
-  }
-  const finalVisible = await evalOnWelcome("backend.currentVisibleApp");
-  if (finalVisible !== FIXTURE_A.name) {
-    throw new Error(
-      `backend.currentVisibleApp=${JSON.stringify(finalVisible)} at test end ` +
-      `(expected "${FIXTURE_A.name}")`);
-  }
+  assertEq(await tileChecked(), true, "tile checked after returning to the workspace");
+  assertEq(await settingsChecked(), false, "Settings button checked after returning");
+  assertEq(await evalOn(app, workspace.id, "dockCount"), 1, "WorkspaceArea.dockCount at end");
+  assertEq(await evalOnWelcome("backend.currentVisibleApp"), FIXTURE_A.name,
+           "backend.currentVisibleApp at end");
 });
 
-// --- App Manager (A8) — search narrows the grid to matching apps ---
+// --- App Manager helpers -----------------------------------------------------
 //
-// Spec §2.A A8 (amended 2026-08-28): Applications → type fixture A's display
-// name in deliberately wrong case into appManager.searchField, append a
-// non-matching suffix, then clear. AppsFilterProxy's search is a fixed-string
-// case-insensitive contains over Name/DisplayName/Description
-// (AppsFilterProxy.cpp:327-335).
-//
-// The spec's literal query is "LIFECYCLE" ("Lifecycle Demo"), but that is the
-// doctest package's display name (doctests/basecamp-package-lifecycle
-// .test.yaml), NOT this branch's fixture A: the pre-seeded fixture is
-// displayName "Test QML Only" (FIXTURE_A in tests/fixtures/lgx.mjs, seeded
-// verbatim by nix/integration-test.nix), so "LIFECYCLE" would match nothing.
-// The query is therefore DERIVED from FIXTURE_A.displayName, upper-cased to
-// keep the spec's wrong-case intent. It still matches via DisplayNameRole
-// only: the name is the underscored "test_qml_only" and the seeded
-// description embeds that underscored form, so neither contains the spaced
-// display name.
-//
-// Offline the grid has no catalog rows, so every row is a local install:
-// fixture A plus whatever else the harness staged into <user-dir>/plugins/
-// (integration-test.nix also stages the four intent fixtures from
-// tests/fixtures/intents/stage.sh, each with a manifest.json, so they list as
-// installed user apps too). The only assumption is that fixture A is the sole
-// row whose display name matches the query, which the narrowing legs prove.
-// appManager.localAppsProxy chains matchLocalOnly on top of the OUTER
-// searched proxy (AppManagerView.qml:69-75), so its visibleCount tracks the
-// search. The spec's non-match gate "backend.uiAppsProxy.rowCount() === 0"
-// reads that outer proxy — uiAppsProxy is a ContentViews.qml id, not a
-// backend property, and it is exactly localAppsProxy.sourceModel, so the
-// gate evaluates sourceModel.rowCount() on the proxy anchor (same access
-// path as the matchLocalOnly wiring test).
-//
-// The field's text is set via inspector evaluate on appManager.searchField
-// and read back (round-trip; evaluate returns primitives only, one property
-// per call). The assignment breaks the `text: d.searchText` binding, which
-// is harmless: onTextChanged pushes the value into d.searchText (the actual
-// filter input), and nothing else writes d.searchText. Cleanup: the search
-// ends cleared, so appManager.emptyView ends hidden.
-
-test("app manager: search narrows the grid to matching apps", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  let field = null;
-  await app.waitFor(async () => {
-    field = await findByObjectName(app.inspector, "appManager.searchField");
-    if (!field) throw new Error("appManager.searchField not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "search field to exist" });
-
-  const setSearch = async (value) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
-    });
-    if (res.error) {
-      throw new Error(
-        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
-    }
-  };
-
-  // Normalize: pre-search means an empty field. Nothing before A8 touches the
-  // search, but a leftover value would skew the recording below.
-  const initialText = await evalOn(app, field.id, "text");
-  if (typeof initialText !== "string") {
-    throw new Error(
-      `search field text=${JSON.stringify(initialText)} (expected string)`);
-  }
-  if (initialText !== "") await setSearch("");
-
-  // PRECONDITION (spec gate): fixture A is installed and at least one local
-  // row is in the grid. The tile check matters outside --ci: a developer
-  // instance with some other local app but no fixture A would otherwise pass
-  // this gate and then time out in step 1's exact-one assertion instead of
-  // taking the spec-§0.A skip. In --ci both are hard failures (integration-test
-  // pre-seeds fixture A at boot).
-  try {
-    await app.waitFor(async () => {
-      const fixtureTile = await findByObjectName(
-        app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-      if (!fixtureTile) {
-        throw new Error(`fixture A (${FIXTURE_A.name}) is not installed`);
-      }
-      const count = await evalOn(app, proxyId, "visibleCount");
-      if (typeof count !== "number" || count < 1) {
-        throw new Error(
-          `localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
-      }
-    }, { timeout: 10000, interval: 500,
-         description: "fixture A and at least one local row to be present" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: A8 precondition not met — ${e.message} ` +
-        `(spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `A8 precondition failed — fixture A missing or no user-install row: ` +
-      `${e.message}`);
-  }
-
-  // Record the pre-search values; the post-clear gate compares against these.
-  const preLocal = await evalOn(app, proxyId, "visibleCount");
-  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof preOuterRows !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
-  }
-
-  // Step 1 — the display name in deliberately wrong case: the grid narrows to
-  // exactly fixture A (the other staged fixtures' names, display names and
-  // descriptions do not contain it) and the text round-trips (match is
-  // case-insensitive over name/displayName/description). Guard that
-  // upper-casing actually changed the case — an already-uppercase display
-  // name would make this leg assert nothing.
-  const matchQuery = FIXTURE_A.displayName.toUpperCase();
-  if (matchQuery === FIXTURE_A.displayName) {
-    throw new Error(
-      `FIXTURE_A.displayName=${JSON.stringify(FIXTURE_A.displayName)} is ` +
-      `already upper-case — the wrong-case leg cannot prove case-insensitivity`);
-  }
-  await setSearch(matchQuery);
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== matchQuery) {
-      throw new Error(
-        `search text=${JSON.stringify(text)} did not round-trip ` +
-        `(expected ${JSON.stringify(matchQuery)})`);
-    }
-    const count = await evalOn(app, proxyId, "visibleCount");
-    if (count !== 1) {
-      throw new Error(
-        `localAppsProxy.visibleCount=${count} with wrong-case display-name ` +
-        `search (expected exactly 1: fixture A — search must be ` +
-        `case-insensitive and narrow away the other ${preLocal - 1} local ` +
-        `row(s))`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== 1) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} with wrong-case ` +
-        `display-name search (expected exactly 1: fixture A)`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "wrong-case display-name search to narrow to fixture A" });
-
-  // Step 2 — append a non-matching suffix: the grid empties, all the way down
-  // to the outer proxy (the spec's uiAppsProxy — localAppsProxy.sourceModel).
-  const noMatchQuery = `${matchQuery} ZZZ-NO-SUCH-APP`;
-  await setSearch(noMatchQuery);
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== noMatchQuery) {
-      throw new Error(
-        `search text=${JSON.stringify(text)} did not round-trip ` +
-        `(expected ${JSON.stringify(noMatchQuery)})`);
-    }
-    const count = await evalOn(app, proxyId, "visibleCount");
-    if (count !== 0) {
-      throw new Error(
-        `localAppsProxy.visibleCount=${count} with non-matching search ` +
-        `(expected 0)`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== 0) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} with non-matching search ` +
-        `(expected 0)`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "non-matching search to empty the grid" });
-
-  // Step 3 — clear: the recorded pre-search values return, and the
-  // empty-search view ends hidden (its `visible` binds on
-  // d.searchText.length > 0).
-  await setSearch("");
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "") {
-      throw new Error(`search text=${JSON.stringify(text)} after clear (expected "")`);
-    }
-    const count = await evalOn(app, proxyId, "visibleCount");
-    if (count !== preLocal) {
-      throw new Error(
-        `localAppsProxy.visibleCount=${count} after clearing the search ` +
-        `(expected the recorded pre-search ${preLocal})`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== preOuterRows) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} after clearing the search ` +
-        `(expected the recorded pre-search ${preOuterRows})`);
-    }
-    const empty = await findByObjectName(app.inspector, "appManager.emptyView");
-    if (!empty) throw new Error("appManager.emptyView not in the QML tree");
-    const emptyVisible = await evalOn(app, empty.id, "visible");
-    if (emptyVisible !== false) {
-      throw new Error(
-        `appManager.emptyView visible=${emptyVisible} after clearing the ` +
-        `search (expected false)`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "cleared search to restore the pre-search grid" });
-});
-
-// --- App Manager (A9) — search with no match shows the empty view ---
-//
-// Spec §2.A A9 (amended 2026-08-28): Applications → type the guaranteed
-// no-match query "zzz-no-such-app-§". The search is a fixed-string
-// case-insensitive contains over name/displayName/description, so the §
-// character is inert data, not a pattern. Gates: appManager.emptyView is
-// visible with a non-empty message · the outer searched proxy (the spec's
-// uiAppsProxy — localAppsProxy.sourceModel, same access path as A8) reports
-// rowCount() 0 · localAppsProxy.visibleCount is 0 · no AppRepoSection (repo
-// or synthetic local) is visible · no visible "local" section header remains
-// · clearing hides the empty view and restores the recorded pre-search counts.
-//
-// First assertion for the empty-search element: its `visible` binds on
-// d.searchText.length > 0 && appsProxy.visibleCount === 0
-// (AppManagerView.qml), so it can only show while the no-match text is set.
-// The message property is read defensively — title (EmptyView) or text
-// (LogosText), whichever round-trips non-empty — one property per evaluate
-// call, primitives only.
-//
-// "Every section hides" is checked on the sections themselves, not only on
-// the model: findByType("AppRepoSection") enumerates every section instance
-// (the Repeater's repo delegates plus the always-instantiated synthetic
-// local one — so zero matches is an inspector failure, not an empty grid),
-// and each must report visible === false. The `visible` bindings live in
-// AppManagerView.qml (repoFilter.visibleCount > 0 / localFilter.visibleCount
-// > 0), so a section that stayed on screen with zero rows would fail here
-// even though the model gates above pass.
-//
-// The "local" header probe mirrors the header-invariant test late in this
-// file: findByProperty(text === "local"), then getProperties visible per
-// match. No fixture precondition: with zero rows pre-search the no-match
-// search still flips the empty view on, and the restore gates compare
-// against the recorded (possibly zero) counts. Cleanup: the search ends
-// cleared, so the empty view ends hidden.
-//
-// Baseline is taken only after appManager.loadingOverlay is hidden: the
-// subtitle/search/proxy objects exist while appsLoading is still true, and
-// a catalog refresh landing mid-test would both cover the empty view and
-// move the model counts the restore gate compares against.
-
-test("app manager: search with no match shows the empty view", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  // Settle: the loading overlay (visible: root.loading) must be gone before
-  // any baseline is recorded — see the header comment.
-  await app.waitFor(async () => {
-    const overlay = await findByObjectName(app.inspector, "appManager.loadingOverlay");
-    if (!overlay) throw new Error("appManager.loadingOverlay not in the QML tree");
-    const visible = await evalOn(app, overlay.id, "visible");
-    if (visible !== false) {
-      throw new Error(
-        `appManager.loadingOverlay visible=${visible} (expected false — apps ` +
-        `still loading)`);
-    }
-  }, { timeout: 30000, interval: 500, description: "apps loading overlay to hide" });
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  let field = null;
-  await app.waitFor(async () => {
-    field = await findByObjectName(app.inspector, "appManager.searchField");
-    if (!field) throw new Error("appManager.searchField not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "search field to exist" });
-
-  // The empty view is a plain (non-Loader) child — instantiated even while
-  // hidden, so it is findable before the search begins.
-  let emptyView = null;
-  await app.waitFor(async () => {
-    emptyView = await findByObjectName(app.inspector, "appManager.emptyView");
-    if (!emptyView) throw new Error("appManager.emptyView not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "empty-search view to exist" });
-
-  const setSearch = async (value) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
-    });
-    if (res.error) {
-      throw new Error(
-        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
-    }
-  };
-
-  // The empty view's message: title if it is an EmptyView, text if a
-  // LogosText — read whichever comes back a non-empty string.
-  const emptyViewMessage = async () => {
-    for (const prop of ["title", "text"]) {
-      const res = await app.inspector.send("evaluate", {
-        objectId: emptyView.id, expression: prop,
-      });
-      if (!res.error && typeof res.result === "string" && res.result.length > 0) {
-        return res.result;
-      }
-    }
-    return "";
-  };
-
-  // Visible "local" section headers (label is the lowercase synthetic-bucket
-  // title — same probe as the 'local'-header invariant test later in this file).
-  // Inspector failures throw (inside a waitFor step that means retry, then
-  // fail) — they must never read as "no header visible".
-  const visibleLocalHeaderCount = async () => {
-    const hits = await app.inspector.send("findByProperty", {
-      property: "text", value: "local",
-    });
-    if (hits.error) {
-      throw new Error(`findByProperty(text="local") failed: ${hits.error}`);
-    }
-    let count = 0;
-    for (const m of (hits.matches ?? [])) {
-      // getProperties (not evaluate): a text="local" match that is not a
-      // visual Item has no `visible` and simply doesn't count, whereas a
-      // failed inspector round-trip must surface.
-      const props = await app.inspector.send("getProperties", { objectId: m.id });
-      if (props.error) {
-        throw new Error(`getProperties(${m.id}) failed: ${props.error}`);
-      }
-      const visibleProp = props.properties?.find((p) => p.name === "visible");
-      if (visibleProp && visibleProp.value === true) count += 1;
-    }
-    return count;
-  };
-
-  // Every AppRepoSection instance (repo delegates + the synthetic local
-  // section). The local section is a plain child of gridColumn, so at least
-  // one match always exists — zero means the type probe itself broke.
-  const visibleRepoSectionCount = async () => {
-    const hits = await app.inspector.send("findByType", { typeName: "AppRepoSection" });
-    if (hits.error) throw new Error(`findByType(AppRepoSection) failed: ${hits.error}`);
-    const matches = hits.matches ?? [];
-    if (matches.length === 0) {
-      throw new Error(
-        "findByType(AppRepoSection) returned no instances — the synthetic " +
-        "local section is always instantiated, so the probe is broken");
-    }
-    let count = 0;
-    for (const m of matches) {
-      const visible = await evalOn(app, m.id, "visible");
-      if (visible === true) count += 1;
-    }
-    return count;
-  };
-
-  // Normalize (A8 ends cleared, but a leftover value would skew the
-  // recording), then record the pre-search counts the restore gate compares
-  // against.
-  const initialText = await evalOn(app, field.id, "text");
-  if (typeof initialText !== "string") {
-    throw new Error(
-      `search field text=${JSON.stringify(initialText)} (expected string)`);
-  }
-  if (initialText !== "") {
-    await setSearch("");
-    // The filter re-evaluates asynchronously: don't record the baseline until
-    // the clear has landed (field empty, empty view hidden), or the "pre"
-    // counts would still reflect the leftover filter.
-    await app.waitFor(async () => {
-      const text = await evalOn(app, field.id, "text");
-      if (text !== "") {
-        throw new Error(
-          `search text=${JSON.stringify(text)} after normalizing clear (expected "")`);
-      }
-      const emptyVisible = await evalOn(app, emptyView.id, "visible");
-      if (emptyVisible !== false) {
-        throw new Error(
-          `appManager.emptyView visible=${emptyVisible} after normalizing ` +
-          `clear (expected false)`);
-      }
-    }, { timeout: 5000, interval: 250,
-         description: "normalizing clear to round-trip before baseline" });
-  }
-
-  const preLocal = await evalOn(app, proxyId, "visibleCount");
-  if (typeof preLocal !== "number") {
-    throw new Error(
-      `localAppsProxy.visibleCount=${JSON.stringify(preLocal)} (expected number)`);
-  }
-  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof preOuterRows !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
-  }
-
-  // Step 1 — the guaranteed no-match query: every section hides, the empty
-  // view shows with a message.
-  const noMatchQuery = "zzz-no-such-app-§";
-  await setSearch(noMatchQuery);
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== noMatchQuery) {
-      throw new Error(
-        `search text=${JSON.stringify(text)} did not round-trip ` +
-        `(expected ${JSON.stringify(noMatchQuery)})`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== 0) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} with no-match search ` +
-        `(expected 0)`);
-    }
-    const localCount = await evalOn(app, proxyId, "visibleCount");
-    if (localCount !== 0) {
-      throw new Error(
-        `localAppsProxy.visibleCount=${localCount} with no-match search ` +
-        `(expected 0)`);
-    }
-    const emptyVisible = await evalOn(app, emptyView.id, "visible");
-    if (emptyVisible !== true) {
-      throw new Error(
-        `appManager.emptyView visible=${emptyVisible} with no-match search ` +
-        `(expected true)`);
-    }
-    const message = await emptyViewMessage();
-    if (message.length === 0) {
-      throw new Error(
-        "appManager.emptyView carries no message — neither title nor text " +
-        "is a non-empty string");
-    }
-    const sections = await visibleRepoSectionCount();
-    if (sections !== 0) {
-      throw new Error(
-        `${sections} visible AppRepoSection(s) with no-match search ` +
-        `(expected 0 — every section must hide)`);
-    }
-    const headers = await visibleLocalHeaderCount();
-    if (headers !== 0) {
-      throw new Error(
-        `${headers} visible "local" section header(s) with no-match search ` +
-        `(expected 0 — every section must hide)`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "no-match search to show the empty view" });
-
-  // Step 2 — clear: the empty view hides and the recorded counts return.
-  await setSearch("");
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "") {
-      throw new Error(`search text=${JSON.stringify(text)} after clear (expected "")`);
-    }
-    const emptyVisible = await evalOn(app, emptyView.id, "visible");
-    if (emptyVisible !== false) {
-      throw new Error(
-        `appManager.emptyView visible=${emptyVisible} after clearing the ` +
-        `search (expected false)`);
-    }
-    const localCount = await evalOn(app, proxyId, "visibleCount");
-    if (localCount !== preLocal) {
-      throw new Error(
-        `localAppsProxy.visibleCount=${localCount} after clearing the search ` +
-        `(expected the recorded pre-search ${preLocal})`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== preOuterRows) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} after clearing the search ` +
-        `(expected the recorded pre-search ${preOuterRows})`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "cleared search to hide the empty view and restore counts" });
-});
-
-// --- App Manager (A10) — search tolerates regex/special/unicode input ---
-//
-// Spec §2.A A10 (amended + corrected ×2 2026-08-28): Applications → type, in
-// turn, ( [ * \ .* 日本語 and a 512-char string into appManager.searchField.
-// The search is a fixed-string case-insensitive contains over
-// Name/DisplayName/Description (AppsFilterProxy.cpp) — regex metacharacters
-// are inert data, so none of these inputs may produce QRegularExpression
-// warnings, QML errors, or a stale grid.
-//
-// The expected row count per input is NOT hardcoded to 0 (first correction:
-// "(" matches fixture A's own seeded description, which contains a literal
-// "(") and the outer model is NOT assumed to hold only fixture A's row
-// (second correction: the hermetic build's package_downloader ships a default
-// catalog, so localAppsProxy.sourceModel holds fixture A plus the catalog
-// rows). Instead the test SNAPSHOTS every outer-model row's
-// name/displayName/description with the search empty, then computes each
-// input's expectation as the number of snapshot rows containing the literal
-// input case-insensitively — mirroring exactly the C++ filter. Role numbers
-// follow BasecampModelRoles.h (NameRole = Qt.UserRole + 1, DisplayNameRole =
-// + 3, DescriptionRole = + 4); rows are read one primitive per evaluate call
-// via sourceModel.data(sourceModel.index(i, 0), role).
-//
-// Gates per input: the field text round-trips exactly (equality plus
-// length/charCode spot-checks — the backslash and CJK legs are the ones a
-// broken transport would mangle) · outer rowCount() reaches the computed
-// expectation · appManager.emptyView is visible exactly when that expectation
-// is 0 (its visible binds on d.searchText.length > 0 &&
-// appsProxy.visibleCount === 0, and visibleCount IS rowCount()) · no new
-// QRegularExpression line in BASECAMP_APP_LOG (scanned from a test-start
-// baseline; the suite's G-ERR epilogue covers QML error lines). G-ALIVE runs
-// after the 512-char input. Clearing restores the recorded pre-search outer
-// count and hides the empty view.
-//
-// Precondition (as in A8): fixture A is installed and at least one local row
-// is present (localAppsProxy.visibleCount >= 1) — hard failure in --ci,
-// spec-§0.A skip otherwise. Neither the local nor the outer count is assumed.
-
-test("app manager: search tolerates regex/special/unicode input", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  let field = null;
-  await app.waitFor(async () => {
-    field = await findByObjectName(app.inspector, "appManager.searchField");
-    if (!field) throw new Error("appManager.searchField not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "search field to exist" });
-
-  // Plain (non-Loader) child — findable while hidden, as in A9.
-  let emptyView = null;
-  await app.waitFor(async () => {
-    emptyView = await findByObjectName(app.inspector, "appManager.emptyView");
-    if (!emptyView) throw new Error("appManager.emptyView not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "empty-search view to exist" });
-
-  const setSearch = async (value) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
-    });
-    if (res.error) {
-      throw new Error(
-        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
-    }
-  };
-
-  // QRegularExpression scan of the app log, from a baseline taken now.
-  // Same file/offset mechanics as the harness's G-ERR file mode; no-ops
-  // when BASECAMP_APP_LOG is unset (attached-to-local-app runs).
-  const appLogPath = process.env.BASECAMP_APP_LOG || null;
-  let appLogBaseline = 0;
-  if (appLogPath) {
-    try {
-      appLogBaseline = statSync(appLogPath).size;
-    } catch {
-      appLogBaseline = 0;
-    }
-  }
-  const assertNoRegexWarnings = (label) => {
-    if (!appLogPath) return;
-    let tail = "";
-    try {
-      tail = readFileSync(appLogPath).subarray(appLogBaseline).toString("utf-8");
-    } catch {
-      return; // log vanished — nothing to assert against
-    }
-    const hits = tail.split("\n").filter((l) => l.includes("QRegularExpression"));
-    if (hits.length > 0) {
-      throw new Error(
-        `${hits.length} QRegularExpression warning(s) in the app log after ` +
-        `input ${label}:\n  ${hits.join("\n  ")}`);
-    }
-  };
-
-  // Short display form for waitFor descriptions / error messages — the
-  // 512-char input must not flood the output.
-  const labelFor = (input) =>
-    input.length > 16
-      ? JSON.stringify(`${input.slice(0, 8)}…`) + ` (${input.length} chars)`
-      : JSON.stringify(input);
-
-  // Normalize: A9 ends cleared, but a leftover value would skew the
-  // snapshot and the recorded pre-search count.
-  const initialText = await evalOn(app, field.id, "text");
-  if (typeof initialText !== "string") {
-    throw new Error(
-      `search field text=${JSON.stringify(initialText)} (expected string)`);
-  }
-  if (initialText !== "") await setSearch("");
-
-  // PRECONDITION (spec gate, as in A8): fixture A is installed and at least
-  // one local row is in the grid. The hermetic build also stages the intent
-  // fixtures as local apps, so "exactly one local row" would fail in --ci; the
-  // per-input expectations below are computed from a snapshot of the outer
-  // model, so the count itself is never assumed. Hard failure in --ci,
-  // spec-§0.A skip otherwise.
-  try {
-    await app.waitFor(async () => {
-      const fixtureTile = await findByObjectName(
-        app.inspector, `sidebar.app.${FIXTURE_A.name}`);
-      if (!fixtureTile) {
-        throw new Error(`fixture A (${FIXTURE_A.name}) is not installed`);
-      }
-      const count = await evalOn(app, proxyId, "visibleCount");
-      if (typeof count !== "number" || count < 1) {
-        throw new Error(
-          `localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
-      }
-    }, { timeout: 10000, interval: 500,
-         description: "fixture A and at least one local row to be present" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: A10 precondition not met — ${e.message} ` +
-        `(spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `A10 precondition failed — fixture A missing or no user-install row: ` +
-      `${e.message}`);
-  }
-
-  // Record the pre-search outer count — whatever it is (fixture A plus any
-  // default-catalog rows); the post-clear gate compares against it.
-  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof preOuterRows !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
-  }
-
-  // SNAPSHOT every outer-model row's searched fields while the search is
-  // empty. One primitive per evaluate call; String(x || "") keeps an unset
-  // role a plain empty string instead of an opaque QVariant.
-  const ROLE_EXPRS = {
-    name: "Qt.UserRole + 1",        // AppsModelRoles::NameRole
-    displayName: "Qt.UserRole + 3", // AppsModelRoles::DisplayNameRole
-    description: "Qt.UserRole + 4", // AppsModelRoles::DescriptionRole
-  };
-  const snapshot = [];
-  for (let i = 0; i < preOuterRows; i += 1) {
-    const row = {};
-    for (const [key, roleExpr] of Object.entries(ROLE_EXPRS)) {
-      const value = await evalOn(
-        app, proxyId,
-        `String(sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr}) || "")`);
-      row[key] = typeof value === "string" ? value : "";
-    }
-    snapshot.push(row);
-  }
-
-  // Mirror of AppsFilterProxy's search leg: fixed-string case-insensitive
-  // contains over name/displayName/description.
-  const expectedMatches = (input) => {
-    const needle = input.toLowerCase();
-    return snapshot.filter((r) =>
-      r.name.toLowerCase().includes(needle)
-      || r.displayName.toLowerCase().includes(needle)
-      || r.description.toLowerCase().includes(needle)).length;
-  };
-
-  // The inputs, spec order. The backslash is built from its char code so no
-  // source-level escaping sits between the test and the wire (JSON.stringify
-  // in setSearch handles the transport escaping).
-  const BACKSLASH = String.fromCharCode(92);
-  const inputs = ["(", "[", "*", BACKSLASH, ".*", "日本語", "x".repeat(512)];
-
-  for (const input of inputs) {
-    const expected = expectedMatches(input);
-    const label = labelFor(input);
-    await setSearch(input);
-    await app.waitFor(async () => {
-      const text = await evalOn(app, field.id, "text");
-      if (text !== input) {
-        throw new Error(
-          `search text=${labelFor(String(text))} did not round-trip ` +
-          `(expected ${label})`);
-      }
-      // Spot-checks on top of the equality: length and the end char codes —
-      // the legs a lossy transport would mangle first.
-      if (text.length !== input.length
-          || text.charCodeAt(0) !== input.charCodeAt(0)
-          || text.charCodeAt(text.length - 1)
-             !== input.charCodeAt(input.length - 1)) {
-        throw new Error(
-          `search text for ${label} corrupted in transport: length=` +
-          `${text.length}/${input.length}, charCodes ${text.charCodeAt(0)}/` +
-          `${input.charCodeAt(0)} … ${text.charCodeAt(text.length - 1)}/` +
-          `${input.charCodeAt(input.length - 1)}`);
-      }
-      const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-      if (outerRows !== expected) {
-        throw new Error(
-          `outer apps proxy rowCount()=${outerRows} for input ${label} ` +
-          `(expected ${expected} — the snapshot rows containing it literally)`);
-      }
-      const emptyVisible = await evalOn(app, emptyView.id, "visible");
-      if (emptyVisible !== (expected === 0)) {
-        throw new Error(
-          `appManager.emptyView visible=${emptyVisible} for input ${label} ` +
-          `(expected ${expected === 0} — visible exactly when 0 rows match)`);
-      }
-    }, { timeout: 5000, interval: 100,
-         description: `input ${label} to filter to ${expected} row(s)` });
-    assertNoRegexWarnings(label);
-  }
-
-  // G-ALIVE after the last (512-char) input.
-  await assertResponsive(app);
-
-  // Clear: the recorded outer count returns and the empty view hides.
-  await setSearch("");
-  await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "") {
-      throw new Error(`search text=${JSON.stringify(text)} after clear (expected "")`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== preOuterRows) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} after clearing the search ` +
-        `(expected the recorded pre-search ${preOuterRows})`);
-    }
-    const emptyVisible = await evalOn(app, emptyView.id, "visible");
-    if (emptyVisible !== false) {
-      throw new Error(
-        `appManager.emptyView visible=${emptyVisible} after clearing the ` +
-        `search (expected false)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: "cleared search to restore the recorded outer count" });
-  assertNoRegexWarnings('"" (clear)');
-});
-
-// --- App Manager (A11) — selecting a category filters the grid ---
-//
-// Spec §2.A A11 (amended 2026-08-28, operator-confirmed): Applications →
-// click a non-"All" category cell (obj: appManager.category.<name>). Gates:
-// appsProxy.categoryFilter equals that category's name · every row remaining
-// in the grid carries that category role (equivalently: the outer count
-// equals the pre-click snapshot rows with that category) · clicking the "All"
-// cell clears the filter and restores the unfiltered count.
-//
-// Selection is asserted via appsProxy.categoryFilter, NOT
-// d.selectedCategoryIndex: object-scoped evaluate resolves only the anchor's
-// OWN properties, never file-internal ids like AppManagerView's `d` QtObject.
-// appsProxy is reached as localAppsProxy.sourceModel — the proven A8/A10
-// anchor path; they are the same AppsFilterProxy instance
-// (AppManagerView.qml:72) — so the filter reads as sourceModel.categoryFilter,
-// an own-property chain, one primitive per evaluate call. The index effect is
-// asserted through the delegates' `highlighted` (binds ListView.isCurrentItem,
-// which tracks d.selectedCategoryIndex via the view's currentIndex).
-//
-// The clicked category is "Testing" — fixture A's manifest category is
-// "testing" (tests/fixtures/lgx.mjs manifestFor), first-letter-uppercased by
-// AppsFilterProxy::categories() (AppsFilterProxy.cpp:164-191). The --ci build
-// seeds fixture A at boot, so the cell is guaranteed there (hard failure if
-// not); against a local app without the fixture the cell may be absent —
-// spec-§0.A skip with a log line. The expected filtered count is NOT
-// hardcoded: the outer model also holds the hermetic default catalog, so the
-// test SNAPSHOTS every outer row's CategoryRole (Qt.UserRole + 5,
-// BasecampModelRoles.h) with no filter applied and computes the expectation
-// as the rows whose capitalized category is "Testing" — mirroring
-// filterAcceptsRow's capitalizeFirst comparison (AppsFilterProxy.cpp:311-316).
-//
-// Cells are clicked via evaluate("clicked()") on the objectName-found
-// delegate — the same handler chain a pointer click drives (onClicked:
-// d.selectedCategoryIndex = index). Cells are re-found inside every waitFor
-// pass: the proxy's row changes re-emit categoriesChanged, and the resulting
-// (equal) list re-assignment can rebuild the ListView's delegates. Cleanup:
-// the test ends on the "All" cell with the filter cleared and the recorded
-// unfiltered count restored.
-
-test("app manager: selecting a category filters the grid", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  const CATEGORY = "Testing";
-  // Mirror of AppsFilterProxy's capitalizeFirst — first char only, rest as-is.
-  const capitalizeFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-
-  const findCategoryCell = (name) =>
-    findByObjectName(app.inspector, `appManager.category.${name}`);
-  const clickCell = async (name) => {
-    const cell = await findCategoryCell(name);
-    if (!cell) {
-      throw new Error(`appManager.category.${name} cell not in the QML tree`);
-    }
-    const res = await app.inspector.send("evaluate", {
-      objectId: cell.id, expression: "clicked()",
-    });
-    if (res.error) {
-      throw new Error(
-        `clicking the "${name}" category cell failed: ${res.error}`);
-    }
-  };
-
-  // Normalize: the snapshot below must be unfiltered. Nothing before A11
-  // touches the category (the boot value is "All" — AppManagerView.qml:42-51)
-  // and A10 ends with the search cleared, but a leftover value in either
-  // would skew the recording. The search is cleared through the field, as in
-  // A8 — writing the proxy directly would desync it from d.searchText.
-  const initialFilter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
-  if (typeof initialFilter !== "string") {
-    throw new Error(
-      `sourceModel.categoryFilter=${JSON.stringify(initialFilter)} ` +
-      `(expected string)`);
-  }
-  if (initialFilter !== "" && initialFilter !== "All") {
-    await clickCell("All");
-    await app.waitFor(async () => {
-      const f = await evalOn(app, proxyId, "sourceModel.categoryFilter");
-      if (f !== "All") {
-        throw new Error(
-          `sourceModel.categoryFilter=${JSON.stringify(f)} (expected "All")`);
-      }
-    }, { timeout: 5000, interval: 100,
-         description: 'category filter to normalize to "All"' });
-  }
-  const initialSearch = await evalOn(app, proxyId, "sourceModel.searchText");
-  if (initialSearch !== "") {
-    const field = await findByObjectName(app.inspector, "appManager.searchField");
-    if (!field) throw new Error("appManager.searchField not in the QML tree");
-    const res = await app.inspector.send("evaluate", {
-      objectId: field.id, expression: 'text = ""',
-    });
-    if (res.error) throw new Error(`clearing the search failed: ${res.error}`);
-    await app.waitFor(async () => {
-      const s = await evalOn(app, proxyId, "sourceModel.searchText");
-      if (s !== "") {
-        throw new Error(
-          `sourceModel.searchText=${JSON.stringify(s)} (expected "")`);
-      }
-    }, { timeout: 5000, interval: 100,
-         description: "search to normalize to empty" });
-  }
-
-  // PRECONDITION (spec gate): the "Testing" category cell exists. Fixture A's
-  // category guarantees it in --ci (hard failure there); spec-§0.A skip
-  // against a local app without a testing-category row.
-  try {
-    await app.waitFor(async () => {
-      const cell = await findCategoryCell(CATEGORY);
-      if (!cell) {
-        throw new Error(
-          `appManager.category.${CATEGORY} not in the QML tree`);
-      }
-    }, { timeout: 10000, interval: 500,
-         description: `the "${CATEGORY}" category cell to exist` });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: A11 precondition not met — the "${CATEGORY}" category ` +
-        `cell is absent (no ${CATEGORY.toLowerCase()}-category rows in this ` +
-        `app instance; spec §0.A: skip, not fail, outside --ci)`);
-      return;
-    }
-    throw new Error(
-      `A11 precondition failed — the "${CATEGORY}" category cell never ` +
-      `appeared although fixture A's manifest category is "testing": ` +
-      `${e.message}`);
-  }
-
-  // Record the unfiltered count and SNAPSHOT every outer row's category —
-  // one primitive per evaluate call, as in A10's search-field snapshot.
-  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof preOuterRows !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
-  }
-  const CATEGORY_ROLE = "Qt.UserRole + 5"; // AppsModelRoles::CategoryRole
-  const rowCategory = (i) => evalOn(
-    app, proxyId,
-    `String(sourceModel.data(sourceModel.index(${i}, 0), ${CATEGORY_ROLE}) || "")`);
-  const snapshot = [];
-  for (let i = 0; i < preOuterRows; i += 1) {
-    const value = await rowCategory(i);
-    snapshot.push(typeof value === "string" ? value : "");
-  }
-  // Mirror of filterAcceptsRow's category leg: capitalizeFirst(row) == filter.
-  const expectedFiltered =
-    snapshot.filter((c) => capitalizeFirst(c) === CATEGORY).length;
-  if (expectedFiltered < 1) {
-    throw new Error(
-      `snapshot found 0 "${CATEGORY}"-category rows in ${preOuterRows} outer ` +
-      `rows although the "${CATEGORY}" cell renders — the category snapshot ` +
-      `and AppsFilterProxy::categories() disagree`);
-  }
-
-  // Click "Testing": the filter lands on the proxy, only that category's rows
-  // survive, and the selection (index effect) moves to the clicked cell.
-  await clickCell(CATEGORY);
-  await app.waitFor(async () => {
-    const filter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
-    if (filter !== CATEGORY) {
-      throw new Error(
-        `sourceModel.categoryFilter=${JSON.stringify(filter)} after clicking ` +
-        `"${CATEGORY}" (expected "${CATEGORY}")`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== expectedFiltered) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} with the "${CATEGORY}" ` +
-        `filter (expected ${expectedFiltered} — the snapshot rows with that ` +
-        `category)`);
-    }
-    // The spec's stronger per-row form of the count gate: every surviving
-    // row carries the category role.
-    for (let i = 0; i < outerRows; i += 1) {
-      const c = await rowCategory(i);
-      if (capitalizeFirst(typeof c === "string" ? c : "") !== CATEGORY) {
-        throw new Error(
-          `filtered row ${i} has category ${JSON.stringify(c)} ` +
-          `(expected "${CATEGORY}")`);
-      }
-    }
-    const testingCell = await findCategoryCell(CATEGORY);
-    if (!testingCell) {
-      throw new Error(`appManager.category.${CATEGORY} not in the QML tree`);
-    }
-    const testingHighlighted = await evalOn(app, testingCell.id, "highlighted");
-    if (testingHighlighted !== true) {
-      throw new Error(
-        `"${CATEGORY}" cell highlighted=${testingHighlighted} after its ` +
-        `click (expected true)`);
-    }
-    const allCell = await findCategoryCell("All");
-    if (!allCell) throw new Error("appManager.category.All not in the QML tree");
-    const allHighlighted = await evalOn(app, allCell.id, "highlighted");
-    if (allHighlighted !== false) {
-      throw new Error(
-        `"All" cell highlighted=${allHighlighted} while "${CATEGORY}" is ` +
-        `selected (expected false)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description:
-         `the "${CATEGORY}" category to filter the grid to ` +
-         `${expectedFiltered} row(s)` });
-
-  // Clear: clicking "All" resets the filter, restores the recorded
-  // unfiltered count and moves the selection back — the required end state.
-  await clickCell("All");
-  await app.waitFor(async () => {
-    const filter = await evalOn(app, proxyId, "sourceModel.categoryFilter");
-    if (filter !== "All") {
-      throw new Error(
-        `sourceModel.categoryFilter=${JSON.stringify(filter)} after clicking ` +
-        `"All" (expected "All")`);
-    }
-    const outerRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-    if (outerRows !== preOuterRows) {
-      throw new Error(
-        `outer apps proxy rowCount()=${outerRows} after clearing the ` +
-        `category (expected the recorded unfiltered ${preOuterRows})`);
-    }
-    const allCell = await findCategoryCell("All");
-    if (!allCell) throw new Error("appManager.category.All not in the QML tree");
-    const allHighlighted = await evalOn(app, allCell.id, "highlighted");
-    if (allHighlighted !== true) {
-      throw new Error(
-        `"All" cell highlighted=${allHighlighted} after the reset click ` +
-        `(expected true)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: 'the "All" category to restore the unfiltered grid' });
-});
-
-// --- App Manager (A12) — reload shows the loading state then settles ---
-//
-// Spec §2.A A12 (amended + corrected 2026-08-28): Applications → click
-// obj: appManager.reloadButton. Gates: within 2 s at least one loading
-// observable shows — appManager.loadingOverlay visible === true,
-// backend.appsLoading === true, or the reload button enabled === false
-// (the overlay's visible and the button's enabled both bind the same
-// backend.appsLoading, AppManagerView.qml:325 / AppManagerPanelHeader.qml:74)
-// · appsLoading is false again within 30 s · the outer model count
-// (localAppsProxy.sourceModel.rowCount()) after equals the count before ·
-// G-ERR (the suite epilogue's QML-error scan).
-//
-// The click goes through the button's objectName, never by text: "Reload" is
-// also rendered inside package_manager_ui's view (the PMUI section test
-// below asserts that instance), so a text click could land on the wrong
-// widget — the sidebarSection lesson again.
-//
-// Offline (the hermetic --ci build) PackageCoordinator::remoteRefresh sets
-// appsLoading synchronously, but the catalog fetch gives up after
-// ~10 × 200 ms ≈ 2 s and clears it — the loading window can be that brief,
-// so the phase gate polls all three observables in one fast (50 ms) loop
-// instead of the suite's usual 250-500 ms waitFor cadence, and any one of
-// them counts as the phase observed.
-//
-// A failed offline fetch never reaches replaceCatalog /
-// mergeLocalOnlyInstalled, so no rows may be removed: both counts recorded
-// before the click (outer sourceModel.rowCount() plus the local section's
-// visibleCount) must survive verbatim. Counts use the proven A8/A10 anchor
-// path — the spec's uiAppsProxy is a ContentViews.qml id and does not
-// evaluate. backend.appsLoading is read via the overlay anchor (backend is
-// an engine-wide context property; one primitive per evaluate call).
-// Cleanup: the test ends only after appsLoading is false, the overlay is
-// hidden and the reload button re-enabled.
-
-test("app manager: reload shows the loading state then settles", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
-
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-
-  let reloadButton = null;
-  await app.waitFor(async () => {
-    reloadButton = await findByObjectName(app.inspector, "appManager.reloadButton");
-    if (!reloadButton) {
-      throw new Error("appManager.reloadButton not in the QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "reload button to exist" });
-
-  let overlay = null;
-  await app.waitFor(async () => {
-    overlay = await findByObjectName(app.inspector, "appManager.loadingOverlay");
-    if (!overlay) {
-      throw new Error("appManager.loadingOverlay not in the QML tree");
-    }
-  }, { timeout: 10000, interval: 500, description: "loading overlay to exist" });
-
-  // Normalize: no refresh may be in flight while the counts are recorded —
-  // a still-settling boot refresh would race the recording, and the click
-  // below must be a legitimate one (enabled binds !loading).
-  await app.waitFor(async () => {
-    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
-    if (loading !== false) {
-      throw new Error(
-        `backend.appsLoading=${JSON.stringify(loading)} (expected false)`);
-    }
-    const enabled = await evalOn(app, reloadButton.id, "enabled");
-    if (enabled !== true) {
-      throw new Error(
-        `reload button enabled=${JSON.stringify(enabled)} (expected true)`);
-    }
-  }, { timeout: 30000, interval: 500,
-       description: "no refresh to be in flight before the click" });
-
-  // Record the pre-click counts the post-settle gate compares against.
-  const preOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof preOuterRows !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(preOuterRows)} (expected number)`);
-  }
-  const preLocal = await evalOn(app, proxyId, "visibleCount");
-  if (typeof preLocal !== "number") {
-    throw new Error(
-      `localAppsProxy.visibleCount=${JSON.stringify(preLocal)} (expected number)`);
-  }
-
-  // Click reload — signal-level, as everywhere in the A-series.
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: reloadButton.id, method: "clicked",
-  });
-  if (clicked.error) {
-    throw new Error(`clicking appManager.reloadButton failed: ${clicked.error}`);
-  }
-
-  // Gate 1 — the loading phase is observable within 2 s of the click.
-  const phaseDeadline = Date.now() + 2000;
-  let observed = null;
-  for (;;) {
-    const overlayVisible = await evalOn(app, overlay.id, "visible");
-    if (overlayVisible === true) { observed = "loadingOverlay visible"; break; }
-    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
-    if (loading === true) { observed = "backend.appsLoading === true"; break; }
-    const enabled = await evalOn(app, reloadButton.id, "enabled");
-    if (enabled === false) { observed = "reload button disabled"; break; }
-    if (Date.now() >= phaseDeadline) {
-      throw new Error(
-        "no loading observable within 2s of clicking reload — the overlay " +
-        "stayed hidden, backend.appsLoading stayed false and the reload " +
-        "button stayed enabled");
-    }
-    await sleep(50);
-  }
-  console.log(`    loading phase observed via: ${observed}`);
-
-  // Gate 2 — settles within 30 s: appsLoading false again, the overlay
-  // hidden and the button re-enabled (the required end state).
-  await app.waitFor(async () => {
-    const loading = await evalOn(app, overlay.id, "backend.appsLoading");
-    if (loading !== false) {
-      throw new Error(
-        `backend.appsLoading=${JSON.stringify(loading)} (expected false)`);
-    }
-    const overlayVisible = await evalOn(app, overlay.id, "visible");
-    if (overlayVisible !== false) {
-      throw new Error(
-        `appManager.loadingOverlay visible=${overlayVisible} after the ` +
-        `reload settled (expected false)`);
-    }
-    const enabled = await evalOn(app, reloadButton.id, "enabled");
-    if (enabled !== true) {
-      throw new Error(
-        `reload button enabled=${enabled} after the reload settled ` +
-        `(expected true)`);
-    }
-  }, { timeout: 30000, interval: 250, description: "reload to settle" });
-
-  // Gate 3 — no rows lost. Single-shot reads on purpose: the failed offline
-  // fetch never touches the model, so the counts must already be back the
-  // moment appsLoading clears — a retried wait would mask a transient drop.
-  const postOuterRows = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (postOuterRows !== preOuterRows) {
-    throw new Error(
-      `outer apps proxy rowCount()=${postOuterRows} after the reload ` +
-      `settled (expected the recorded pre-click ${preOuterRows})`);
-  }
-  const postLocal = await evalOn(app, proxyId, "visibleCount");
-  if (postLocal !== preLocal) {
-    throw new Error(
-      `localAppsProxy.visibleCount=${postLocal} after the reload settled ` +
-      `(expected the recorded pre-click ${preLocal})`);
-  }
-});
-
-// --- App Manager — context-menu / Details-dialog helpers ---
-//
-// Shared plumbing for A13–A15: anchor on appManager.localAppsProxy, read
-// outer-model rows, find the AppContextMenu owned by the App Manager
-// delegate rendering a row, open it via openFor(d.snapshot()), trigger a
-// menu item by objectName, and find, text-check and close the single
-// AddApplicationDialog instance.
-//
-// Menu selection probes each AppContextMenu's delegate scope (d.nameText,
-// d.isInstalled, root.contextMenuEnabled): the welcome page also builds
-// AppGridDelegate tiles with contextMenuEnabled: false and no
-// detailsRequested wiring, and they precede the App Manager's in
-// findByType order. Menu items are addressed through the same instance
-// over its own count/itemAt — a tree-wide objectName find would hit
-// another delegate's unopened menu. Details is wired declaratively down
-// to backend.openApp, which opens OverlayDialogs' single
-// AddApplicationDialog; it has no objectName and lives in the overlay
-// QQuickWidget, so its texts are checked with a dialog-scoped walk over
-// contentItem. callMethod is never used for openFor: it mis-converts
-// arguments.
-
-// Outer-model roles the menu's appData consumes (BasecampModelRoles.h
-// AppsModelRoles); kind picks the primitive coercion for evaluate.
-const APPS_ROW_FIELDS = [
-  ["name",          "Qt.UserRole + 1",  "string"], // NameRole
-  ["repositoryUrl", "Qt.UserRole + 2",  "string"], // RepositoryUrlRole
-  ["displayName",   "Qt.UserRole + 3",  "string"], // DisplayNameRole
-  ["isInstalled",   "Qt.UserRole + 14", "bool"],   // IsInstalledRole
-  ["installStatus", "Qt.UserRole + 16", "number"], // InstallStatusRole
-  ["installType",   "Qt.UserRole + 17", "string"], // InstallTypeRole
-  ["installStage",  "Qt.UserRole + 29", "number"], // PlanInstallStageRole — what the delegates snapshot
-];
+// AppsFilterProxy's search is a fixed-string case-insensitive contains over
+// name/displayName/description. appManager.localAppsProxy chains
+// matchLocalOnly onto the searched proxy, so its visibleCount tracks the
+// search and its sourceModel is the searched ("outer") proxy — the same
+// AppsFilterProxy AppManagerView calls appsProxy. Offline, the outer model
+// holds the local installs plus package_downloader's default catalog.
+
+// AppsModelRoles (app/interfaces/BasecampModelRoles.h) as evaluate expressions.
+const APPS_ROLE = {
+  name: "Qt.UserRole + 1",
+  repositoryUrl: "Qt.UserRole + 2",
+  displayName: "Qt.UserRole + 3",
+  description: "Qt.UserRole + 4",
+  category: "Qt.UserRole + 5",
+  isInstalled: "Qt.UserRole + 14",
+  installStatus: "Qt.UserRole + 16",
+  installType: "Qt.UserRole + 17",
+  installStage: "Qt.UserRole + 29", // PlanInstallStageRole — what the delegates snapshot
+};
 
 // Opens the Applications view and returns the appManager.localAppsProxy id.
 async function openApplicationsWithProxy(app) {
@@ -2333,24 +664,18 @@ async function openApplicationsWithProxy(app) {
   let proxyId = null;
   await app.waitFor(async () => {
     proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) {
-      throw new Error("appManager.localAppsProxy not found in QML tree");
-    }
+    if (proxyId === null) throw new Error("appManager.localAppsProxy not found in QML tree");
   }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
   return proxyId;
 }
 
 async function outerRowCount(app, proxyId) {
-  const rowCount = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (typeof rowCount !== "number") {
-    throw new Error(
-      `outer proxy rowCount()=${JSON.stringify(rowCount)} (expected number)`);
-  }
-  return rowCount;
+  return assertType(await evalOn(app, proxyId, "sourceModel.rowCount()"),
+                    "number", "outer proxy rowCount()");
 }
 
-// Reads one primitive role of outer-model row `i`.
-async function outerRowField(app, proxyId, i, roleExpr, kind) {
+// One primitive role of outer-model row `i`; unset roles coerce to "" / false / 0.
+async function outerRowField(app, proxyId, i, roleExpr, kind = "string") {
   const data = `sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr})`;
   const expr = kind === "string" ? `String(${data} || "")`
     : kind === "bool" ? `${data} === true`
@@ -2358,7 +683,419 @@ async function outerRowField(app, proxyId, i, roleExpr, kind) {
   return evalOn(app, proxyId, expr);
 }
 
-// Full appData-contract snapshot of outer-model row `i`.
+// A search field driven by assigning `text`. That breaks the
+// `text: d.searchText` binding, which is harmless: onTextChanged still feeds
+// d.searchText, and every test ends with the field cleared.
+async function searchFieldOn(app, objectName) {
+  const field = await requireObject(app, objectName);
+  const get = () => evalOn(app, field.id, "text");
+  const set = (value) => evalOn(app, field.id, `text = ${JSON.stringify(value)}`);
+  const expectText = async (expected) => assertEq(await get(), expected, `${objectName} text`);
+  // Clears leftover text so a recorded baseline is unfiltered.
+  const normalize = async () => {
+    if (assertType(await get(), "string", `${objectName} text`) === "") return;
+    await set("");
+    await app.waitFor(() => expectText(""),
+      { timeout: 5000, interval: 100, description: `${objectName} to clear` });
+  };
+  return { id: field.id, get, set, expectText, normalize };
+}
+
+// Clears the App Manager search and waits for the recorded counts to return
+// and the empty view to hide.
+async function clearAppManagerSearch(app, search, proxyId, { preLocal = null, preOuterRows }) {
+  const emptyView = await requireObject(app, "appManager.emptyView");
+  await search.set("");
+  await app.waitFor(async () => {
+    await search.expectText("");
+    assertEq(await outerRowCount(app, proxyId), preOuterRows,
+             "outer proxy rowCount() after clearing the search");
+    if (preLocal !== null) {
+      assertEq(await evalOn(app, proxyId, "visibleCount"), preLocal,
+               "localAppsProxy.visibleCount after clearing the search");
+    }
+    assertEq(await evalOn(app, emptyView.id, "visible"), false,
+             "appManager.emptyView visible after clearing the search");
+  }, { timeout: 5000, interval: 250, description: "cleared search to restore the grid" });
+}
+
+// Precondition: fixture A installed and at least one local row in the grid.
+// Returns localAppsProxy.visibleCount, or null on skip.
+async function requireFixtureALocalRow(app, label, proxyId) {
+  return requireFixtureA(app, label, async () => {
+    await findFixtureATile(app);
+    const count = await evalOn(app, proxyId, "visibleCount");
+    if (typeof count !== "number" || count < 1) {
+      throw new Error(`localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
+    }
+    return count;
+  }, "fixture A and at least one local row to be present");
+}
+
+// --- App Manager (A8) — search narrows the grid to matching apps ---
+
+test("app manager: search narrows the grid to matching apps", async (app) => {
+  const proxyId = await openApplicationsWithProxy(app);
+  const search = await searchFieldOn(app, "appManager.searchField");
+  await search.normalize();
+  const preLocal = await requireFixtureALocalRow(app, "A8", proxyId);
+  if (preLocal === null) return;
+  const preOuterRows = await outerRowCount(app, proxyId);
+
+  // Wrong case proves case-insensitivity. The spaced display name matches
+  // only via DisplayNameRole (name and description use the underscored form).
+  const matchQuery = FIXTURE_A.displayName.toUpperCase();
+  if (matchQuery === FIXTURE_A.displayName) {
+    throw new Error(
+      `FIXTURE_A.displayName=${JSON.stringify(FIXTURE_A.displayName)} is already ` +
+      "upper-case, so the wrong-case leg cannot prove case-insensitivity");
+  }
+  await search.set(matchQuery);
+  await app.waitFor(async () => {
+    await search.expectText(matchQuery);
+    assertEq(await evalOn(app, proxyId, "visibleCount"), 1,
+             "localAppsProxy.visibleCount with wrong-case display-name search");
+    assertEq(await outerRowCount(app, proxyId), 1,
+             "outer proxy rowCount() with wrong-case display-name search");
+  }, { timeout: 5000, interval: 250,
+       description: "wrong-case display-name search to narrow to fixture A" });
+
+  const noMatchQuery = `${matchQuery} ZZZ-NO-SUCH-APP`;
+  await search.set(noMatchQuery);
+  await app.waitFor(async () => {
+    await search.expectText(noMatchQuery);
+    assertEq(await evalOn(app, proxyId, "visibleCount"), 0,
+             "localAppsProxy.visibleCount with non-matching search");
+    assertEq(await outerRowCount(app, proxyId), 0,
+             "outer proxy rowCount() with non-matching search");
+  }, { timeout: 5000, interval: 250, description: "non-matching search to empty the grid" });
+
+  await clearAppManagerSearch(app, search, proxyId, { preLocal, preOuterRows });
+});
+
+// --- App Manager (A9) — search with no match shows the empty view ---
+
+test("app manager: search with no match shows the empty view", async (app) => {
+  const proxyId = await openApplicationsWithProxy(app);
+
+  // A catalog refresh landing mid-test would cover the empty view and move
+  // the counts the restore gate compares against.
+  const overlay = await requireObject(app, "appManager.loadingOverlay");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, overlay.id, "visible"), false, "appManager.loadingOverlay visible");
+  }, { timeout: 30000, interval: 500, description: "apps loading overlay to hide" });
+
+  const search = await searchFieldOn(app, "appManager.searchField");
+  // A plain (non-Loader) child, findable while hidden.
+  const emptyView = await requireObject(app, "appManager.emptyView");
+  await search.normalize();
+  const preLocal = assertType(await evalOn(app, proxyId, "visibleCount"),
+                              "number", "localAppsProxy.visibleCount");
+  const preOuterRows = await outerRowCount(app, proxyId);
+
+  // title (EmptyView) or text (LogosText), whichever is a non-empty string.
+  const emptyViewMessage = async () => {
+    for (const prop of ["title", "text"]) {
+      const res = await app.inspector.send("evaluate", { objectId: emptyView.id, expression: prop });
+      if (!res.error && typeof res.result === "string" && res.result.length > 0) return res.result;
+    }
+    return "";
+  };
+
+  // Every AppRepoSection: the Repeater's repo delegates plus the
+  // always-instantiated synthetic local one, so zero matches means the
+  // probe itself broke.
+  const visibleRepoSectionCount = async () => {
+    const matches = await findByType(app, "AppRepoSection");
+    if (matches.length === 0) {
+      throw new Error("findByType(AppRepoSection) returned no instances");
+    }
+    let count = 0;
+    for (const m of matches) {
+      if ((await evalOn(app, m.id, "visible")) === true) count += 1;
+    }
+    return count;
+  };
+
+  // The synthetic local section's header is the lowercase "local". Uses
+  // getProperties: a non-visual match has no `visible` and does not count,
+  // while a failed round-trip must surface.
+  const visibleLocalHeaderCount = async () => {
+    const hits = await app.inspector.send("findByProperty", { property: "text", value: "local" });
+    if (hits.error) throw new Error(`findByProperty(text="local") failed: ${hits.error}`);
+    let count = 0;
+    for (const m of (hits.matches ?? [])) {
+      const props = await app.inspector.send("getProperties", { objectId: m.id });
+      if (props.error) throw new Error(`getProperties(${m.id}) failed: ${props.error}`);
+      if (props.properties?.find((p) => p.name === "visible")?.value === true) count += 1;
+    }
+    return count;
+  };
+
+  // "§" is inert data: the filter is fixed-string, not a pattern.
+  const noMatchQuery = "zzz-no-such-app-§";
+  await search.set(noMatchQuery);
+  await app.waitFor(async () => {
+    await search.expectText(noMatchQuery);
+    assertEq(await outerRowCount(app, proxyId), 0, "outer proxy rowCount() with no-match search");
+    assertEq(await evalOn(app, proxyId, "visibleCount"), 0,
+             "localAppsProxy.visibleCount with no-match search");
+    assertEq(await evalOn(app, emptyView.id, "visible"), true,
+             "appManager.emptyView visible with no-match search");
+    if ((await emptyViewMessage()).length === 0) {
+      throw new Error("appManager.emptyView carries no message (neither title nor text)");
+    }
+    assertEq(await visibleRepoSectionCount(), 0, "visible AppRepoSections with no-match search");
+    assertEq(await visibleLocalHeaderCount(), 0, 'visible "local" headers with no-match search');
+  }, { timeout: 5000, interval: 250, description: "no-match search to show the empty view" });
+
+  await clearAppManagerSearch(app, search, proxyId, { preLocal, preOuterRows });
+});
+
+// --- App Manager (A10) — search tolerates regex/special/unicode input ---
+//
+// Regex metacharacters are inert data to the fixed-string filter, so none of
+// these inputs may produce QRegularExpression warnings or a stale grid. The
+// expected count per input is computed from a snapshot of the searched
+// fields, mirroring the C++ filter: "(" matches fixture A's own description,
+// and the outer model also holds the default catalog.
+
+test("app manager: search tolerates regex/special/unicode input", async (app) => {
+  const proxyId = await openApplicationsWithProxy(app);
+  const search = await searchFieldOn(app, "appManager.searchField");
+  const emptyView = await requireObject(app, "appManager.emptyView");
+
+  // Scanned from a baseline taken now; no-op when BASECAMP_APP_LOG is unset.
+  const appLogPath = process.env.BASECAMP_APP_LOG || null;
+  let appLogBaseline = 0;
+  if (appLogPath) {
+    try { appLogBaseline = statSync(appLogPath).size; } catch { appLogBaseline = 0; }
+  }
+  const assertNoRegexWarnings = (label) => {
+    if (!appLogPath) return;
+    let tail = "";
+    try {
+      tail = readFileSync(appLogPath).subarray(appLogBaseline).toString("utf-8");
+    } catch {
+      return;
+    }
+    const hits = tail.split("\n").filter((l) => l.includes("QRegularExpression"));
+    if (hits.length > 0) {
+      throw new Error(
+        `${hits.length} QRegularExpression warning(s) in the app log after input ` +
+        `${label}:\n  ${hits.join("\n  ")}`);
+    }
+  };
+
+  // Keeps the 512-char input out of descriptions and error messages.
+  const labelFor = (input) =>
+    input.length > 16
+      ? `${JSON.stringify(`${input.slice(0, 8)}…`)} (${input.length} chars)`
+      : JSON.stringify(input);
+
+  await search.normalize();
+  if ((await requireFixtureALocalRow(app, "A10", proxyId)) === null) return;
+  const preOuterRows = await outerRowCount(app, proxyId);
+
+  const snapshot = [];
+  for (let i = 0; i < preOuterRows; i += 1) {
+    snapshot.push({
+      name: await outerRowField(app, proxyId, i, APPS_ROLE.name),
+      displayName: await outerRowField(app, proxyId, i, APPS_ROLE.displayName),
+      description: await outerRowField(app, proxyId, i, APPS_ROLE.description),
+    });
+  }
+  const expectedMatches = (input) => {
+    const needle = input.toLowerCase();
+    return snapshot.filter((r) =>
+      [r.name, r.displayName, r.description].some((v) => v.toLowerCase().includes(needle))
+    ).length;
+  };
+
+  const inputs = ["(", "[", "*", "\\", ".*", "日本語", "x".repeat(512)];
+  for (const input of inputs) {
+    const expected = expectedMatches(input);
+    const label = labelFor(input);
+    await search.set(input);
+    await app.waitFor(async () => {
+      const text = await search.get();
+      if (text !== input) {
+        throw new Error(
+          `search text=${labelFor(String(text))} did not round-trip (expected ${label})`);
+      }
+      assertEq(await outerRowCount(app, proxyId), expected,
+               `outer proxy rowCount() for input ${label}`);
+      assertEq(await evalOn(app, emptyView.id, "visible"), expected === 0,
+               `appManager.emptyView visible for input ${label}`);
+    }, { timeout: 5000, interval: 100,
+         description: `input ${label} to filter to ${expected} row(s)` });
+    assertNoRegexWarnings(label);
+  }
+
+  await assertResponsive(app);
+  await clearAppManagerSearch(app, search, proxyId, { preOuterRows });
+  assertNoRegexWarnings('"" (clear)');
+});
+
+// --- App Manager (A11) — selecting a category filters the grid ---
+//
+// The filter is read as sourceModel.categoryFilter: object-scoped evaluate
+// cannot reach AppManagerView's file-internal `d`. The selection shows
+// through the cells' `highlighted` (ListView.isCurrentItem). Fixture A's
+// manifest category is "testing", which AppsFilterProxy::categories()
+// capitalizes; the expected count is computed from a snapshot of every
+// outer row's category, mirroring filterAcceptsRow's capitalizeFirst.
+
+test("app manager: selecting a category filters the grid", async (app) => {
+  const proxyId = await openApplicationsWithProxy(app);
+  const CATEGORY = "Testing";
+  const capitalizeFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  const categoryFilter = () => evalOn(app, proxyId, "sourceModel.categoryFilter");
+
+  // Cells are re-found on every use: categoriesChanged can rebuild the
+  // ListView's delegates.
+  const findCategoryCell = (name) =>
+    findByObjectName(app.inspector, `appManager.category.${name}`);
+  const requireCell = async (name) => {
+    const cell = await findCategoryCell(name);
+    if (!cell) throw new Error(`appManager.category.${name} not in the QML tree`);
+    return cell;
+  };
+  const clickCell = async (name) => evalOn(app, (await requireCell(name)).id, "clicked()");
+  const cellHighlighted = async (name) => evalOn(app, (await requireCell(name)).id, "highlighted");
+
+  // Normalize: "All" category and an empty search. The search is cleared
+  // through the field so d.searchText stays in sync.
+  const initialFilter = assertType(await categoryFilter(), "string", "sourceModel.categoryFilter");
+  if (initialFilter !== "" && initialFilter !== "All") {
+    await clickCell("All");
+    await app.waitFor(async () => {
+      assertEq(await categoryFilter(), "All", "sourceModel.categoryFilter");
+    }, { timeout: 5000, interval: 100, description: 'category filter to normalize to "All"' });
+  }
+  if ((await evalOn(app, proxyId, "sourceModel.searchText")) !== "") {
+    await (await searchFieldOn(app, "appManager.searchField")).set("");
+    await app.waitFor(async () => {
+      assertEq(await evalOn(app, proxyId, "sourceModel.searchText"), "", "sourceModel.searchText");
+    }, { timeout: 5000, interval: 100, description: "search to normalize to empty" });
+  }
+
+  const cell = await requireFixtureA(app, "A11", () => requireCell(CATEGORY),
+                                     `the "${CATEGORY}" category cell to exist`);
+  if (cell === null) return;
+
+  const preOuterRows = await outerRowCount(app, proxyId);
+  const rowCategory = (i) => outerRowField(app, proxyId, i, APPS_ROLE.category);
+  const snapshot = [];
+  for (let i = 0; i < preOuterRows; i += 1) snapshot.push(await rowCategory(i));
+  const expectedFiltered = snapshot.filter((c) => capitalizeFirst(c) === CATEGORY).length;
+  if (expectedFiltered < 1) {
+    throw new Error(
+      `snapshot found 0 "${CATEGORY}"-category rows in ${preOuterRows} outer rows ` +
+      `although the "${CATEGORY}" cell renders`);
+  }
+
+  await clickCell(CATEGORY);
+  await app.waitFor(async () => {
+    assertEq(await categoryFilter(), CATEGORY, "sourceModel.categoryFilter after the click");
+    const outerRows = await outerRowCount(app, proxyId);
+    assertEq(outerRows, expectedFiltered, `outer proxy rowCount() with the "${CATEGORY}" filter`);
+    for (let i = 0; i < outerRows; i += 1) {
+      assertEq(capitalizeFirst(await rowCategory(i)), CATEGORY, `filtered row ${i} category`);
+    }
+    assertEq(await cellHighlighted(CATEGORY), true, `"${CATEGORY}" cell highlighted`);
+    assertEq(await cellHighlighted("All"), false, '"All" cell highlighted');
+  }, { timeout: 5000, interval: 100,
+       description: `the "${CATEGORY}" category to filter the grid to ${expectedFiltered} row(s)` });
+
+  await clickCell("All");
+  await app.waitFor(async () => {
+    assertEq(await categoryFilter(), "All", 'sourceModel.categoryFilter after clicking "All"');
+    assertEq(await outerRowCount(app, proxyId), preOuterRows,
+             "outer proxy rowCount() after clearing the category");
+    assertEq(await cellHighlighted("All"), true, '"All" cell highlighted after the reset');
+  }, { timeout: 5000, interval: 100,
+       description: 'the "All" category to restore the unfiltered grid' });
+});
+
+// --- App Manager (A12) — reload shows the loading state then settles ---
+//
+// The overlay's visible and the reload button's enabled both bind
+// backend.appsLoading. Offline, the catalog fetch gives up after ~2 s, so the
+// loading window is short: the phase gate polls all three observables in a
+// fast loop and any one counts. A failed fetch never touches the model, so
+// both counts must survive verbatim. The button is clicked by objectName:
+// package_manager_ui renders its own "Reload".
+
+test("app manager: reload shows the loading state then settles", async (app) => {
+  const proxyId = await openApplicationsWithProxy(app);
+  const reloadButton = await requireObject(app, "appManager.reloadButton");
+  const overlay = await requireObject(app, "appManager.loadingOverlay");
+  const appsLoading = () => evalOn(app, overlay.id, "backend.appsLoading");
+  const overlayVisible = () => evalOn(app, overlay.id, "visible");
+  const reloadEnabled = () => evalOn(app, reloadButton.id, "enabled");
+
+  // No refresh may be in flight while the counts are recorded.
+  await app.waitFor(async () => {
+    assertEq(await appsLoading(), false, "backend.appsLoading");
+    assertEq(await reloadEnabled(), true, "reload button enabled");
+  }, { timeout: 30000, interval: 500, description: "no refresh to be in flight before the click" });
+  const preOuterRows = await outerRowCount(app, proxyId);
+  const preLocal = assertType(await evalOn(app, proxyId, "visibleCount"),
+                              "number", "localAppsProxy.visibleCount");
+
+  await invoke(app, reloadButton.id, "clicked", "clicking appManager.reloadButton");
+
+  const phaseDeadline = Date.now() + 2000;
+  let observed = null;
+  for (;;) {
+    if ((await overlayVisible()) === true) { observed = "loadingOverlay visible"; break; }
+    if ((await appsLoading()) === true) { observed = "backend.appsLoading === true"; break; }
+    if ((await reloadEnabled()) === false) { observed = "reload button disabled"; break; }
+    if (Date.now() >= phaseDeadline) {
+      throw new Error(
+        "no loading observable within 2s of clicking reload (overlay hidden, " +
+        "backend.appsLoading false, reload button enabled)");
+    }
+    await sleep(50);
+  }
+  console.log(`    loading phase observed via: ${observed}`);
+
+  await app.waitFor(async () => {
+    assertEq(await appsLoading(), false, "backend.appsLoading after reload");
+    assertEq(await overlayVisible(), false, "appManager.loadingOverlay visible after reload");
+    assertEq(await reloadEnabled(), true, "reload button enabled after reload");
+  }, { timeout: 30000, interval: 250, description: "reload to settle" });
+
+  // Single-shot reads: the counts must already be back the moment
+  // appsLoading clears, and a retried wait would mask a transient drop.
+  assertEq(await outerRowCount(app, proxyId), preOuterRows,
+           "outer proxy rowCount() after the reload settled");
+  assertEq(await evalOn(app, proxyId, "visibleCount"), preLocal,
+           "localAppsProxy.visibleCount after the reload settled");
+});
+
+// --- App Manager — context-menu / Details-dialog helpers (A13–A15) ---------
+//
+// The welcome page also builds AppGridDelegate tiles, with contextMenuEnabled
+// false and no detailsRequested wiring, and they precede the App Manager's in
+// findByType order, so menus are selected by probing each AppContextMenu's
+// delegate scope. Menu items are addressed through the menu's own
+// count/itemAt: a tree-wide objectName find would hit another delegate's
+// unopened menu. The AddApplicationDialog has no objectName and lives in the
+// overlay QQuickWidget, so its texts are checked with a walk over contentItem.
+
+// The outer-model roles the menu's appData consumes; kind picks the coercion.
+const APPS_ROW_FIELDS = [
+  ["name",          APPS_ROLE.name,          "string"],
+  ["repositoryUrl", APPS_ROLE.repositoryUrl, "string"],
+  ["displayName",   APPS_ROLE.displayName,   "string"],
+  ["isInstalled",   APPS_ROLE.isInstalled,   "bool"],
+  ["installStatus", APPS_ROLE.installStatus, "number"],
+  ["installType",   APPS_ROLE.installType,   "string"],
+  ["installStage",  APPS_ROLE.installStage,  "number"],
+];
+
 async function readOuterRow(app, proxyId, i) {
   const row = {};
   for (const [key, roleExpr, kind] of APPS_ROW_FIELDS) {
@@ -2367,7 +1104,6 @@ async function readOuterRow(app, proxyId, i) {
   return row;
 }
 
-// Snapshot of every outer-model row.
 async function snapshotOuterRows(app, proxyId) {
   const rowCount = await outerRowCount(app, proxyId);
   const rows = [];
@@ -2375,50 +1111,24 @@ async function snapshotOuterRows(app, proxyId) {
   return rows;
 }
 
-// Fixture A's row, or null.
+// Fixture A's installed row, or null.
 async function findFixtureARow(app, proxyId) {
   const rowCount = await outerRowCount(app, proxyId);
   for (let i = 0; i < rowCount; i += 1) {
-    const name = await outerRowField(app, proxyId, i, "Qt.UserRole + 1", "string");
-    if (name === FIXTURE_A.name) return readOuterRow(app, proxyId, i);
+    const name = await outerRowField(app, proxyId, i, APPS_ROLE.name);
+    if (name === FIXTURE_A.name) {
+      const row = await readOuterRow(app, proxyId, i);
+      return row.isInstalled === true ? row : null;
+    }
   }
   return null;
 }
 
-// Precondition gate: fixture A's installed row is in the model — hard
-// failure in --ci (pre-seeded at boot), spec-§0.A skip otherwise. Returns
-// `probe`'s value, or null when the test should skip (already logged).
-async function requireFixtureARow(app, label, probe) {
-  let value = null;
-  try {
-    await app.waitFor(async () => { value = await probe(); },
-      { timeout: 10000, interval: 500,
-        description: "fixture A's installed row to appear in the model" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(
-        `    SKIP: fixture A (${FIXTURE_A.name}) has no installed row in ` +
-        `this app instance (spec §0.A: skip, not fail, outside --ci)`);
-      return null;
-    }
-    throw new Error(
-      `${label} precondition failed — fixture A's installed row never ` +
-      `appeared: ${e.message}`);
-  }
-  return value;
-}
-
 // The AppContextMenu owned by the App Manager delegate rendering `row`, or
-// null if none is live. Disabled menus are skipped; an unresolvable scope is reported.
+// null if none is live. Disabled menus are skipped.
 async function findDelegateMenu(app, row) {
-  const res = typeof app.findByType === "function"
-    ? await app.findByType("AppContextMenu")
-    : await app.inspector.send("findByType", { typeName: "AppContextMenu" });
-  if (res.error) throw new Error(`findByType(AppContextMenu) failed: ${res.error}`);
-  const matches = res.matches ?? [];
-  if (matches.length === 0) {
-    throw new Error("no AppContextMenu instance in the QML tree");
-  }
+  const matches = await findByType(app, "AppContextMenu");
+  if (matches.length === 0) throw new Error("no AppContextMenu instance in the QML tree");
   for (const m of matches) {
     const probe = await app.inspector.send("evaluate", {
       objectId: m.id,
@@ -2429,8 +1139,7 @@ async function findDelegateMenu(app, row) {
     });
     if (probe.error) {
       throw new Error(
-        `delegate state (d.nameText/d.isInstalled) does not resolve in ` +
-        `AppContextMenu ${m.id}'s scope: ${probe.error}`);
+        `delegate state does not resolve in AppContextMenu ${m.id}'s scope: ${probe.error}`);
     }
     const got = JSON.parse(probe.result);
     if (!got.menuEnabled) continue;
@@ -2439,14 +1148,12 @@ async function findDelegateMenu(app, row) {
   return null;
 }
 
-// Waits for fixture A's delegate menu; the installed section renders first.
 async function requireFixtureAMenu(app, row) {
   let menuId = null;
   await app.waitFor(async () => {
     menuId = await findDelegateMenu(app, row);
     if (menuId === null) {
-      throw new Error(
-        `no live delegate renders fixture A's installed row ("${row.name}")`);
+      throw new Error(`no live delegate renders fixture A's installed row ("${row.name}")`);
     }
   }, { timeout: 10000, interval: 500,
        description: "fixture A's delegate (and its AppContextMenu) to exist" });
@@ -2455,164 +1162,76 @@ async function requireFixtureAMenu(app, row) {
 
 // The delegate TapHandler's handler verbatim; waits for the menu to show.
 async function openContextMenuFor(app, menuId, label) {
-  const res = await app.inspector.send("evaluate", {
-    objectId: menuId, expression: "openFor(d.snapshot())",
-  });
-  if (res.error) {
-    throw new Error(`openFor(d.snapshot()) for the ${label} row failed: ${res.error}`);
-  }
+  await evalOn(app, menuId, "openFor(d.snapshot())");
   await app.waitFor(async () => {
-    const menuVisible = await evalOn(app, menuId, "visible");
-    if (menuVisible !== true) {
-      throw new Error(
-        `AppContextMenu visible=${menuVisible} after openFor (expected true)`);
-    }
+    assertEq(await evalOn(app, menuId, "visible"), true,
+             `AppContextMenu visible after openFor (${label})`);
   }, { timeout: 5000, interval: 100, description: "the context menu to open" });
 }
 
 // The appData the delegate handed the menu must equal its model row.
 async function assertMenuAppData(app, menuId, row, label) {
-  const res = await app.inspector.send("evaluate", {
-    objectId: menuId, expression: "JSON.stringify(appData)",
-  });
-  if (res.error) {
-    throw new Error(`evaluate(appData) for the ${label} row failed: ${res.error}`);
-  }
-  const appData = JSON.parse(res.result);
+  const appData = JSON.parse(await evalOn(app, menuId, "JSON.stringify(appData)"));
   for (const [key] of APPS_ROW_FIELDS) {
-    if (appData[key] !== row[key]) {
-      throw new Error(
-        `menu appData.${key}=${JSON.stringify(appData[key])} for the ${label} ` +
-        `row (delegate snapshot) but the model row has ` +
-        `${JSON.stringify(row[key])}`);
-    }
+    assertEq(appData[key], row[key], `menu appData.${key} for the ${label} row`);
   }
 }
 
-// close() on the menu instance, then assert it hid.
 async function closeContextMenu(app, menuId, label) {
-  const res = await app.inspector.send("evaluate", {
-    objectId: menuId, expression: "close()",
-  });
-  if (res.error) {
-    throw new Error(`close() after ${label} failed: ${res.error}`);
-  }
+  await evalOn(app, menuId, "close()");
   await app.waitFor(async () => {
-    const visible = await evalOn(app, menuId, "visible");
-    if (visible !== false) {
-      throw new Error(
-        `AppContextMenu visible=${visible} after close() (expected false)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: `the menu to close after ${label}` });
+    assertEq(await evalOn(app, menuId, "visible"), false, `AppContextMenu visible after close() (${label})`);
+  }, { timeout: 5000, interval: 100, description: `the menu to close after ${label}` });
 }
 
 // Emits triggered() on this menu's item found by objectName among its own items.
 async function triggerContextMenuItem(app, menuId, objectName) {
-  const trig = await app.inspector.send("evaluate", {
-    objectId: menuId,
-    expression: `(() => {
-      for (let i = 0; i < count; i += 1) {
-        const item = itemAt(i);
-        if (!item || item.objectName !== ${JSON.stringify(objectName)}) continue;
-        if (item.visible !== true) return "item not visible";
-        item.triggered();
-        return "triggered";
-      }
-      return "item not found";
-    })()`,
-  });
-  if (trig.error) throw new Error(`evaluate(trigger ${objectName}) failed: ${trig.error}`);
-  if (trig.result !== "triggered") {
-    throw new Error(`triggering ${objectName} failed: ${trig.result}`);
-  }
+  const result = await evalOn(app, menuId, `(() => {
+    for (let i = 0; i < count; i += 1) {
+      const item = itemAt(i);
+      if (!item || item.objectName !== ${JSON.stringify(objectName)}) continue;
+      if (item.visible !== true) return "item not visible";
+      item.triggered();
+      return "triggered";
+    }
+    return "item not found";
+  })()`);
+  if (result !== "triggered") throw new Error(`triggering ${objectName} failed: ${result}`);
 }
 
 // Waits for the single AddApplicationDialog instance to be visible; returns its id.
 async function waitForAddApplicationDialog(app) {
   let dialogId = null;
   await app.waitFor(async () => {
-    const res = typeof app.findByType === "function"
-      ? await app.findByType("AddApplicationDialog")
-      : await app.inspector.send("findByType", { typeName: "AddApplicationDialog" });
-    if (res.error) {
-      throw new Error(`findByType(AddApplicationDialog) failed: ${res.error}`);
-    }
-    dialogId = (res.matches ?? [])[0]?.id ?? null;
-    if (dialogId === null) {
-      throw new Error("no AddApplicationDialog instance in the QML tree");
-    }
-    const visible = await evalOn(app, dialogId, "visible");
-    if (visible !== true) {
-      throw new Error(
-        `AddApplicationDialog visible=${visible} (expected true)`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "the Add Application dialog to open" });
+    dialogId = (await findByType(app, "AddApplicationDialog"))[0]?.id ?? null;
+    if (dialogId === null) throw new Error("no AddApplicationDialog instance in the QML tree");
+    assertEq(await evalOn(app, dialogId, "visible"), true, "AddApplicationDialog visible");
+  }, { timeout: 10000, interval: 500, description: "the Add Application dialog to open" });
   return dialogId;
 }
 
-// Dialog-scoped text walk over contentItem; returns the subset of `texts` NOT rendered.
-async function missingDialogTexts(app, dialogId, texts) {
-  const res = await app.inspector.send("evaluate", {
-    objectId: dialogId,
-    expression: `(() => {
-      const hasText = (node, expected) => {
-        if (!node) return false;
-        if (typeof node.text === "string" && node.text.includes(expected)) return true;
-        if (!node.children || typeof node.children.length !== "number") return false;
-        for (let i = 0; i < node.children.length; i += 1) {
-          if (hasText(node.children[i], expected)) return true;
-        }
-        return false;
-      };
-      const wanted = ${JSON.stringify(texts)};
-      return JSON.stringify(wanted.filter((t) => !hasText(contentItem, t)));
-    })()`,
-  });
-  if (res.error) throw new Error(`evaluate(dialog texts) failed: ${res.error}`);
-  return JSON.parse(res.result);
-}
+const missingDialogTexts = (app, dialogId, texts) =>
+  missingTexts(app, dialogId, "contentItem", texts);
 
-// Clicks addApplicationDialog.closeButton (unique — one dialog instance) and
-// waits for the dialog to hide; onClosed notifies the backend declaratively.
+// Clicks addApplicationDialog.closeButton and waits for the dialog to hide.
 async function closeAddApplicationDialog(app, dialogId) {
-  const closeButton =
-    await findByObjectName(app.inspector, "addApplicationDialog.closeButton");
-  if (!closeButton) {
-    throw new Error("addApplicationDialog.closeButton not found in the QML tree");
-  }
-  const clicked = await app.inspector.send("callMethod", {
-    objectId: closeButton.id, method: "clicked",
-  });
-  if (clicked.error) {
-    throw new Error(
-      `clicking addApplicationDialog.closeButton failed: ${clicked.error}`);
-  }
+  const closeButton = await requireObject(app, "addApplicationDialog.closeButton");
+  await invoke(app, closeButton.id, "clicked", "clicking addApplicationDialog.closeButton");
   await app.waitFor(async () => {
-    const visible = await evalOn(app, dialogId, "visible");
-    if (visible !== false) {
-      throw new Error(
-        `AddApplicationDialog visible=${visible} after the close click ` +
-        `(expected false)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: "the dialog to close after the close click" });
+    assertEq(await evalOn(app, dialogId, "visible"), false,
+             "AddApplicationDialog visible after the close click");
+  }, { timeout: 5000, interval: 100, description: "the dialog to close" });
 }
 
-// Opens fixture A's Details dialog: Applications → fixture A's delegate menu
-// → appContextMenu.details → explicit menu close → dialog visible. Returns
-// the dialog id, or null when the fixture-A precondition skipped.
+// Applications → fixture A's delegate menu → Details → dialog visible.
+// Returns the dialog id, or null when the fixture-A precondition skipped.
 async function openFixtureADetailsDialog(app, label) {
   const proxyId = await openApplicationsWithProxy(app);
-  const fixtureRow = await requireFixtureARow(app, label, async () => {
+  const fixtureRow = await requireFixtureA(app, label, async () => {
     const row = await findFixtureARow(app, proxyId);
-    if (!row || row.isInstalled !== true) {
-      throw new Error(
-        `no installed row named "${FIXTURE_A.name}" in the outer model`);
-    }
+    if (!row) throw new Error(`no installed row named "${FIXTURE_A.name}" in the outer model`);
     return row;
-  });
+  }, "fixture A's installed row to appear in the model");
   if (fixtureRow === null) return null;
 
   const menuId = await requireFixtureAMenu(app, fixtureRow);
@@ -2625,30 +1244,24 @@ async function openFixtureADetailsDialog(app, label) {
 
 // --- App Manager (A13) — the context menu offers actions by install state ---
 //
-// Spec §2.A A13: open the context menu for fixture A (installed), then for
-// a catalog-only row if one has a live delegate. Install state is expressed
-// via item VISIBILITY: open/details iff installed; install iff not
-// installed; uninstall iff installed && installType !== "embedded" &&
-// name !== "main_ui", enabled iff no install is in flight. The menu's
-// appData must equal the pre-menu outer-model snapshot of its row.
-// NOT covered: the right-button binding — the inspector clicks left only.
+// Install state shows as item visibility: open/details iff installed;
+// install iff not installed; uninstall iff installed && installType !==
+// "embedded" && name !== "main_ui", enabled iff no install is in flight.
+// The right-button binding is not covered: the inspector clicks left only.
 
 test("app manager: context menu offers actions by install state", async (app) => {
   const proxyId = await openApplicationsWithProxy(app);
 
-  // Snapshot every outer row's menu-relevant fields before any menu opens.
-  const rows = await requireFixtureARow(app, "A13", async () => {
+  const rows = await requireFixtureA(app, "A13", async () => {
     const snapshot = await snapshotOuterRows(app, proxyId);
     if (!snapshot.some((r) => r.name === FIXTURE_A.name && r.isInstalled === true)) {
       throw new Error(
-        `no installed row named "${FIXTURE_A.name}" among ${snapshot.length} ` +
-        `outer row(s)`);
+        `no installed row named "${FIXTURE_A.name}" among ${snapshot.length} outer row(s)`);
     }
     return snapshot;
-  });
+  }, "fixture A's installed row to appear in the model");
   if (rows === null) return;
-  const installedRow =
-    rows.find((r) => r.name === FIXTURE_A.name && r.isInstalled === true);
+  const installedRow = rows.find((r) => r.name === FIXTURE_A.name && r.isInstalled === true);
   const catalogRows = rows.filter((r) => r.isInstalled === false);
 
   const ITEM_NAMES = [
@@ -2656,25 +1269,15 @@ test("app manager: context menu offers actions by install state", async (app) =>
     "appContextMenu.install", "appContextMenu.uninstall",
   ];
   const menuItemStates = async (menuId) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: menuId,
-      expression: `(() => {
-        const out = {};
-        for (let i = 0; i < count; i += 1) {
-          const item = itemAt(i);
-          if (!item || !item.objectName) continue;
-          out[item.objectName] = {
-            visible: item.visible === true,
-            enabled: item.enabled === true,
-          };
-        }
-        return JSON.stringify(out);
-      })()`,
-    });
-    if (res.error) {
-      throw new Error(`evaluate(menu item states) failed: ${res.error}`);
-    }
-    const states = JSON.parse(res.result);
+    const states = JSON.parse(await evalOn(app, menuId, `(() => {
+      const out = {};
+      for (let i = 0; i < count; i += 1) {
+        const item = itemAt(i);
+        if (!item || !item.objectName) continue;
+        out[item.objectName] = { visible: item.visible === true, enabled: item.enabled === true };
+      }
+      return JSON.stringify(out);
+    })()`));
     for (const name of ITEM_NAMES) {
       if (!states[name]) {
         throw new Error(
@@ -2684,18 +1287,12 @@ test("app manager: context menu offers actions by install state", async (app) =>
     }
     return states;
   };
-
   const assertItem = (states, name, expected, label) => {
     for (const [prop, want] of Object.entries(expected)) {
-      const got = states[name][prop];
-      if (got !== want) {
-        throw new Error(
-          `${name} ${prop}=${got} for the ${label} row (expected ${want})`);
-      }
+      assertEq(states[name][prop], want, `${name} ${prop} for the ${label} row`);
     }
   };
 
-  // Installed row: open/details/uninstall offered, install hidden.
   const installedMenuId = await requireFixtureAMenu(app, installedRow);
   await openContextMenuFor(app, installedMenuId, "installed");
   await app.waitFor(async () => {
@@ -2704,13 +1301,12 @@ test("app manager: context menu offers actions by install state", async (app) =>
     assertItem(states, "appContextMenu.open",    { visible: true },  "installed");
     assertItem(states, "appContextMenu.details", { visible: true },  "installed");
     assertItem(states, "appContextMenu.install", { visible: false }, "installed");
-    assertItem(states, "appContextMenu.uninstall",
-               { visible: true, enabled: true }, "installed");
+    assertItem(states, "appContextMenu.uninstall", { visible: true, enabled: true }, "installed");
   }, { timeout: 5000, interval: 100,
        description: "the installed row's menu to offer open/details/uninstall" });
   await closeContextMenu(app, installedMenuId, "the installed row");
 
-  // Catalog-only row: only install offered. First not-installed row with a live delegate.
+  // First not-installed row with a live delegate.
   let catalogRow = null;
   let catalogMenuId = null;
   for (const row of catalogRows) {
@@ -2719,9 +1315,8 @@ test("app manager: context menu offers actions by install state", async (app) =>
   }
   if (catalogMenuId === null) {
     console.log(
-      `    SKIP: A13 catalog-only half — ${catalogRows.length} of ` +
-      `${rows.length} outer-model row(s) are not installed, but none has a ` +
-      `live delegate to open the menu from`);
+      `    SKIP: A13 catalog-only half — ${catalogRows.length} of ${rows.length} outer ` +
+      "row(s) are not installed, but none has a live delegate");
     return;
   }
   await openContextMenuFor(app, catalogMenuId, "catalog-only");
@@ -2738,147 +1333,97 @@ test("app manager: context menu offers actions by install state", async (app) =>
 });
 
 // --- App Manager (A14) — Details opens the Add Application dialog ---
-//
-// Spec §2.A A14: appContextMenu.details on test_qml_only opens the
-// AddApplicationDialog (visible within 10 s; "Add Application", the display
-// name, "Description", "Required Packages" present; installStage === 0 =
-// InstallStage.None), and addApplicationDialog.closeButton dismisses it.
 
 test("app manager: context menu Details opens the Add Application dialog", async (app) => {
-  // Gate 1: the dialog is visible within 10 s.
   const dialogId = await openFixtureADetailsDialog(app, "A14");
   if (dialogId === null) return;
 
-  // Gate 2: the four fixed texts under the dialog's contentItem.
   await app.waitFor(async () => {
     const missing = await missingDialogTexts(app, dialogId, [
       "Add Application", FIXTURE_A.displayName, "Description", "Required Packages",
     ]);
-    if (missing.length > 0) {
-      throw new Error(`dialog texts missing: ${missing.join(", ")}`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "the dialog's fixed texts to render" });
+    if (missing.length > 0) throw new Error(`dialog texts missing: ${missing.join(", ")}`);
+  }, { timeout: 5000, interval: 250, description: "the dialog's fixed texts to render" });
 
-  // Gate 3: installStage === 0 (no op in flight).
-  const stage = await evalOn(app, dialogId, "installStage");
-  if (stage !== 0) {
-    throw new Error(
-      `dialog.installStage=${JSON.stringify(stage)} ` +
-      `(expected 0 = InstallStage.None)`);
-  }
+  assertEq(await evalOn(app, dialogId, "installStage"), 0,
+           "dialog.installStage (0 = InstallStage.None)");
 
-  // Gate 4: the close button dismisses the dialog.
   await closeAddApplicationDialog(app, dialogId);
 });
 
 // --- App Manager (A15) — dialog wording for an already-installed app ---
 //
-// Spec §2.A A15: Details on test_qml_only. Gates: primaryButton text is
-// "Reinstall" or "Launch" · "will be installed." absent · uninstallButton
-// visible && enabled.
-//
-// Fixture A is a catalog-less user install, so installStatus is
-// InstallStatus.Installed and actionMode resolves to "launch"
-// (AddApplicationDialog.qml:84-93): the test pins "Launch", the
-// deterministic arm. "%1 will be installed." comes only from
-// buildFooterText's "install" arm (:170). Uninstall keys on d.canUninstall
-// (:106-115), all true for fixture A; the button has no enabled binding.
+// Fixture A is a catalog-less user install, so actionMode resolves to
+// "launch" and the primary button reads "Launch"; "%1 will be installed."
+// comes only from the "install" footer arm. Uninstall keys on d.canUninstall,
+// all true for fixture A.
 
 test("app manager: dialog wording for an already-installed app", async (app) => {
   const dialogId = await openFixtureADetailsDialog(app, "A15");
   if (dialogId === null) return;
 
-  // Gate 1: the primary button reads exactly "Launch".
-  const primaryButton =
-    await findByObjectName(app.inspector, "addApplicationDialog.primaryButton");
-  if (!primaryButton) {
-    throw new Error("addApplicationDialog.primaryButton not found in the QML tree");
-  }
+  const primaryButton = await requireObject(app, "addApplicationDialog.primaryButton");
   await app.waitFor(async () => {
-    const text = await evalOn(app, primaryButton.id, "text");
-    if (text !== "Launch") {
-      throw new Error(
-        `primaryButton text=${JSON.stringify(text)} (expected exactly "Launch")`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: 'the primary button to read "Launch"' });
+    assertEq(await evalOn(app, primaryButton.id, "text"), "Launch", "primaryButton text");
+  }, { timeout: 5000, interval: 100, description: 'the primary button to read "Launch"' });
 
-  // Gate 2: no install phrasing, checked after Gate 1 settled the bindings.
-  await app.waitFor(async () => {
-    const missing = await missingDialogTexts(app, dialogId, ["will be installed."]);
-    if (missing.length !== 1) {
-      throw new Error(`"will be installed." found in the dialog (expected absent)`);
-    }
-  }, { timeout: 5000, interval: 100,
-       description: "no install phrasing in the dialog" });
-
-  // Gate 3: the Uninstall button is visible && enabled.
-  const uninstallButton =
-    await findByObjectName(app.inspector, "addApplicationDialog.uninstallButton");
-  if (!uninstallButton) {
-    throw new Error(
-      "addApplicationDialog.uninstallButton not found in the QML tree");
+  const missing = await missingDialogTexts(app, dialogId, ["will be installed."]);
+  if (missing.length !== 1) {
+    throw new Error('"will be installed." found in the dialog (expected absent)');
   }
+
+  const uninstallButton = await requireObject(app, "addApplicationDialog.uninstallButton");
   await app.waitFor(async () => {
-    const visible = await evalOn(app, uninstallButton.id, "visible");
-    const enabled = await evalOn(app, uninstallButton.id, "enabled");
-    if (visible !== true || enabled !== true) {
-      throw new Error(
-        `uninstallButton visible=${visible} enabled=${enabled} ` +
-        `(expected both true)`);
-    }
+    assertEq(await evalOn(app, uninstallButton.id, "visible"), true, "uninstallButton visible");
+    assertEq(await evalOn(app, uninstallButton.id, "enabled"), true, "uninstallButton enabled");
   }, { timeout: 5000, interval: 100,
        description: "the Uninstall button to be visible and enabled" });
 
-  // Cleanup: close through the real button.
   await closeAddApplicationDialog(app, dialogId);
 });
 
-// --- Settings (A16): Dashboard shows version, build type and commits ---
-//
-// Spec §2.A A16. Gates, all derived from the backend: backend.buildVersion
-// rendered when non-empty, Version row hidden when empty (dirty local builds
-// bake "") · "Commits" heading · commit-row count equals
-// backend.buildCommits.length (≥ 1) · first row shows buildCommits[0] ·
-// "Portable build" iff backend.isPortableBuild else "Dev build", never both.
-//
-// DashboardView has no objectNames, so the gates run as one JS tree walk
-// scoped to the view (which also keeps the sidebar footer's own build-type
-// token out of the never-both check). Commit rows are the children of the
-// "Commits" column that hold exactly two text nodes: name, then commit.
+// --- Settings helpers --------------------------------------------------------
 
-test("settings: Dashboard shows version, build type and commit list", async (app) => {
+async function openSettingsEntry(app, entry, expectedTexts = []) {
   await app.click("Settings", sidebarSection);
   await app.waitFor(
     async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
     { timeout: 10000, interval: 500, description: "Settings entries to render" }
   );
-  await app.click("Dashboard", { type: "LogosItemDelegate" });
+  await app.click(entry, { type: "LogosItemDelegate" });
+  if (expectedTexts.length > 0) {
+    await app.waitFor(
+      async () => { await app.expectTexts(expectedTexts); },
+      { timeout: 10000, interval: 500, description: `${entry} to become active` }
+    );
+  }
+}
 
-  // DashboardView is instantiated eagerly; only visible proves it is selected.
+// --- Settings (A16) — Dashboard shows version, build type and commits ---
+//
+// Every expectation is derived from the backend. DashboardView has no
+// objectNames, so the gates run as one JS walk scoped to the view, which also
+// keeps the sidebar footer's build-type token out of the never-both check.
+// Commit rows are the children of the "Commits" column holding exactly two
+// text nodes: name, then commit.
+
+test("settings: Dashboard shows version, build type and commit list", async (app) => {
+  await openSettingsEntry(app, "Dashboard");
+
+  // DashboardView is instantiated eagerly; only `visible` proves it is selected.
   let dashboard = null;
   await app.waitFor(async () => {
-    const res = await app.inspector.send("findByType", { typeName: "DashboardView" });
-    if (res.error) throw new Error(`findByType(DashboardView) failed: ${res.error}`);
-    dashboard = (res.matches ?? [])[0] || null;
+    dashboard = (await findByType(app, "DashboardView"))[0] || null;
     if (!dashboard) throw new Error("no DashboardView instance in the QML tree");
-    const visible = await evalOn(app, dashboard.id, "visible");
-    if (visible !== true) {
-      throw new Error(`DashboardView visible=${visible} (expected true)`);
-    }
+    assertEq(await evalOn(app, dashboard.id, "visible"), true, "DashboardView visible");
   }, { timeout: 10000, interval: 500, description: "Dashboard view to become visible" });
 
-  // Expected values, one primitive per evaluate call. Empty buildVersion is valid.
-  const buildVersion = await evalOn(app, dashboard.id, "backend.buildVersion");
-  if (typeof buildVersion !== "string") {
-    throw new Error(
-      `backend.buildVersion=${JSON.stringify(buildVersion)} (expected string)`);
-  }
+  // An empty buildVersion is valid (dirty local builds bake "").
+  const buildVersion = assertType(await evalOn(app, dashboard.id, "backend.buildVersion"),
+                                  "string", "backend.buildVersion");
   const commitCount = await evalOn(app, dashboard.id, "backend.buildCommits.length");
   if (typeof commitCount !== "number" || commitCount < 1) {
-    throw new Error(
-      `backend.buildCommits.length=${JSON.stringify(commitCount)} (expected ≥ 1)`);
+    throw new Error(`backend.buildCommits.length=${JSON.stringify(commitCount)} (expected ≥ 1)`);
   }
   const firstName = await evalOn(app, dashboard.id, "backend.buildCommits[0].name");
   const firstCommit = await evalOn(app, dashboard.id, "backend.buildCommits[0].commit");
@@ -2888,211 +1433,129 @@ test("settings: Dashboard shows version, build type and commit list", async (app
       `backend.buildCommits[0] name=${JSON.stringify(firstName)} ` +
       `commit=${JSON.stringify(firstCommit)} (expected non-empty strings)`);
   }
-  const isPortable = await evalOn(app, dashboard.id, "backend.isPortableBuild");
-  if (typeof isPortable !== "boolean") {
-    throw new Error(
-      `backend.isPortableBuild=${JSON.stringify(isPortable)} (expected boolean)`);
-  }
+  const isPortable = assertType(await evalOn(app, dashboard.id, "backend.isPortableBuild"),
+                                "boolean", "backend.isPortableBuild");
 
-  // One walk per attempt, returned as JSON (evaluate only round-trips primitives).
-  const snapshotDashboard = async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: dashboard.id,
-      expression: `(() => {
-        const out = {
-          hasVersion: false, versionLabelVisible: false, hasCommits: false,
-          hasPortable: false, hasDev: false, rows: null,
-        };
-        const walk = (node) => {
-          if (!node) return;
-          if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
-          // Item.visible is effective visibility, so it tracks the hidden row.
-          if (node.text === "Version" && node.visible === true) {
-            out.versionLabelVisible = true;
+  const snapshotDashboard = async () => JSON.parse(await evalOn(app, dashboard.id, `(() => {
+    const out = {
+      hasVersion: false, versionLabelVisible: false, hasCommits: false,
+      hasPortable: false, hasDev: false, rows: null,
+    };
+    const walk = (node) => {
+      if (!node) return;
+      if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
+      // Item.visible is effective visibility, so it tracks the hidden row.
+      if (node.text === "Version" && node.visible === true) out.versionLabelVisible = true;
+      if (node.text === "Portable build") out.hasPortable = true;
+      if (node.text === "Dev build") out.hasDev = true;
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      let hasHeading = false;
+      for (let i = 0; i < kids.length; i += 1) {
+        if (kids[i] && kids[i].text === "Commits") hasHeading = true;
+      }
+      if (hasHeading) {
+        out.hasCommits = true;
+        out.rows = [];
+        for (let i = 0; i < kids.length; i += 1) {
+          const k = kids[i];
+          const two = k && k.children && k.children.length === 2 ? k.children : null;
+          if (two && typeof two[0].text === "string" && typeof two[1].text === "string") {
+            out.rows.push({ name: two[0].text, commit: two[1].text });
           }
-          if (node.text === "Portable build") out.hasPortable = true;
-          if (node.text === "Dev build") out.hasDev = true;
-          const kids = node.children;
-          if (!kids || typeof kids.length !== "number") return;
-          let hasHeading = false;
-          for (let i = 0; i < kids.length; i += 1) {
-            if (kids[i] && kids[i].text === "Commits") hasHeading = true;
-          }
-          if (hasHeading) {
-            out.hasCommits = true;
-            out.rows = [];
-            for (let i = 0; i < kids.length; i += 1) {
-              const k = kids[i];
-              const two =
-                k && k.children && k.children.length === 2 ? k.children : null;
-              if (two && typeof two[0].text === "string" &&
-                  typeof two[1].text === "string") {
-                out.rows.push({ name: two[0].text, commit: two[1].text });
-              }
-            }
-            return;
-          }
-          for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-        };
-        walk(this);
-        return JSON.stringify(out);
-      })()`,
-    });
-    if (res.error) throw new Error(`evaluate(dashboard snapshot) failed: ${res.error}`);
-    return JSON.parse(res.result);
-  };
+        }
+        return;
+      }
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify(out);
+  })()`));
 
   const expectedType = isPortable ? "Portable build" : "Dev build";
   const otherType = isPortable ? "Dev build" : "Portable build";
   await app.waitFor(async () => {
     const snap = await snapshotDashboard();
-
-    // Gate 1: non-empty version rendered, empty version hides the row.
     if (buildVersion.length > 0) {
       if (snap.hasVersion !== true) {
         throw new Error(
-          `no text equal to buildVersion=${JSON.stringify(buildVersion)} ` +
-          `in the Dashboard view`);
+          `no text equal to buildVersion=${JSON.stringify(buildVersion)} in the Dashboard view`);
       }
     } else if (snap.versionLabelVisible !== false) {
-      throw new Error(
-        'the "Version" row is visible although backend.buildVersion is empty');
+      throw new Error('the "Version" row is visible although backend.buildVersion is empty');
     }
-
-    // Gate 2: "Commits" heading.
     if (snap.hasCommits !== true) {
       throw new Error('"Commits" heading not found in the Dashboard view');
     }
-
-    // Gate 3: row count equals backend.buildCommits.length.
     if (!Array.isArray(snap.rows) || snap.rows.length !== commitCount) {
       throw new Error(
-        `${Array.isArray(snap.rows) ? snap.rows.length : "no"} commit rows ` +
-        `rendered (expected backend.buildCommits.length=${commitCount})`);
+        `${Array.isArray(snap.rows) ? snap.rows.length : "no"} commit rows rendered ` +
+        `(expected backend.buildCommits.length=${commitCount})`);
     }
-
-    // Gate 4: first row shows buildCommits[0].
     if (snap.rows[0].name !== firstName || snap.rows[0].commit !== firstCommit) {
       throw new Error(
         `first commit row=${JSON.stringify(snap.rows[0])} (expected ` +
         `name=${JSON.stringify(firstName)} commit=${JSON.stringify(firstCommit)})`);
     }
-
-    // Gate 5: the matching build-type text, never the other one.
     const hasExpected = isPortable ? snap.hasPortable : snap.hasDev;
     const hasOther = isPortable ? snap.hasDev : snap.hasPortable;
     if (hasExpected !== true || hasOther !== false) {
       throw new Error(
-        `build-type texts: "${expectedType}"=${hasExpected} ` +
-        `"${otherType}"=${hasOther} (isPortableBuild=${isPortable} — ` +
-        `expected the matching one alone, never both)`);
+        `build-type texts: "${expectedType}"=${hasExpected} "${otherType}"=${hasOther} ` +
+        `(isPortableBuild=${isPortable}; expected the matching one alone)`);
     }
   }, { timeout: 10000, interval: 500,
        description: "Dashboard to render version, build type and commit rows" });
 });
 
-// --- Settings (A17): Apps Inspector search filters the table ---
+// --- Settings (A17) — Apps Inspector search filters the table ---
 //
-// Settings → Apps Inspector → type "package", then "zzz", then clear into
-// settings.searchField. Gates: "package" keeps exactly the rows whose
-// name/label/statusText/description/version contains it (≥ 1, since
-// package_manager_ui is always installed); "zzz" leaves 0 rows and no
-// "Loaded"/"Not loaded" badge text rendered inside the table; clearing
-// restores the pre-search row count.
-//
-// The search bar is SettingsView's page-level LogosSearchBar
-// (settings.searchField), shared by both inspectors and reset on every
-// section switch. Text is set through inspector evaluate on the field's
-// `text`; that breaks the `text: d.searchText` binding, which is harmless
-// because onTextChanged still feeds d.searchText and the test ends cleared.
-//
-// Counts come from appsInspector.table's model (the ModulesFilterProxy) as
-// visibleCount/totalCount. The expected "package" count is derived from a
-// snapshot of the five roles the proxy matches (ModulesFilterProxy.cpp,
-// role numbers from BasecampModelRoles.h ModuleInstanceRoles), never
-// hardcoded. The "zzz" absence check walks rendered text under the table;
-// a positive control with the search empty first proves the walk reaches
-// the badges, so an empty result cannot pass vacuously.
+// settings.searchField is SettingsView's page-level LogosSearchBar, shared by
+// both inspectors and reset on every section switch. Counts come from
+// appsInspector.table's ModulesFilterProxy; the expected "package" count is
+// derived from a snapshot of the roles the proxy matches. The "zzz" absence
+// walk is first proven against the rendered badges with the search empty,
+// so an empty result cannot pass vacuously.
+
+// ModuleInstanceRoles (app/interfaces/BasecampModelRoles.h) the search matches.
+const MODULE_SEARCH_ROLES = {
+  name: "Qt.UserRole + 1",
+  label: "Qt.UserRole + 2",
+  description: "Qt.UserRole + 3",
+  version: "Qt.UserRole + 6",
+  statusText: "Qt.UserRole + 12",
+};
 
 test("apps inspector: search filters the table", async (app) => {
   await openAppsInspector(app);
 
-  // AppsInspectorView is instantiated eagerly; only `visible` proves the
-  // section is selected.
-  let view = null;
+  // AppsInspectorView is instantiated eagerly; only `visible` proves it is selected.
+  const view = await requireObject(app, "appsInspectorView");
   await app.waitFor(async () => {
-    view = await findByObjectName(app.inspector, "appsInspectorView");
-    if (!view) throw new Error("appsInspectorView not in the QML tree");
-    const visible = await evalOn(app, view.id, "visible");
-    if (visible !== true) {
-      throw new Error(`appsInspectorView visible=${visible} (expected true)`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "Apps Inspector view to become visible" });
+    assertEq(await evalOn(app, view.id, "visible"), true, "appsInspectorView visible");
+  }, { timeout: 10000, interval: 500, description: "Apps Inspector view to become visible" });
 
-  let table = null;
-  await app.waitFor(async () => {
-    table = await findByObjectName(app.inspector, "appsInspector.table");
-    if (!table) throw new Error("appsInspector.table not in the QML tree");
-  }, { timeout: 10000, interval: 500, description: "apps table to exist" });
+  const table = await requireObject(app, "appsInspector.table");
+  const visibleCount = () => evalOn(app, table.id, "model.visibleCount");
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
 
-  let field = null;
-  await app.waitFor(async () => {
-    field = await findByObjectName(app.inspector, "settings.searchField");
-    if (!field) throw new Error("settings.searchField not in the QML tree");
-  }, { timeout: 10000, interval: 500,
-       description: "settings search field to exist" });
-
-  const setSearch = async (value) => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: field.id, expression: `text = ${JSON.stringify(value)}`,
-    });
-    if (res.error) {
-      throw new Error(
-        `setting search text to ${JSON.stringify(value)} failed: ${res.error}`);
-    }
-  };
-
-  // The bar may carry leftover text if an earlier run broke its binding.
-  const initialText = await evalOn(app, field.id, "text");
-  if (typeof initialText !== "string") {
-    throw new Error(
-      `search field text=${JSON.stringify(initialText)} (expected string)`);
-  }
-  if (initialText !== "") await setSearch("");
-
-  // Pre-search invariant: ≥ 1 row and every row visible. The post-clear
-  // gate compares against this count.
   let initialCount = 0;
   await app.waitFor(async () => {
     const total = await evalOn(app, table.id, "model.totalCount");
-    const visible = await evalOn(app, table.id, "model.visibleCount");
     if (typeof total !== "number" || total < 1) {
       throw new Error(`model.totalCount=${JSON.stringify(total)} (expected ≥ 1)`);
     }
-    if (visible !== total) {
-      throw new Error(
-        `model.visibleCount=${visible} !== totalCount=${total} with an ` +
-        `empty search (expected every row visible)`);
-    }
-    initialCount = visible;
+    assertEq(await visibleCount(), total, "model.visibleCount with an empty search");
+    initialCount = total;
   }, { timeout: 10000, interval: 500, description: "apps table to populate" });
 
-  // Snapshot the five roles the filter matches, over every row.
-  const SEARCH_ROLES = [
-    ["name",        "Qt.UserRole + 1"],  // ModuleInstanceRoles::NameRole
-    ["label",       "Qt.UserRole + 2"],  // ModuleInstanceRoles::LabelRole
-    ["statusText",  "Qt.UserRole + 12"], // ModuleInstanceRoles::StatusTextRole
-    ["description", "Qt.UserRole + 3"],  // ModuleInstanceRoles::DescriptionRole
-    ["version",     "Qt.UserRole + 6"],  // ModuleInstanceRoles::VersionRole
-  ];
   const rows = [];
   for (let i = 0; i < initialCount; i += 1) {
     const row = {};
-    for (const [key, roleExpr] of SEARCH_ROLES) {
+    for (const [key, roleExpr] of Object.entries(MODULE_SEARCH_ROLES)) {
       row[key] = await evalOn(
-        app, table.id,
-        `String(model.data(model.index(${i}, 0), ${roleExpr}) || "")`);
+        app, table.id, `String(model.data(model.index(${i}, 0), ${roleExpr}) || "")`);
     }
     rows.push(row);
   }
@@ -3100,39 +1563,28 @@ test("apps inspector: search filters the table", async (app) => {
     Object.values(row).some((v) => v.toLowerCase().includes("package"))).length;
   if (expectedMatches < 1) {
     throw new Error(
-      `no snapshot row matches "package" across name/label/statusText/` +
-      `description/version, yet package_manager_ui is always installed, so ` +
-      `either the snapshot or the table is wrong (rows=${JSON.stringify(rows)})`);
+      'no snapshot row matches "package" although package_manager_ui is always ' +
+      `installed (rows=${JSON.stringify(rows)})`);
   }
 
-  const collectStatusTexts = async () => {
-    const res = await app.inspector.send("evaluate", {
-      objectId: table.id,
-      expression: `(() => {
-        const bad = [];
-        const walk = (node) => {
-          if (!node) return;
-          if (typeof node.text === "string") {
-            const t = node.text.replace(/[()]/g, "").trim().toLowerCase();
-            if (t === "loaded" || t === "not loaded") bad.push(node.text);
-          }
-          const kids = node.children;
-          if (!kids || typeof kids.length !== "number") return;
-          for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-        };
-        walk(this);
-        return JSON.stringify(bad);
-      })()`,
-    });
-    if (res.error) {
-      throw new Error(`evaluate(status-text walk) failed: ${res.error}`);
-    }
-    return JSON.parse(res.result);
-  };
+  // Rendered "Loaded" / "Not loaded" badge texts under the table.
+  const collectStatusTexts = async () => JSON.parse(await evalOn(app, table.id, `(() => {
+    const found = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (typeof node.text === "string") {
+        const t = node.text.replace(/[()]/g, "").trim().toLowerCase();
+        if (t === "loaded" || t === "not loaded") found.push(node.text);
+      }
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify(found);
+  })()`));
 
-  // Positive control for the "zzz" absence walk: with the search empty the
-  // walk must find at least the snapshot's "Loaded"/"Not loaded" rows
-  // (other rows carry "Main UI" / dependency wording, hence at-least).
+  // Positive control: other rows carry "Main UI" / dependency wording, hence at-least.
   const badgeRows = rows.filter((row) => {
     const t = row.statusText.trim().toLowerCase();
     return t === "loaded" || t === "not loaded";
@@ -3142,70 +1594,37 @@ test("apps inspector: search filters the table", async (app) => {
       const found = await collectStatusTexts();
       if (found.length < badgeRows) {
         throw new Error(
-          `status-text walk found ${found.length} badge texts ` +
-          `(${JSON.stringify(found)}) with the search empty, but the ` +
-          `snapshot has ${badgeRows} "Loaded"/"Not loaded" rows; the walk ` +
-          `cannot reach the table's badges, so its "zzz" absence gate ` +
-          `would be vacuous`);
+          `status-text walk found ${found.length} badge texts (${JSON.stringify(found)}) ` +
+          `with the search empty, but the snapshot has ${badgeRows} badge rows`);
       }
-    }, { timeout: 5000, interval: 250,
-         description: "status-text walk to see the rendered badges" });
+    }, { timeout: 5000, interval: 250, description: "status-text walk to see the rendered badges" });
   }
 
-  await setSearch("package");
+  await search.set("package");
   await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "package") {
-      throw new Error(
-        `search text=${JSON.stringify(text)} did not round-trip ` +
-        `(expected "package")`);
-    }
-    const visible = await evalOn(app, table.id, "model.visibleCount");
-    if (visible !== expectedMatches) {
-      throw new Error(
-        `model.visibleCount=${visible} for "package" (expected the ` +
-        `snapshot-derived ${expectedMatches} of ${initialCount} rows)`);
-    }
+    await search.expectText("package");
+    assertEq(await visibleCount(), expectedMatches,
+             `model.visibleCount for "package" (of ${initialCount} rows)`);
   }, { timeout: 5000, interval: 250,
        description: '"package" search to keep exactly the matching rows' });
 
   // Filtered-out rows destroy their delegates; no badge text may remain.
-  await setSearch("zzz");
+  await search.set("zzz");
   await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "zzz") {
-      throw new Error(
-        `search text=${JSON.stringify(text)} did not round-trip (expected "zzz")`);
-    }
-    const visible = await evalOn(app, table.id, "model.visibleCount");
-    if (visible !== 0) {
-      throw new Error(`model.visibleCount=${visible} for "zzz" (expected 0)`);
-    }
+    await search.expectText("zzz");
+    assertEq(await visibleCount(), 0, 'model.visibleCount for "zzz"');
     const leftovers = await collectStatusTexts();
     if (leftovers.length !== 0) {
       throw new Error(
-        `status texts still rendered in the table with zero matches: ` +
-        `${JSON.stringify(leftovers)}`);
+        `status texts still rendered with zero matches: ${JSON.stringify(leftovers)}`);
     }
-  }, { timeout: 5000, interval: 250,
-       description: '"zzz" search to empty the table' });
+  }, { timeout: 5000, interval: 250, description: '"zzz" search to empty the table' });
 
-  // The cleared search is the suite-visible end state.
-  await setSearch("");
+  await search.set("");
   await app.waitFor(async () => {
-    const text = await evalOn(app, field.id, "text");
-    if (text !== "") {
-      throw new Error(
-        `search text=${JSON.stringify(text)} after clear (expected "")`);
-    }
-    const visible = await evalOn(app, table.id, "model.visibleCount");
-    if (visible !== initialCount) {
-      throw new Error(
-        `model.visibleCount=${visible} after clearing the search ` +
-        `(expected the recorded pre-search ${initialCount})`);
-    }
-  }, { timeout: 5000, interval: 250,
-       description: "cleared search to restore every row" });
+    await search.expectText("");
+    assertEq(await visibleCount(), initialCount, "model.visibleCount after clearing the search");
+  }, { timeout: 5000, interval: 250, description: "cleared search to restore every row" });
 });
 
 // --- Package Manager ---
@@ -3298,31 +1717,12 @@ test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
 // nested tabs) was split into two top-level Settings sections:
 // "Apps Inspector" (UI plugins) and "Module Inspector" (core modules,
 // with live CPU/memory + Interface drilldown).
-async function openAppsInspector(app) {
-  await app.click("Settings");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
-    { timeout: 10000, interval: 500, description: "Settings entries to render" }
-  );
-  await app.click("Apps Inspector", { type: "LogosItemDelegate" });
-  await app.waitFor(
-    async () => { await app.expectTexts(["UI plugins available in this installation."]); },
-    { timeout: 10000, interval: 500, description: "Apps Inspector to become active" }
-  );
-}
+const openAppsInspector = (app) =>
+  openSettingsEntry(app, "Apps Inspector", ["UI plugins available in this installation."]);
 
-async function openModuleInspector(app) {
-  await app.click("Settings");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
-    { timeout: 10000, interval: 500, description: "Settings entries to render" }
-  );
-  await app.click("Module Inspector", { type: "LogosItemDelegate" });
-  await app.waitFor(
-    async () => { await app.expectTexts(["Core modules known to the runtime, with live resource usage."]); },
-    { timeout: 10000, interval: 500, description: "Module Inspector to become active" }
-  );
-}
+const openModuleInspector = (app) =>
+  openSettingsEntry(app, "Module Inspector",
+                    ["Core modules known to the runtime, with live resource usage."]);
 
 test("apps inspector: shows installed UI plugins", async (app) => {
   await openAppsInspector(app);
@@ -3853,9 +2253,9 @@ async function windowProps(app, objectId) {
   return { visible: read("visible"), minimized: read("minimized") };
 }
 
-async function invoke(app, objectId, method) {
+async function invoke(app, objectId, method, what = `callMethod(${method})`) {
   const res = await app.inspector.send("callMethod", { objectId, method });
-  if (res.error) throw new Error(`callMethod(${method}) failed: ${res.error}`);
+  if (res.error) throw new Error(`${what} failed: ${res.error}`);
 }
 
 test("window: tray toggle restores a minimized window on the first click", async (app) => {
