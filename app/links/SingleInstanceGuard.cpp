@@ -8,6 +8,14 @@
 #include <QLocalSocket>
 #include <QStandardPaths>
 
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+#  include <sys/socket.h>
+#  include <sys/types.h>
+#  if defined(Q_OS_MAC)
+#    include <sys/un.h>
+#  endif
+#endif
+
 namespace {
 
 // Long enough to be unambiguous, short enough to stay inside the ~100-character
@@ -19,6 +27,32 @@ constexpr char kTerminator = '\n';
 
 // Guards against a hostile or broken peer streaming forever into the primary.
 constexpr int kMaxMessageBytes = 64 * 1024;
+
+// Who is on the other end, as the KERNEL sees it — never as the peer states it.
+// This PID decides which process gets handed the foreground, so one the peer
+// could choose would be one it could aim.
+//
+// Only macOS consumes it; the Linux branch is what makes the plumbing testable
+// where CI runs.
+qint64 peerPidOf(qintptr fd)
+{
+    if (fd < 0)
+        return 0;
+#if defined(Q_OS_MAC)
+    pid_t pid = 0;
+    socklen_t len = sizeof(pid);
+    if (::getsockopt(int(fd), SOL_LOCAL, LOCAL_PEERPID, &pid, &len) == 0)
+        return qint64(pid);
+#elif defined(Q_OS_LINUX)
+    struct ucred cred = {};
+    socklen_t len = sizeof(cred);
+    if (::getsockopt(int(fd), SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0)
+        return qint64(cred.pid);
+#else
+    Q_UNUSED(fd);
+#endif
+    return 0;
+}
 
 } // namespace
 
@@ -57,6 +91,9 @@ SingleInstanceGuard::Role SingleInstanceGuard::acquire(const QString& userDir,
     QLocalSocket probe;
     probe.connectToServer(name);
     if (probe.waitForConnected(kProbeTimeoutMs)) {
+        // While still connected: the disconnect below invalidates the fd.
+        m_primaryPid = peerPidOf(probe.socketDescriptor());
+
         if (!url.isEmpty()) {
             const QByteArray payload = url.toUtf8() + kTerminator;
             probe.write(payload);
@@ -98,6 +135,11 @@ SingleInstanceGuard::Role SingleInstanceGuard::acquire(const QString& userDir,
 bool SingleInstanceGuard::isPrimary() const
 {
     return m_primary;
+}
+
+qint64 SingleInstanceGuard::primaryPid() const
+{
+    return m_primaryPid;
 }
 
 void SingleInstanceGuard::onNewConnection()

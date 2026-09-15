@@ -26,6 +26,7 @@ class TestSingleInstanceGuard : public QObject
 
 private slots:
     void testSecondInstanceForwardsAndDoesNotBecomePrimary();
+    void testSecondaryLearnsThePrimaryPidFromTheSocket();
     void testControlCharactersSurviveTheSocketAndAreRefused();
     void testDifferentUserDirsDoNotSeeEachOther();
 
@@ -54,6 +55,25 @@ void TestSingleInstanceGuard::testSecondInstanceForwardsAndDoesNotBecomePrimary(
     QVERIFY(received.wait(5000));
     QCOMPARE(received.size(), 1);
     QCOMPARE(received.at(0).at(0).toString(), QStringLiteral("basecamp://app/demo"));
+}
+
+// The PID the secondary yields the foreground to on macOS, and the reason it
+// comes off the socket rather than over it: a PID the peer states is a PID it
+// can aim. Both guards live in this process, so the answer is this test's own.
+void TestSingleInstanceGuard::testSecondaryLearnsThePrimaryPidFromTheSocket()
+{
+    QVERIFY(m_dir.isValid());
+    const QString userDir = m_dir.filePath(QStringLiteral("peerpid"));
+
+    SingleInstanceGuard primary;
+    QCOMPARE(primary.acquire(userDir, QString()), SingleInstanceGuard::Primary);
+
+    // No peer, so nothing to report — and the macOS call treats <= 0 as "skip".
+    QCOMPARE(primary.primaryPid(), 0);
+
+    SingleInstanceGuard secondary;
+    QCOMPARE(secondary.acquire(userDir, QString()), SingleInstanceGuard::Secondary);
+    QCOMPARE(secondary.primaryPid(), qint64(QCoreApplication::applicationPid()));
 }
 
 void TestSingleInstanceGuard::testControlCharactersSurviveTheSocketAndAreRefused()

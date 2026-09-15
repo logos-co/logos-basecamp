@@ -37,6 +37,26 @@ void macActivateApp()
 #endif
 }
 
+void macYieldActivationTo(long long pid)
+{
+#ifdef Q_OS_MAC
+    if (QGuiApplication::platformName() == "offscreen") return;
+    if (pid <= 0) return;
+
+    NSRunningApplication* target =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!target) return;
+
+    // Yield first, then ask: the yield is what makes the request legal.
+    if (@available(macOS 14.0, *))
+        [NSApp yieldActivationToApplication:target];
+
+    [target activateWithOptions:NSApplicationActivateAllWindows];
+#else
+    (void)pid;
+#endif
+}
+
 bool macAppIsHidden()
 {
 #ifdef Q_OS_MAC

@@ -40,6 +40,13 @@ public:
     // coordinator, which is several layers down and has no view of the shell.
     void setLinkRaiseHandler(std::function<void()> raise);
 
+    // Bring this window back and put the app in front. Public for the two
+    // paths that arrive from outside the process — a second launch and a
+    // clicked link — because show()/raise()/activateWindow() is not enough on
+    // macOS or on a minimised X11/Wayland window, and the platform handling
+    // lives in here.
+    void restoreWindow();
+
 protected:
     void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
@@ -76,7 +83,6 @@ private:
     void createTrayIcon();
     void setIcon();
     bool isWindowShown() const;
-    void restoreWindow();
 #ifdef Q_OS_MAC
     void setupMacOSDockReopen();
     void createMenuBar();
