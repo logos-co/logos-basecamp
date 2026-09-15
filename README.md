@@ -91,9 +91,37 @@ nix run .#shell-preview
 
 Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and loads no plugins — its nix closure contains no Logos library at all, so a core rework cannot reach it. For mobile, see [`MOBILE-HANDOFF.md`](MOBILE-HANDOFF.md).
 
-#### Parallel Instances (`--user-dir`)
+#### Parallel Instances (`--user-dir`, `--new-instance`)
 
-`--user-dir <path>` (or `-u`) sets the base directory so multiple Basecamp instances can run side-by-side with isolated `plugins/`, `modules/`, `module_data/`, and `logs/`. The path is used verbatim.
+**One Basecamp per data directory.** Start a second one against a directory
+that is already in use and it will not open a window: it hands over any
+`basecamp://` URL it was launched with, asks the running window to come
+forward, and exits 0. From a terminal that looks like nothing happened, so it
+says so on stderr:
+
+```
+Basecamp is already running for /Users/you/Library/Application Support/Logos/LogosBasecampDev; asked it to come forward.
+Use --new-instance to start a second one anyway, or --user-dir <path> for an isolated instance.
+```
+
+If you see that and no window appears, the first instance is probably on
+another desktop or minimised — or it is wedged, in which case check for a
+leftover process (`ps aux | grep LogosBasecamp`).
+
+This guard exists for deep links. On Linux and Windows the OS answers a
+`basecamp://` click by launching the registered handler as a **new process**
+with the URL in argv, whether or not Basecamp is running; without the guard
+every click would start another runtime against the same `plugins/` and
+`module_data/`. macOS delivers to the live process instead and does not need
+it, but it runs there too so a terminal launch behaves the same everywhere.
+
+There are two ways to get a second instance.
+
+**`--user-dir <path>` (or `-u`) — isolated.** Sets the base directory, giving
+the instance its own `plugins/`, `modules/`, `module_data/` and `logs/`. The
+guard's socket name is derived from the resolved path, so a different directory
+is a different guard. The path is used verbatim; equivalent to setting the
+`LOGOS_USER_DIR` env var.
 
 ```bash
 # Two instances with isolated state
@@ -101,7 +129,23 @@ Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and l
 ./result/bin/LogosBasecamp --user-dir /tmp/basecamp-b &
 ```
 
-Equivalent to setting the `LOGOS_USER_DIR` env var.
+A fresh directory starts with no apps installed. For a second instance that
+looks like your real one, copy the session directory first and point
+`--user-dir` at the copy.
+
+**`--new-instance` — shares the directory, and gives up the guarantee.** Skips
+the guard entirely and runs against the directory already in use. Two runtimes
+then load the same plugins and can both install packages into the same
+`module_data/` — exactly what the guard prevents — so this is a development
+escape hatch, not a normal way to run.
+
+```bash
+./result/bin/LogosBasecamp --new-instance
+```
+
+The first instance keeps the socket, so a `--new-instance` process is
+**link-deaf** on Linux and Windows: clicked `basecamp://` links keep going to
+whichever instance started first.
 
 #### Session logging (`config.yaml`)
 

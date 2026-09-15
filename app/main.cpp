@@ -30,6 +30,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
+#ifdef Q_OS_MAC
+    #include "macWindowStyle.h"
+#endif
 #include "ICoreRuntime.h"
 #ifndef LOGOS_MOCK_BACKEND
 #include "QtLogosCoreRuntime.h"
@@ -143,6 +146,9 @@ int main(int argc, char *argv[])
     // parser block below. Empty for an ordinary launch.
     QString launchUri;
 
+    // Read out of the parser block below; see the guard for what it gives up.
+    bool forceNewInstance = false;
+
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against
     // isolated data trees (plugins, modules, module_data, logs). LOGOS_USER_DIR
@@ -173,10 +179,25 @@ int main(int argc, char *argv[])
                            "handler; not normally typed by hand."),
             QStringLiteral("url"));
         parser.addOption(uriOption);
+        // Deliberately not wired into the .desktop entry or the Windows
+        // registry command: a scheme handler that skipped the guard would start
+        // a runtime per link click.
+        QCommandLineOption newInstanceOption(QStringLiteral("new-instance"),
+            QStringLiteral("Start even if another instance already owns this "
+                           "data directory. Two runtimes then share one "
+                           "plugins/ and module_data/ — use --user-dir instead "
+                           "if they must not interfere."));
+        parser.addOption(newInstanceOption);
+        // Acted on below rather than by process(): parse() is what keeps an
+        // unrecognised flag from aborting startup, and it does not handle
+        // --help itself.
+        const QCommandLineOption helpOption = parser.addHelpOption();
         if (!parser.parse(app.arguments())) {
             std::cerr << parser.errorText().toStdString() << std::endl;
             return 1;
         }
+        if (parser.isSet(helpOption))
+            parser.showHelp(0);   // exits
 
         // The flag wins; LOGOS_ACCESS_POLICY is the way in for a launch that
         // has no argv to speak of (double-clicked bundle, desktop entry).
@@ -214,6 +235,7 @@ int main(int argc, char *argv[])
         }
 
         launchUri = parser.value(uriOption);
+        forceNewInstance = parser.isSet(newInstanceOption);
     }
 
     // The resolved session directory. Read once, here, because two separate
@@ -234,8 +256,28 @@ int main(int argc, char *argv[])
     // One call, two outcomes. Nobody listening ⇒ this process is the app and
     // starts listening. Someone answers ⇒ the URL has been handed over and
     // there is nothing left to do.
+    //
+    // --new-instance skips the call rather than ignoring its answer: probing
+    // would hand `launchUri` to the running instance, which would then act on a
+    // URL this process was asked to open. It does not listen either, so it is
+    // link-deaf — the first instance keeps the socket.
     auto guard = std::make_unique<SingleInstanceGuard>();
-    if (guard->acquire(sessionDir, launchUri) == SingleInstanceGuard::Secondary) {
+    if (!forceNewInstance
+        && guard->acquire(sessionDir, launchUri) == SingleInstanceGuard::Secondary) {
+#ifdef Q_OS_MAC
+        // The primary cannot front itself from the background; this process
+        // can give it the foreground. See macWindowStyle.h.
+        macYieldActivationTo(guard->primaryPid());
+#endif
+        // Exiting 0 in silence reads as a broken build when the window that
+        // came forward is on another desktop.
+        std::cerr << "Basecamp is already running for "
+                  << sessionDir.toStdString()
+                  << "; asked it to come forward."
+                  << (launchUri.isEmpty() ? "" : " The URL was handed over.")
+                  << "\nUse --new-instance to start a second one anyway, or"
+                     " --user-dir <path> for an isolated instance."
+                  << std::endl;
         return 0;
     }
 
@@ -442,9 +484,7 @@ int main(int argc, char *argv[])
     // Status calls makeStatusAppActive() on secondInstanceDetected.
     QObject::connect(guard.get(), &SingleInstanceGuard::secondInstanceDetected,
                      mainWindow.get(), [w = mainWindow.get()]() {
-                         w->show();
-                         w->raise();
-                         w->activateWindow();
+                         w->restoreWindow();
                      });
 
     // Bare `basecamp://` raises and nothing else, and a link that DOES carry an
@@ -452,9 +492,7 @@ int main(int argc, char *argv[])
     // and is looking at it, so a dialog on a window that never came forward is
     // worse than a window that then asks.
     mainWindow->setLinkRaiseHandler([w = mainWindow.get()]() {
-        w->show();
-        w->raise();
-        w->activateWindow();
+        w->restoreWindow();
     });
 
 #ifdef ENABLE_QML_INSPECTOR

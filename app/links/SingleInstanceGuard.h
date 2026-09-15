@@ -33,6 +33,7 @@ public:
     Role acquire(const QString& userDir, const QString& url);
 
     bool isPrimary() const;
+    qint64 primaryPid() const;
 
 signals:
     void urlReceived(const QString& url);
@@ -45,5 +46,6 @@ private:
 
     QLocalServer* m_server = nullptr;
     bool m_primary = false;
+    qint64 m_primaryPid = 0;
     QHash<QLocalSocket*, QByteArray> m_buffers;
 };
