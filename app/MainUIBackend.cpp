@@ -382,17 +382,9 @@ void MainUIBackend::wireIntents()
     // costs nothing and there is nothing to take back.
     m_intentInstaller = std::make_unique<ShellIntentInstaller>(
         [this](const QString& intent, const QStringList& candidates) {
-            // Carry WHERE each candidate comes from. A package suggested by a
-            // repo the user added for something unrelated deserves to be
-            // recognised as such before it is installed.
             QVariantList detailed;
-            for (const QString& name : candidates) {
-                detailed.append(QVariantMap{
-                    {QStringLiteral("moduleName"), name},
-                    {QStringLiteral("displayName"), displayNameFor(name)},
-                    {QStringLiteral("repositoryUrl"), repositoryUrlFor(name)},
-                });
-            }
+            for (const QString& name : candidates)
+                detailed.append(installCandidateDetails(name));
             emit intentInstallOffered(intent, candidates, detailed);
         });
     m_intentBroker->setInstaller(m_intentInstaller.get());
@@ -604,6 +596,48 @@ QString MainUIBackend::repositoryUrlFor(const QString& packageName) const
     return QString();   // installed but not in any catalog we know
 }
 
+// Carry WHERE a candidate comes from. A package suggested by a repo the user
+// added for something unrelated deserves to be recognised as such before it is
+// installed. Shared by the install offer and the chooser's not-installed
+// section, so the same package cannot be described two ways.
+QVariantMap MainUIBackend::installCandidateDetails(const QString& name) const
+{
+    const QString repoUrl = repositoryUrlFor(name);
+    const QVariantMap src = m_packageCoordinator
+        ? m_packageCoordinator->repositorySource(repoUrl)
+        : QVariantMap{};
+    return QVariantMap{
+        {QStringLiteral("moduleName"), name},
+        {QStringLiteral("displayName"), displayNameFor(name)},
+        {QStringLiteral("repositoryUrl"), repoUrl},
+        {QStringLiteral("repositoryLabel"), src.value(QStringLiteral("label"))},
+        {QStringLiteral("repositoryLink"),  src.value(QStringLiteral("link"))},
+    };
+}
+
+// Catalog packages that could service `intent` and are NOT installed — the
+// registry drops any entry already on disk, so this never overlaps the
+// chooser's real providers.
+QVariantList MainUIBackend::installableProvidersFor(const QString& intent) const
+{
+    if (!m_intentRegistry) return {};
+    QVariantList out;
+    for (const QString& name : m_intentRegistry->installableProvidersFor(intent))
+        out.append(installCandidateDetails(name));
+    return out;
+}
+
+// Raise the install offer for ONE package, for a user who picked it out of the
+// chooser's not-installed section. The request it came from has already been
+// answered `cancelled` by the dialog — installing resumes nothing, exactly as
+// on the nothing-installed path.
+void MainUIBackend::offerInstallFor(const QString& intent, const QString& moduleName)
+{
+    if (intent.isEmpty() || moduleName.isEmpty()) return;
+    emit intentInstallOffered(intent, QStringList{moduleName},
+                              QVariantList{installCandidateDetails(moduleName)});
+}
+
 QVariantMap MainUIBackend::providerDetailsFor(const QString& packageName) const
 {
     QVariantMap out;
@@ -635,10 +669,7 @@ QVariantMap MainUIBackend::providerDetailsFor(const QString& packageName) const
         // because a signature is exactly the trusted reference it lacks today.
     }
 
-    if (!m_appsModel)
-        return out;
-
-    for (int row = 0; row < m_appsModel->rowCount(); ++row) {
+    for (int row = 0; m_appsModel && row < m_appsModel->rowCount(); ++row) {
         const QModelIndex idx = m_appsModel->index(row, 0);
         if (idx.data(AppsModelRoles::NameRole).toString() != packageName)
             continue;
@@ -650,6 +681,13 @@ QVariantMap MainUIBackend::providerDetailsFor(const QString& packageName) const
         out.insert(QStringLiteral("description"),
                    idx.data(AppsModelRoles::DescriptionRole).toString());
         break;
+    }
+
+    if (m_packageCoordinator) {
+        const QVariantMap src = m_packageCoordinator->repositorySource(
+            out.value(QStringLiteral("repositoryUrl")).toString());
+        out.insert(QStringLiteral("repositoryLabel"), src.value(QStringLiteral("label")));
+        out.insert(QStringLiteral("repositoryLink"),  src.value(QStringLiteral("link")));
     }
     return out;
 }

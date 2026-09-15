@@ -320,6 +320,7 @@ set(PROJECT_SOURCES
     RecentlyClosedStore.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
+    RepositorySource.cpp
     UninstallPlan.cpp
     InstallRegistry.cpp
     AppsModel.cpp

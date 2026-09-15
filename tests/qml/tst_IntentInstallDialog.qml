@@ -110,13 +110,141 @@ TestCase {
         dlg.openWith("probe.echo", ["probe_ui"], [{
             moduleName: "probe_ui",
             displayName: "Probe",
-            repositoryUrl: "https://packages.example.org/logos-repo.json"
+            repositoryUrl: "https://packages.example.org/logos-repo.json",
+            repositoryLabel: "Example Packages",
+            repositoryLink: "https://packages.example.org/logos-repo.json"
         }]);
 
-        // Hostname, not the full URL — the part that tells you whether this is
-        // the catalog you expect. A package suggested by a repo the user added
-        // for something unrelated should be recognisable as such.
+        // A package suggested by a repo the user added for something unrelated
+        // should be recognisable as such before it is installed.
+        compare(dlg.candidates[0].repositoryLabel, "Example Packages");
         compare(dlg.candidates[0].repositoryUrl, "https://packages.example.org/logos-repo.json");
+
+        dlg.destroy();
+    }
+
+    // The source line used to be a hostname inside the body sentence. For
+    // everything published through GitHub that hostname is
+    // raw.githubusercontent.com — the same for the official catalog and for
+    // anything else on GitHub — so it identified nobody. What stands there now
+    // is the publishing repository, resolved by the shell.
+    //
+    // The dialog is given `repositoryLink` and renders it. That it is not the
+    // catalog URL is the shell's doing and is covered by repository_source_test;
+    // what is pinned here is that the dialog shows the resolved field and not
+    // the address it was handed alongside it.
+    function test_source_line_shows_the_resolved_link_not_the_catalog_url() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith("probe.echo", ["probe_ui"], [{
+            moduleName: "probe_ui",
+            displayName: "Probe",
+            repositoryUrl: "https://raw.githubusercontent.com/logos-co/"
+                         + "logos-modules-release/refs/heads/main/logos-repo.json",
+            repositoryLabel: "Logos Official Modules",
+            repositoryLink: "https://github.com/logos-co/logos-modules-release"
+        }]);
+        waitForRendering(testCase);
+
+        var link = null;
+        tryVerify(function () {
+            link = deepFind(dlg.contentItem, "intentInstallSourceLink");
+            return link !== null && link.text.length > 0;
+        }, 5000, "the source link is realised");
+
+        compare(link.text, "https://github.com/logos-co/logos-modules-release");
+        verify(link.text.indexOf("raw.githubusercontent.com") < 0,
+               "the transport host is not what the user is being asked to judge");
+
+        // The body sentence no longer carries an origin clause of its own —
+        // two statements of the same fact, one of them unverifiable.
+        var body = deepFind(dlg.contentItem, "intentInstallBody");
+        verify(body.text.indexOf("installed from") < 0,
+               "origin stated once, in the source row, got: " + body.text);
+
+        dlg.destroy();
+    }
+
+    // "Go and check where this comes from" happens in another window. A link
+    // that has to be retyped by eye is one nobody checks, which makes the line
+    // decoration rather than evidence.
+    function test_the_source_link_can_be_selected_and_copied() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith("probe.echo", ["probe_ui"], [{
+            moduleName: "probe_ui",
+            displayName: "Probe",
+            repositoryUrl: "https://raw.githubusercontent.com/logos-co/"
+                         + "logos-modules-release/refs/heads/main/logos-repo.json",
+            repositoryLabel: "Logos Official Modules",
+            repositoryLink: "https://github.com/logos-co/logos-modules-release"
+        }]);
+        waitForRendering(testCase);
+
+        var link = null, copy = null;
+        tryVerify(function () {
+            link = deepFind(dlg.contentItem, "intentInstallSourceLink");
+            copy = deepFind(dlg.contentItem, "intentInstallSourceCopy");
+            return link !== null && copy !== null && copy.width > 0;
+        }, 5000, "the source row is realised");
+
+        verify(link.selectByMouse, "drag-selectable");
+        link.selectAll();
+        compare(link.selectedText, "https://github.com/logos-co/logos-modules-release",
+                "the whole link selects, not a visible fragment of it");
+
+        // The clipboard value is what is on screen. A copy button that yielded
+        // the catalog URL instead would hand the user something they did not
+        // read and cannot match against the line they clicked next to.
+        var copied = copySpy.createObject(testCase, { target: copy });
+        copy.copy();
+        compare(copied.count, 1, "the button copies");
+        compare(copied.signalArguments[0][0], link.text);
+
+        copied.destroy();
+        dlg.destroy();
+    }
+
+    // With several candidates the source belongs to whichever one Install would
+    // act on. A row that kept showing the first candidate's origin after the
+    // user picked the second would be describing a package they did not choose.
+    function test_the_source_line_follows_the_selection() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith("probe.echo", ["probe_ui", "other_ui"], [
+            { moduleName: "probe_ui", displayName: "Probe",
+              repositoryLabel: "Logos Official",
+              repositoryLink: "https://github.com/logos-co/official" },
+            { moduleName: "other_ui", displayName: "Other",
+              repositoryLabel: "Someone Else's Repo",
+              repositoryLink: "https://github.com/someone-else/side-repo" }
+        ]);
+        waitForRendering(testCase);
+
+        var link = null;
+        tryVerify(function () {
+            link = deepFind(dlg.contentItem, "intentInstallSourceLink");
+            return link !== null && link.text.length > 0;
+        }, 5000, "the source link is realised");
+
+        compare(link.text, "https://github.com/logos-co/official");
+
+        dlg.select("other_ui");
+        tryVerify(function () {
+            return link.text === "https://github.com/someone-else/side-repo";
+        }, 5000, "the source tracks the selection, got: " + link.text);
+
+        dlg.destroy();
+    }
+
+    // Nothing to show and nothing to copy: an empty row would read as
+    // "from nowhere", and a copy button beside it would put "" on the clipboard.
+    function test_no_repository_renders_no_source_row() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith("probe.echo", ["probe_ui"],
+                     [{ moduleName: "probe_ui", displayName: "Probe", repositoryUrl: "" }]);
+        waitForRendering(testCase);
+
+        var section = deepFind(dlg.contentItem, "intentInstallSource");
+        verify(section !== null, "the source section exists in the tree");
+        verify(!section.visible, "but is not shown without a repository");
 
         dlg.destroy();
     }
@@ -163,22 +291,27 @@ TestCase {
 
         // Two candidates: the list renders, and the subtitle is the module name
         // alone rather than "name · ".
-        dlg.openWith("probe.echo", ["probe_ui", "other_ui"], [
-            { moduleName: "probe_ui", displayName: "Probe", repositoryUrl: "" },
-            { moduleName: "other_ui", displayName: "Other", repositoryUrl: "https://packages.example.org/r.json" }
+        dlg.openWith("probe.echo", ["probe_ui", "other_ui", "third_ui"], [
+            { moduleName: "probe_ui", displayName: "Probe", repositoryLabel: "" },
+            { moduleName: "other_ui", displayName: "Other", repositoryLabel: "Example Packages" },
+            { moduleName: "third_ui", displayName: "Third", repositoryLabel: "Logos Official Modules" }
         ]);
         waitForRendering(testCase);
 
-        var bare = null, withOrigin = null;
+        var bare = null, withOrigin = null, onGithub = null;
         tryVerify(function () {
             bare = deepFind(dlg.contentItem, "intentInstallSubtitle_probe_ui");
             withOrigin = deepFind(dlg.contentItem, "intentInstallSubtitle_other_ui");
-            return bare !== null && withOrigin !== null;
-        }, 5000, "both subtitles are realised");
+            onGithub = deepFind(dlg.contentItem, "intentInstallSubtitle_third_ui");
+            return bare !== null && withOrigin !== null && onGithub !== null;
+        }, 5000, "all three subtitles are realised");
 
         compare(bare.text, "probe_ui", "no separator when there is no origin");
-        compare(withOrigin.text, "other_ui · packages.example.org",
-                "hostname only, not the full URL");
+
+        // One line to spare per row, so the repository's name rather than its
+        // link — the same name the App Manager and Settings show for it.
+        compare(withOrigin.text, "other_ui · Example Packages");
+        compare(onGithub.text, "third_ui · Logos Official Modules");
 
         dlg.destroy();
     }
@@ -213,4 +346,5 @@ TestCase {
     }
 
     Component { id: installSpy; SignalSpy { signalName: "installRequested" } }
+    Component { id: copySpy;    SignalSpy { signalName: "copied" } }
 }
