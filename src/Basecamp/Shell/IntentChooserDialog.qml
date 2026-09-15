@@ -26,6 +26,8 @@ IntentDialog {
     // ── Injected by the shell ───────────────────────────────────────────────
     property var displayNameLookup: function (name) { return name }
     property var detailsLookup:     function (name) { return ({}) }
+    // Catalog packages that could service this intent and are not installed.
+    property var installableLookup: function (intent) { return [] }
 
     // ── The request on screen. Read-only: openWith() is the only way in, so
     //    the four fields cannot drift out of step with each other. ───────────
@@ -33,6 +35,11 @@ IntentDialog {
     readonly property alias intentName:    d.intentName
     readonly property alias requesterName: d.requesterName
     readonly property alias providers:     d.providers
+
+    // Read once at openWith, not bound: the catalog can refresh under a dialog
+    // the user is reading, and a row appearing mid-decision is the same class
+    // of problem as repointing a chooser.
+    readonly property alias installable:   d.installable
 
     // moduleName of the row whose details are open, or "".
     readonly property alias expandedProvider: d.expanded
@@ -46,6 +53,12 @@ IntentDialog {
     signal providerChosen(string dispatchId, string providerName)
     signal choiceCancelled(string dispatchId)
 
+    // Emitted AFTER choiceCancelled for the same dispatch: an uninstalled
+    // package cannot be dispatched to, so the request ends before the install
+    // begins. The user retries once it lands, exactly as on the
+    // nothing-installed path.
+    signal installRequested(string intent, string providerName)
+
     // One object, taken whole: the previous positional form was
     // (dispatchId, intent, requester, providers), three of them strings, so
     // transposing intent and requester produced a plausible-looking prompt
@@ -56,6 +69,7 @@ IntentDialog {
         d.intentName    = r.intent        || ""
         d.requesterName = r.requesterName || ""
         d.providers     = r.providers     || []
+        d.installable   = root.installableLookup(d.intentName) || []
         d.expanded      = ""
         d.answered      = false
         open()
@@ -73,14 +87,23 @@ IntentDialog {
     // Escape, or any Dialog-managed dismissal. Something is blocked on an
     // answer, so silence is not an option.
     onClosed: {
-        if (d.answered) {
+        if (d.answered)
             d.answered = false
-            return
-        }
-        root.choiceCancelled(d.dispatchId)
+        else
+            root.choiceCancelled(d.dispatchId)
+
+        // However it closed, the request is over. Cleared here rather than in
+        // closeFor() so it happens after the exit transition, and for every
+        // path rather than just a withdrawal.
+        d.dispatchId  = ""
+        d.installable = []
     }
 
-    title: qsTr("Choose an app")
+    // One provider is not a choice. The broker sends it here anyway — see its
+    // "ONE PROVIDER IS NOT A REASON TO SKIP THE USER" — but what it is asking
+    // for then is consent, not a selection.
+    title: d.providers.length === 1 ? qsTr("Use this app?")
+                                    : qsTr("Choose an app")
 
     QtObject {
         id: d
@@ -89,6 +112,7 @@ IntentDialog {
         property string intentName: ""
         property string requesterName: ""
         property var    providers: []
+        property var    installable: []
 
         // moduleName of the expanded row, or "". One at a time, so the dialog
         // cannot outgrow the screen on a long provider list.
@@ -129,6 +153,26 @@ IntentDialog {
             root.close()
         }
 
+        // Answer FIRST, then ask for the install. Both, in that order: the
+        // broker is holding a request that nothing here can service, and
+        // leaving it open across a download would give AwaitingChoice — which
+        // has no deadline, because a human is deciding — a transfer to cover.
+        function installInstead(moduleName) {
+            // Read BEFORE close(): onClosed can run inside it, and it clears
+            // the request state.
+            const dispatch = d.dispatchId
+            const intent   = d.intentName
+
+            // close() first, unlike cancel(): installRequested runs straight
+            // through the shell into the install dialog's open(), so emitting
+            // before closing leaves two modal popups up with the outgoing one
+            // closing second. answered suppresses onClosed either way.
+            d.answered = true
+            root.close()
+            root.choiceCancelled(dispatch)
+            root.installRequested(intent, moduleName)
+        }
+
     }
 
     rightActions: [
@@ -136,6 +180,21 @@ IntentDialog {
             objectName: "intentChooserCancel"
             text: qsTr("Cancel")
             onClicked: d.cancel()
+        },
+        // ONLY with exactly one provider. Clicking a row is the answer here —
+        // there is no selected-but-not-yet-confirmed state for a button to act
+        // on — so with several listed this could not say which one it meant.
+        // (IntentInstallDialog does have that state, which is why Install is
+        // always present there.)
+        //
+        // Without it the refusal is a button and the approval is a list row
+        // that does not look like one, on a prompt whose whole job is consent.
+        LogosButton {
+            objectName: "intentChooserConfirm"
+            text: qsTr("Open")
+            variant: LogosButton.Variant.Primary
+            visible: d.providers.length === 1
+            onClicked: d.answer(d.providers[0].moduleName)
         }
     ]
 
@@ -177,6 +236,12 @@ IntentDialog {
                 readonly property bool expanded: d.expanded === modelData.moduleName
                 readonly property var facts:
                     row.expanded ? root.detailsLookup(modelData.moduleName) : ({})
+                // Resolved by the shell alongside the rest of the facts; the
+                // dialog does not turn a catalog URL into anything.
+                readonly property var source: ({
+                    label: row.facts.repositoryLabel || "",
+                    link:  row.facts.repositoryLink || ""
+                })
 
                 width: ListView.view.width
                 objectName: "intentProvider_" + modelData.moduleName
@@ -288,7 +353,6 @@ IntentDialog {
                             model: [
                                 { label: qsTr("Package"), value: modelData.moduleName },
                                 { label: qsTr("Version"), value: row.facts.version || "" },
-                                { label: qsTr("From"),    value: row.facts.repositoryUrl || "" },
                                 { label: qsTr("Install"), value: row.facts.installType || "" }
                             ]
 
@@ -314,6 +378,44 @@ IntentDialog {
                             }
                         }
 
+                        // Pulled out of the fact rows above because it is the
+                        // one value a user acts on elsewhere: they open it. A
+                        // catalog URL was here before, which for anything on
+                        // GitHub meant raw.githubusercontent.com/<path> — not
+                        // a page, not readable, and elided to a stub besides.
+                        RowLayout {
+                            objectName: "intentProviderSource_" + modelData.moduleName
+                            Layout.fillWidth: true
+                            spacing: Theme.spacing.small
+                            visible: row.source.link !== ""
+
+                            LogosText {
+                                Layout.preferredWidth: 64
+                                Layout.alignment: Qt.AlignTop
+                                text: qsTr("From")
+                                font.pixelSize: Theme.typography.secondaryText
+                                color: Theme.palette.textSubtle
+                            }
+
+                            LogosSelectableText {
+                                objectName: "intentProviderSourceLink_" + modelData.moduleName
+                                Layout.fillWidth: true
+                                text: row.source.link
+                                font.pixelSize: Theme.typography.secondaryText
+                                color: Theme.palette.textSecondary
+                                wrapMode: TextEdit.WrapAnywhere
+                                persistentSelection: true
+                            }
+
+                            LogosCopyButton {
+                                objectName: "intentProviderSourceCopy_" + modelData.moduleName
+                                Layout.alignment: Qt.AlignTop
+                                value: row.source.link
+                                size: 20
+                                iconSize: 14
+                            }
+                        }
+
                         LogosText {
                             Layout.fillWidth: true
                             text: row.facts.description || ""
@@ -324,6 +426,101 @@ IntentDialog {
                             elide: Text.ElideRight
                             visible: text !== ""
                         }
+                    }
+                }
+            }
+        }
+
+        // ── Not installed ──────────────────────────────────────────────────
+        //
+        // The catalog knows packages that could service this too. With none
+        // installed the shell already offers them; with one installed it used
+        // to show nothing, so "the only app that can do this" and "the only one
+        // you have" looked identical — and no other screen surfaces what a
+        // package provides.
+        //
+        // A SECTION, not more rows in the list above. These do the opposite
+        // thing: choosing one ends this request rather than servicing it, and
+        // two rows that look alike and diverge like that is a trap. Hence the
+        // heading, and "Install…" rather than a bare clickable row.
+        LogosText {
+            objectName: "intentChooserInstallableHeader"
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing.small
+            visible: d.installable.length > 0
+            text: qsTr("Not installed")
+            font.pixelSize: Theme.typography.secondaryText
+            color: Theme.palette.textSubtle
+        }
+
+        LogosListView {
+            objectName: "intentChooserInstallable"
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(contentHeight, 2 * d.rowHeight)
+            visible: d.installable.length > 0
+            model: d.installable
+            interactive: contentHeight > height
+
+            delegate: LogosItemDelegate {
+                width: ListView.view.width
+                objectName: "intentInstallable_" + modelData.moduleName
+                implicitHeight: d.rowHeight
+                radius: Theme.spacing.radiusSmall
+
+                // Deliberately inert. The row carries no onClicked because the
+                // action it would trigger is not the one the rows above take.
+                contentItem: RowLayout {
+                    id: installableRow
+
+                    spacing: Theme.spacing.small
+
+                    LogosTile {
+                        objectName: "intentInstallableIcon_" + modelData.moduleName
+
+                        readonly property int side:
+                            Math.max(20, Math.min(32, installableRow.height
+                                                      - 2 * Theme.spacing.tiny))
+                        Layout.preferredWidth: side
+                        Layout.preferredHeight: side
+                        Layout.alignment: Qt.AlignVCenter
+                        label: modelData.displayName || modelData.moduleName
+                        tileSize: side
+                        interactive: false
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 0
+
+                        LogosText {
+                            Layout.fillWidth: true
+                            text: modelData.displayName || modelData.moduleName
+                            font.pixelSize: Theme.typography.primaryText
+                            color: Theme.palette.text
+                            elide: Text.ElideRight
+                        }
+
+                        LogosText {
+                            objectName: "intentInstallableSubtitle_" + modelData.moduleName
+                            Layout.fillWidth: true
+                            text: modelData.repositoryLabel
+                                  ? modelData.moduleName + " · " + modelData.repositoryLabel
+                                  : modelData.moduleName
+                            font.pixelSize: Theme.typography.secondaryText
+                            color: Theme.palette.textSubtle
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    // The ellipsis is doing work: something else follows, and
+                    // what follows is not this request being serviced.
+                    LogosLink {
+                        objectName: "intentInstallableAction_" + modelData.moduleName
+                        text: qsTr("Install…")
+                        underline: false
+                        Layout.alignment: Qt.AlignVCenter
+                        onActivated: d.installInstead(modelData.moduleName)
                     }
                 }
             }

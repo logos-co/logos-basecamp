@@ -142,11 +142,17 @@ Item {
         id: intentChooserDialog
         displayNameLookup: _dialogDeps.displayNameLookup
         detailsLookup: function(name) { return backend.providerDetailsFor(name); }
+        installableLookup: function(intent) { return backend.installableProvidersFor(intent); }
         onProviderChosen: function(dispatchId, providerName) {
             backend.resolveIntentChooser(dispatchId, providerName);
         }
         onChoiceCancelled: function(dispatchId) {
             backend.cancelIntentChooser(dispatchId);
+        }
+        // Ordering is the dialog's: it cancels first, so by the time this
+        // arrives the request has been answered and the install resumes nothing.
+        onInstallRequested: function(intent, providerName) {
+            backend.offerInstallFor(intent, providerName);
         }
 
     }

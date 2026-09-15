@@ -79,19 +79,24 @@ IntentDialog {
                 out.push({
                     moduleName:    names[j],
                     displayName:   det.displayName || "",
-                    repositoryUrl: det.repositoryUrl || ""
+                    repositoryUrl: det.repositoryUrl || "",
+                    repositoryLabel: det.repositoryLabel || "",
+                    repositoryLink:  det.repositoryLink || ""
                 })
             }
             return out
         }
 
-        // Hostname only. A full URL is unreadable in a list row, and the host is
-        // the part that tells you whether this is the catalog you expect.
-        function originOf(url) {
-            if (!url)
-                return ""
-            var m = /^[a-z]+:\/\/([^\/]+)/.exec(url)
-            return m ? m[1] : url
+        // Where the row Install would act on comes from. One source line for
+        // the selection rather than one per candidate: the others are not what
+        // is about to be installed, and a column of near-identical links is a
+        // thing the eye skips.
+        readonly property var selectedSource: {
+            for (var i = 0; i < d.candidates.length; ++i)
+                if (d.candidates[i].moduleName === d.selected)
+                    return { label: d.candidates[i].repositoryLabel,
+                             link:  d.candidates[i].repositoryLink }
+            return { label: "", link: "" }
         }
     }
 
@@ -107,11 +112,8 @@ IntentDialog {
                 if (d.candidates.length !== 1)
                     return qsTr("Nothing installed can handle this. Choose one to install:")
 
-                var only = d.candidates[0]
-                var origin = d.originOf(only.repositoryUrl)
-                return root.displayNameLookup(only.moduleName)
+                return root.displayNameLookup(d.candidates[0].moduleName)
                      + qsTr(" can handle this, but it is not installed yet.")
-                     + (origin ? qsTr("\nIt would be installed from ") + origin + "." : "")
             }
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textSecondary
@@ -181,16 +183,51 @@ IntentDialog {
                         LogosText {
                             objectName: "intentInstallSubtitle_" + modelData.moduleName
                             Layout.fillWidth: true
-                            text: {
-                                var origin = d.originOf(modelData.repositoryUrl)
-                                return origin ? modelData.moduleName + " · " + origin
-                                              : modelData.moduleName
-                            }
+                            text: modelData.repositoryLabel
+                                  ? modelData.moduleName + " · " + modelData.repositoryLabel
+                                  : modelData.moduleName
                             font.pixelSize: Theme.typography.secondaryText
                             color: Theme.palette.textSubtle
                             elide: Text.ElideRight
                         }
                     }
+                }
+            }
+        }
+
+        ColumnLayout {
+            objectName: "intentInstallSource"
+            Layout.fillWidth: true
+            spacing: 0
+            visible: d.selectedSource.link !== ""
+
+            LogosText {
+                Layout.fillWidth: true
+                text: qsTr("Would be installed from")
+                font.pixelSize: Theme.typography.secondaryText
+                color: Theme.palette.textSubtle
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing.small
+
+                LogosSelectableText {
+                    objectName: "intentInstallSourceLink"
+                    Layout.fillWidth: true
+                    text: d.selectedSource.link
+                    font.pixelSize: Theme.typography.secondaryText
+                    color: Theme.palette.textSecondary
+                    wrapMode: TextEdit.WrapAnywhere
+                    persistentSelection: true
+                }
+
+                LogosCopyButton {
+                    objectName: "intentInstallSourceCopy"
+                    Layout.alignment: Qt.AlignTop
+                    value: d.selectedSource.link
+                    size: 20
+                    iconSize: 14
                 }
             }
         }

@@ -5,6 +5,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
+#include "RepositorySource.h"
 #include "utils/DependencyBlocker.h"
 
 #include <QCoreApplication>
@@ -706,10 +707,17 @@ void PackageCoordinator::resolveDepChangesThen(const QString& name,
                 // The resolver echoes the requested package back as topLevel.
                 // It is the subject of the dialog, not one of its dep changes.
                 if (entry.value("topLevel").toBool()) continue;
-                changes.append(changeFromResolverEntry(
+                QVariantMap change = changeFromResolverEntry(
                     entry,
                     self->m_installedVersionByName.value(entryName),
-                    self->m_installedHashByName.value(entryName)));
+                    self->m_installedHashByName.value(entryName));
+                // Skipped for error rows, matching computeDepChanges: they
+                // carry no repositoryUrl, so the label would be "" — a key the
+                // other caller does not add at all.
+                if (change.value("action").toString() != QStringLiteral("error"))
+                    change.insert(QStringLiteral("repository"),
+                                  self->repositoryLabelFor(entry));
+                changes.append(change);
             }
             then(true, changes);
         });
@@ -1154,6 +1162,40 @@ static QVariantList withDisplayLabels(const QVariantList& repos)
     return out;
 }
 
+QVariantMap PackageCoordinator::repositoryRow(const QString& url) const
+{
+    for (const QVariant& v : m_repositories) {
+        const QVariantMap r = v.toMap();
+        if (r.value(QStringLiteral("url")).toString() == url)
+            return r;
+    }
+    return {};
+}
+
+QVariantMap PackageCoordinator::repositorySource(const QString& repositoryUrl) const
+{
+    const QVariantMap row = repositoryRow(repositoryUrl);
+    if (row.isEmpty()) {
+        // Not a repository we hold: removed since the catalog was fetched, or a
+        // package that predates the registry. Report the address it names
+        // without claiming to know whose it is. Empty in, empty out — the
+        // dialogs hide the source line rather than render "from nowhere".
+        return QVariantMap{{QStringLiteral("label"), repositoryUrl},
+                           {QStringLiteral("link"),  repositoryUrl}};
+    }
+
+    const RepositorySource src = repositorySourceFor(row);
+    return QVariantMap{{QStringLiteral("label"), src.label},
+                       {QStringLiteral("link"),  src.link}};
+}
+
+QString PackageCoordinator::repositoryLabelFor(const QVariantMap& catalogEntry) const
+{
+    return repositoryLabelForEntry(
+        catalogEntry,
+        repositoryRow(catalogEntry.value(QStringLiteral("repositoryUrl")).toString()));
+}
+
 void PackageCoordinator::refreshRepositories()
 {
     LogosAPIClient* dlClient = m_logosAPI
@@ -1526,11 +1568,9 @@ QVariantMap PackageCoordinator::changeFromResolverEntry(const QVariantMap& entry
         {QStringLiteral("toVersion"),     to},
         {QStringLiteral("fromVersion"),   installedVersion},
         {QStringLiteral("repositoryUrl"), entry.value("repositoryUrl").toString()},
-        // The dialog renders `repository`; without it every dep row lost its
-        // source label. Display name when the catalog knows one, else the URL.
-        {QStringLiteral("repository"),    entry.value("repositoryDisplayName").toString().isEmpty()
-                                              ? entry.value("repositoryUrl").toString()
-                                              : entry.value("repositoryDisplayName").toString()},
+        // NOT `repository` — the dialog renders that, but naming a repository
+        // needs the registry and this is static. Both callers stamp it with
+        // repositoryLabelFor().
         {QStringLiteral("description"),   entry.value("description").toString()},
         {QStringLiteral("action"),        depAction(installedVersion, to, installedHash, toH)},
         {QStringLiteral("isTopLevel"),    entry.value("topLevel").toBool()},
@@ -1551,6 +1591,7 @@ QVariantList PackageCoordinator::computeDepChanges(
             out.append(c);
             continue;
         }
+        c.insert(QStringLiteral("repository"), repositoryLabelFor(m));
         const QString repoUrl = c.value("repositoryUrl").toString();
         c.insert(QStringLiteral("versions"),
                  m_versionsByRepoAndName.value(catalogKey(repoUrl, name)));

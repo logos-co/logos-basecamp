@@ -82,6 +82,7 @@ public:
     // refreshRepositories() and after every successful add/remove/toggle.
     QVariantList repositories() const { return m_repositories; }
     bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
+    QVariantMap repositorySource(const QString& repositoryUrl) const;
 
     // True during the initial catalog populate and during a user-initiated
     // App Manager Reload (remoteRefresh). Background refreshes (file-install
@@ -422,6 +423,8 @@ private:
     static QVariantMap changeFromResolverEntry(const QVariantMap& entry,
                                                const QString& installedVersion,
                                                const QString& installedHash);
+    QVariantMap repositoryRow(const QString& url) const;
+    QString repositoryLabelFor(const QVariantMap& catalogEntry) const;
     static bool installPluginSucceeded(const QVariantMap& installResult);
 
     void runResolverAndOpenDialog(const QString& name,
