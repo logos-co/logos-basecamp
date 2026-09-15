@@ -596,6 +596,7 @@
             inherit pkgs src logosQtMcp; appPkg = app;
           };
 
+
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {
@@ -606,6 +607,12 @@
 
           # Default package
           default = app;
+        } // pkgs.lib.optionalAttrs (logosStorageModule != null) {
+          # Starts the app with the real storage_module and checks that the
+          # node starts, then stops on SIGTERM.
+          storage-node-test = import ./nix/storage-node-test.nix {
+            inherit pkgs; appPkg = app;
+          };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isWindows {
           # nix build .#packages.x86_64-windows.bin-installer
           bin-installer = windowsInstaller;
@@ -652,7 +659,7 @@
         };
       });
 
-      checks = forAllSystems ({ pkgs, system, ... }: {
+      checks = forAllSystems ({ pkgs, system, logosStorageModule, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;
@@ -666,6 +673,8 @@
       } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
         link-gate = self.packages.${system}.link-gate;
         link-gate-negative = self.packages.${system}.link-gate-negative;
+      } // pkgs.lib.optionalAttrs (logosStorageModule != null) {
+        storage-node-test = self.packages.${system}.storage-node-test;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
