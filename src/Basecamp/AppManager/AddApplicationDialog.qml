@@ -129,6 +129,15 @@ Dialog {
         readonly property string counterText:
             d.installedDepsCount + " / " + d.totalDeps
 
+        // ── Fixed section heights ──
+        readonly property int showcaseHeight:   200
+        readonly property int versionRowHeight: 52
+
+        // ── Required-packages list ──
+        readonly property int depsRowHeight: 56
+        readonly property int depsMaxRows:   6
+        readonly property int depsWantedHeight: d.depsRowHeight * d.totalDeps
+
         readonly property int installFreshBuckets:
             root.requiredPackagesModel ? root.requiredPackagesModel.installFreshCount : 0
         readonly property int upgradeBuckets:
@@ -260,6 +269,9 @@ Dialog {
     modal: true
     anchors.centerIn: parent
     width: 560
+    height: root.parent
+            ? Math.min(implicitHeight, root.parent.height - 2 * Theme.spacing.large)
+            : implicitHeight
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
@@ -276,6 +288,8 @@ Dialog {
         // ─── Header ───
         RowLayout {
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
+            Layout.fillHeight: false
             Layout.topMargin: Theme.spacing.large
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
@@ -303,10 +317,12 @@ Dialog {
 
         // ─── App showcase ───
         Rectangle {
+            objectName: "addApplicationDialog.showcase"
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
-            Layout.preferredHeight: 200
+            Layout.preferredHeight: d.showcaseHeight
+            Layout.minimumHeight: d.showcaseHeight
             color: Theme.palette.background
             radius: Theme.spacing.radiusMedium
 
@@ -338,6 +354,8 @@ Dialog {
         // ─── Description ───
         ColumnLayout {
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
+            Layout.fillHeight: false
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             spacing: Theme.spacing.tiny
@@ -361,7 +379,8 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
-            Layout.preferredHeight: 52
+            Layout.preferredHeight: d.versionRowHeight
+            Layout.minimumHeight: d.versionRowHeight
             color: Theme.palette.background
             radius: Theme.spacing.radiusMedium
 
@@ -447,6 +466,8 @@ Dialog {
         // ─── Required Packages section ───
         RowLayout {
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
+            Layout.fillHeight: false
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
@@ -466,17 +487,33 @@ Dialog {
         }
 
         LogosListView {
+            objectName: "addApplicationDialog.requiredPackages"
+
+            // Full-bleed, unlike every other section: the scrollbar is an
+            // overlay painted at the view's right edge, so insetting the view
+            // parks it 20px into the dialog, on top of each row's stage badge.
+            // The 16px moves onto the rows instead (below), which leaves the
+            // bar hugging the dialog edge and the content clear of it.
             Layout.fillWidth: true
-            Layout.leftMargin: Theme.spacing.large
-            Layout.rightMargin: Theme.spacing.large
-            Layout.preferredHeight: contentHeight
-            interactive: false
+            Layout.fillHeight: true
+            Layout.preferredHeight: Math.min(d.depsWantedHeight,
+                                             d.depsRowHeight * d.depsMaxRows)
+            Layout.maximumHeight: Layout.preferredHeight
+            Layout.minimumHeight: d.depsRowHeight
+
+            interactive: d.depsWantedHeight > height
             spacing: 0
             model: root.requiredPackagesModel
 
             delegate: PackageRowDelegate {
                 width: ListView.view.width
-                height: 56
+                height: d.depsRowHeight
+
+                // The dialog's content margin, carried by the row rather than
+                // the view. Padding moves the contentItem only, so the row's
+                // separator rule still runs edge to edge.
+                leftPadding: Theme.spacing.large
+                rightPadding: Theme.spacing.large
 
                 appRow: model
                 installing: d.installing
@@ -498,6 +535,7 @@ Dialog {
         LogosText {
             objectName: "addApplicationDialog.errorText"
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
@@ -515,6 +553,7 @@ Dialog {
         LogosText {
             objectName: "addApplicationDialog.resolutionBanner"
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
@@ -529,7 +568,9 @@ Dialog {
 
         // Steady-state breakdown of what this install will do.
         LogosText {
+            objectName: "addApplicationDialog.footerText"
             Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium

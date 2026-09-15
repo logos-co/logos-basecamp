@@ -304,7 +304,10 @@ void IntentRegistry::setInstallableProviders(
             // trusted one, so it does not get a laxer filter.
             if (!logos::intent::isValidName(intent))
                 continue;
-            if (logos::intent::isReservedName(intent)) {
+            // isReservedNamespace, not isReservedName: the latter covers only
+            // `logos.*`, which left the catalog able to claim `basecamp.*` —
+            // the one thing this comment says it cannot.
+            if (isReservedNamespace(intent)) {
                 m_diagnostics.append(
                     QStringLiteral("catalog: %1 offers reserved intent '%2' — ignored")
                         .arg(moduleName, intent));

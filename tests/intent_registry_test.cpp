@@ -62,6 +62,9 @@ private slots:
     void testNonBooleanHandoffIsDiagnosedNotCoerced();
     void testProvidersMayDisagreeAboutHandoff();
     void testShellHandoffSurvivesRebuild();
+    void testInstallableNeverOverlapsAnInstalledPackage();
+    void testInstallableRefusesReservedAndInvalidNames();
+    void testInstallableIsSortedAndDeduplicated();
 };
 
 void TestIntentRegistry::testResolvesSingleProvider()
@@ -479,6 +482,82 @@ void TestIntentRegistry::testShellHandoffSurvivesRebuild()
                                QStringLiteral("basecamp.repositories.manage")));
     QVERIFY(!registry.isHandoff(QStringLiteral("main_ui"),
                                 QStringLiteral("basecamp.packages.confirm_install")));
+}
+
+// ── Catalog-sourced providers ───────────────────────────────────────────────
+//
+// The table the RESOLVER never consults: these packages are not installed, so
+// nothing can be dispatched to them. It feeds the install suggestion and the
+// chooser's "Not installed" section.
+
+// The chooser renders installed and installable providers as two sections,
+// which only reads correctly if a package cannot appear in both. The registry
+// is what guarantees that — and without it the shell would offer to install
+// something already on disk.
+void TestIntentRegistry::testInstallableNeverOverlapsAnInstalledPackage()
+{
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("wallet"),
+        R"({"name":"wallet_ui","provides":[{"intent":"wallet.send"}]})");
+
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("wallet_ui"), plugin(dir) } },
+                     [](const QString& n) { return n; },
+                     [](const QString&) { return QString(); });
+
+    // The catalog offers the installed one AND a second that is not.
+    registry.setInstallableProviders({
+        { QStringLiteral("wallet_ui"), { QStringLiteral("wallet.send") } },
+        { QStringLiteral("secure_ui"), { QStringLiteral("wallet.send") } },
+    });
+
+    QCOMPARE(registry.installableProvidersFor(QStringLiteral("wallet.send")),
+             QStringList{ QStringLiteral("secure_ui") });
+
+    // …and the installed one is still the only thing that resolves.
+    const auto resolution = registry.resolve(QStringLiteral("wallet.send"));
+    QCOMPARE(resolution.status, IntentRegistry::Ok);
+    QCOMPARE(resolution.found.size(), 1);
+    QCOMPARE(resolution.found.first().moduleName, QStringLiteral("wallet_ui"));
+}
+
+// A catalog is a LESS trusted source than the local disk, so it gets the same
+// filter and not a laxer one. Reaching the chooser is enough to matter: an
+// entry claiming `basecamp.*` would put a shell capability into a list of
+// things the user is invited to install.
+void TestIntentRegistry::testInstallableRefusesReservedAndInvalidNames()
+{
+    IntentRegistry registry;
+    registry.setInstallableProviders({
+        { QStringLiteral("evil_ui"), { QStringLiteral("basecamp.settings.open"),
+                                       QStringLiteral("logos.anything"),
+                                       QStringLiteral("not a valid name"),
+                                       QStringLiteral("wallet.send") } },
+    });
+
+    QVERIFY(registry.installableProvidersFor(QStringLiteral("basecamp.settings.open")).isEmpty());
+    QVERIFY(registry.installableProvidersFor(QStringLiteral("logos.anything")).isEmpty());
+    QVERIFY(registry.installableProvidersFor(QStringLiteral("not a valid name")).isEmpty());
+
+    // The well-formed entry in the same record still lands: one bad name does
+    // not discard the package.
+    QCOMPARE(registry.installableProvidersFor(QStringLiteral("wallet.send")),
+             QStringList{ QStringLiteral("evil_ui") });
+}
+
+// Order is what the user reads, so it comes from the data rather than from
+// whichever order the catalog happened to arrive in.
+void TestIntentRegistry::testInstallableIsSortedAndDeduplicated()
+{
+    IntentRegistry registry;
+    registry.setInstallableProviders({
+        { QStringLiteral("zeta_ui"),  { QStringLiteral("wallet.send") } },
+        { QStringLiteral("alpha_ui"), { QStringLiteral("wallet.send"),
+                                        QStringLiteral("wallet.send") } },
+    });
+
+    QCOMPARE(registry.installableProvidersFor(QStringLiteral("wallet.send")),
+             (QStringList{ QStringLiteral("alpha_ui"), QStringLiteral("zeta_ui") }));
 }
 
 QTEST_MAIN(TestIntentRegistry)

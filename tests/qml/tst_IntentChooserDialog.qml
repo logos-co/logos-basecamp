@@ -55,6 +55,192 @@ TestCase {
         return null;
     }
 
+    readonly property var oneProvider: [
+        { moduleName: "wallet_a", displayName: "Wallet A", iconSource: "" }
+    ]
+
+    // The broker sends a lone provider here on purpose, so that the quiet case
+    // is not the unguarded one. But then it is asking for consent, not a pick,
+    // and "Choose an app" over a list of one names an action the user cannot
+    // take.
+    function test_the_title_asks_to_confirm_when_there_is_nothing_to_choose() {
+        var dlg = dialogComp.createObject(testCase);
+
+        dlg.openWith({ dispatchId: "d-t1", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        compare(dlg.title, "Use this app?");
+
+        // …and back, so the title tracks the offer rather than being set once.
+        dlg.openWith({ dispatchId: "d-t2", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.twoProviders });
+        compare(dlg.title, "Choose an app");
+
+        dlg.destroy();
+    }
+
+    // Approving used to be a click on a list row while refusing was a button —
+    // the safe action prominent, the intended one an affordance that does not
+    // look like one. With a single provider there is no ambiguity about what an
+    // affirmative button would mean, so there is one.
+    function test_a_lone_provider_can_be_approved_with_a_button() {
+        var dlg = dialogComp.createObject(testCase);
+        var spy = chosenSpy.createObject(testCase, { target: dlg });
+
+        dlg.openWith({ dispatchId: "d-ok", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        waitForRendering(testCase);
+
+        var confirm = null;
+        tryVerify(function () {
+            confirm = deepFind(dlg.footerItem, "intentChooserConfirm");
+            return confirm !== null && confirm.width > 0;
+        }, 5000, "the confirm button is realised");
+
+        verify(confirm.visible, "shown when there is exactly one provider");
+        mouseClick(confirm);
+
+        // The same answer a row click gives, carrying the broker's dispatch id.
+        compare(spy.count, 1, "answers once");
+        compare(spy.signalArguments[0][0], "d-ok");
+        compare(spy.signalArguments[0][1], "wallet_a");
+        verify(!dlg.visible, "and closes, like any other answer");
+
+        spy.destroy();
+        dlg.destroy();
+    }
+
+    // With several, a button could not say which one it meant: the chooser has
+    // no selection state — a row click IS the answer. Adding one would mean
+    // changing how the consent is expressed, not just adding a control.
+    function test_several_providers_get_no_affirmative_button() {
+        var dlg = dialogComp.createObject(testCase);
+        var spy = chosenSpy.createObject(testCase, { target: dlg });
+
+        dlg.openWith({ dispatchId: "d-many", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.twoProviders });
+        waitForRendering(testCase);
+
+        var confirm = deepFind(dlg.footerItem, "intentChooserConfirm");
+        verify(confirm !== null, "the button exists in the tree");
+        verify(!confirm.visible, "but is not offered with more than one provider");
+
+        // Cancel is still the only button, and still answers.
+        var cancel = deepFind(dlg.footerItem, "intentChooserCancel");
+        verify(cancel !== null && cancel.visible, "Cancel is unchanged");
+        compare(spy.count, 0, "nothing answered by merely opening");
+
+        spy.destroy();
+        dlg.destroy();
+    }
+
+    readonly property var oneInstallable: [
+        { moduleName: "wallet_c", displayName: "Secure Wallet",
+          repositoryLabel: "Logos Official Modules",
+          repositoryLink: "https://github.com/logos-co/logos-modules-release" }
+    ]
+
+    // The mixed case. One installed provider used to render exactly like "this
+    // is the only app that can do this", and nothing else in the UI says what a
+    // package provides — so the alternatives were unreachable, not just unshown.
+    function test_catalog_packages_appear_in_their_own_section() {
+        var dlg = dialogComp.createObject(testCase, {
+            installableLookup: function (intent) { return testCase.oneInstallable; }
+        });
+        dlg.openWith({ dispatchId: "d-mix", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        waitForRendering(testCase);
+
+        var header = null, row = null;
+        tryVerify(function () {
+            header = deepFind(dlg.contentItem, "intentChooserInstallableHeader");
+            row = deepFind(dlg.contentItem, "intentInstallable_wallet_c");
+            return header !== null && row !== null && row.height > 0;
+        }, 5000, "the not-installed section is realised");
+
+        verify(header.visible, "the section is labelled, not merged into the list");
+
+        // The installed provider is still the one that can service this.
+        verify(deepFind(dlg.contentItem, "intentProvider_wallet_a") !== null,
+               "the real provider is still listed");
+
+        dlg.destroy();
+    }
+
+    function test_no_section_when_the_catalog_adds_nothing() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith({ dispatchId: "d-none", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        waitForRendering(testCase);
+
+        var header = deepFind(dlg.contentItem, "intentChooserInstallableHeader");
+        verify(header !== null && !header.visible,
+               "no heading over an empty section");
+
+        dlg.destroy();
+    }
+
+    // The load-bearing one. An uninstalled package cannot be dispatched to, so
+    // picking it has to END the request — and it must do so BEFORE asking for
+    // the install, or the broker is left holding an AwaitingChoice that has no
+    // deadline (a human is deciding) while a download runs.
+    function test_installing_instead_answers_the_request_first() {
+        var dlg = dialogComp.createObject(testCase, {
+            installableLookup: function (intent) { return testCase.oneInstallable; }
+        });
+        var cancelled = cancelSpy.createObject(testCase, { target: dlg });
+        var install = installSpy.createObject(testCase, { target: dlg });
+        var chosen = chosenSpy.createObject(testCase, { target: dlg });
+
+        dlg.openWith({ dispatchId: "d-inst", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        waitForRendering(testCase);
+
+        var action = null;
+        tryVerify(function () {
+            action = deepFind(dlg.contentItem, "intentInstallableAction_wallet_c");
+            return action !== null && action.width > 0;
+        }, 5000, "the Install… affordance is realised");
+
+        mouseClick(action);
+
+        compare(cancelled.count, 1, "the request is answered");
+        compare(cancelled.signalArguments[0][0], "d-inst");
+        compare(install.count, 1, "and the install is asked for");
+        compare(install.signalArguments[0][0], "wallet.send");
+        compare(install.signalArguments[0][1], "wallet_c");
+
+        // Never dispatched: nothing installed could have serviced this pick.
+        compare(chosen.count, 0, "no provider was chosen");
+
+        // And closing must not send a SECOND, contradictory cancel.
+        verify(!dlg.visible, "the dialog closed");
+        compare(cancelled.count, 1, "answered exactly once");
+
+        chosen.destroy(); install.destroy(); cancelled.destroy();
+        dlg.destroy();
+    }
+
+    // Whatever closed it, nothing of the finished request stays addressable —
+    // and the catalog rows do not sit there stale waiting for the next offer.
+    function test_closing_leaves_nothing_of_the_request_behind() {
+        var dlg = dialogComp.createObject(testCase, {
+            installableLookup: function (intent) { return testCase.oneInstallable; }
+        });
+
+        dlg.openWith({ dispatchId: "d-left", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.oneProvider });
+        compare(dlg.dispatchId, "d-left");
+        compare(dlg.installable.length, 1);
+
+        dlg.closeFor("d-left");
+        tryVerify(function () { return !dlg.visible; }, 5000, "closed");
+
+        compare(dlg.dispatchId, "", "no id left to answer for");
+        compare(dlg.installable.length, 0, "no stale catalog rows");
+
+        dlg.destroy();
+    }
+
     function test_details_button_is_scaled_to_its_row() {
         var dlg = dialogComp.createObject(testCase);
         dlg.openWith({ dispatchId: "d-1", intent: "wallet.send", requesterName: "chat_ui", providers: testCase.twoProviders });
@@ -115,6 +301,76 @@ TestCase {
         // Toggling closes it again rather than stacking panels.
         mouseClick(btn);
         compare(dlg.expandedProvider, "");
+
+        dlg.destroy();
+    }
+
+    // The Details panel's "From" row. It used to print the catalog URL into an
+    // elided LogosText, so on GitHub it read as a truncated
+    // "https://raw.githubusercontent.com/logos-co/logos-mod…" — unreadable,
+    // uncopyable, and naming a CDN rather than a publisher.
+    //
+    // `repositoryLink` arrives resolved, alongside the rest of the facts; how
+    // the shell resolves it is repository_source_test's business. What is
+    // pinned here is that the row renders that field rather than the catalog
+    // address sitting next to it.
+    function test_details_shows_the_resolved_link_and_lets_it_be_copied() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.detailsLookup = function (name) {
+            return { moduleName: name, version: "1.2.3", verified: false,
+                     repositoryUrl: "https://raw.githubusercontent.com/logos-co/"
+                                  + "logos-modules-release/refs/heads/main/logos-repo.json",
+                     repositoryLabel: "Logos Official Modules",
+                     repositoryLink: "https://github.com/logos-co/logos-modules-release" };
+        };
+        dlg.openWith({ dispatchId: "d-3", intent: "wallet.send", requesterName: "chat_ui",
+                       providers: testCase.twoProviders });
+        dlg.toggleDetails("wallet_a");
+        waitForRendering(testCase);
+
+        var link = null, copy = null;
+        tryVerify(function () {
+            link = deepFind(dlg.contentItem, "intentProviderSourceLink_wallet_a");
+            copy = deepFind(dlg.contentItem, "intentProviderSourceCopy_wallet_a");
+            return link !== null && copy !== null && link.text.length > 0;
+        }, 5000, "the source row is realised");
+
+        compare(link.text, "https://github.com/logos-co/logos-modules-release");
+        verify(link.text.indexOf("raw.githubusercontent.com") < 0,
+               "the catalog address is not what is shown");
+        verify(link.selectByMouse, "drag-selectable, not just readable");
+
+        var copied = copySpy.createObject(testCase, { target: copy });
+        copy.copy();
+        compare(copied.count, 1, "the button copies");
+        compare(copied.signalArguments[0][0], link.text,
+                "what is copied is what was shown");
+
+        copied.destroy();
+        dlg.destroy();
+    }
+
+    // A provider installed from nowhere the shell knows — sideloaded, or
+    // embedded in the app. An empty "From" would be a claim about provenance
+    // that the shell cannot make, on the one panel whose job is provenance.
+    function test_a_provider_with_no_repository_shows_no_source_row() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.detailsLookup = function (name) {
+            return { moduleName: name, version: "1.0.0", installType: "embedded",
+                     verified: false };
+        };
+        dlg.openWith({ dispatchId: "d-4", intent: "wallet.send", requesterName: "chat_ui",
+                       providers: testCase.twoProviders });
+        dlg.toggleDetails("wallet_a");
+        waitForRendering(testCase);
+
+        var source = null;
+        tryVerify(function () {
+            source = deepFind(dlg.contentItem, "intentProviderSource_wallet_a");
+            return source !== null;
+        }, 5000, "the source row exists in the tree");
+
+        verify(!source.visible, "and is not shown without a repository");
 
         dlg.destroy();
     }
@@ -214,4 +470,6 @@ TestCase {
 
     Component { id: cancelSpy;  SignalSpy { signalName: "choiceCancelled" } }
     Component { id: chosenSpy;  SignalSpy { signalName: "providerChosen" } }
+    Component { id: copySpy;    SignalSpy { signalName: "copied" } }
+    Component { id: installSpy; SignalSpy { signalName: "installRequested" } }
 }
