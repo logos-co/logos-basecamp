@@ -49,7 +49,13 @@ pkgs.runCommand "logos-basecamp-storage-node-test" {
   fi
 
   kill -TERM "$APP"
-  wait "$APP" || true
+
+  timeout 30 tail --pid="$APP" -f /dev/null || {
+    kill -KILL "$APP" 2>/dev/null || true
+    cat "$LOG"
+    echo "FAIL: the app did not exit within 30s of SIGTERM"
+    exit 1
+  }
 
   cat "$LOG"
 
