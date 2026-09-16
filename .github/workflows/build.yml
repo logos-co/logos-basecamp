@@ -212,6 +212,9 @@ jobs:
       - name: Host-services grant guard
         run: nix build .#host-services-test -L
 
+      - name: Storage node test
+        run: nix build .#storage-node-test -L
+
       # The one control that mechanically enforces the one-runtime invariant:
       # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is
       # DEFINED by exactly one image among those sharing a process, and the
