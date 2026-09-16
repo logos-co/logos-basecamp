@@ -23,7 +23,8 @@ QString sharedStorageHome()
     return QDir::homePath() + "/.logos_storage";
 }
 
-// The config is shared with the Storage UI.
+// The config is shared with the Storage UI, which reads this file to show and
+// compare what the node runs with.
 QJsonObject sharedUserNodeConfig()
 {
     QFile file(sharedStorageHome() + "/config.json");
@@ -33,17 +34,6 @@ QJsonObject sharedUserNodeConfig()
     }
 
     return QJsonDocument::fromJson(file.readAll()).object();
-}
-
-QJsonObject nodeConfig()
-{
-    QJsonObject config = sharedUserNodeConfig();
-
-    if (!config.contains(QStringLiteral("network"))) {
-        config.insert(QStringLiteral("network"), QStringLiteral("logos.test"));
-    }
-
-    return config;
 }
 
 QJsonObject eventPayload(const QVariantList& data)
@@ -115,7 +105,7 @@ void StorageNode::setStorageReady(bool ready)
     LogosModules logos(m_logosAPI);
 
     const QString configJson =
-        QString::fromUtf8(QJsonDocument(nodeConfig()).toJson(QJsonDocument::Compact));
+        QString::fromUtf8(QJsonDocument(sharedUserNodeConfig()).toJson(QJsonDocument::Compact));
 
     const LogosResult migrated = logos.storage_module.migrateConfig(configJson);
 
