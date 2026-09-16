@@ -11,6 +11,7 @@
 #include <QVariantList>
 
 #include "logos_api.h"
+#include "logos_api_client.h"
 #include "logos_sdk.h"
 
 namespace {
@@ -101,6 +102,22 @@ void StorageNode::setStorageReady(bool ready)
     }
 
     subscribeToStorageEvents();
+
+    QPointer<StorageNode> self(this);
+
+    m_logosAPI->getClient(QStringLiteral("storage_module"))
+        ->whenObjectAvailable(QStringLiteral("storage_module"), [self](bool ready) {
+            if (self && ready) {
+                self->startNode();
+            }
+        });
+}
+
+void StorageNode::startNode()
+{
+    if (m_initialised) {
+        return;
+    }
 
     LogosModules logos(m_logosAPI);
 

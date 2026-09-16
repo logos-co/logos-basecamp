@@ -18,6 +18,7 @@ signals:
 
 private:
     void setStorageReady(bool ready);
+    void startNode();
     void subscribeToStorageEvents();
 
     LogosAPI* m_logosAPI;

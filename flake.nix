@@ -35,7 +35,8 @@
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     # TODO: back to master once feat/storage-fetcher is merged.
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module?ref=feat/storage-fetcher";
-    logos-storage-module.url = "github:logos-co/logos-storage-module";
+    # TODO: back to master once logos-storage-module#90 is merged.
+    logos-storage-module.url = "github:logos-co/logos-storage-module?ref=feat/node-state";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
