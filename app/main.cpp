@@ -534,6 +534,11 @@ int main(int argc, char *argv[])
     // on partially-destroyed objects.
     if (mainWindow) {
         mainWindow->hide();
+
+#ifndef LOGOS_MOCK_BACKEND
+        storageNode.shutdown();
+#endif
+
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QCoreApplication::processEvents();
 
@@ -556,10 +561,6 @@ int main(int argc, char *argv[])
         // Restore the original handler now that all deferred work is done.
         QAccessible::installUpdateHandler(previousHandler);
     }
-
-#ifndef LOGOS_MOCK_BACKEND
-    storageNode.shutdown();
-#endif
 
     // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
     // logos_core_cleanup(); this reset() is what pins it to exactly here,
