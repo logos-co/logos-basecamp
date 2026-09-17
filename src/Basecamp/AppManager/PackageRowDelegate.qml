@@ -86,9 +86,7 @@ ItemDelegate {
         // versionPicked signal that the dialog folds into its pin map.
         Item {
             Layout.alignment: Qt.AlignVCenter
-            // Wide enough for a describe-style version, "2.0.0-32.gf8ab37c1",
-            // which is what a per-commit repository publishes.
-            Layout.preferredWidth: 190
+            Layout.preferredWidth: 110
             Layout.preferredHeight: 32
 
             LogosComboBox {
