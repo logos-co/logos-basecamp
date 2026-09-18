@@ -48,9 +48,6 @@ README) extended for our multi-entry layout.
 # Smoke test (validates app starts without QML errors)
 nix build .#smoke-test -L
 
-# Storage node test
-nix build .#storage-node-test -L
-
 # Build test framework (one-time, rebuilds when logos-qt-mcp changes)
 nix build .#logos-qt-mcp -o result-mcp
 

@@ -598,7 +598,6 @@
             inherit pkgs src logosQtMcp; appPkg = app;
           };
 
-
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {

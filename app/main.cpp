@@ -447,8 +447,6 @@ int main(int argc, char *argv[])
 
     LogosAPI logosAPI("core", nullptr);
 
-    // One storage node per process, started here and shared with the Storage UI.
-
     // Set application icon.
 #ifdef Q_OS_LINUX
     // setDesktopFileName is required for Wayland compositors, which look up the
@@ -520,8 +518,6 @@ int main(int argc, char *argv[])
     // on partially-destroyed objects.
     if (mainWindow) {
         mainWindow->hide();
-
-
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QCoreApplication::processEvents();
 

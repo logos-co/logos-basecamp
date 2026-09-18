@@ -58,7 +58,6 @@ logos-basecamp/
 │   ├── qml-tests.nix                     # QML tests
 │   ├── sandbox-test.nix                  # ui_qml sandbox-escape regression test
 │   ├── shutdown-test.nix                 # Quit-gesture teardown tests
-│   ├── storage-node-test.nix             # Storage node start/stop test
 │   ├── coverage.nix                      # gcovr report over app/ and src/
 │   └── build-info.nix                    # Version/build metadata
 ├── qt-ios/                               # iOS build configuration (experimental)
@@ -176,12 +175,6 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 **Files:** `app/main.cpp`
 
 **Purpose:** Initializes the Qt application, configures plugin directories (embedded + user-writable), calls `logos_core_start()` to boot the runtime, auto-loads the `package_manager` module, creates the `LogosAPI` instance, creates the main window, starts a stats polling timer (2s interval), starts the QML inspector (if enabled), and runs the event loop. On exit, calls `logos_core_cleanup()`.
-
-### StorageNode
-
-**Files:** `app/StorageNode.h`, `app/StorageNode.cpp`
-
-**Purpose:** Runs the Logos Storage node that `package_downloader` uses for `logos:<cid>` packages. Starts it (`migrateConfig` → `init` → `start`) when `modules_state` reports `storage_module` ready, and stops then destroys it on quit. The config is shared with the Storage UI: `~/.logos_storage/config.json`, network `logos.test` by default.
 
 ### Window
 
@@ -631,19 +624,6 @@ Validates the application starts correctly:
 
 ```bash
 nix build '.#smoke-test' -L
-```
-
-### Storage Node Test
-
-**File:** `nix/storage-node-test.nix`
-
-Launches the app with the real `storage_module`:
-- Waits for `Storage node started.` in the log (60-second timeout)
-- Sends SIGTERM and checks for `Storage node stopped.`
-- Not built where `storage_module` is unavailable (Windows)
-
-```bash
-nix build '.#storage-node-test' -L
 ```
 
 ### Integration Tests
