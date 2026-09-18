@@ -36,7 +36,7 @@
     # TODO: back to master once feat/storage-fetcher is merged.
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module?ref=feat/storage-fetcher";
     # TODO: back to master once logos-storage-module#90 is merged.
-    logos-storage-module.url = "github:logos-co/logos-storage-module?ref=feat/node-state";
+    logos-storage-module.url = "github:logos-co/logos-storage-module?ref=feat/node-running";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
@@ -248,7 +248,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosStorageModule logosModulesStateModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             installedModules = installedDev;
           };
@@ -262,7 +262,7 @@
             inherit pkgs common src mainUIPlugin;
           };
           appMock = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosStorageModule logosModulesStateModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             # The SAME plugins the real dev build stages. PMUI is real code
             # loaded from disk here — only the modules it talks to are faked —
@@ -275,7 +275,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosStorageModule logosModulesStateModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -287,7 +287,7 @@
           # shipped bundles are (portable liblogos, portable module variants,
           # no /nix/store references after bundling).
           appMockPortable = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosStorageModule logosModulesStateModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -298,7 +298,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosStorageModule logosModulesStateModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -609,12 +609,6 @@
 
           # Default package
           default = app;
-        } // pkgs.lib.optionalAttrs (logosStorageModule != null) {
-          # Starts the app with the real storage_module and checks that the
-          # node starts, then stops on SIGTERM.
-          storage-node-test = import ./nix/storage-node-test.nix {
-            inherit pkgs; appPkg = app;
-          };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isWindows {
           # nix build .#packages.x86_64-windows.bin-installer
           bin-installer = windowsInstaller;
@@ -661,7 +655,7 @@
         };
       });
 
-      checks = forAllSystems ({ pkgs, system, logosStorageModule, ... }: {
+      checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;
@@ -675,8 +669,6 @@
       } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
         link-gate = self.packages.${system}.link-gate;
         link-gate-negative = self.packages.${system}.link-gate-negative;
-      } // pkgs.lib.optionalAttrs (logosStorageModule != null) {
-        storage-node-test = self.packages.${system}.storage-node-test;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosProtocolPkg, logosQtHost, logosModule, logosLiblogos, logosPackageManagerLibrary, logosPackageManagerModule, logosCapabilityModule, logosPackageLib, logosDesignSystem, logosCppSdkSrc, logosLiblogosSrc, logosPackageManagerModuleSrc, logosCapabilityModuleSrc, ... }: {
