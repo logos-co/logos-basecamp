@@ -3,7 +3,7 @@
 # producing a Basecamp that serves fixture data and contains no Logos runtime.
 # Exposed only via the .#app-mock output — never from a release target.
 # See mock/README.md.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosStorageModule ? null, logosModulesStateModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -220,23 +220,6 @@ pkgs.stdenv.mkDerivation rec {
       cp -r "${logosPackageDownloaderModule}/include"/* ./app/generated/
     else
       echo "Warning: No include directory found in logos-package-downloader-module"
-    fi
-
-    # TODO: include Windows target.
-    ${pkgs.lib.optionalString (logosStorageModule != null) ''
-      echo "Copying include files from logos-storage-module..."
-      if [ -d "${logosStorageModule}/include" ]; then
-        cp -r "${logosStorageModule}/include"/* ./app/generated/
-      else
-        echo "Warning: No include directory found in logos-storage-module"
-      fi
-    ''}
-
-    echo "Copying include files from logos-modules-state-module..."
-    if [ -d "${logosModulesStateModule}/include" ]; then
-      cp -r "${logosModulesStateModule}/include"/* ./app/generated/
-    else
-      echo "Warning: No include directory found in logos-modules-state-module"
     fi
 
     # Shared semver headers (logos/semver.hpp + its <semver/semver.hpp>) so

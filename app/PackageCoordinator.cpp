@@ -201,6 +201,17 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
                                                data.at(1).toULongLong(),
                                                data.at(2).toULongLong());
     });
+
+    // Which transport served a package, `logos:<cid>` or the https url. Payload
+    // is [packageName, source]. Logged only: nothing shows it yet.
+    logos.package_downloader.on("downloadDone", [](const QVariantList& data) {
+        if (data.size() < 2) {
+            qWarning() << "PackageCoordinator: package_downloader.downloadDone "
+                          "expected [name, source], got" << data.size() << "args";
+            return;
+        }
+        qInfo() << "Downloaded" << data.at(0).toString() << "from" << data.at(1).toString();
+    });
 }
 
 // ---------------------------------------------------------------------------

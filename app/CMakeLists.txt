@@ -321,7 +321,6 @@ set(PROJECT_SOURCES
     UIPluginManager.cpp
     PackageCoordinator.cpp
     RepositorySource.cpp
-    StorageNode.cpp
     UninstallPlan.cpp
     InstallRegistry.cpp
     AppsModel.cpp
