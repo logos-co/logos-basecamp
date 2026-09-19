@@ -146,9 +146,6 @@
         logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.default;
         logosPackageDownloaderModuleLib = logos-package-downloader-module.packages.${system}.lib;
         # TODO: include Windows target.
-        logosStorageModule =
-          if system == "x86_64-windows" then null
-          else logos-storage-module.packages.${system}.default;
         logosStorageModuleLib =
           if system == "x86_64-windows" then null
           else logos-storage-module.packages.${system}.lib;
@@ -198,7 +195,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModule, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
