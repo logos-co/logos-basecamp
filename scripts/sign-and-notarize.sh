@@ -87,6 +87,8 @@ trap "rm -rf '${TEMP_DIR}' '${CERTS_DIR}'" EXIT
 APP_BUNDLE="${TEMP_DIR}/LogosBasecamp.app"
 CONTENTS="${APP_BUNDLE}/Contents"
 ENTITLEMENTS="./app/macos/LogosBasecamp.entitlements"
+# logos_host runs the modules, and some of them JIT (RandomX in monerod_module): only it gets allow-jit.
+HOST_ENTITLEMENTS="./app/macos/logos_host.entitlements"
 KEYCHAIN_NAME="build.keychain"
 KEYCHAIN_DB_PATH="${HOME}/Library/Keychains/${KEYCHAIN_NAME}-db"
 
@@ -244,8 +246,10 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
       "${CONTENTS}/MacOS/ui-host" \
       "${CONTENTS}/MacOS/logoscore"; do
       if [[ -f "${exe}" ]]; then
+          ents="${ENTITLEMENTS}"
+          [[ "${exe}" == */logos_host ]] && ents="${HOST_ENTITLEMENTS}"
           echo "  Signing: ${exe}"
-          codesign_with_retry "${CODESIGN_OPTS[@]}" --entitlements "${ENTITLEMENTS}" "${exe}" \
+          codesign_with_retry "${CODESIGN_OPTS[@]}" --entitlements "${ents}" "${exe}" \
               || { echo "ERROR: failed to sign ${exe}"; exit 1; }
       fi
   done
@@ -269,6 +273,11 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
   echo "Verifying signature."
   codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" \
       || { echo "ERROR: Signature verification failed, aborting before notarization."; exit 1; }
+  if [[ -f "${CONTENTS}/MacOS/logos_host" ]]; then
+      host_ents=$(codesign -d --entitlements - "${CONTENTS}/MacOS/logos_host" 2>/dev/null || true)
+      grep -qF "com.apple.security.cs.allow-jit" <<<"${host_ents}" \
+          || { echo "ERROR: logos_host is missing the allow-jit entitlement."; exit 1; }
+  fi
 
   echo "Signing phase complete"
 fi
