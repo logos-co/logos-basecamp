@@ -324,6 +324,7 @@ Item {
                             RowLayout {
                                 spacing: Theme.spacing.small
                                 LogosSwitch {
+                                    objectName: "repositories.enableSwitch." + url
                                     checked: isEnabled
                                     onToggled: root.setEnabledRequested(url, checked)
                                 }
