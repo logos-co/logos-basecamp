@@ -54,6 +54,7 @@ Item {
     Component {
         id: gridDelegate
         AppGridDelegate {
+            objectName: "appManager.app." + model.name
             width:  GridView.view.cellWidth
             height: GridView.view.cellHeight
             appData: model
@@ -75,6 +76,7 @@ Item {
     Component {
         id: listDelegate
         AppListDelegate {
+            objectName: "appManager.app." + model.name
             width:  GridView.view.cellWidth
             height: GridView.view.cellHeight
             appData: model

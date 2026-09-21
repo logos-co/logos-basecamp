@@ -14,6 +14,7 @@ what_you_learn:
   - How a release publishes a package to a storage node
   - How the download falls back to HTTPS when the node is stopped from the Storage UI
   - That a download never restarts a node the user stopped
+  - That a node on another network than the catalog's is not used
 
 prerequisites:
   - |
@@ -52,6 +53,11 @@ sections:
         run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1#logos-storage-nim' -o storage-node"
         check_file: "storage-node/bin/storage"
 
+      - title: "Build caddy"
+        text: "It serves the catalog and the package over HTTPS."
+        run: "nix build nixpkgs#caddy -o caddy"
+        check_file: "caddy/bin/caddy"
+
       - title: "Build the lgx tool"
         text: "`index.py` uses it to read the package manifest."
         run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
@@ -61,14 +67,17 @@ sections:
     step: true
     text: |
       Release packages are published to Logos Storage nodes over their HTTP API.
-      The following steps reproduce that release process with the real
-      `storage_ui` release.
+      The following steps reproduce that release process with a `storage_ui`
+      package built from source.
     steps:
-      - title: "Download the storage_ui release"
+      - title: "Build the storage_ui package"
         run: |
           set -eu
-          curl -sSfL -o storage_ui.lgx \
-            https://github.com/2-towns/logos-modules-release-base/releases/download/storage_ui-v2.1.3/storage_ui-2.1.3.lgx
+
+          nix build "${STORAGE_UI_FLAKE:-github:logos-co/logos-storage-ui}#lgx-portable" -o result-storage-ui
+
+          cp result-storage-ui/*.lgx storage_ui.lgx
+          chmod u+w storage_ui.lgx
           ls -l storage_ui.lgx
         check_file: "storage_ui.lgx"
 
@@ -85,6 +94,7 @@ sections:
             --nat=extip:127.0.0.1 \
             --no-bootstrap-node \
             > provider.log 2>&1 &
+
           echo $! > provider.pid
 
           for _ in $(seq 60); do
@@ -96,6 +106,7 @@ sections:
           done
 
           cat provider.log
+
           exit 1
         expect_contains:
           - "provider up"
@@ -106,20 +117,23 @@ sections:
           node configuration for Basecamp's Storage node.
         run: |
           set -eu
-          curl -sS -H 'Accept: text/plain' http://127.0.0.1:8080/api/storage/v1/spr > spr.txt
+          curl --fail-with-body -sS -H 'Accept: text/plain' http://127.0.0.1:8080/api/storage/v1/spr > spr.txt
           cat spr.txt
-        check_file: "spr.txt"
+        expect_contains:
+          - "spr:"
 
       - title: "Upload the package over the HTTP API"
         text: |
           Simulate a release by uploading `storage_ui` to Logos Storage.
         run: |
           set -eu
+
           curl --fail-with-body -sS -X POST \
             -H 'Content-Type: application/octet-stream' \
-            -H 'Content-Disposition: attachment; filename="storage_ui-2.1.3.lgx"' \
+            -H 'Content-Disposition: attachment; filename="storage_ui.lgx"' \
             --data-binary @storage_ui.lgx \
             http://127.0.0.1:8080/api/storage/v1/data > cid.txt
+
           cat cid.txt
         check_file: "cid.txt"
 
@@ -160,7 +174,7 @@ sections:
           }
           EOF
 
-          nix run nixpkgs#caddy -- run --config Caddyfile --adapter caddyfile > caddy.log 2>&1 &
+          ./caddy/bin/caddy run --config Caddyfile --adapter caddyfile > caddy.log 2>&1 &
           echo $! > caddy.pid
 
           for _ in $(seq 60); do
@@ -195,20 +209,21 @@ sections:
           # TODO: use main once logos-modules-release-tool merges storage support.
           curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/feat/add-storage-as-lgx-provider/index.py
 
-          PATH="$(pwd)/lgx/bin:$PATH" SSL_CERT_FILE="$(pwd)/localhost.crt" \
+          PATH="$(pwd)/lgx/bin:$PATH" \
+          SSL_CERT_FILE="$(pwd)/localhost.crt" NIX_SSL_CERT_FILE="$(pwd)/localhost.crt" \
             python3 index.py build urls.txt --no-icons -o www/index.json 2> index.log
 
           jq . www/index.json
         expect_contains:
           - "logos:"
 
-      - title: "Check that the index advertises the CID first and the HTTPS URL second"
+      - title: "Check that the index advertises both the CID and the HTTPS URL"
         text: |
           The HTTPS URL is the fallback, used when the CID is not available.
         run: |
           jq -er --arg cid "logos:$(cat cid.txt)" '
-            .packages[0].versions[0].urls[0] == $cid
-            and .packages[0].versions[0].urls[1] == "https://127.0.0.1:8443/storage_ui.lgx"
+            .packages[0].versions[0].urls
+            | (index($cid) != null) and (index("https://127.0.0.1:8443/storage_ui.lgx") != null)
           ' www/index.json
         expect_contains:
           - "true"
@@ -332,38 +347,52 @@ sections:
               action: click
               target: "Applications"
 
-            - name: "storage_ui is listed"
+            - name: "Our catalog is shown"
               action: wait_for
-              texts: ["Storage"]
+              texts: ["Doctest Catalog"]
               timeout: 30000
 
             - name: "Open storage_ui"
-              action: click
-              target: "Storage"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              screenshot: "storage-install.png"
 
             - name: "Install it"
               action: click_object
               find_by: "objectName"
               find_value: "addApplicationDialog.primaryButton"
-              screenshot: "storage-install.png"
 
             - name: "Let the download finish"
               action: sleep
-              ms: 30000
+              ms: 20000
 
       - title: "Check that the package came from the Storage network"
-        run: "grep 'Downloaded \"storage_ui\" from' ui-test-app.log"
+        run: |
+          cid="$(cat cid.txt)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
-          - '"logos:'
+          - "logos=1 https=0"
 
   - title: "Stop the node from the Storage UI"
     step: true
     text: |
-      The Storage UI can stop the node, and a download must not start it
-      again. With the node stopped, the package comes from HTTPS. Once the
-      node is started again, the package comes from the Storage network.
+      The Storage UI can stop the node. With the node stopped, the package
+      comes from HTTPS, and the download leaves the node alone. The Storage
+      UI starts it again afterwards.
     steps:
-      - title: "Stop the node and reinstall, then start it and reinstall"
+      - title: "Stop the node, reinstall, and start it again"
         ui_test:
           launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-bundle/bin/LogosBasecamp'"
           qt_mcp: "result-mcp"
@@ -391,29 +420,43 @@ sections:
 
             - name: "The node is stopped"
               action: wait_for
-              texts: ["Start"]
+              texts: ["Start", "Stopped"]
               timeout: 30000
 
             - name: "Open the App Manager"
               action: click
               target: "Applications"
 
-            - name: "Open storage_ui"
-              action: click
-              target: "Storage"
+            - name: "Open the storage_ui details"
+              action: call_method
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              method: "openDetails"
+              args: []
+              text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
 
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
               find_value: "addApplicationDialog.uninstallButton"
 
+            - name: "Let the confirmation open"
+              action: sleep
+              ms: 2000
+
+            - name: "Confirm the uninstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "uninstallDialog.confirmButton"
+
             - name: "Let the uninstall finish"
               action: sleep
               ms: 5000
 
             - name: "Open storage_ui again"
-              action: click
-              target: "Storage"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
 
             - name: "Install it with the node stopped"
               action: click_object
@@ -422,7 +465,7 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 30000
+              ms: 20000
 
             - name: "Open the Storage UI"
               action: click_object
@@ -431,11 +474,11 @@ sections:
 
             - name: "The node is still stopped"
               action: wait_for
-              texts: ["Start"]
+              texts: ["Start", "Stopped"]
               timeout: 30000
               text: "The download did not restart the node."
 
-            - name: "Start it"
+            - name: "Start it again"
               action: click
               target: "Start"
 
@@ -443,52 +486,23 @@ sections:
               action: wait_for
               texts: ["Stop"]
               timeout: 60000
+              text: "The node the downloader stopped talking to comes back from the Storage UI."
 
-            - name: "Open the App Manager"
-              action: click
-              target: "Applications"
-
-            - name: "Open storage_ui"
-              action: click
-              target: "Storage"
-
-            - name: "Uninstall it"
-              action: click_object
-              find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
-
-            - name: "Let the uninstall finish"
-              action: sleep
-              ms: 5000
-
-            - name: "Open storage_ui again"
-              action: click
-              target: "Storage"
-
-            - name: "Install it with the node running"
-              action: click_object
-              find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
-
-            - name: "Let the download finish"
-              action: sleep
-              ms: 30000
-
-      - title: "Check that the package came from HTTPS, then from the Storage network"
+      - title: "Check that the package came from HTTPS"
+        text: |
+          Each launch writes its own log, so the counts cover this run alone.
         run: |
-          grep -o 'Downloaded "storage_ui" from "[a-z]*:' ui-test-app.log | tr '\n' ' '
-          echo
+          cid="$(cat cid.txt)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
-          - 'from "https: Downloaded "storage_ui" from "logos:'
+          - "logos=0 https=1"
 
-  - title: "The node comes back with the storage module"
+  - title: "Unload the storage module"
     step: true
     text: |
-      Without the storage module, the download falls back to HTTPS. A storage
-      module that comes back has no node. The downloader starts the node again
-      when the module reports `ready`.
+      Without the storage module, the download falls back to HTTPS.
     steps:
-      - title: "Unload the storage module and reinstall, then load it and reinstall"
+      - title: "Unload the storage module and reinstall"
         ui_test:
           launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-bundle/bin/LogosBasecamp'"
           qt_mcp: "result-mcp"
@@ -523,26 +537,47 @@ sections:
               action: sleep
               ms: 5000
 
+            - name: "storage_module is gone"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.storage_module"
+              property: "text"
+              value: "Not loaded"
+
             - name: "Open the App Manager"
               action: click
               target: "Applications"
 
-            - name: "Open storage_ui"
-              action: click
-              target: "Storage"
+            - name: "Open the storage_ui details"
+              action: call_method
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              method: "openDetails"
+              args: []
+              text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
 
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
               find_value: "addApplicationDialog.uninstallButton"
 
+            - name: "Let the confirmation open"
+              action: sleep
+              ms: 2000
+
+            - name: "Confirm the uninstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "uninstallDialog.confirmButton"
+
             - name: "Let the uninstall finish"
               action: sleep
               ms: 5000
 
             - name: "Open storage_ui again"
-              action: click
-              target: "Storage"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
 
             - name: "Install it without storage_module"
               action: click_object
@@ -551,7 +586,32 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 60000
+              ms: 20000
+
+      - title: "Check that the package came from HTTPS"
+        run: |
+          cid="$(cat cid.txt)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+        expect_contains:
+          - "logos=0 https=1"
+
+  - title: "Restart the storage module"
+    step: true
+    text: |
+      A storage module that is loaded again starts with no node running. The
+      downloader starts one when the module reports `ready`, so the download
+      goes back to the Storage network.
+    steps:
+      - title: "Unload the storage module, load it again, and reinstall"
+        ui_test:
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-bundle/bin/LogosBasecamp'"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
 
             - name: "Open Settings"
               action: click
@@ -561,7 +621,23 @@ sections:
               action: click
               target: "Module Inspector"
 
-            - name: "Load storage_module again"
+            - name: "Unload storage_module"
+              action: click_object
+              find_by: "objectName"
+              find_value: "moduleRow.loadToggle.storage_module"
+
+            - name: "Let the unload finish"
+              action: sleep
+              ms: 5000
+
+            - name: "storage_module is gone"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.storage_module"
+              property: "text"
+              value: "Not loaded"
+
+            - name: "Load it again"
               action: click_object
               find_by: "objectName"
               find_value: "moduleRow.loadToggle.storage_module"
@@ -570,26 +646,47 @@ sections:
               action: sleep
               ms: 15000
 
-            - name: "Open the App Manager again"
+            - name: "storage_module is loaded again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "moduleInspector.status.storage_module"
+              property: "text"
+              value: "Loaded"
+
+            - name: "Open the App Manager"
               action: click
               target: "Applications"
 
-            - name: "Open storage_ui"
-              action: click
-              target: "Storage"
+            - name: "Open the storage_ui details"
+              action: call_method
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              method: "openDetails"
+              args: []
+              text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
 
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
               find_value: "addApplicationDialog.uninstallButton"
 
+            - name: "Let the confirmation open"
+              action: sleep
+              ms: 2000
+
+            - name: "Confirm the uninstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "uninstallDialog.confirmButton"
+
             - name: "Let the uninstall finish"
               action: sleep
               ms: 5000
 
             - name: "Open storage_ui again"
-              action: click
-              target: "Storage"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
 
             - name: "Install it with storage_module back"
               action: click_object
@@ -598,14 +695,104 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 30000
+              ms: 20000
 
-      - title: "Check that the package came from HTTPS, then from the Storage network again"
+      - title: "Check that the package came from the Storage network"
         run: |
-          grep -o 'Downloaded "storage_ui" from "[a-z]*:' ui-test-app.log | tr '\n' ' '
-          echo
+          cid="$(cat cid.txt)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
-          - 'from "https: Downloaded "storage_ui" from "logos:'
+          - "logos=1 https=0"
+
+  - title: "Put the node on another network"
+    step: true
+    text: |
+      A running node only serves the packages of its own network. The
+      downloader compares the node's network with the repository's and falls
+      back to HTTPS when they differ.
+    steps:
+      - title: "Move the node to logos.test"
+        text: |
+          The catalog stays on `logos.dev`.
+        run: |
+          set -eu
+
+          sed -i 's/"logos.dev"/"logos.test"/' home/.logos_storage/config.json
+          grep network home/.logos_storage/config.json
+        expect_contains:
+          - '"network": "logos.test"'
+
+      - title: "Reinstall with the networks apart"
+        ui_test:
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-bundle/bin/LogosBasecamp'"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+
+            - name: "Open the Storage UI"
+              action: click_object
+              find_by: "objectName"
+              find_value: "sidebar.app.storage_ui"
+
+            - name: "The node is running"
+              action: wait_for
+              texts: ["Stop"]
+              timeout: 60000
+              text: "The node is up: only its network differs."
+
+            - name: "Open the App Manager"
+              action: click
+              target: "Applications"
+
+            - name: "Open the storage_ui details"
+              action: call_method
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              method: "openDetails"
+              args: []
+
+            - name: "Uninstall it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+
+            - name: "Let the confirmation open"
+              action: sleep
+              ms: 2000
+
+            - name: "Confirm the uninstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "uninstallDialog.confirmButton"
+
+            - name: "Let the uninstall finish"
+              action: sleep
+              ms: 5000
+
+            - name: "Open storage_ui again"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+
+            - name: "Install it from another network"
+              action: click_object
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+
+            - name: "Let the download finish"
+              action: sleep
+              ms: 20000
+
+      - title: "Check that the package came from HTTPS"
+        run: |
+          cid="$(cat cid.txt)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+        expect_contains:
+          - "logos=0 https=1"
 
   - title: "Shut down"
     steps:

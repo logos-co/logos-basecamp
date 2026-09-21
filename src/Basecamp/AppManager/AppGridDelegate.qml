@@ -86,6 +86,12 @@ ItemDelegate {
         }
     }
 
+    // Same as the context menu's Details entry. A test driver cannot emit
+    // detailsRequested itself: a typed QML signal refuses QVariant arguments.
+    function openDetails() {
+        root.detailsRequested(d.nameText, d.repositoryUrl)
+    }
+
     background: Item {}
     padding: 0
     hoverEnabled: true
