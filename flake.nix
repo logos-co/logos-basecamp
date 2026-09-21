@@ -145,10 +145,7 @@
         logosPackageManagerModuleLib = logos-package-manager-module.packages.${system}.lib;
         logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.default;
         logosPackageDownloaderModuleLib = logos-package-downloader-module.packages.${system}.lib;
-        # TODO: include Windows target.
-        logosStorageModuleLib =
-          if system == "x86_64-windows" then null
-          else logos-storage-module.packages.${system}.lib;
+        logosStorageModuleLib = logos-storage-module.packages.${system}.lib;
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
         logosPackageManagerModuleLibPortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
@@ -224,7 +221,7 @@
           # host already ships in bin/, so the PE path needs a hostLibs strip
           # that nix-bundle-dir does not have yet. Unrelated to binBundleDir
           # below, which is the APP and therefore is the thing that ships them.
-          installedDev = map installDev ([
+          installedDev = map installDev [
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
@@ -234,14 +231,16 @@
             # Optional by construction: absent, the feed never arms.
             logosModulesStateModule
             packageManagerUIPlugin
-          ] ++ pkgs.lib.optional (logosStorageModuleLib != null) logosStorageModuleLib);
-          installedDistributed = map installPortable ([
+            logosStorageModuleLib
+          ];
+          installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
             logosModulesStateModule
             packageManagerUIPlugin
-          ] ++ pkgs.lib.optional (logosStorageModuleLib != null) logosStorageModuleLib);
+            logosStorageModuleLib
+          ];
 
           # App package (development build)
           app = import ./nix/app.nix {
