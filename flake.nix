@@ -33,7 +33,11 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
-    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
+    # TODO: back to master once feat/storage-fetcher is merged.
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module?ref=feat/storage-fetcher";
+    # TODO: back to master once logos-storage-module#90 is merged.
+    logos-storage-module.url = "github:logos-co/logos-storage-module?ref=feat/node-running";
+    logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
@@ -66,7 +70,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-storage-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -92,6 +96,7 @@
           { name = "logos-package-manager"; commit = revOf logos-package-manager; }
           { name = "logos-package-manager-module"; commit = revOf logos-package-manager-module; }
           { name = "logos-package-downloader-module"; commit = revOf logos-package-downloader-module; }
+          { name = "logos-storage-module"; commit = revOf logos-storage-module; }
           { name = "logos-capability-module"; commit = revOf logos-capability-module; }
           { name = "logos-modules-state-module"; commit = revOf logos-modules-state-module; }
           { name = "logos-package"; commit = revOf logos-package; }
@@ -140,6 +145,7 @@
         logosPackageManagerModuleLib = logos-package-manager-module.packages.${system}.lib;
         logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.default;
         logosPackageDownloaderModuleLib = logos-package-downloader-module.packages.${system}.lib;
+        logosStorageModuleLib = logos-storage-module.packages.${system}.lib;
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
         logosPackageManagerModuleLibPortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
@@ -186,7 +192,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -225,6 +231,7 @@
             # Optional by construction: absent, the feed never arms.
             logosModulesStateModule
             packageManagerUIPlugin
+            logosStorageModuleLib
           ];
           installedDistributed = map installPortable [
             logosPackageManagerModuleLibPortable
@@ -232,6 +239,7 @@
             logosCapabilityModule
             logosModulesStateModule
             packageManagerUIPlugin
+            logosStorageModuleLib
           ];
 
           # App package (development build)
@@ -672,7 +680,7 @@
             pkgs.krb5
             pkgs.abseil-cpp
           ];
-          
+
           shellHook = ''
             # Nix package paths (pre-built for host system)
             export LOGOS_CPP_SDK_ROOT="${logosSdk}"
@@ -684,13 +692,13 @@
             export LOGOS_CAPABILITY_MODULE_ROOT="${logosCapabilityModule}"
             export LGX_ROOT="${logosPackageLib}"
             export LOGOS_DESIGN_SYSTEM_ROOT="${logosDesignSystem}"
-            
+
             # Source paths for iOS builds (from flake inputs)
             export LOGOS_CPP_SDK_SRC="${logosCppSdkSrc}"
             export LOGOS_LIBLOGOS_SRC="${logosLiblogosSrc}"
             export LOGOS_PACKAGE_MANAGER_MODULE_SRC="${logosPackageManagerModuleSrc}"
             export LOGOS_CAPABILITY_MODULE_SRC="${logosCapabilityModuleSrc}"
-            
+
             echo "Logos Basecamp development environment"
             echo ""
             echo "Nix packages (host builds):"

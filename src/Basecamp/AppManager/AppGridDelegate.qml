@@ -86,6 +86,10 @@ ItemDelegate {
         }
     }
 
+    function openDetails() {
+        root.detailsRequested(d.nameText, d.repositoryUrl)
+    }
+
     background: Item {}
     padding: 0
     hoverEnabled: true
