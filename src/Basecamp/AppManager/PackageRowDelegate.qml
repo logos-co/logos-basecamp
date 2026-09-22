@@ -73,6 +73,7 @@ ItemDelegate {
         spacing: Theme.spacing.medium
 
         LogosText {
+            id: nameLabel
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: 110
             text: d.rowDisplayName
@@ -80,6 +81,13 @@ ItemDelegate {
             font.pixelSize: Theme.typography.primaryText
             color: Theme.palette.text
             elide: Text.ElideRight
+
+            HoverHandler { id: nameHover }
+            LogosToolTip {
+                text: d.rowDisplayName
+                placement: LogosToolTip.Top
+                visible: nameHover.hovered && nameLabel.truncated
+            }
         }
 
         // Per-row version picker. Same combo as before; emits a
@@ -90,6 +98,7 @@ ItemDelegate {
             Layout.preferredHeight: 32
 
             LogosComboBox {
+                id: versionCombo
                 anchors.fill: parent
                 visible: d.usableVersions.length > 0
                 enabled: !root.installing && !d.isError
@@ -113,24 +122,50 @@ ItemDelegate {
                     if (!picked || picked === d.toVersion) return
                     root.versionPicked(d.rowName, picked)
                 }
+
+                hoverEnabled: true
+                LogosToolTip {
+                    text: versionCombo.displayText
+                    placement: LogosToolTip.Top
+                    visible: versionCombo.hovered && versionCombo.contentLabel.truncated
+                }
             }
 
             LogosText {
+                id: versionFallback
+                anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 visible: d.usableVersions.length === 0
                 text: d.toVersion ? ("v." + d.toVersion) : ""
                 font.pixelSize: Theme.typography.secondaryText
                 color: Theme.palette.textTertiary
+                elide: Text.ElideRight
+
+                HoverHandler { id: versionFallbackHover }
+                LogosToolTip {
+                    text: versionFallback.text
+                    placement: LogosToolTip.Top
+                    visible: versionFallbackHover.hovered && versionFallback.truncated
+                }
             }
         }
 
         LogosText {
+            id: descLabel
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
             text: root.appRow ? (root.appRow.description || "") : ""
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textTertiary
             elide: Text.ElideRight
+
+            HoverHandler { id: descHover }
+            LogosToolTip {
+                text: descLabel.text
+                placement: LogosToolTip.Top
+                visible: descHover.hovered && descLabel.truncated
+            }
         }
 
         LogosBadge {

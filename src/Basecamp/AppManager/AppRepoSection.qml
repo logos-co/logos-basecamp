@@ -24,12 +24,20 @@ ColumnLayout {
         spacing: Theme.spacing.small
 
         LogosText {
+            id: titleLabel
             text: root.title
             font.pixelSize: Theme.typography.subtitleText
             font.weight: Theme.typography.weightMedium
             color: Theme.palette.textSecondary
             elide: Text.ElideRight
             Layout.fillWidth: true
+
+            HoverHandler { id: titleHover }
+            LogosToolTip {
+                text: root.title
+                placement: LogosToolTip.Top
+                visible: titleHover.hovered && titleLabel.truncated
+            }
         }
 
         LogosText {
