@@ -44,6 +44,9 @@
     # signer-binding fix.
     logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
     logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
+    # Basecamp loads the UI plugin, never its standalone host (`nix run`/ui-dev only);
+    # cutting it drops a second copy of the module toolchain from this lock.
+    logos-package-manager-ui.inputs.logos-module-builder.inputs.logos-standalone-app.follows = "logos-nix";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     # ui-host links the same qt-host and protocol the app does.
