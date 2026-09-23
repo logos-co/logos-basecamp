@@ -183,7 +183,7 @@ endif()
 endif() # LOGOS_USE_MOCK_BACKEND
 
 # ── logos-view-module-runtime (provides ViewModuleHost.h + the ui-host lib) ───
-# Load-bearing: UIPluginManager/PluginLoader compile into the exe.
+# Load-bearing: UIPluginManager and the UI plugin loader it drives link from here.
 if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
     set(_candidate "${REAL_SOURCE_DIR}/../../logos-view-module-runtime")
     if(EXISTS "${_candidate}/include/ViewModuleHost.h")
@@ -284,11 +284,9 @@ set(PROJECT_SOURCES
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
     utils/DependencyBlocker.h
-    utils/DependencyEntry.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
-    interfaces/IComponent.h
     interfaces/IShellHost.h
     interfaces/IShellView.h
     interfaces/InstallEnums.h
@@ -316,7 +314,6 @@ set(PROJECT_SOURCES
     IntentBridgeAdapter.cpp
     UIPluginPresenter.cpp
     CoreModuleManager.cpp
-    CoreDependencyLoader.cpp
     RecentlyClosedStore.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
@@ -325,13 +322,6 @@ set(PROJECT_SOURCES
     InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
-    PluginLoader.cpp
-    restricted/DenyAllReply.cpp
-    restricted/DenyAllNetworkAccessManager.cpp
-    restricted/DenyAllNAMFactory.cpp
-    restricted/RestrictedUrlInterceptor.cpp
-    restricted/QmlSandbox.cpp
-    restricted/SandboxLogging.cpp
 )
 
 if(EXISTS ${GENERATED_LOGOS_SDK_CPP})
@@ -399,8 +389,8 @@ endif()
 # logos-protocol library transitively.
 #
 # Qt6::Network is named EXPLICITLY rather than left to arrive transitively
-# through Quick/QuickWidgets: restricted/DenyAllNetworkAccessManager.cpp
-# subclasses QNetworkAccessManager.
+# through Quick/QuickWidgets: the ui_qml sandbox in the view-module-runtime
+# archive subclasses QNetworkAccessManager.
 #
 # This executable owns no QML. Qt6::Quick / Qml / QuickWidgets / QuickControls2
 # are linked for the out-of-process UI plugins, and so the portable bundler

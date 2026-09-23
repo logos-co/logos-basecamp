@@ -79,7 +79,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     // connections it sets up internally.
     m_uiPluginManager->setPackageCoordinator(m_packageCoordinator);
 
-    // Bridges become intent-capable from here on. PluginLoader attaches each
+    // Bridges become intent-capable from here on. The plugin loader attaches each
     // ui_qml app's bridge as it loads, before its QML runs.
     m_uiPluginManager->setIntentAdapter(m_intentAdapter);
 

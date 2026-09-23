@@ -26,16 +26,9 @@ logos-basecamp/
 │   ├── ShellHostAdapter.h/cpp            # IShellHost over MainUIBackend
 │   ├── CoreModuleManager.h/cpp           # Core-module lifecycle over the SDK facade
 │   ├── UIPluginManager.h/cpp             # UI-plugin load/unload, widget ownership
-│   ├── PluginLoader.h/cpp                # Per-plugin identities, ui-host spawning
 │   ├── PackageCoordinator.h/cpp          # Install/uninstall flows
 │   ├── AppsModel.h/cpp                   # App list model
 │   ├── ModuleInstanceModel.h/cpp         # Module list model
-│   └── restricted/                       # ui_qml sandbox (network + filesystem + native-plugin)
-│   │   ├── QmlSandbox.h/cpp               # applies the sandbox policy to a QML engine
-│   │   ├── DenyAllNetworkAccessManager.h/cpp
-│   │   ├── DenyAllNAMFactory.h/cpp
-│   │   ├── DenyAllReply.h/cpp
-│       └── RestrictedUrlInterceptor.h/cpp
 ├── tests/                                # Integration tests
 │   ├── ui-tests.mjs                      # Node.js test suite (logos-qt-mcp)
 │   ├── host-services-tests.mjs           # Capability trust-root guard (spec)
@@ -56,7 +49,6 @@ logos-basecamp/
 │   ├── symbol-gate.nix                   # One-runtime gate + its negative control
 │   ├── unit-tests.nix                    # C++ unit tests
 │   ├── qml-tests.nix                     # QML tests
-│   ├── sandbox-test.nix                  # ui_qml sandbox-escape regression test
 │   ├── shutdown-test.nix                 # Quit-gesture teardown tests
 │   ├── coverage.nix                      # gcovr report over app/ and src/
 │   └── build-info.nix                    # Version/build metadata
@@ -225,7 +217,7 @@ The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named opera
 
 ### LogosQmlBridge
 
-**Files:** none in this repo — `LogosQmlBridge` is an external header, included by `app/PluginLoader.cpp` from a flake input's include path (logos-view-module-runtime).
+**Files:** none in this repo — `LogosQmlBridge` comes from logos-view-module-runtime, whose `UiPluginLoader` builds one per `ui_qml` app.
 
 **Purpose:** Bridge between QML-based UI Apps and Logos Modules. Injected into each QML UI App's context as `logos`, enabling UI Apps to call Logos Module methods via the Logos API.
 
@@ -243,27 +235,11 @@ The bridge validates that the `LogosAPI` is available and the target Logos Modul
 
 **Purpose:** Dock-based app workspace, one dock per loaded UI App: `addPluginDock` / `removePluginDock` / `activatePluginDock`. It replaced the earlier `MdiView` / `MdiChild` QMdiArea tab pair, which no longer exist.
 
-### QML Sandbox
+### UI plugin loading and the QML sandbox
 
-**Files:** `app/restricted/QmlSandbox.h/cpp`, `app/restricted/DenyAllNetworkAccessManager.h/cpp`, `app/restricted/DenyAllNAMFactory.h/cpp`, `app/restricted/DenyAllReply.h/cpp`, `app/restricted/RestrictedUrlInterceptor.h/cpp`
+**Files:** none in this repo. `UiPluginLoader` (dependency loading, per-plugin identities, ui-host spawning) and the `ui_qml` sandbox (`QmlSandbox`: network deny, filesystem allow-list, no native plugins from the app's own dir) live in logos-view-module-runtime, which logos-standalone-app shares, so a plugin behaves the same in both hosts. `UIPluginManager` builds the load requests from the package manager's metadata and attaches each bridge to intents through the loader's bridge-setup hook.
 
-**Purpose:** Security layer for QML-based UI Apps (`ui_qml` modules), applied by `QmlSandbox::configure()` (the single setup `PluginLoader::loadQmlView` runs on each app's `QQmlEngine`). A `ui_qml` app is meant to be QML/JS only, confined to its own install directory; the sandbox enforces that on three fronts:
-
-- **Network:** a `DenyAllNAMFactory` blocks all outgoing HTTP/HTTPS. Apps that need network do so indirectly through Logos Modules via the QML bridge.
-- **Filesystem:** a `RestrictedUrlInterceptor` resolves only `qrc:` URLs and local files under an allow-list of roots (the app's own dir, the vetted app lib dir's shared Logos QML modules, and Qt's own module dirs). Other schemes and *existing* paths outside the roots are blocked. A non-existent path is passed through untouched — Qt's module resolution probes many non-existent `<importPath>/<Module>[.ver]/qmldir` candidates before finding the real one, and a path that doesn't exist can load nothing; if it later resolves to a real file, that file is re-intercepted (now with a non-empty canonical path) and vetted against the roots then. The only **fail-closed** case is the genuinely anomalous one — a path that *exists* but still won't canonicalise (e.g. a symlink loop) — which is blocked because it can't be vetted yet could back a real resource.
-- **Native code:** the app's install dir is **not** added to the engine's native-plugin search path, and a qmldir living under the app's own (untrusted) dir may **not** declare a native `plugin`. Without this, a `ui_qml` app could ship a `qmldir` with a `plugin` directive plus a matching Qt plugin `.so` and have Qt `dlopen()` it straight into the host process — full native code execution, defeating the network/filesystem guarantees (formerly tracked as finding F-008). Native plugin loading bypasses URL interception entirely, so the qmldir that *declares* the plugin is the choke point: rejecting that qmldir makes the malicious module simply "not installed". Vetted roots (the app lib dir, Qt's module dirs — which legitimately ship native plugins like QtQuick) are exempt.
-
-The escape and its fix are covered by the `sandbox-test` check (`tests/sandbox/`, `nix build .#sandbox-test`), which builds a real malicious QML plugin and asserts it is never loaded while a legitimate pure-QML module still is. The same check also regresses the rest of the `ui_qml` sandbox policy — network deny (HTTP and `file://`), URL-interceptor blocking of remote-scheme loads and out-of-root file reads, and the matching positive cases (files under the module's own dir and `qrc:` resources still resolve) — i.e. the guarantees the `counter_qml` probe app exercises by hand, now driven against the real `QmlSandbox::configure`. On top of those mechanism-level slots, `tests/sandbox/evil_app/` is an end-to-end adversarial fixture — the evil twin of `counter_qml` — a real `ui_qml` view whose `Main.qml` automatically fires every escape vector on load and tallies an `escapes` count; the check loads it through the real sandbox and asserts `escapes == 0` (plus a QML-only F-008 probe: an `EvilModule/qmldir` declaring a native plugin must be rejected at import).
-
-| Class | Description |
-|-------|-------------|
-| `QmlSandbox` (namespace) | `configure(engine, installDir, qmlViewPath, appLibDir)` — applies the whole ui_qml sandbox policy to a QML engine. Factored out of `PluginLoader` so it is unit-testable against a bare `QQmlEngine`. |
-| `DenyAllNetworkAccessManager` | Qt network access manager that rejects all requests |
-| `DenyAllNAMFactory` | Factory that creates deny-all NAM instances for QML engines |
-| `DenyAllReply` | Network reply that immediately signals error |
-| `RestrictedUrlInterceptor` | URL interceptor: gates file/qmldir resolution to allowed roots (non-existent probe candidates pass through so Qt's module resolution still works; an *existing* path that can't be canonicalised fails closed), and rejects a qmldir under an *untrusted* root that declares a native plugin |
-
-## QML UI Layer
+The sandbox-escape regression test (F-008) moved with it: logos-view-module-runtime's `tests/sandbox`, run by its `nix flake check`.
 
 ### SidebarPanel
 

@@ -546,14 +546,10 @@
             inherit pkgs; bundlePkg = binBundleDir; negativeControl = true;
           };
 
-          # ui_qml sandbox-escape regression test (F-008). Focused C++ unit test:
-          # builds a real malicious QML plugin and asserts the production sandbox
-          # refuses to load it. Build: nix build .#sandbox-test
-          sandbox-test = import ./nix/sandbox-test.nix { inherit pkgs src; };
-
-          # Pure-model unit tests (AppsModel install-status logic, etc.). Same
-          # shape as sandbox-test — standalone QtTest project, no app launch,
-          # no IPC. Build: nix build .#unit-tests
+          # Pure-model unit tests (AppsModel install-status logic, etc.).
+          # Standalone QtTest project, no app launch, no IPC. The ui_qml
+          # sandbox-escape test (F-008) moved to logos-view-module-runtime
+          # with the sandbox. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
             inherit pkgs src logosPackageHeaders;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
@@ -647,7 +643,6 @@
 
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
-        sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;
         qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
