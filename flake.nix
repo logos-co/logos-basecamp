@@ -509,6 +509,11 @@
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
 
+          module-hosts = import ./nix/module-hosts.nix {
+            inherit pkgs logosLiblogos;
+            appPkg = app;
+          };
+
           # One-runtime symbol gate. Asserts the logos C++ runtime (TokenManager,
           # StoreRegistry, LogosAPI, LogosAPIClient) is DEFINED exactly once across
           # the images that share one process. The assertion is exactly-one and
@@ -647,6 +652,7 @@
 
       checks = forAllSystems ({ pkgs, system, ... }: {
         smoke-test = self.packages.${system}.smoke-test;
+        module-hosts = self.packages.${system}.module-hosts;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;
         qml-tests = self.packages.${system}.qml-tests;
