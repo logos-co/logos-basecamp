@@ -5,13 +5,15 @@
     logos-nix.url = "github:logos-co/logos-nix";
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
+    # Back to master once logos-co/logos-cpp-sdk#167 merges.
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/core-token-listener";
     logos-protocol.url = "github:logos-co/logos-protocol";
     logos-plugin-qt.url = "github:logos-co/logos-plugin-qt";
     logos-qt-sdk.url = "github:logos-co/logos-qt-sdk";
     logos-module.url = "github:logos-co/logos-module";
     logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt";
-    logos-liblogos.url = "github:logos-co/logos-liblogos";
+    # Back to master once logos-co/logos-liblogos#224 merges.
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/core-token-listener";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -48,7 +50,8 @@
     # cutting it drops a second copy of the module toolchain from this lock.
     logos-package-manager-ui.inputs.logos-module-builder.inputs.logos-standalone-app.follows = "logos-nix";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
+    # Back to master once logos-co/logos-view-module-runtime#36 merges.
+    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime/feat/ui-host-library";
     # ui-host links the same qt-host and protocol the app does.
     logos-view-module-runtime.inputs.logos-protocol.follows = "logos-protocol";
     logos-view-module-runtime.inputs.logos-plugin-qt.follows = "logos-plugin-qt";

@@ -630,15 +630,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1789679286,
-        "narHash": "sha256-sGek+VwjpygEDqGHYA1oC1yrlWpfr1l5+CtdJcsJ8iQ=",
+        "lastModified": 1790175105,
+        "narHash": "sha256-XZE+x08q1DMsdBHJ3CZRHDxX6JXi6cgMIenuc/atgmI=",
         "owner": "logos-co",
         "repo": "logos-cpp-sdk",
-        "rev": "3f34c0b216c8fbdbf2093056b9f0fc53d89f05a1",
+        "rev": "d9617aa55c6569fc5b16fbf66e266a0af8fbcaa9",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/core-token-listener",
         "repo": "logos-cpp-sdk",
         "type": "github"
       }
@@ -1122,15 +1123,16 @@
         "process-stats": "process-stats"
       },
       "locked": {
-        "lastModified": 1790116830,
-        "narHash": "sha256-7nMAuHfoIjTUhZI0E7kt2C4rDpdfais8dnBuXQd7gLw=",
+        "lastModified": 1790175164,
+        "narHash": "sha256-xdp6bfnZOgYVLN0ChHklgX//dhzkUc7m4EDqsX0w/KU=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "db45024f5c45ce5fc00ab76a6921985839ad7355",
+        "rev": "0403c18c7ec22f4da1530b9e74383ea3fc221d85",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/core-token-listener",
         "repo": "logos-liblogos",
         "type": "github"
       }
@@ -13038,6 +13040,11 @@
         "logos-cpp-sdk": [
           "logos-cpp-sdk"
         ],
+        "logos-module": [
+          "logos-view-module-runtime",
+          "logos-plugin-qt",
+          "logos-module"
+        ],
         "logos-nix": "logos-nix_185",
         "logos-plugin-qt": [
           "logos-plugin-qt"
@@ -13052,15 +13059,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1790028132,
-        "narHash": "sha256-kBkz68YXWj2gDdwtYRgZ0/7smTURYzrJlsp/+stlqcA=",
+        "lastModified": 1790175861,
+        "narHash": "sha256-W/RtXC2YiO5uyxcuerZtx3SIg0L7fp1rBdZL2Ceq+xY=",
         "owner": "logos-co",
         "repo": "logos-view-module-runtime",
-        "rev": "42d9140811088f6ac0fcc3ccfc26d647afef1c35",
+        "rev": "040125ab5fe91b4dd17dd7e14ef27b4e0b067c56",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/ui-host-library",
         "repo": "logos-view-module-runtime",
         "type": "github"
       }
