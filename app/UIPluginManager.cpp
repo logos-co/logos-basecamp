@@ -4,7 +4,7 @@
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
-#include "PluginLoader.h"
+#include "UiPluginLoader.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/LogosBasecampPaths.h"
 
@@ -16,7 +16,6 @@
 #include <QMetaObject>
 #include <QPixmap>
 #include <QPointer>
-#include <QQmlContext>
 #include <QQuickWidget>
 #include <QSet>
 #include <QTimer>
@@ -65,12 +64,18 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
     connect(this, &UIPluginManager::launcherAppsChanged,
             this, &UIPluginManager::recentlyClosedAppsChanged);
 
-    m_pluginLoader = new PluginLoader(m_logosAPI, m_coreModuleManager, this);
-    connect(m_pluginLoader, &PluginLoader::pluginLoaded,
+    // The loader runs dependency loads on a worker, so it gets the manager
+    // pointer rather than `this`.
+    m_pluginLoader = new logos::ui::UiPluginLoader(m_logosAPI,
+        [core = m_coreModuleManager](const QString& dep, bool) {
+            return core && core->loadModule(dep);
+        },
+        this);
+    connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoaded,
             this, &UIPluginManager::onPluginLoaded);
-    connect(m_pluginLoader, &PluginLoader::pluginLoadFailed,
+    connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoadFailed,
             this, &UIPluginManager::onPluginLoadFailed);
-    connect(m_pluginLoader, &PluginLoader::loadingChanged,
+    connect(m_pluginLoader, &logos::ui::UiPluginLoader::loadingChanged,
             this, &UIPluginManager::loadingModulesChanged);
 }
 
@@ -285,16 +290,16 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
     if (isQmlPlugin(moduleName)) {
         const QVariantMap& meta = m_uiPluginMetadata.value(moduleName);
 
-        PluginLoadRequest request;
+        logos::ui::UiPluginRequest request;
         request.name = moduleName;
-        request.type = UIPluginType::UiQml;
+        request.kind = logos::ui::UiPluginKind::UiQml;
         request.installDir = meta.value("installDir").toString();
         request.qmlViewPath = resolveQmlViewPath(meta);
         request.iconPath = pluginIconUrl(moduleName, true);
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
-        request.coreDependencies = meta.value("dependencies").toList();
-        request.optionalCoreDependencies = meta.value("optionalDependencies").toList();
+        request.dependencies = meta.value("dependencies").toList();
+        request.optionalDependencies = meta.value("optionalDependencies").toList();
 
         m_pluginLoader->load(request);
         return;
@@ -304,12 +309,12 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
 }
 
 void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
-                                     IComponent* component, UIPluginType type,
-                                     ViewModuleHost* viewHost)
+                                     IComponent* component, logos::ui::UiPluginKind kind,
+                                     ViewModuleHost* viewHost, LogosQmlBridge* bridge)
 {
     if (component)
         m_loadedUiModules[name] = component;
-    if (type != UIPluginType::Legacy)
+    if (kind != logos::ui::UiPluginKind::Legacy)
         m_qmlPluginWidgets[name] = qobject_cast<QQuickWidget*>(widget);
     if (viewHost)
         m_viewModuleHosts[name] = viewHost;
@@ -320,34 +325,25 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     // from basecamp to other apps
     // For ui_qml view modules, wire up any signals we care about from the
     // QtRO replica before QML sees the widget. The replica is already
-    // created inside LogosQmlBridge at this point (setViewModuleSocket was
-    // called in PluginLoader::onHostReady before pluginLoaded was emitted);
-    // it may not yet be Valid, but Qt signal/slot connections work regardless
-    // of replica state — the connection will fire when the source emits.
-    if (type == UIPluginType::UiQml) {
-        QQuickWidget* qw = m_qmlPluginWidgets.value(name);
-        if (qw) {
-            auto* bridge = qobject_cast<LogosQmlBridge*>(
-                qw->rootContext()->contextProperty(QStringLiteral("logos"))
-                    .value<QObject*>());
-            if (bridge) {
-                if (name == QStringLiteral("package_manager_ui")) {
-                    QObject* replica = bridge->module(name);
-                    if (replica) {
-                        // String-based connects resolve against the replica's
-                        // metaobject at runtime — a signature drift in the PMU
-                        // .rep would fail silently, so guard each result.
-                        if (!connect(replica,
-                                     SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
-                                     this,
-                                     SLOT(onPmuiInstallProgress(int,QString,int,int,bool,QString)))) {
-                            qCritical() << "package_manager_ui replica signal"
-                                        << "installationProgressUpdated(...) not found"
-                                        << "- signature drift vs package_manager_ui.rep?"
-                                        << "Install failures will NOT surface in the UI.";
-                        }
-                    }
-                }
+    // created inside LogosQmlBridge at this point (the loader set the view
+    // module socket before emitting pluginLoaded); it may not yet be Valid, but
+    // Qt signal/slot connections work regardless of replica state — the
+    // connection will fire when the source emits.
+    if (kind == logos::ui::UiPluginKind::UiQml && bridge
+        && name == QStringLiteral("package_manager_ui")) {
+        QObject* replica = bridge->module(name);
+        if (replica) {
+            // String-based connects resolve against the replica's metaobject at
+            // runtime — a signature drift in the PMU .rep would fail silently,
+            // so guard each result.
+            if (!connect(replica,
+                         SIGNAL(installationProgressUpdated(int,QString,int,int,bool,QString)),
+                         this,
+                         SLOT(onPmuiInstallProgress(int,QString,int,int,bool,QString)))) {
+                qCritical() << "package_manager_ui replica signal"
+                            << "installationProgressUpdated(...) not found"
+                            << "- signature drift vs package_manager_ui.rep?"
+                            << "Install failures will NOT surface in the UI.";
             }
         }
     }
@@ -525,7 +521,12 @@ void UIPluginManager::activateApp(const QString& appName)
 
 void UIPluginManager::setIntentAdapter(IntentBridgeAdapter* adapter)
 {
-    if (m_pluginLoader) m_pluginLoader->setIntentAdapter(adapter);
+    if (!m_pluginLoader) return;
+    // Null is survivable: bridges never become intent-capable.
+    QPointer<IntentBridgeAdapter> guard(adapter);
+    m_pluginLoader->setBridgeSetup([guard](const QString& name, LogosQmlBridge* bridge) {
+        if (guard) guard->attach(name, bridge);
+    });
 }
 
 QMap<QString, QVariantMap> UIPluginManager::uiPluginMetadataSnapshot() const
@@ -808,8 +809,8 @@ void UIPluginManager::cancelUnloadCascade(const QString& moduleName)
 // `moduleName`, or nullptr when there is none.
 //
 // Only LEGACY (type: ui) plugins have one. m_loadedUiModules is populated
-// exclusively from PluginLoader's Legacy branch — its ui_qml branch emits
-// pluginLoaded() with a null IComponent* (PluginLoader.cpp:385) — so a
+// exclusively from the loader's Legacy branch — its ui_qml branch emits
+// pluginLoaded() with a null IComponent* — so a
 // non-null entry here is always an in-process QPluginLoader instance living in
 // this address space.
 //
@@ -939,9 +940,8 @@ bool UIPluginManager::beginDeferredTeardown(const QString& moduleName, QObject* 
 {
     // The widget is the staleness token the continuation re-validates against,
     // so a deferral without one has no way to tell "still mine" from "someone
-    // else's". PluginLoader never emits pluginLoaded for a legacy plugin
-    // without a widget (PluginLoader.cpp:193-206), so this is a guard, not a
-    // path we expect to take.
+    // else's". The loader never emits pluginLoaded for a legacy plugin
+    // without a widget, so this is a guard, not a path we expect to take.
     QWidget* widget = m_uiModuleWidgets.value(moduleName);
     if (!widget) return false;
 
@@ -1139,14 +1139,14 @@ void UIPluginManager::loadLegacyUiModule(const QString& moduleName)
         return;
     }
 
-    PluginLoadRequest request;
+    logos::ui::UiPluginRequest request;
     request.name = moduleName;
-    request.type = UIPluginType::Legacy;
+    request.kind = logos::ui::UiPluginKind::Legacy;
     request.pluginPath = getPluginPath(moduleName);
     request.iconPath = pluginIconUrl(moduleName, true);
     if (m_uiPluginMetadata.contains(moduleName)) {
-        request.coreDependencies = m_uiPluginMetadata[moduleName].value("dependencies").toList();
-        request.optionalCoreDependencies =
+        request.dependencies = m_uiPluginMetadata[moduleName].value("dependencies").toList();
+        request.optionalDependencies =
             m_uiPluginMetadata[moduleName].value("optionalDependencies").toList();
     }
 
