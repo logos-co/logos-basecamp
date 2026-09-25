@@ -1918,6 +1918,31 @@ async function isDefaultEnabled(app, anchorId) {
   })).result;
 }
 
+// Picks go through the selector's own onActivated, so the view -> backend ->
+// downloader path and the read-back into the selector are both covered. The
+// restore keeps later tests on the default.
+test("repositories: the download source round-trips through the downloader", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+  const selector = await requireObject(app, "repositories.downloadSource");
+
+  const expectSource = (expected, index, description) => app.waitFor(async () => {
+    const actual = await evalOn(app, anchorId, "backend.downloadSource");
+    const shown = await evalOn(app, selector.id, "currentIndex");
+    if (actual !== expected || shown !== index)
+      throw new Error(`backend.downloadSource=${actual}, selector index ${shown} `
+        + `(expected ${expected}, ${index})`);
+  }, { timeout: 5000, interval: 250, description });
+
+  await expectSource("any", 0, "the default download source");
+  assertEq(await evalOn(app, selector.id, "visible"), true, "download source selector visible");
+
+  await evalOn(app, selector.id, "activated(1)");
+  await expectSource("logos", 1, "the download source to become logos");
+
+  await evalOn(app, selector.id, "activated(0)");
+  await expectSource("any", 0, "the download source to return to any");
+});
+
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 

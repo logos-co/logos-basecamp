@@ -82,6 +82,10 @@ public:
     // refreshRepositories() and after every successful add/remove/toggle.
     QVariantList repositories() const { return m_repositories; }
     bool repositoriesLoading() const { return m_repositoriesLoadingCount > 0; }
+
+    // package_downloader's download source: "any", "logos" or "http". Empty
+    // until it answers, and when it predates the setting.
+    QString downloadSource() const { return m_downloadSource; }
     QVariantMap repositorySource(const QString& repositoryUrl) const;
 
     // True during the initial catalog populate and during a user-initiated
@@ -176,6 +180,8 @@ public slots:
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
+    Q_INVOKABLE void refreshDownloadSource();
+    Q_INVOKABLE void setDownloadSource(const QString& source);
 
     // Called by QML when the Add Application dialog closes so stale async
     // resolver callbacks for previously-opened apps don't mutate the shared
@@ -253,6 +259,7 @@ signals:
     // an outcome signal for add/remove/toggle (success or error string).
     void repositoriesChanged();
     void repositoriesLoadingChanged();
+    void downloadSourceChanged();
     void appsLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
                                       const QString& url,
@@ -527,5 +534,6 @@ private:
 
     QVariantList m_repositories;
     int          m_repositoriesLoadingCount = 0;
+    QString      m_downloadSource;
     bool         m_appsLoading              = true;
 };

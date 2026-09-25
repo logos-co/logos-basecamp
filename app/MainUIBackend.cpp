@@ -184,6 +184,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
             this,             &MainUIBackend::repositoriesChanged);
     connect(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
             this,             &MainUIBackend::repositoriesLoadingChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
+            this,             &MainUIBackend::downloadSourceChanged);
     connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
             this,             &MainUIBackend::appsLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
@@ -859,6 +861,7 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 // Package repositories — delegations + cache pass-through.
 QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
+QString      MainUIBackend::downloadSource() const      { return m_packageCoordinator->downloadSource(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 
@@ -886,6 +889,8 @@ void MainUIBackend::refreshAppCatalog()                                    { m_p
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
+void MainUIBackend::refreshDownloadSource()                                { m_packageCoordinator->refreshDownloadSource(); }
+void MainUIBackend::setDownloadSource(const QString& source)               { m_packageCoordinator->setDownloadSource(source); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 
