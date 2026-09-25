@@ -6,16 +6,17 @@
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
     # The runtime-control wave: the app is the "basecamp" shell of a runtime
-    # whose capability_module is the token authority. Each input goes back to
-    # master as its PR merges (cpp-sdk#169, protocol#97, plugin-qt#48,
-    # qt-sdk#60, loader-qt#21, liblogos#227).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/drop-legacy-mode";
+    # whose capability_module is the token authority, and that runtime runs in
+    # a process of its own. Each input goes back to master as its PR merges
+    # (cpp-sdk#169, protocol#97, plugin-qt#48, qt-sdk#60, loader-qt#21,
+    # liblogos#227, and the drafts stacked on them).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/runtime-process";
     logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
     logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-mode";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/drop-legacy-mode";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/runtime-process";
     logos-module.url = "github:logos-co/logos-module";
     logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-mode";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/drop-legacy-mode";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/runtime-process";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an

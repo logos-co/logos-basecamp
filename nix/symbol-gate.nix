@@ -27,11 +27,12 @@
 #   IN   lib/liblogos_core.*              the single provider
 #   IN   plugins/*/*_replica_factory.*    QPluginLoader'd by LogosQmlBridge
 #   IN   plugins/main_ui/main_ui.*        QPluginLoader'd by Window
-#   OUT  bin/logos_host, bin/ui-host      SEPARATE PROCESSES; they correctly keep
+#   OUT  bin/logos_runtime, bin/logos_host, bin/ui-host
+#                                         SEPARATE PROCESSES; they correctly keep
 #                                         their own statics
 #   OUT  plugins/*/*_plugin.*             a ui_qml backend is loaded by ui-host,
 #                                         not by the app
-#   OUT  modules/**                       loaded by logos_host
+#   OUT  modules/**                       loaded by logos_runtime or a module host
 #
 # negativeControl = true builds the same script against a tree with a REAL
 # duplicate planted where a consumer goes, and asserts the gate REJECTS it.
@@ -248,24 +249,26 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
 
   echo
   echo "== the app calls as its shell: it neither reads nor mirrors core's tokens =="
-  # liblogos keeps its module tokens to itself, and those tokens are host
-  # authority at every module. The app takes the shell binding and calls as
-  # "basecamp"; the token listener and get_token it used to mirror them with are
-  # gone from liblogos, and must not come back.
+  # The runtime keeps its module tokens to itself, and those tokens are host
+  # authority at every module. The app spawns the runtime in a process of its
+  # own and calls as "basecamp" over its binding; the token listener and
+  # get_token it used to mirror them with are gone from liblogos, and must not
+  # come back. That capability_module never maps into the app is measured by
+  # runtime-process-test.
   reads_core_tokens() {
     local s; s=$(${tp}nm "$1" 2>/dev/null | ${tp}c++filt 2>/dev/null)
     grep -qE 'logos_core_set_token_listener|logos_core_get_token|saveCoreTokenToQtStore' <<<"$s"
   }
-  takes_binding() {
-    ${tp}nm "$1" 2>/dev/null | grep -q 'logos_core_take_shell_binding'
+  spawns_runtime() {
+    ${tp}nm "$1" 2>/dev/null | grep -q 'logos_runtime_spawn'
   }
   APP=""
   for e in "$ROOT/bin/LogosBasecamp" "$ROOT/bin/LogosBasecamp.exe"; do [ -e "$e" ] && APP=$(resolve_image "$e"); done
   if [ -z "$APP" ]; then bad "LogosBasecamp" "not in the bundle, so the probe went unchecked"
   else
-    # The binding is the control: a probe that sees no symbols fails here.
-    if takes_binding "$APP"; then note "$(basename "$APP")" "takes the shell binding  OK"
-    else bad "$(basename "$APP")" "does NOT take the shell binding"; fi
+    # The spawn is the control: a probe that sees no symbols fails here.
+    if spawns_runtime "$APP"; then note "$(basename "$APP")" "spawns its runtime  OK"
+    else bad "$(basename "$APP")" "does NOT spawn its runtime"; fi
     if reads_core_tokens "$APP"; then bad "$(basename "$APP")" "reads or mirrors core's tokens"
     else note "$(basename "$APP")" "does not read core's tokens  OK"; fi
   fi

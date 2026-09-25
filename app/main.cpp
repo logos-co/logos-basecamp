@@ -22,6 +22,8 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QDir>
+#include <QMessageBox>
+#include <QMetaObject>
 #include <QStyleHints>
 #include <QStandardPaths>
 #include <iostream>
@@ -435,6 +437,19 @@ int main(int argc, char *argv[])
     }
     std::cout << "Logos Core started successfully!" << std::endl;
 
+    // The runtime runs in a process of its own: without it nothing answers the
+    // app, so it says why and quits (offscreen has nobody to read a dialog).
+    core->onRuntimeExit([&app](const QString& reason) {
+        QMetaObject::invokeMethod(&app, [reason]() {
+            qCritical().noquote() << "The Logos runtime stopped:" << reason;
+            if (QGuiApplication::platformName() != QLatin1String("offscreen"))
+                QMessageBox::critical(nullptr, QStringLiteral("Logos Basecamp"),
+                                      QObject::tr("The Logos runtime stopped (%1), so Basecamp "
+                                                  "will close.").arg(reason));
+            QCoreApplication::exit(1);
+        }, Qt::QueuedConnection);
+    });
+
     // Explicit, not the interface default: this path bypasses
     // CoreModuleManager, so nothing else would widen it.
     bool loaded = core->loadModule(QStringLiteral("package_manager"),
@@ -569,9 +584,8 @@ int main(int argc, char *argv[])
         QAccessible::installUpdateHandler(previousHandler);
     }
 
-    // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
-    // logos_core_cleanup(); this reset() is what pins it to exactly here,
-    // before the app's LogosAPI is destroyed.
+    // Stop the runtime, which unloads its modules in order; this reset() is
+    // what pins it to exactly here, before the app's LogosAPI is destroyed.
     core.reset();
 
     // Flush final output, restore original stdout/stderr, and close the log file.
