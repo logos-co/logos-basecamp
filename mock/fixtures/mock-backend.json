@@ -243,6 +243,7 @@
         "name": "Logos Core",
         "enabled": true
       }
-    ]
+    ],
+    "package_downloader.getDownloadSource": "any"
   }
 }

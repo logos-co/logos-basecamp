@@ -31,8 +31,12 @@ ItemDelegate {
                 ? root.appRow.installStage
                 : InstallStage.None
 
+        // Not the versions the download source cannot serve: the resolver
+        // never picks one.
         readonly property var usableVersions:
-            root.appRow ? (root.appRow.versions || []) : []
+            root.appRow ? (root.appRow.versions || []).filter(function(v) {
+                return !v || v.sourceAvailable !== false
+            }) : []
 
         // Live download bytes. `downloadTotal` is 0 when nobody knows the
         // size, so guard every division on `hasProgress`.

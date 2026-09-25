@@ -1296,6 +1296,55 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
                              QVariantList{url, enabled});
 }
 
+void PackageCoordinator::refreshDownloadSource()
+{
+    LogosAPIClient* dlClient = m_logosAPI
+        ? m_logosAPI->getClient("package_downloader")
+        : nullptr;
+    if (!dlClient || !dlClient->isConnected()) return;
+
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "getDownloadSource", QVariantList{},
+        [self](QVariant result) {
+            if (!self) return;
+            // A downloader without the method answers nothing: stays empty.
+            const QString source = result.toString();
+            if (source == self->m_downloadSource) return;
+            self->m_downloadSource = source;
+            emit self->downloadSourceChanged();
+        });
+}
+
+// The catalog refresh follows from the catalogChanged the downloader emits.
+void PackageCoordinator::setDownloadSource(const QString& source)
+{
+    LogosAPIClient* dlClient = m_logosAPI
+        ? m_logosAPI->getClient("package_downloader")
+        : nullptr;
+    if (!dlClient || !dlClient->isConnected()) {
+        emit repositoryOperationCompleted(QStringLiteral("setDownloadSource"), source, false,
+            QStringLiteral("package_downloader not connected"));
+        return;
+    }
+
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "setDownloadSource", QVariantList{source},
+        [self, source](QVariant result) {
+            if (!self) return;
+            const QVariantMap r = result.toMap();
+            const bool ok = r.value("success").toBool();
+            QString error = r.value("error").toString();
+            if (!ok && error.isEmpty())
+                error = QStringLiteral("package_downloader did not accept the download source");
+            emit self->repositoryOperationCompleted(QStringLiteral("setDownloadSource"),
+                                                    source, ok, error);
+            // Either way: a refused value must not stay selected.
+            self->refreshDownloadSource();
+        });
+}
+
 void PackageCoordinator::refreshDependencyInfo()
 {
     if (!m_logosAPI) return;

@@ -10,6 +10,7 @@ Rectangle {
 
     property var    repositories:        []
     property bool   repositoriesLoading: false
+    property string downloadSource:      ""
     // Real Qt models (ModuleInstanceModel), owned by MainUIBackend and
     // populated on every uiModulesChanged/coreModulesChanged tick.
     property var    uiModulesModel:      null
@@ -20,6 +21,7 @@ Rectangle {
     signal repositoryAddRequested(string url)
     signal repositoryRemoveRequested(string url)
     signal repositoryEnabledRequested(string url, bool enabled)
+    signal downloadSourceRequested(string source)
     signal repositoriesBecameVisible()
 
     signal appsRefreshRequested()
@@ -216,14 +218,16 @@ Rectangle {
                     RepositoriesView {
                         id: repositoriesView
 
-                        repositories: root.repositories
-                        loading:      root.repositoriesLoading
+                        repositories:   root.repositories
+                        loading:        root.repositoriesLoading
+                        downloadSource: root.downloadSource
 
                         onRefreshRequested:    root.repositoryRefreshRequested()
                         onAddRequested:        url => root.repositoryAddRequested(url)
                         onRemoveRequested:     url => root.repositoryRemoveRequested(url)
                         onSetEnabledRequested: (url, enabled) =>
                                                    root.repositoryEnabledRequested(url, enabled)
+                        onDownloadSourceRequested: source => root.downloadSourceRequested(source)
                         onVisibleChanged:      if (visible)
                                                    root.repositoriesBecameVisible()
                     }

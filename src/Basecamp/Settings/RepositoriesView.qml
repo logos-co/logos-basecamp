@@ -11,13 +11,21 @@ Item {
 
     property var repositories: []
     property bool loading: false
+    // "any", "logos" or "http"; empty hides the selector (a downloader that
+    // predates the setting).
+    property string downloadSource: ""
 
     signal refreshRequested()
     signal addRequested(string url)
     signal removeRequested(string url)
     signal setEnabledRequested(string url, bool enabled)
+    signal downloadSourceRequested(string source)
+
+    onDownloadSourceChanged: d.pendingDownloadSource = ""
 
     function reportOperationResult(operation, url, success, error) {
+        // A refused source snaps the selector back to the real one.
+        if (operation === "setDownloadSource" && !success) d.pendingDownloadSource = ""
         if (success) {
             d.lastError = ""
             if (operation === "add") d.newRepoUrl = ""
@@ -31,6 +39,13 @@ Item {
         property string newRepoUrl: ""
         property string lastError: ""
         property string pendingRemoveUrl: ""
+
+        readonly property var downloadSourceValues: ["any", "logos", "http"]
+        readonly property var downloadSourceLabels: [qsTr("Any"), qsTr("Logos only"), qsTr("HTTP only")]
+        // The pick, shown until the downloader confirms it.
+        property string pendingDownloadSource: ""
+        readonly property int downloadSourceIndex: Math.max(0,
+            downloadSourceValues.indexOf(pendingDownloadSource || root.downloadSource))
 
         // Display names claimed by more than one configured repository.
         readonly property var duplicateNames: {
@@ -173,6 +188,44 @@ Item {
                 target: d
                 function onShowDuplicateWarningChanged() {
                     duplicateNameNotice.shown = d.showDuplicateWarning
+                }
+            }
+
+            // Where packages download from.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing.small
+                visible: root.downloadSource.length > 0
+
+                LogosText {
+                    text: qsTr("Download source")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightMedium
+                    color: Theme.palette.text
+                }
+                LogosText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Where packages download from. Versions the selected source "
+                             + "cannot serve are listed as not available.")
+                    font.pixelSize: Theme.typography.secondaryText
+                    color: Theme.palette.textTertiary
+                }
+                LogosComboBox {
+                    objectName: "repositories.downloadSource"
+                    Layout.topMargin: Theme.spacing.tiny
+                    Layout.preferredWidth: 220
+                    Layout.preferredHeight: 40
+                    model: d.downloadSourceLabels
+                    currentIndex: d.downloadSourceIndex
+                    onActivated: function(idx) {
+                        const picked = d.downloadSourceValues[idx]
+                        if (picked && picked !== (d.pendingDownloadSource || root.downloadSource)) {
+                            d.pendingDownloadSource = picked
+                            root.downloadSourceRequested(picked)
+                        }
+                        currentIndex = Qt.binding(function() { return d.downloadSourceIndex })
+                    }
                 }
             }
 

@@ -29,6 +29,7 @@ bool FixtureBackend::isMockBackend() const { return m_fixture.value("isMockBacke
 QVariantList FixtureBackend::buildCommits() const { return m_fixture.value("buildCommits").toArray().toVariantList(); }
 QVariantList FixtureBackend::repositories() const { return m_fixture.value("repositories").toArray().toVariantList(); }
 bool FixtureBackend::repositoriesLoading() const { return m_fixture.value("repositoriesLoading").toBool(); }
+QString FixtureBackend::downloadSource() const { return m_fixture.value("downloadSource").toString(QStringLiteral("any")); }
 bool FixtureBackend::appsLoading() const { return m_fixture.value("appsLoading").toBool(); }
 bool FixtureBackend::modulesLoading() const { return m_fixture.value("modulesLoading").toBool(); }
 
@@ -170,6 +171,17 @@ void FixtureBackend::setRepositoryEnabled(const QString& url, bool enabled)
 {
     Q_UNUSED(url); Q_UNUSED(enabled);
     qInfo() << "FixtureBackend: setRepositoryEnabled — fixture build, no effect";
+}
+
+void FixtureBackend::refreshDownloadSource()
+{
+    qInfo() << "FixtureBackend: refreshDownloadSource — fixture build, no effect";
+}
+
+void FixtureBackend::setDownloadSource(const QString& source)
+{
+    Q_UNUSED(source);
+    qInfo() << "FixtureBackend: setDownloadSource — fixture build, no effect";
 }
 
 void FixtureBackend::setCurrentVisibleApp(const QString& name)
