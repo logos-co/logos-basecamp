@@ -24,6 +24,8 @@ public:
     bool        unloadModule(const QString& name, bool withDependents) override;
     void        refreshModules() override;
     QVariantList allStats() const override;
+    QString     shellCredential() const override;
+    QString     admitConsumer(const QString& name) override;
 
 private:
     std::unique_ptr<logos::qt::QtLogosCore> m_core;

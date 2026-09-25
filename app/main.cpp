@@ -1,5 +1,6 @@
 #include "window.h"
 #include "logos_api.h"
+#include "logos_consumer.h"
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
 #include "LogSink.h"
@@ -27,6 +28,7 @@
 #include <memory>
 #include <QStringList>
 #include <QDebug>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFile>
@@ -50,6 +52,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+
+// The app's identity at the runtime; a first-party shell name liblogos reserves.
+static const std::string kShellName = "basecamp";
 
 #ifdef Q_OS_UNIX
 // Self-pipe pattern for SIGTERM/SIGINT: the signal handler writes one byte
@@ -360,6 +365,17 @@ int main(int argc, char *argv[])
     coreConfig.persistenceBasePath =
         LogosBasecampPaths::moduleDataDirectory().toStdString();
 
+    // The app's own modules, and its identity at the runtime. package_manager's
+    // setters answer only the runtime, so the runtime points it at our dirs.
+    coreConfig.bundledModulesDirs.push_back(embeddedModulesDir.toStdString());
+    coreConfig.shellName = kShellName;
+    coreConfig.packageConfigJson = QJsonDocument(QJsonObject{
+        {"embedded_modules_dirs", QJsonArray{LogosBasecampPaths::embeddedModulesDirectory()}},
+        {"user_modules_dir", LogosBasecampPaths::modulesDirectory()},
+        {"embedded_ui_plugins_dirs", QJsonArray{LogosBasecampPaths::embeddedPluginsDirectory()}},
+        {"user_ui_plugins_dir", LogosBasecampPaths::pluginsDirectory()},
+    }).toJson(QJsonDocument::Compact).toStdString();
+
     // Inter-module access policy. DEFAULT: none — passing NULL clears any
     // policy so no enforcement runs, and any loaded module may call any other.
     //
@@ -445,7 +461,17 @@ int main(int argc, char *argv[])
         qInfo() << "Total modules:" << modules.size();
     }
 
-    LogosAPI logosAPI("core", nullptr);
+    // The app's own calls: as its shell identity once capability_module is the
+    // token authority, otherwise as "core" on the tokens the listener mirrors.
+    std::unique_ptr<LogosAPI> coreApi;
+    LogosAPI* logosAPI = nullptr;
+    if (const QString credential = core->shellCredential(); !credential.isEmpty())
+        logosAPI = logos::adoptAdmittedConsumer(QString::fromStdString(kShellName),
+                                                credential, &app).api;
+    if (!logosAPI) {
+        coreApi = std::make_unique<LogosAPI>("core", nullptr);
+        logosAPI = coreApi.get();
+    }
 
     // Set application icon.
 #ifdef Q_OS_LINUX
@@ -464,7 +490,7 @@ int main(int argc, char *argv[])
 
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
-    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get());
+    auto mainWindow = std::make_unique<Window>(logosAPI, core.get());
     mainWindow->show();
 
     // Tell the OS that `basecamp://` means this executable. This is what makes
@@ -543,7 +569,7 @@ int main(int argc, char *argv[])
 
     // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
     // logos_core_cleanup(); this reset() is what pins it to exactly here,
-    // before logosAPI is destroyed on the stack unwind.
+    // before the app's LogosAPI is destroyed.
     core.reset();
 
     // Flush final output, restore original stdout/stderr, and close the log file.
