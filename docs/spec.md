@@ -154,7 +154,7 @@ Discovered ──► Loading ──► Running ──► Unloading ──► Dis
 ```
 
 1. **Discovery**: Basecamp queries the package manager for installed UI Apps. They appear in the UI Modules tab.
-2. **Loading**: Basecamp loads the plugin directly into its own process. For C++ plugins, `QPluginLoader` loads the shared library and calls `createWidget(LogosAPI*)`. For QML plugins, a `QQuickWidget` is created with a sandboxed QML engine (network-deny, filesystem-restricted, and barred from loading native code from the app's own directory — see [QML App Sandboxing](#qml-app-sandboxing)). If the UI App declares Logos Module dependencies, those are loaded first via `logos_core_load_module()` in its required-plus-optional mode, so an optional collaborator that is installed comes up too and one that is absent is not an error. A new tab is added to the MDI workspace.
+2. **Loading**: Basecamp loads the plugin directly into its own process. For C++ plugins, `QPluginLoader` loads the shared library and calls `createWidget(LogosAPI*)`. For QML plugins, a `QQuickWidget` is created with a sandboxed QML engine (network-deny, filesystem-restricted, and barred from loading native code from the app's own directory — see [QML App Sandboxing](#qml-app-sandboxing)). If the UI App declares Logos Module dependencies, those are loaded first through core_service's `loadModule` in its required-plus-optional mode, so an optional collaborator that is installed comes up too and one that is absent is not an error. A new tab is added to the MDI workspace.
 3. **Running**: The UI App's widget is displayed in a tab. The user interacts with it. The app may call Logos Modules via the QML bridge or LogosAPI.
 4. **Unloading**: The tab is removed from the MDI area, the widget is destroyed, and the plugin is unloaded. Any Logos Module dependencies remain loaded (they may be shared with other apps).
 
@@ -166,7 +166,7 @@ Basecamp integrates with the package management system for installing both Logos
 2. The `package_manager` Logos Module extracts the appropriate platform variant from the LGX archive
 3. Logos Module files are placed in the user modules directory; UI App files are placed in the user plugins directory
 4. The package manager emits an event (`corePluginFileInstalled` or `uiPluginFileInstalled`)
-5. Basecamp listens for these events and automatically refreshes the appropriate list — calling `logos_core_refresh_modules()` for Logos Modules, or re-querying the package manager for UI App metadata
+5. Basecamp listens for these events and automatically refreshes the appropriate list — calling core_service's `refreshModules` for Logos Modules, or re-querying the package manager for UI App metadata
 6. The user can then load the newly installed component from the Modules view
 
 ## Features & Requirements

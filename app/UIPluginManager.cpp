@@ -66,16 +66,14 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
 
     // The loader runs dependency loads on a worker, so it gets the manager
     // pointer rather than `this`.
-    m_pluginLoader = new logos::ui::UiPluginLoader(m_logosAPI,
+    m_pluginLoader = new logos::ui::UiPluginLoader(
         [core = m_coreModuleManager](const QString& dep, bool) {
             return core && core->loadModule(dep);
         },
+        [core = m_coreModuleManager](const QString& name) {
+            return core ? core->admitConsumer(name) : QString();
+        },
         this);
-    if (m_coreModuleManager && m_coreModuleManager->runtimeAdmitsConsumers()) {
-        m_pluginLoader->setAdmitConsumer([core = m_coreModuleManager](const QString& name) {
-            return core->admitConsumer(name);
-        });
-    }
     connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoaded,
             this, &UIPluginManager::onPluginLoaded);
     connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoadFailed,
@@ -563,11 +561,10 @@ void UIPluginManager::loadCoreModule(const QString& moduleName)
 {
     // Defer the ENTIRE body — not just the emit. Callers are typically
     // QML Button.onClicked handlers, and m_coreModuleManager->loadModule
-    // ultimately calls logos_core_load_module_with_dependencies, which
-    // internally spins a nested Qt event loop (via
-    // QConnectedReplicaImplementation::waitForSource during the
-    // informModuleToken round-trip, see liblogos_core). Running that
-    // nested loop while a QML signal handler is still on the stack lets
+    // ultimately waits on core_service's loadModule, which has spun a nested
+    // Qt event loop before (via QConnectedReplicaImplementation::waitForSource
+    // during the informModuleToken round-trip). Running such a nested loop
+    // while a QML signal handler is still on the stack lets
     // Qt deliver a pending DeferredDelete for the firing Button/Repeater
     // delegate, and then the destructor trips "Object destroyed while
     // one of its QML signal handlers is in progress" → qFatal.
@@ -605,8 +602,8 @@ void UIPluginManager::unloadCoreModule(const QString& moduleName)
     }
 
     // Normal path: defer the whole body — same rationale as loadCoreModule.
-    // m_coreModuleManager->unloadModule → logos_core_unload_module spins a
-    // nested event loop inside the QRemoteObjects teardown handshake, and
+    // m_coreModuleManager->unloadModule → core_service's unloadModule has spun
+    // a nested event loop inside the QRemoteObjects teardown handshake, and
     // this slot is typically invoked from a QML Button.onClicked. Running
     // the nested loop while the click handler is still on the stack is
     // what trips QQmlData::destroyed's "Object destroyed while one of its
@@ -1192,7 +1189,7 @@ QStringList UIPluginManager::loadedDependentsOf(const QString& name) const
     // liblogos) OR currently mounted as a UI plugin in this Basecamp instance
     // (tracked by m_loadedUiModules / m_qmlPluginWidgets). Without this
     // second source, a UI plugin like wallet_ui that depends on wallet_module
-    // never registered in `logos_core_get_loaded_modules()` would silently
+    // never in the core's loaded list (core_service.listModules) would silently
     // disappear from the cascade dialog — making the unload look "safe"
     // when in fact wallet_ui is still mounted and would orphan.
     const QStringList loadedCore = loadedCoreModules();

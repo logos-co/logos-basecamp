@@ -6,15 +6,14 @@
 //
 // ── What this exists to catch ────────────────────────────────────────────────
 //
-// capability_module is the trust root: it mints the auth token a NON-"core"
-// identity needs before any other module will answer it. To do that job it
-// needs two privileged host services, `token_registry` (enumerate the token
-// store, so it can verify a caller is a real loaded identity) and
-// `token_delivery` (push a token to a target). Those are granted by the HOST —
-// QtPluginFormatLoader::buildArguments in logos-module-loader-qt appends
-// `--host-services` for capability_module, logos_host stamps it on the LogosAPI
-// object, and the plugin's generated glue forwards it across the module-impl C
-// ABI into the module's own image.
+// capability_module is the token authority: it mints the auth token a
+// NON-"core" identity needs before any other module will answer it. To do that
+// job it needs a privileged host service, `token_delivery` (push a token to a
+// target), granted by the HOST — liblogos' bootstrap policy, now that it runs
+// capability_module in-process. (It once also needed `token_registry`, and was
+// hosted: QtPluginFormatLoader::buildArguments in logos-module-loader-qt
+// appended `--host-services`, and the plugin's generated glue forwarded it
+// across the module-impl C ABI into the module's own image.)
 //
 // That is a four-repo chain (basecamp's pins -> logos-liblogos ->
 // logos-module-loader-qt -> logos-protocol/logos-plugin-qt), and basecamp
@@ -157,10 +156,10 @@ export async function assertHostServicesGrantReached(app, opts = {}) {
     `non-"core" identity "package_manager_ui", never completed the gated chain\n` +
     `    package_downloader.getCatalog -> package_manager.getInstalledPackages -> ` +
     `package_manager.getValidVariants -> package_downloader.listRepositories.\n` +
-    `  The usual cause is that capability_module was not granted ["token_registry",` +
-    `"token_delivery"], so it fails closed and mints no token — check that basecamp's ` +
+    `  The usual cause is that capability_module was not granted "token_delivery", ` +
+    `so it fails closed and pushes no token — check that basecamp's ` +
     `logos-liblogos / default-module-loader pin includes the host-services grant, and look ` +
-    `for "rejecting unauthorized call" / "was not granted the token_registry host service" ` +
+    `for "rejecting unauthorized call" / "was not granted the token_delivery host service" ` +
     `in the app log.\n` +
     `  Full store snapshot: ${JSON.stringify(last)}`
   );

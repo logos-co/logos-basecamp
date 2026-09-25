@@ -108,40 +108,35 @@ Basecamp is a frontend for `liblogos_core`, the C shared library that provides t
 
 The SDK wrapper (`LogosAPI` from logos-cpp-sdk) is used on top of the C API to provide ergonomic inter-component communication — it is how UI Apps call methods on Logos Modules via the Logos API.
 
-### C API Call Sites
+### Runtime Calls
 
-All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/shutdown) and `app/MainUIBackend.cpp` (runtime module management).
+Basecamp is a named shell, `basecamp`. It configures liblogos through the C API before start, then does everything about Logos Modules through `core_service`, over its shell binding: `logos::qt::QtLogosCore` (logos-qt-sdk) wraps both, behind `ICoreRuntime` (`app/QtLogosCoreRuntime.cpp`). capability_module, the token authority, ships in the bundle and runs in-process; without it `start()` throws and the app exits.
 
 **Initialization and startup** (`app/main.cpp`):
 
 | Call | Purpose |
 |------|---------|
-| `logos_core_add_modules_dir(embeddedDir)` | Add the embedded modules directory (read-only, pre-installed at build time) |
-| `logos_core_add_modules_dir(userDir)` | Add the user-writable modules directory for runtime installs |
-| `logos_core_start()` | Scan module directories, initialize the capability module, start the remote object registry |
-| `logos_core_load_module("package_manager", LOGOS_LOAD_REQUIRED_AND_OPTIONAL)` | Auto-load the package manager module at startup, with its required dependencies and any installed optional ones |
-| `logos_core_get_loaded_modules()` | Query loaded module names for initial status display |
+| `LogosCore::Config` | Modules directories (embedded, user-writable), bundled directories, package config, the shell name `basecamp`, all before start |
+| `start()` | `logos_core_start()`, then take the shell binding |
+| `loadModule("package_manager", RequiredAndOptional)` | core_service `loadModule`: auto-load the package manager at startup, with its required dependencies and any installed optional ones |
+| `loadedModules()` | core_service `listModules("loaded")`: initial status display |
 
-**Runtime Logos Module management** (`app/MainUIBackend.cpp`):
-
-| Call | Purpose |
-|------|---------|
-| `logos_core_load_module(name, LOGOS_LOAD_REQUIRED_AND_OPTIONAL)` | Load a Logos Module and all its declared dependencies (topological sort), plus any optional ones that are installed. Also called when loading a UI App that depends on Logos Modules. |
-| `logos_core_unload_module(name, false)` | Terminate a Logos Module's host process and clean up |
-| `logos_core_refresh_modules()` | Re-scan module directories after a package install |
-| `logos_core_get_loaded_modules()` | Query which Logos Modules are currently running (for Modules view status) |
-| `logos_core_get_known_modules()` | Query all discovered Logos Modules (for Modules view listing) |
-| `logos_core_get_module_stats()` | Get JSON-formatted CPU/memory stats for all loaded Logos Modules (polled every 2s) |
-
-**Shutdown** (`app/main.cpp`):
+**Runtime Logos Module management** (`app/CoreModuleManager.cpp`), each a core_service call:
 
 | Call | Purpose |
 |------|---------|
-| `logos_core_cleanup()` | Terminate all module host processes and release resources |
+| `loadModule(name, ...)` | Load a Logos Module and its declared dependencies (topological sort), plus any optional ones that are installed. Also called when loading a UI App that depends on Logos Modules. |
+| `unloadModule(name, ...)` | Terminate a Logos Module's host process and clean up |
+| `refreshModules()` | Re-scan module directories after a package install |
+| `loadedModules()` / `knownModules()` | Which Logos Modules run, and which are discovered (Modules view) |
+| `allStats()` | CPU/memory stats for all loaded Logos Modules (polled every 2s) |
+| `admitConsumer(name)` | A UI App's credential, which capability_module mints; the app's ui-host adopts it |
+
+**Shutdown**: destroying the runtime releases the binding and runs `logos_core_cleanup()`, which terminates every module host process.
 
 ### LogosAPI Usage
 
-A single `LogosAPI` instance is created in `main()` and passed through the component hierarchy: `main() → Window → MainContainer → MainUIBackend`. Once capability_module is the runtime's token authority it is the app's shell identity, `basecamp` (adopted from the runtime's shell credential), and UI plugins are admitted through `core_service`; otherwise it is `"core"`, on the tokens core's listener mirrors.
+A single `LogosAPI` instance is created in `main()` and passed through the component hierarchy: `main() → Window → MainContainer → MainUIBackend`. It is the app's shell identity, `basecamp`, adopted from the runtime's shell credential, and UI plugins are admitted through `core_service`. The app never calls as the host.
 
 **Getting module clients:**
 ```cpp
@@ -199,12 +194,12 @@ The shell's entire contract is `IShellHost`: a `QWidget*` out, eight named opera
 
 | Method | Description |
 |--------|-------------|
-| `loadUiModule(name)` | Load a UI App (QML or C++ plugin) — resolve Logos Module dependencies via `logos_core_load_module(name, LOGOS_LOAD_REQUIRED_AND_OPTIONAL)`, then load the Qt plugin and create a tab in MDI |
+| `loadUiModule(name)` | Load a UI App (QML or C++ plugin) — resolve Logos Module dependencies via core_service `loadModule(name, required_and_optional)`, then load the Qt plugin and create a tab in MDI |
 | `unloadUiModule(name)` | Remove tab from MDI, destroy widget, clean up tracking state. Logos Module dependencies are left running. |
-| `loadCoreModule(name)` | Load a Logos Module via `logos_core_load_module(name, LOGOS_LOAD_REQUIRED_AND_OPTIONAL)`, spawning a `logos_host` process |
-| `unloadCoreModule(name)` | Unload a Logos Module via `logos_core_unload_module(name, false)`, terminating its host process |
-| `refreshCoreModules()` | Call `logos_core_refresh_modules()` then `logos_core_get_known_modules()` to refresh the Logos Module list |
-| `updateModuleStats()` | Call `logos_core_get_module_stats()`, parse JSON, update `m_moduleStats` map for Logos Modules |
+| `loadCoreModule(name)` | Load a Logos Module via core_service `loadModule(name, required_and_optional)`, spawning a `logos_host` process |
+| `unloadCoreModule(name)` | Unload a Logos Module via core_service `unloadModule(name, false)`, terminating its host process |
+| `refreshCoreModules()` | core_service `refreshModules` then `listModules` to refresh the Logos Module list |
+| `updateModuleStats()` | core_service `getModuleStats`, update `m_moduleStats` map for Logos Modules |
 | `subscribeToPackageInstallationEvents()` | Register event listeners on `package_manager` Logos Module for `corePluginFileInstalled` and `uiPluginFileInstalled` events |
 | `fetchUiPluginMetadata()` | Async call to `package_manager.getInstalledUiPluginsAsync()` to populate UI App metadata cache |
 | `confirmInstallGate(name)` / `cancelInstallGate(name)` | Forward the user's install-gate decision back to `package_manager` so the initiator (`package_manager_ui`) proceeds or aborts |
@@ -272,20 +267,19 @@ The sandbox-escape regression test (F-008) moved with it: logos-view-module-runt
 ```
 main()
  ├─ QApplication(argc, argv)
- ├─ logos_core_add_modules_dir(<app>/../modules)       # Embedded modules (read-only)
- ├─ logos_core_add_modules_dir(~/.local/share/.../modules)  # User modules (writable)
+ ├─ modules dirs: <app>/../modules, ~/.local/share/.../modules  # Embedded (read-only), user (writable)
  ├─ bundled dirs, package config, shell "basecamp"    # Protected input, before start
- ├─ logos_core_start()                                 # Scan dirs, capability in-process as the token authority, core_service
+ ├─ start()                                            # logos_core_start (capability in-process as the token authority, core_service), then the shell binding
  ├─ loadModule("package_manager", REQUIRED_AND_OPTIONAL)  # Through core_service; the runtime sets its dirs
  ├─ loadedModules()                                    # Log loaded modules
- ├─ LogosAPI as "basecamp" (or "core" without the authority)  # Create SDK instance
+ ├─ LogosAPI as "basecamp"                             # The shell's own identity
  ├─ Window(&logosAPI)
  │   └─ setCentralWidget(new MainContainer(&logosAPI))
  │       ├─ MainUIBackend(logosAPI)
  │       │   ├─ initializeSections()                   # Dashboard, Modules, Settings + app sections
  │       │   ├─ m_statsTimer.start(2000)               # Poll module stats every 2s
  │       │   ├─ refreshCoreModules()
- │       │   │   └─ logos_core_refresh_modules()
+ │       │   │   └─ core_service refreshModules
  │       │   ├─ subscribeToPackageInstallationEvents()
  │       │   │   ├─ logos.package_manager.on("corePluginFileInstalled", ...)
  │       │   │   └─ logos.package_manager.on("uiPluginFileInstalled", ...)
@@ -305,7 +299,7 @@ User clicks "Load" in UI Apps tab (or clicks app icon in sidebar)
  └─ MainUIBackend::loadUiModule(name)
      ├─ Look up app metadata from m_uiPluginMetadata cache
      ├─ Load Logos Module dependencies (if any)
-     │   └─ logos_core_load_module(dep, REQUIRED_AND_OPTIONAL) for each dependency
+     │   └─ core_service loadModule(dep, required_and_optional) for each dependency
      ├─ Create QQuickWidget (loaded in Basecamp process, NOT via liblogos)
      ├─ Configure QML engine:
      │   ├─ Set import/plugin paths
@@ -350,12 +344,12 @@ User clicks close on tab or "Unload" in UI Apps tab
 ```
 User clicks "Load" in Logos Modules tab
  └─ MainUIBackend::loadCoreModule(name)
-     ├─ logos_core_load_module(name, REQUIRED_AND_OPTIONAL)   # liblogos spawns logos_host process
+     ├─ core_service loadModule(name, required_and_optional)   # liblogos spawns logos_host process
      └─ emit coreModulesChanged()
 
 User clicks "Unload" in Logos Modules tab
  └─ MainUIBackend::unloadCoreModule(name)
-     ├─ logos_core_unload_module(name, false)  # liblogos terminates logos_host process
+     ├─ core_service unloadModule(name, false)  # liblogos terminates logos_host process
      └─ emit coreModulesChanged()
 ```
 
@@ -381,7 +375,7 @@ package_manager_ui → package_manager.requestInstall(name, version, repoUrl, de
                             "uiPluginFileInstalled"
                              └─ PackageCoordinator event handler:
                                  ├─ refreshCoreModules()
-                                 │   └─ logos_core_refresh_modules()
+                                 │   └─ core_service refreshModules
                                  └─ fetchUiPluginMetadata()
 ```
 
@@ -390,7 +384,7 @@ package_manager_ui → package_manager.requestInstall(name, version, repoUrl, de
 ```
 Every 2 seconds (m_statsTimer):
  └─ MainUIBackend::updateModuleStats()
-     ├─ logos_core_get_module_stats() → JSON string (Logos Module processes only)
+     ├─ core_service getModuleStats → JSON array (Logos Module processes only)
      ├─ Parse JSON array: [{name, cpu_percent, memory_mb}, ...]
      ├─ Store in m_moduleStats map
      └─ emit coreModulesChanged() → QML updates Logos Modules tab

@@ -23,6 +23,9 @@ public:
     bool         unloadModule(const QString& name, bool withDependents) override;
     void         refreshModules() override;
     QVariantList allStats() const override;
+    // Fixed credentials: the mock runtime has no authority, and nothing checks them.
+    QString      shellCredential() const override;
+    QString      admitConsumer(const QString& name) override;
 
 private:
     QJsonArray  m_modules;          // immutable, from the fixture

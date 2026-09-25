@@ -74,8 +74,8 @@ namespace {
 // of blocked GUI thread on macOS and 361 s on Linux before Basecamp's window
 // appeared, because all of this runs inside the Window constructor.
 //
-// logos_core_get_loaded_modules answers the same question in-process, with no
-// IPC and no timeout. The same guard already ships in
+// The core's own loaded list (core_service.listModules, in-process) answers the
+// same question with no call into the module and no 20 s wait. The same guard already ships in
 // logos-logoscore-cli/src/daemon/daemon.cpp, which skips its identical
 // setEmbeddedModulesDirectory block and reports that package commands are
 // unavailable for the session.

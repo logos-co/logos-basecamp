@@ -429,8 +429,9 @@ target_link_libraries(LogosBasecamp PRIVATE
     # called LogosAPI::forIdentity itself, basecamp's own objects demanded the
     # symbol before ld reached the host, so the member was pulled early and this
     # archive's later reference resolved against it. Admitting consumers through
-    # logos::admitConsumer removed that call — the last first-party reference —
-    # and with it the accident that was holding the old order up.
+    # the runtime (logos::adoptAdmittedConsumer) removed that call — the last
+    # first-party reference — and with it the accident that was holding the old
+    # order up.
     #
     # Linux and macOS cannot see any of this: there the host is a real shared
     # object, and shared libraries satisfy undefined references regardless of

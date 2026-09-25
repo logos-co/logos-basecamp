@@ -247,26 +247,28 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   else bad "tier-2 total" "$T2  > $TIER2_ALLOW  REGRESSION"; fi
 
   echo
-  echo "== core's module tokens reach TokenManager: the app installs core's token listener =="
-  # liblogos' Qt-free core saves module tokens outside TokenManager, so an app
-  # that does not mirror them has every module call refused, with no build error.
-  installs_listener() {
+  echo "== the app calls as its shell: it neither reads nor mirrors core's tokens =="
+  # liblogos keeps its module tokens to itself, and those tokens are host
+  # authority at every module. The app takes the shell binding and calls as
+  # "basecamp"; the token listener and get_token it used to mirror them with are
+  # gone from liblogos, and must not come back.
+  reads_core_tokens() {
     local s; s=$(${tp}nm "$1" 2>/dev/null | ${tp}c++filt 2>/dev/null)
-    grep -q 'logos_core_set_token_listener' <<<"$s" && grep -q 'logos::ui::saveCoreTokenToQtStore' <<<"$s"
+    grep -qE 'logos_core_set_token_listener|logos_core_get_token|saveCoreTokenToQtStore' <<<"$s"
+  }
+  takes_binding() {
+    ${tp}nm "$1" 2>/dev/null | grep -q 'logos_core_take_shell_binding'
   }
   APP=""
   for e in "$ROOT/bin/LogosBasecamp" "$ROOT/bin/LogosBasecamp.exe"; do [ -e "$e" ] && APP=$(resolve_image "$e"); done
-  if [ -n "$APP" ] && installs_listener "$APP"; then note "$(basename "$APP")" "installs it  OK"
-  else bad "''${APP:+$(basename "$APP")}" "does NOT install core's token listener"; fi
-  # Control: logos_host never installs it, so the probe must say so.
-  CONTROL=0
-  for h in "$ROOT/bin/logos_host" "$ROOT/bin/logos_host.exe"; do
-    [ -e "$h" ] || continue
-    CONTROL=1
-    if installs_listener "$(resolve_image "$h")"; then bad "control: logos_host" "reads as installing it: the probe is vacuous"
-    else note "control: logos_host" "does not  OK"; fi
-  done
-  [ "$CONTROL" -eq 1 ] || bad "control: logos_host" "not in the bundle, so the probe went unchecked"
+  if [ -z "$APP" ]; then bad "LogosBasecamp" "not in the bundle, so the probe went unchecked"
+  else
+    # The binding is the control: a probe that sees no symbols fails here.
+    if takes_binding "$APP"; then note "$(basename "$APP")" "takes the shell binding  OK"
+    else bad "$(basename "$APP")" "does NOT take the shell binding"; fi
+    if reads_core_tokens "$APP"; then bad "$(basename "$APP")" "reads or mirrors core's tokens"
+    else note "$(basename "$APP")" "does not read core's tokens  OK"; fi
+  fi
 
   echo
   echo "== non-weak statics defined in MORE THAN ONE in-process image (expect 0) =="

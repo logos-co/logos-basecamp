@@ -193,3 +193,13 @@ QVariantList FixtureCoreRuntime::allStats() const
     }
     return out;
 }
+
+QString FixtureCoreRuntime::shellCredential() const
+{
+    return QStringLiteral("mock-shell-credential");
+}
+
+QString FixtureCoreRuntime::admitConsumer(const QString& name)
+{
+    return QStringLiteral("mock-consumer-credential-") + name;
+}
