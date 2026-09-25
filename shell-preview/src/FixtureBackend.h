@@ -28,6 +28,7 @@ class FixtureBackend : public QObject {
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
+    Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
     Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
@@ -48,6 +49,7 @@ public:
     QVariantList buildCommits() const;
     QVariantList repositories() const;
     bool repositoriesLoading() const;
+    QString downloadSource() const;
     bool appsLoading() const;
     bool modulesLoading() const;
 
@@ -74,6 +76,8 @@ public:
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
+    Q_INVOKABLE void refreshDownloadSource();
+    Q_INVOKABLE void setDownloadSource(const QString& source);
 
     // Not QML-bound: the shell reaches this through IShellHost.
     void setCurrentVisibleApp(const QString& name);
@@ -95,6 +99,7 @@ signals:
     void modulesLoadingChanged();
     void repositoriesChanged();
     void repositoriesLoadingChanged();
+    void downloadSourceChanged();
     void requiredPackagesChanged();
 
 private:
