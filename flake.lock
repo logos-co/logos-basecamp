@@ -75,11 +75,11 @@
         "logos-module-builder": "logos-module-builder"
       },
       "locked": {
-        "lastModified": 1790312042,
-        "narHash": "sha256-5q0OO/u+I3N+TTjvAoLVBYG+//SoRoQU81nzOZzVCSM=",
+        "lastModified": 1790330847,
+        "narHash": "sha256-eDzRYTtsQcqinpfyCR1EO+SXtrxP7tiatwF/hP2ABOw=",
         "owner": "logos-co",
         "repo": "logos-capability-module",
-        "rev": "c924c8f7d0bafabaa226e0764fa17fc1afa0f19b",
+        "rev": "34ff521f60c52bd54c09763e34ef4efab55cf0fe",
         "type": "github"
       },
       "original": {
@@ -94,11 +94,11 @@
         "logos-module-builder": "logos-module-builder_2"
       },
       "locked": {
-        "lastModified": 1790312042,
-        "narHash": "sha256-5q0OO/u+I3N+TTjvAoLVBYG+//SoRoQU81nzOZzVCSM=",
+        "lastModified": 1790330847,
+        "narHash": "sha256-eDzRYTtsQcqinpfyCR1EO+SXtrxP7tiatwF/hP2ABOw=",
         "owner": "logos-co",
         "repo": "logos-capability-module",
-        "rev": "c924c8f7d0bafabaa226e0764fa17fc1afa0f19b",
+        "rev": "34ff521f60c52bd54c09763e34ef4efab55cf0fe",
         "type": "github"
       },
       "original": {
@@ -1143,11 +1143,11 @@
         "process-stats": "process-stats"
       },
       "locked": {
-        "lastModified": 1790327194,
-        "narHash": "sha256-8fkAp0u1dbxkn4/HJQ8cZkFsAdoYCjdggLlUy23qb7s=",
+        "lastModified": 1790332152,
+        "narHash": "sha256-t8lJRlLYf6VLFcNce3LrzAUT2amlulZo0lC9KykFvvg=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "f3c2e669051129d45b3c01e344280bba2ed698ff",
+        "rev": "fdd5758ffe820b174bcc26c0a79a5eb2e0e89cbb",
         "type": "github"
       },
       "original": {
@@ -11403,11 +11403,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1790311761,
-        "narHash": "sha256-BokgcprCQ++R52D/6Od822Bd95nthRPeTfBiWriEdBg=",
+        "lastModified": 1790329191,
+        "narHash": "sha256-f4HK7MqrLR/boKmfilxwtsljB3OYXoEn9D1OnmuLngY=",
         "owner": "logos-co",
         "repo": "logos-protocol",
-        "rev": "e166ea0f37a41ad779733591fb3a061bd0708b67",
+        "rev": "e430122d9d05797bb2abeec65e73216896cee9a9",
         "type": "github"
       },
       "original": {
