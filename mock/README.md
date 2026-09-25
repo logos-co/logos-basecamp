@@ -130,9 +130,9 @@ Invariants:
   gates its directory setup and every event subscription on it.
 - **`capability_module` must appear under `calls`,** even though Basecamp never
   calls it directly. `MockStore`'s seeder mints a `TokenManager` token for every
-  module named by a key, and the host must hold a `capability_module` token to be
-  admitted as the trusted channel when loading a ui_qml plugin. Without it:
-  `logos::admitConsumer: the host holds no capability_module token`.
+  module named by a key, and an identity — the app's shell, each UI plugin — asks
+  `capability_module.requestModule` for its token before its first call to a
+  module. The mock runtime hands out fixed credentials (`FixtureCoreRuntime`).
 - **`calls` keys use the wire method name** — the generated wrapper's name minus
   any `Async` suffix.
 

@@ -1671,8 +1671,8 @@ test("package_manager_ui: section click loads PMUI's own QML", async (app) => {
 //
 // The test above proves PMUI's QML is LIVE. It says nothing about whether PMUI
 // can actually TALK to anything, and that gap is why this suite certified a
-// build in which capability_module had been denied its token_registry /
-// token_delivery grant: ui-host's every call came back
+// build in which capability_module had been denied its host-services
+// grant: ui-host's every call came back
 // "ModuleProxy: rejecting unauthorized call" (34 of them), PMUI rendered its
 // chrome over an empty backend, and all 16 tests still passed.
 //

@@ -89,14 +89,12 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
   # `grep -c` exits 1 on zero matches, so each count is taken with `|| true`;
   # the `:-0` guards the (log-missing) case where grep prints nothing at all.
   REFUSED=$(grep -c "ModuleProxy: rejecting unauthorized call" "$LOG" || true)
-  UNGRANTED=$(grep -c "was not granted the token_registry host service" "$LOG" || true)
   UNGRANTED_DELIVERY=$(grep -c "was not granted the token_delivery host service" "$LOG" || true)
   REFUSED=''${REFUSED:-0}
-  UNGRANTED=''${UNGRANTED:-0}
   UNGRANTED_DELIVERY=''${UNGRANTED_DELIVERY:-0}
 
   echo ""
-  echo "Gate 2 counts: refused=$REFUSED ungranted(token_registry)=$UNGRANTED ungranted(token_delivery)=$UNGRANTED_DELIVERY"
+  echo "Gate 2 counts: refused=$REFUSED ungranted(token_delivery)=$UNGRANTED_DELIVERY"
 
   if [ "$RUN_CODE" -eq 124 ]; then
     echo ""
@@ -112,12 +110,12 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
     exit 1
   fi
 
-  if [ "$REFUSED" -ne 0 ] || [ "$UNGRANTED" -ne 0 ] || [ "$UNGRANTED_DELIVERY" -ne 0 ]; then
+  if [ "$REFUSED" -ne 0 ] || [ "$UNGRANTED_DELIVERY" -ne 0 ]; then
     echo ""
     echo "FAIL: gate 2 — the run contains refused capability-gated calls."
-    echo "      capability_module fails CLOSED when it is missing the token_registry /"
-    echo "      token_delivery host services, and every cross-identity call then comes"
-    echo "      back as the unauthorized sentinel. Offending lines:"
+    echo "      capability_module fails CLOSED when it is missing the token_delivery"
+    echo "      host service, and every cross-identity call then comes back as the"
+    echo "      unauthorized sentinel. Offending lines:"
     grep -n "ModuleProxy: rejecting unauthorized call\|was not granted the token_" "$LOG" | head -40
     exit 1
   fi

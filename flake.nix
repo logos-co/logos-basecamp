@@ -9,13 +9,13 @@
     # whose capability_module is the token authority. Each input goes back to
     # master as its PR merges (cpp-sdk#169, protocol#97, plugin-qt#48,
     # qt-sdk#60, loader-qt#21, liblogos#227).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/core-service-client";
-    logos-protocol.url = "github:logos-co/logos-protocol/feat/plain-local-inproc";
-    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/consumer-adoption-only";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/shell-binding";
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/drop-legacy-mode";
+    logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-mode";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/drop-legacy-mode";
     logos-module.url = "github:logos-co/logos-module";
-    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/native-module-host-lib";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/embedded-core-service";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-mode";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/drop-legacy-mode";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -39,10 +39,10 @@
     # Plain, in-process eligible, and capability exports the engine interface
     # (package-manager-module#73, package-downloader-module#41,
     # capability-module#33, modules-state-module#6).
-    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module/chore/qt-remote-plain";
-    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/chore/qt-remote-plain";
-    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/token-authority";
-    logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/chore/qt-remote-plain";
+    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module/feat/drop-legacy-mode";
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/feat/drop-legacy-mode";
+    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/drop-legacy-mode";
+    logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/feat/drop-legacy-mode";
     logos-package.url = "github:logos-co/logos-package";
     # package-manager-module#71 added installPlugin's `source`; pmui passes it
     # from #85. Back to master when that merges.
@@ -58,7 +58,7 @@
     logos-package-manager-ui.inputs.logos-module-builder.inputs.logos-standalone-app.follows = "logos-nix";
     logos-design-system.url = "github:logos-co/logos-design-system";
     # Back to master once logos-co/logos-view-module-runtime#36 and #37 merge.
-    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime/feat/admit-through-core-service";
+    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime/feat/drop-legacy-mode";
     # ui-host links the same qt-host and protocol the app does.
     logos-view-module-runtime.inputs.logos-protocol.follows = "logos-protocol";
     logos-view-module-runtime.inputs.logos-plugin-qt.follows = "logos-plugin-qt";
@@ -595,7 +595,7 @@
           # Host-services grant guard. Asserts that a NON-"core" identity
           # (ui-host running package_manager_ui) actually completes a
           # capability-gated call chain — i.e. that capability_module really
-          # received its token_registry/token_delivery grant from the loader
+          # received its token_delivery grant from the loader
           # basecamp pins, rather than failing closed. See
           # nix/host-services-test.nix and tests/host-services-assert.mjs.
           # Build: nix build .#host-services-test

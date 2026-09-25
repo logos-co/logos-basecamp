@@ -425,8 +425,14 @@ int main(int argc, char *argv[])
     core = std::make_unique<QtLogosCoreRuntime>(argc, argv, std::move(coreConfig));
 #endif
 
-    // Start the core
-    core->start();
+    // Start the core. Without its token authority (capability_module, bundled
+    // and run in-process) nothing could load, so the app does not go on.
+    try {
+        core->start();
+    } catch (const std::exception& e) {
+        std::cerr << "Logos Core did not start: " << e.what() << std::endl;
+        return 1;
+    }
     std::cout << "Logos Core started successfully!" << std::endl;
 
     // Explicit, not the interface default: this path bypasses
@@ -461,16 +467,12 @@ int main(int argc, char *argv[])
         qInfo() << "Total modules:" << modules.size();
     }
 
-    // The app's own calls: as its shell identity once capability_module is the
-    // token authority, otherwise as "core" on the tokens the listener mirrors.
-    std::unique_ptr<LogosAPI> coreApi;
-    LogosAPI* logosAPI = nullptr;
-    if (const QString credential = core->shellCredential(); !credential.isEmpty())
-        logosAPI = logos::adoptAdmittedConsumer(QString::fromStdString(kShellName),
-                                                credential, &app).api;
+    // The app's own calls go as its shell identity, never as the host.
+    LogosAPI* logosAPI = logos::adoptAdmittedConsumer(QString::fromStdString(kShellName),
+                                                      core->shellCredential(), &app).api;
     if (!logosAPI) {
-        coreApi = std::make_unique<LogosAPI>("core", nullptr);
-        logosAPI = coreApi.get();
+        std::cerr << "Logos Core gave the app no identity to call modules with" << std::endl;
+        return 1;
     }
 
     // Set application icon.

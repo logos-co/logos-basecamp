@@ -76,9 +76,9 @@ The backend is split into four classes with a unidirectional dependency graph:
 ```
 MainUIBackend (facade, QML-facing — owns the other three as Qt children)
     │
-    ├─► CoreModuleManager    (wraps logos_core_* C API, stats polling)
+    ├─► CoreModuleManager    (wraps the runtime: QtLogosCore over core_service, stats polling)
     │       ▲
-    │       │ (uses for all C API calls)
+    │       │ (uses for all runtime calls)
     ├─► UIPluginManager       (UI plugin widgets, app launcher, unload cascade)
     │       ▲
     │       │ (queries for installType / missing-deps / dependents;
@@ -91,7 +91,7 @@ MainUIBackend (facade, QML-facing — owns the other three as Qt children)
 Thin QML-facing facade. Holds only navigation state (`m_currentActiveSectionIndex`, `m_sections`). Every QML-visible slot/signal is a one-line delegation into one of the three managers. The `coreModules()` Q_PROPERTY is the one exception — it composes data from multiple managers (known list + stats from CoreModuleManager, installType from PackageCoordinator). The `cancelPendingAction(name)` slot fans out to both UIPluginManager and PackageCoordinator so the un-involved one no-ops.
 
 ### CoreModuleManager (`app/CoreModuleManager.h/.cpp`)
-Single owner of the `logos_core_*` C API. Provides thin wrappers: `knownModules()`, `loadedModules()`, `loadModule()`, `unloadModule()`, `unloadModuleWithDependents()`, plus a stats timer that periodically queries `logos_core_get_module_stats`. Nothing else in the app calls the C API directly.
+Single owner of the runtime (`ICoreRuntime`, `QtLogosCore` over core_service). Provides thin wrappers: `knownModules()`, `loadedModules()`, `loadModule()`, `unloadModule()`, `unloadModuleWithDependents()`, `admitConsumer()`, plus a stats timer that periodically queries core_service's `getModuleStats`. Nothing else in the app calls the runtime directly.
 
 ### UIPluginManager (`app/UIPluginManager.h/.cpp`)
 Owns UI plugin widget lifecycle in-process: `logos::ui::UiPluginLoader` wiring (logos-view-module-runtime), widget teardown, app launcher state, UI-plugin metadata cache (`m_uiPluginMetadata`) used for load dispatch. Runs the local *unload* cascade (no package_manager involvement). Queries PackageCoordinator for installType / missing-deps / dependents via accessor methods. Exposes `intersectWithLoaded(names)` + `teardownUiPluginWidget(name)` for PackageCoordinator to call during uninstall cascade.
