@@ -4,7 +4,6 @@
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
-#include "LogosBasecampPaths.h"
 #include "RepositorySource.h"
 #include "utils/DependencyBlocker.h"
 
@@ -114,12 +113,8 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
 
     LogosModules logos(m_logosAPI);
 
-    // Configure the package_manager module's directories so it knows where
-    // to install.
-    logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
-    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
-    logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
-    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    // package_manager's directories are set by the runtime as it loads
+    // (main.cpp's package config): its setters answer only the runtime.
 
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
@@ -2002,7 +1997,8 @@ void PackageCoordinator::installDownloadedFile(const QVariantMap& dl,
     // indistinguishable from a provider that legitimately returned an empty
     // one. AsyncResult<T> carries the value and the error together, which is
     // the whole reason it exists.
-    logos.package_manager.installPluginAsyncResult(filePath, false,
+    // No `source` (package-manager-module#71): this install records none.
+    logos.package_manager.installPluginAsyncResult(filePath, false, std::nullopt,
         [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
             // Transport-level failure FIRST -- a timeout leaves `value`

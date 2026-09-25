@@ -141,7 +141,7 @@ All `logos_core_*` calls are made from two locations: `app/main.cpp` (startup/sh
 
 ### LogosAPI Usage
 
-A single `LogosAPI` instance is created in `main()` with the module name `"core"` and passed through the component hierarchy: `main() → Window → MainContainer → MainUIBackend`.
+A single `LogosAPI` instance is created in `main()` and passed through the component hierarchy: `main() → Window → MainContainer → MainUIBackend`. Once capability_module is the runtime's token authority it is the app's shell identity, `basecamp` (adopted from the runtime's shell credential), and UI plugins are admitted through `core_service`; otherwise it is `"core"`, on the tokens core's listener mirrors.
 
 **Getting module clients:**
 ```cpp
@@ -274,10 +274,11 @@ main()
  ├─ QApplication(argc, argv)
  ├─ logos_core_add_modules_dir(<app>/../modules)       # Embedded modules (read-only)
  ├─ logos_core_add_modules_dir(~/.local/share/.../modules)  # User modules (writable)
- ├─ logos_core_start()                                 # Scan dirs, init capability module, start registry
- ├─ logos_core_load_module("package_manager", REQUIRED_AND_OPTIONAL)  # Auto-load package manager
- ├─ logos_core_get_loaded_modules()                    # Log loaded modules
- ├─ LogosAPI("core", nullptr)                          # Create SDK instance
+ ├─ bundled dirs, package config, shell "basecamp"    # Protected input, before start
+ ├─ logos_core_start()                                 # Scan dirs, capability in-process as the token authority, core_service
+ ├─ loadModule("package_manager", REQUIRED_AND_OPTIONAL)  # Through core_service; the runtime sets its dirs
+ ├─ loadedModules()                                    # Log loaded modules
+ ├─ LogosAPI as "basecamp" (or "core" without the authority)  # Create SDK instance
  ├─ Window(&logosAPI)
  │   └─ setCentralWidget(new MainContainer(&logosAPI))
  │       ├─ MainUIBackend(logosAPI)
@@ -286,7 +287,6 @@ main()
  │       │   ├─ refreshCoreModules()
  │       │   │   └─ logos_core_refresh_modules()
  │       │   ├─ subscribeToPackageInstallationEvents()
- │       │   │   ├─ logos.package_manager.setUserModulesDirectory(...)
  │       │   │   ├─ logos.package_manager.on("corePluginFileInstalled", ...)
  │       │   │   └─ logos.package_manager.on("uiPluginFileInstalled", ...)
  │       │   └─ fetchUiPluginMetadata()
