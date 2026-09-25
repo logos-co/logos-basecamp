@@ -2044,6 +2044,8 @@ void PackageCoordinator::installDownloadedFile(const QVariantMap& dl,
 {
     const QString packageName = dl.value("name").toString();
     const QString filePath    = dl.value("path").toString();
+    // Where the downloader fetched it from; package_manager records it with the install.
+    const QString source      = dl.value("source").toString();
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
@@ -2062,7 +2064,7 @@ void PackageCoordinator::installDownloadedFile(const QVariantMap& dl,
     // indistinguishable from a provider that legitimately returned an empty
     // one. AsyncResult<T> carries the value and the error together, which is
     // the whole reason it exists.
-    logos.package_manager.installPluginAsyncResult(filePath, false,
+    logos.package_manager.installPluginAsyncResult(filePath, false, source,
         [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
             // Transport-level failure FIRST -- a timeout leaves `value`

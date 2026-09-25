@@ -162,7 +162,7 @@ if (client && client->isConnected()) {
 **Using the generated wrapper:**
 ```cpp
 LogosModules logos(m_logosAPI);
-logos.package_manager.installPluginAsync(filePath, false, callback);
+logos.package_manager.installPluginAsync(filePath, false, source, callback);
 logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data) { ... });
 ```
 
@@ -398,7 +398,7 @@ package_manager_ui → package_manager.requestInstall(name, version, repoUrl, de
              └─ Install → confirmInstallGate(name) → module emits "installApproved"
                  └─ PMU performs the install (download first for a catalog
                     package; a local .lgx is already on disk)
-                     └─ package_manager.installPluginAsync(path, false)
+                     └─ package_manager.installPluginAsync(path, false, source)
                          ├─ Extracts the platform variant from the LGX archive
                          ├─ Files copied to user modules/plugins directory
                          └─ Event emitted: "corePluginFileInstalled" or
