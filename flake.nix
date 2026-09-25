@@ -5,15 +5,17 @@
     logos-nix.url = "github:logos-co/logos-nix";
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
-    # Back to master once logos-co/logos-cpp-sdk#167 merges.
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/core-token-listener";
-    logos-protocol.url = "github:logos-co/logos-protocol";
-    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk";
+    # The runtime-control wave: the app is the "basecamp" shell of a runtime
+    # whose capability_module is the token authority. Each input goes back to
+    # master as its PR merges (cpp-sdk#169, protocol#97, plugin-qt#48,
+    # qt-sdk#60, loader-qt#21, liblogos#227).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/core-service-client";
+    logos-protocol.url = "github:logos-co/logos-protocol/feat/plain-local-inproc";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/consumer-adoption-only";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/shell-binding";
     logos-module.url = "github:logos-co/logos-module";
-    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt";
-    # Back to master once logos-co/logos-liblogos#224 merges.
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/core-token-listener";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/native-module-host-lib";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/embedded-core-service";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -34,12 +36,17 @@
     # its OWN older liblgx in the bundle's flat lib/ — where the module's
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
-    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
-    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
-    logos-capability-module.url = "github:logos-co/logos-capability-module";
-    logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
+    # Plain, in-process eligible, and capability exports the engine interface
+    # (package-manager-module#73, package-downloader-module#41,
+    # capability-module#33, modules-state-module#6).
+    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module/chore/qt-remote-plain";
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/chore/qt-remote-plain";
+    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/token-authority";
+    logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/chore/qt-remote-plain";
     logos-package.url = "github:logos-co/logos-package";
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    # package-manager-module#71 added installPlugin's `source`; pmui passes it
+    # from #85. Back to master when that merges.
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui/feat/add-storage-source";
     # The UI otherwise brings its own package_manager and package_downloader,
     # so the closure carries two of each and the UI that drives installs sits
     # on the older one — the one with no VersionMismatch, and without the
@@ -50,13 +57,16 @@
     # cutting it drops a second copy of the module toolchain from this lock.
     logos-package-manager-ui.inputs.logos-module-builder.inputs.logos-standalone-app.follows = "logos-nix";
     logos-design-system.url = "github:logos-co/logos-design-system";
-    # Back to master once logos-co/logos-view-module-runtime#36 merges.
-    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime/feat/ui-host-library";
+    # Back to master once logos-co/logos-view-module-runtime#36 and #37 merge.
+    logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime/feat/admit-through-core-service";
     # ui-host links the same qt-host and protocol the app does.
     logos-view-module-runtime.inputs.logos-protocol.follows = "logos-protocol";
     logos-view-module-runtime.inputs.logos-plugin-qt.follows = "logos-plugin-qt";
     logos-view-module-runtime.inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
+    # Payloads ship their own libiconv (nix-bundle-lgx#17); drop once the installer relocks.
+    nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx/fix/ship-libiconv";
+    nix-bundle-logos-module-install.inputs.nix-bundle-lgx.follows = "nix-bundle-lgx";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
     logos-qt-mcp.url = "github:logos-co/logos-qt-mcp";
     nix-bundle-appimage.url = "github:logos-co/nix-bundle-appimage";
@@ -72,7 +82,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
