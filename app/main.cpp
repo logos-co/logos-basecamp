@@ -65,9 +65,18 @@ static const std::string kShellName = "basecamp";
 // (~Window, logos_core_cleanup, log flush) run. Doing anything Qt-related
 // directly from a signal handler is undefined behaviour.
 static int gSignalFd[2] = {-1, -1};
+// A signal during startup: the notifier only fires once the event loop runs.
+static volatile sig_atomic_t gSignalled = 0;
 
-static void unixSignalHandler(int)
+static void unixSignalHandler(int sig)
 {
+    // A second signal is the way out of a startup or teardown that hangs.
+    if (gSignalled) {
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+        return;
+    }
+    gSignalled = 1;
     char a = 1;
     ::write(gSignalFd[0], &a, sizeof(a));
 }
@@ -139,6 +148,11 @@ int main(int argc, char *argv[])
     // Installing here is what lets every source — this filter, argv, and the
     // single-instance socket — funnel into one inbox.
     LinkUrlInbox::installEventFilter(&app);
+
+#ifdef Q_OS_UNIX
+    // Before the slow startup below: a SIGTERM there used to kill the app outright.
+    installUnixSignalHandlers(app);
+#endif
 
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
@@ -501,10 +515,6 @@ int main(int argc, char *argv[])
     // Don't quit when last window is closed (for system tray support)
     app.setQuitOnLastWindowClosed(false);
 
-#ifdef Q_OS_UNIX
-    installUnixSignalHandlers(app);
-#endif
-
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
     auto mainWindow = std::make_unique<Window>(logosAPI, core.get());
@@ -543,8 +553,13 @@ int main(int argc, char *argv[])
     InspectorServer::attach(mainWindow.get());
 #endif
 
-    // Run the application
+    // Run the application. exec() forgets a quit() made before it, so a signal
+    // taken during startup skips it and goes straight to the teardown.
+#ifdef Q_OS_UNIX
+    int result = gSignalled ? 0 : app.exec();
+#else
     int result = app.exec();
+#endif
 
     // Graceful teardown of the UI before QApplication is destroyed.
     //

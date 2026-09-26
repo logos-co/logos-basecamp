@@ -8,7 +8,8 @@
 //     the app;
 //   - package_manager and package_downloader each run in a logos_host_plain of
 //     their own, never in the runtime or the app;
-//   - SIGTERM on the app takes the runtime and every host down with it.
+//   - SIGTERM on the app takes the runtime and every host down with it, and ends
+//     the app cleanly even when it arrives mid-startup.
 //
 // The probe that finds capability_module in logos_runtime is the control: a
 // probe that sees nothing would fail there, before the absences mean anything.
@@ -95,13 +96,18 @@ function alive(pid) {
   }
 }
 
-const app = spawn(APP_BIN, ["-platform", "offscreen"], {
-  stdio: ["ignore", "pipe", "pipe"],
-  env: { ...process.env, QT_QPA_PLATFORM: "offscreen" },
-});
-const log = [];
-app.stdout.on("data", (d) => log.push(d));
-app.stderr.on("data", (d) => log.push(d));
+function launch() {
+  const child = spawn(APP_BIN, ["-platform", "offscreen"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, QT_QPA_PLATFORM: "offscreen" },
+  });
+  const output = [];
+  child.stdout.on("data", (d) => output.push(d));
+  child.stderr.on("data", (d) => output.push(d));
+  return { child, output };
+}
+
+const { child: app, output: log } = launch();
 
 const failures = [];
 const check = (ok, what) => {
@@ -167,8 +173,38 @@ try {
   }
 }
 
+// Detector: SIGTERM mid-startup (runtime up, package modules not yet) took the
+// default action, because the app installed its handler only once started.
+const { child: early, output: earlyLog } = launch();
+try {
+  let earlyRuntime = 0;
+  for (const deadline = Date.now() + READY_MS; !earlyRuntime && Date.now() < deadline; await sleep(50)) {
+    if (early.exitCode !== null) throw new Error(`the second app exited early (code ${early.exitCode})`);
+    earlyRuntime = descendant(processes(), early.pid, "logos_runtime");
+  }
+  if (!earlyRuntime) throw new Error("the second app spawned no logos_runtime");
+  early.kill("SIGTERM");
+  const exit = await waitForExit(early, READY_MS);
+  check(exit !== null && exit.code === 0, `SIGTERM during startup ends the app cleanly (${JSON.stringify(exit)})`);
+  const table = processes();
+  const leftovers = [earlyRuntime, ...children(table, earlyRuntime, "logos_host_plain")];
+  let gone = false;
+  for (const deadline = Date.now() + 10000; !gone && Date.now() < deadline; await sleep(250))
+    gone = !leftovers.some(alive);
+  check(gone, "a runtime started mid-signal went down with the app");
+} catch (e) {
+  failures.push(e.message);
+  console.log(`  FAIL ${e.message}`);
+} finally {
+  if (early.exitCode === null && early.signalCode === null) {
+    early.kill("SIGKILL");
+    await waitForExit(early, 2000);
+  }
+}
+
 if (failures.length > 0) {
   process.stderr.write("--- app output ---\n" + Buffer.concat(log).toString("utf-8") + "\n--- end ---\n");
+  process.stderr.write("--- second app output ---\n" + Buffer.concat(earlyLog).toString("utf-8") + "\n--- end ---\n");
   console.log(`\n${failures.length} failed`);
   process.exit(1);
 }
