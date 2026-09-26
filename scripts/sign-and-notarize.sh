@@ -246,13 +246,15 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
       "${CONTENTS}/MacOS/logos_runtime" \
       "${CONTENTS}/MacOS/logos_host" \
       "${CONTENTS}/MacOS/logos_host_plain" \
+      "${CONTENTS}/MacOS/logos_host_remote" \
       "${CONTENTS}/MacOS/ui-host" \
       "${CONTENTS}/MacOS/logoscore"; do
       if [[ -f "${exe}" ]]; then
           ents=(--entitlements "${ENTITLEMENTS}")
           [[ "${exe}" == */logos_host || "${exe}" == */logos_host_plain ]] \
               && ents=(--entitlements "${HOST_ENTITLEMENTS}")
-          [[ "${exe}" == */logos_runtime ]] && ents=()
+          # Neither loads a plugin: the runtime, and an import's facade host.
+          [[ "${exe}" == */logos_runtime || "${exe}" == */logos_host_remote ]] && ents=()
           echo "  Signing: ${exe}"
           # bash 3.2 (macOS) calls an empty array unbound under set -u.
           codesign_with_retry "${CODESIGN_OPTS[@]}" ${ents[@]+"${ents[@]}"} "${exe}" \
@@ -279,11 +281,14 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
   echo "Verifying signature."
   codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" \
       || { echo "ERROR: Signature verification failed, aborting before notarization."; exit 1; }
-  if [[ -f "${CONTENTS}/MacOS/logos_host" ]]; then
-      host_ents=$(codesign -d --entitlements - "${CONTENTS}/MacOS/logos_host" 2>/dev/null || true)
-      grep -qF "com.apple.security.cs.allow-jit" <<<"${host_ents}" \
-          || { echo "ERROR: logos_host is missing the allow-jit entitlement."; exit 1; }
-  fi
+  # A plain module with a JIT (monerod_module's RandomX) runs in logos_host_plain.
+  for host in logos_host logos_host_plain; do
+      if [[ -f "${CONTENTS}/MacOS/${host}" ]]; then
+          host_ents=$(codesign -d --entitlements - "${CONTENTS}/MacOS/${host}" 2>/dev/null || true)
+          grep -qF "com.apple.security.cs.allow-jit" <<<"${host_ents}" \
+              || { echo "ERROR: ${host} is missing the allow-jit entitlement."; exit 1; }
+      fi
+  done
 
   echo "Signing phase complete"
 fi

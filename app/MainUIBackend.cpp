@@ -18,9 +18,13 @@
 #include "ModuleInstanceModel.h"
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
+#include "PeeringController.h"
 #include "BuildInfo.h"
+#include "LogosBasecampPaths.h"
+#include "utils/PeeringSettings.h"
 
 #include <QDebug>
+#include <QDir>
 #include <QJSValue>
 #include <QMap>
 #include <QTimer>
@@ -69,6 +73,12 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
+    m_peeringController = new PeeringController(
+        m_logosAPI, m_coreModuleManager,
+        LogosBasecamp::peeringSettingsPath(LogosBasecampPaths::baseDirectory()),
+        LogosBasecamp::daemonLocalInvitePath(qEnvironmentVariable("LOGOSCTL_CONFIG_DIR"),
+                                             QDir::homePath()),
+        this);
 
     // Setter-injection closes the cycle — UIPluginManager queries
     // PackageCoordinator for installType / missing-deps when building its
@@ -186,6 +196,13 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
             this,             &MainUIBackend::appsLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
             this,             &MainUIBackend::repositoryOperationCompleted);
+
+    connect(m_peeringController, &PeeringController::stateChanged,
+            this,                &MainUIBackend::peeringChanged);
+    connect(m_peeringController, &PeeringController::operationCompleted,
+            this,                &MainUIBackend::peeringOperationCompleted);
+    connect(m_peeringController, &PeeringController::peerExportsFetched,
+            this,                &MainUIBackend::peerExportsFetched);
 
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
@@ -884,6 +901,21 @@ void MainUIBackend::refreshAppCatalog()                                    { m_p
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
+
+// --- PeeringController delegations ----------------------------------------
+
+QVariantMap MainUIBackend::peering() const { return m_peeringController->state(); }
+void MainUIBackend::refreshPeering() { m_peeringController->refresh(); }
+void MainUIBackend::setPeeringEnabled(bool enabled) { m_peeringController->setEnabled(enabled); }
+void MainUIBackend::linkLocalDaemon(const QString& invitePath) { m_peeringController->linkLocalDaemon(invitePath); }
+void MainUIBackend::pairWithPeer(const QString& host, int port) { m_peeringController->pairWith(host, port); }
+void MainUIBackend::confirmPeerPairing(const QString& id) { m_peeringController->confirmPairing(id); }
+void MainUIBackend::rejectPeerPairing(const QString& id) { m_peeringController->rejectPairing(id); }
+void MainUIBackend::removePeer(const QString& peer) { m_peeringController->removePeer(peer); }
+void MainUIBackend::fetchPeerExports(const QString& peer) { m_peeringController->fetchPeerExports(peer); }
+void MainUIBackend::importPeerModule(const QString& peer, const QString& module, bool events)
+{ m_peeringController->importModule(peer, module, events); }
+void MainUIBackend::removePeerImport(const QString& name) { m_peeringController->removeImport(name); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 

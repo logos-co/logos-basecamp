@@ -290,6 +290,8 @@ set(PROJECT_SOURCES
     utils/LoggingConfig.cpp
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
+    utils/PeeringSettings.h
+    utils/PeeringSettings.cpp
     utils/DependencyBlocker.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
@@ -324,6 +326,7 @@ set(PROJECT_SOURCES
     RecentlyClosedStore.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
+    PeeringController.cpp
     RepositorySource.cpp
     UninstallPlan.cpp
     InstallRegistry.cpp

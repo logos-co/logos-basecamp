@@ -36,6 +36,12 @@ Item {
         function onRepositoryOperationCompleted(operation, url, success, error) {
             settingsView.reportRepositoryResult(operation, url, success, error)
         }
+        function onPeeringOperationCompleted(operation, success, error) {
+            settingsView.reportPeeringResult(operation, success, error)
+        }
+        function onPeerExportsFetched(peer, exports) {
+            settingsView.showPeerExports(peer, exports)
+        }
         // Capabilities the shell itself provides *that are pure navigation* —
         // no state, no IPC, answerable on the spot. Adding the next one of
         // those is one more `case`. Anything unrecognised must still be
@@ -145,6 +151,20 @@ Item {
             onModuleLoadRequested:          name => backend.loadCoreModule(name)
             onModuleUnloadRequested:        name => backend.unloadCoreModule(name)
             onModuleInspectorBecameVisible: Qt.callLater(backend.refreshCoreModules)
+
+            // Peering — PeeringController behind the backend.
+            peering:                        backend.peering
+            onPeeringRefreshRequested:      backend.refreshPeering()
+            onPeeringEnabledRequested:      enabled => backend.setPeeringEnabled(enabled)
+            onPeeringLinkLocalRequested:    path => backend.linkLocalDaemon(path)
+            onPeeringPairRequested:         (host, port) => backend.pairWithPeer(host, port)
+            onPeeringConfirmRequested:      id => backend.confirmPeerPairing(id)
+            onPeeringRejectRequested:       id => backend.rejectPeerPairing(id)
+            onPeeringRemovePeerRequested:   peer => backend.removePeer(peer)
+            onPeeringExportsRequested:      peer => backend.fetchPeerExports(peer)
+            onPeeringImportRequested:       (peer, module, events) =>
+                                                backend.importPeerModule(peer, module, events)
+            onPeeringRemoveImportRequested: name => backend.removePeerImport(name)
         }
     }
 }

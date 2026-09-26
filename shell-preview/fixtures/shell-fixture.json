@@ -54,5 +54,28 @@
       "description": "Local key-value persistence.", "category": "storage", "type": "core",
       "installedVersion": "0.4.1", "latestVersion": "0.4.1", "isInstalled": true, "hasUpdate": false,
       "installType": "user", "isTopLevel": false, "missingDeps": [], "dependencies": [] }
-  ]
+  ],
+  "peering": {
+    "enabled": true,
+    "restartRequired": false,
+    "running": true,
+    "error": "",
+    "status": {"runtime_id": "0f8fad5b-d9cb-469f-a165-70867728950e", "display_id": "K7Q2M-4XWPD-9TR3B-HN6ZC",
+               "name": "Basecamp on studio", "control": {"enabled": false, "port": 0}, "peers": 1},
+    "peers": [
+      {"runtime_id": "3f2c1a9e-7b4d-4e8a-9c21-5d6e7f809a1b", "alias": "node", "display_name": "node",
+       "display_id": "B4N8R-2KDQW-7XM3P-LT9VH", "role": "peer", "granted_role": "peer",
+       "status": "active", "addresses": ["127.0.0.1"], "control_port": 7443}
+    ],
+    "pending": [],
+    "imports": [
+      {"name": "monerod_module", "from": "3f2c1a9e-7b4d-4e8a-9c21-5d6e7f809a1b", "module": "monerod_module", "peer_alias": "node",
+       "allowed_callers": ["*"], "events": true, "state": "ready", "reason": ""}
+    ],
+    "localInvitePath": "/Users/me/.logosctl/peering/local-invite",
+    "localInviteFound": true
+  },
+  "peerExports": {
+    "3f2c1a9e-7b4d-4e8a-9c21-5d6e7f809a1b": [{"module": "monerod_module", "events": true, "loaded": true}]
+  }
 }
