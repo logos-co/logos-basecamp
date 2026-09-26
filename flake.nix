@@ -44,7 +44,10 @@
     # capability-module#33, modules-state-module#6).
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module/feat/drop-legacy-mode";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/feat/drop-legacy-mode";
-    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/drop-legacy-mode";
+    # Decides peering's remote routes and scopes each import's facade
+    # (capability-module#35); liblogos compiles against the same engine header.
+    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/peering";
+    logos-liblogos.inputs.logos-capability-module.follows = "logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/feat/drop-legacy-mode";
     logos-package.url = "github:logos-co/logos-package";
     # package-manager-module#71 added installPlugin's `source`; pmui passes it
