@@ -26,6 +26,7 @@ public:
     QVariantList allStats() const override;
     QString     shellCredential() const override;
     QString     admitConsumer(const QString& name) override;
+    void        onRuntimeExit(std::function<void(const QString& reason)> handler) override;
 
 private:
     std::unique_ptr<logos::qt::QtLogosCore> m_core;

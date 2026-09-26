@@ -22,6 +22,8 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QDir>
+#include <QMessageBox>
+#include <QMetaObject>
 #include <QStyleHints>
 #include <QStandardPaths>
 #include <iostream>
@@ -63,9 +65,18 @@ static const std::string kShellName = "basecamp";
 // (~Window, logos_core_cleanup, log flush) run. Doing anything Qt-related
 // directly from a signal handler is undefined behaviour.
 static int gSignalFd[2] = {-1, -1};
+// A signal during startup: the notifier only fires once the event loop runs.
+static volatile sig_atomic_t gSignalled = 0;
 
-static void unixSignalHandler(int)
+static void unixSignalHandler(int sig)
 {
+    // A second signal is the way out of a startup or teardown that hangs.
+    if (gSignalled) {
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+        return;
+    }
+    gSignalled = 1;
     char a = 1;
     ::write(gSignalFd[0], &a, sizeof(a));
 }
@@ -137,6 +148,11 @@ int main(int argc, char *argv[])
     // Installing here is what lets every source — this filter, argv, and the
     // single-instance socket — funnel into one inbox.
     LinkUrlInbox::installEventFilter(&app);
+
+#ifdef Q_OS_UNIX
+    // Before the slow startup below: a SIGTERM there used to kill the app outright.
+    installUnixSignalHandlers(app);
+#endif
 
     app.setOrganizationName("Logos");
     app.setApplicationName("LogosBasecamp");
@@ -435,6 +451,19 @@ int main(int argc, char *argv[])
     }
     std::cout << "Logos Core started successfully!" << std::endl;
 
+    // The runtime runs in a process of its own: without it nothing answers the
+    // app, so it says why and quits (offscreen has nobody to read a dialog).
+    core->onRuntimeExit([&app](const QString& reason) {
+        QMetaObject::invokeMethod(&app, [reason]() {
+            qCritical().noquote() << "The Logos runtime stopped:" << reason;
+            if (QGuiApplication::platformName() != QLatin1String("offscreen"))
+                QMessageBox::critical(nullptr, QStringLiteral("Logos Basecamp"),
+                                      QObject::tr("The Logos runtime stopped (%1), so Basecamp "
+                                                  "will close.").arg(reason));
+            QCoreApplication::exit(1);
+        }, Qt::QueuedConnection);
+    });
+
     // Explicit, not the interface default: this path bypasses
     // CoreModuleManager, so nothing else would widen it.
     bool loaded = core->loadModule(QStringLiteral("package_manager"),
@@ -486,10 +515,6 @@ int main(int argc, char *argv[])
     // Don't quit when last window is closed (for system tray support)
     app.setQuitOnLastWindowClosed(false);
 
-#ifdef Q_OS_UNIX
-    installUnixSignalHandlers(app);
-#endif
-
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
     auto mainWindow = std::make_unique<Window>(logosAPI, core.get());
@@ -528,8 +553,13 @@ int main(int argc, char *argv[])
     InspectorServer::attach(mainWindow.get());
 #endif
 
-    // Run the application
+    // Run the application. exec() forgets a quit() made before it, so a signal
+    // taken during startup skips it and goes straight to the teardown.
+#ifdef Q_OS_UNIX
+    int result = gSignalled ? 0 : app.exec();
+#else
     int result = app.exec();
+#endif
 
     // Graceful teardown of the UI before QApplication is destroyed.
     //
@@ -569,9 +599,8 @@ int main(int argc, char *argv[])
         QAccessible::installUpdateHandler(previousHandler);
     }
 
-    // Cleanup logos core (plugins, modules, etc.). ~QtLogosCore calls
-    // logos_core_cleanup(); this reset() is what pins it to exactly here,
-    // before the app's LogosAPI is destroyed.
+    // Stop the runtime, which unloads its modules in order; this reset() is
+    // what pins it to exactly here, before the app's LogosAPI is destroyed.
     core.reset();
 
     // Flush final output, restore original stdout/stderr, and close the log file.

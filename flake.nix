@@ -6,16 +6,17 @@
     # Follow the same nixpkgs as logos-nix
     nixpkgs.follows = "logos-nix/nixpkgs";
     # The runtime-control wave: the app is the "basecamp" shell of a runtime
-    # whose capability_module is the token authority. Each input goes back to
-    # master as its PR merges (cpp-sdk#169, protocol#97, plugin-qt#48,
-    # qt-sdk#60, loader-qt#21, liblogos#227).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/drop-legacy-mode";
+    # whose capability_module is the token authority, and that runtime runs in
+    # a process of its own. Each input goes back to master as its PR merges
+    # (cpp-sdk#169, protocol#97, plugin-qt#48, qt-sdk#60, loader-qt#21,
+    # liblogos#227, and the drafts stacked on them).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/runtime-process";
     logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
     logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-mode";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/drop-legacy-mode";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/runtime-process";
     logos-module.url = "github:logos-co/logos-module";
     logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-mode";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/drop-legacy-mode";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/runtime-process";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -603,6 +604,13 @@
             inherit pkgs src logosQtMcp; appPkg = app;
           };
 
+          # The runtime runs in a process of its own: capability_module maps
+          # only into logos_runtime, each package module into a host of its own,
+          # and none of them into the app. Build: nix build .#runtime-process-test
+          runtime-process-test = import ./nix/runtime-process-test.nix {
+            inherit pkgs src; appPkg = app;
+          };
+
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {
@@ -643,6 +651,11 @@
             inherit logosQtMcp;
             appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
           };
+          runtime-process-test-bundle = import ./nix/runtime-process-test.nix {
+            inherit pkgs src;
+            appPkg = macosAppTest;
+            appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
+          };
         }
       );
 
@@ -667,6 +680,7 @@
         integration-test = self.packages.${system}.integration-test;
         shutdown-test = self.packages.${system}.shutdown-test;
         host-services-test = self.packages.${system}.host-services-test;
+        runtime-process-test = self.packages.${system}.runtime-process-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
         mock-tests = self.packages.${system}.mock-tests;

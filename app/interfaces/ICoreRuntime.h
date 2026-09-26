@@ -4,6 +4,7 @@
 #include <QStringList>
 #include <QVariantList>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -90,4 +91,8 @@ public:
     virtual QString shellCredential() const = 0;
     // A UI plugin's credential, minted by capability_module; empty when refused.
     virtual QString admitConsumer(const QString& name) = 0;
+
+    // Called once, off the GUI thread, if the runtime stops before the app
+    // stops it: nothing answers after that. Set after start().
+    virtual void onRuntimeExit(std::function<void(const QString& reason)> handler) = 0;
 };
