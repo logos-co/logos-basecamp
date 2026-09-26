@@ -158,6 +158,7 @@ Item {
             onPeeringEnabledRequested:      enabled => backend.setPeeringEnabled(enabled)
             onPeeringLinkLocalRequested:    path => backend.linkLocalDaemon(path)
             onPeeringPairRequested:         (host, port) => backend.pairWithPeer(host, port)
+            onPeeringPairingWindowRequested: seconds => backend.openPeerPairingWindow(seconds)
             onPeeringConfirmRequested:      id => backend.confirmPeerPairing(id)
             onPeeringRejectRequested:       id => backend.rejectPeerPairing(id)
             onPeeringRemovePeerRequested:   peer => backend.removePeer(peer)

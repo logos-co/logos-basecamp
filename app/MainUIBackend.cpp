@@ -203,6 +203,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
             this,                &MainUIBackend::peeringOperationCompleted);
     connect(m_peeringController, &PeeringController::peerExportsFetched,
             this,                &MainUIBackend::peerExportsFetched);
+    connect(m_peeringController, &PeeringController::pairingRequested,
+            this,                &MainUIBackend::peerPairingRequested);
 
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
@@ -909,6 +911,7 @@ void MainUIBackend::refreshPeering() { m_peeringController->refresh(); }
 void MainUIBackend::setPeeringEnabled(bool enabled) { m_peeringController->setEnabled(enabled); }
 void MainUIBackend::linkLocalDaemon(const QString& invitePath) { m_peeringController->linkLocalDaemon(invitePath); }
 void MainUIBackend::pairWithPeer(const QString& host, int port) { m_peeringController->pairWith(host, port); }
+void MainUIBackend::openPeerPairingWindow(int seconds) { m_peeringController->openPairingWindow(seconds); }
 void MainUIBackend::confirmPeerPairing(const QString& id) { m_peeringController->confirmPairing(id); }
 void MainUIBackend::rejectPeerPairing(const QString& id) { m_peeringController->rejectPairing(id); }
 void MainUIBackend::removePeer(const QString& peer) { m_peeringController->removePeer(peer); }

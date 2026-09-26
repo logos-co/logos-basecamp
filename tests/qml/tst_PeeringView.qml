@@ -78,6 +78,30 @@ TestCase {
         compare(imported.signalArguments[0][2], false)
     }
 
+    function test_the_pairing_window_is_offered_while_control_listens() {
+        var v = view({ status: { name: "Basecamp on desk", control: { enabled: true, port: 7443 },
+                                 pairing_window_ms: 0 } })
+        var windows = spy(v, "pairingWindowRequested")
+        var button = findChild(v, "peering.pairingWindowButton")
+        verify(button.visible)
+        verify(findChild(v, "peering.controlState").text.indexOf("7443") >= 0)
+        button.clicked()
+        compare(windows.signalArguments[0][0], 300)
+
+        var open = view({ status: { control: { enabled: true, port: 7443 }, pairing_window_ms: 120000 } })
+        var closing = spy(open, "pairingWindowRequested")
+        findChild(open, "peering.pairingWindowButton").clicked()
+        compare(closing.signalArguments[0][0], 0, "an open window can be closed")
+    }
+
+    function test_a_control_endpoint_that_cannot_listen_says_why() {
+        var v = view({ status: { control: { enabled: true, port: 0,
+                                            error: "cannot listen on 0.0.0.0:17443" } } })
+        verify(findChild(v, "peering.controlState").text.indexOf("cannot listen on 0.0.0.0:17443") >= 0)
+        verify(!findChild(v, "peering.pairingWindowButton").visible, "no window to open")
+        verify(!findChild(view({}), "peering.pairingWindowButton").visible, "nor with control off")
+    }
+
     function test_off_offers_only_the_switch() {
         var v = view({ enabled: false, running: false, peers: [] })
         verify(findChild(v, "peering.enabledSwitch").visible)

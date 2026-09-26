@@ -159,6 +159,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/IntentDialog.qml
         Basecamp/Shell/IntentChooserDialog.qml
         Basecamp/Shell/IntentInstallDialog.qml
+        Basecamp/Shell/PairingRequestDialog.qml
         Basecamp/Shell/UninstallDialog.qml
         Basecamp/Shell/WelcomePage.qml
 )

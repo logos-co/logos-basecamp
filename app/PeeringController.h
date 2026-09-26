@@ -28,6 +28,8 @@ public:
     void setEnabled(bool enabled);
     void linkLocalDaemon(const QString& invitePath);
     void pairWith(const QString& host, int port);
+    // Lets runtimes that are not paired yet ask to pair, for `seconds` (0 closes).
+    void openPairingWindow(int seconds);
     void confirmPairing(const QString& id);
     void rejectPairing(const QString& id);
     void removePeer(const QString& peer);
@@ -40,6 +42,9 @@ signals:
     void stateChanged();
     void operationCompleted(const QString& operation, bool ok, const QString& message);
     void peerExportsFetched(const QString& peer, const QVariantList& exports);
+    // Another runtime asks to pair and waits for this side to compare codes:
+    // {id, code, peer_name, peer_display_id, peer_runtime_id, role, expires_ms}.
+    void pairingRequested(const QVariantMap& request);
 
 private:
     using Done = std::function<void(const QVariantMap&)>;

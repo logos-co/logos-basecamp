@@ -17,6 +17,7 @@ Item {
     signal enabledRequested(bool enabled)
     signal linkLocalRequested(string invitePath)
     signal pairRequested(string host, int port)
+    signal pairingWindowRequested(int seconds)
     signal confirmRequested(string id)
     signal rejectRequested(string id)
     signal removePeerRequested(string peer)
@@ -49,6 +50,11 @@ Item {
         readonly property bool enabled: root.peering.enabled === true
         readonly property bool running: root.peering.running === true
         readonly property var status: root.peering.status || ({})
+        readonly property var control: status.control || ({})
+        readonly property bool controlEnabled: control.enabled === true
+        readonly property int controlPort: Number(control.port || 0)
+        readonly property string controlError: String(control.error || "")
+        readonly property bool windowOpen: Number(status.pairing_window_ms || 0) > 0
         readonly property var peers: root.peering.peers || []
         // A finished pairing stays listed a while; a paired one is shown as a peer.
         readonly property var pending: (root.peering.pending || []).filter(p => p.state !== "paired")
@@ -210,6 +216,40 @@ Item {
                     color: Theme.palette.textSecondary
                     font.pixelSize: Theme.typography.secondaryText
                 }
+
+                // With control on, runtimes not paired yet may ask only while a window is open.
+                RowLayout {
+                    visible: d.controlEnabled
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+
+                    LogosText {
+                        objectName: "peering.controlState"
+                        Layout.fillWidth: true
+                        text: d.controlError.length > 0
+                              ? qsTr("Not listening: %1").arg(d.controlError)
+                              : d.windowOpen
+                                ? qsTr("Accepting pairing requests on port %1").arg(d.controlPort)
+                                : qsTr("Listening on port %1 for linked runtimes").arg(d.controlPort)
+                        textFormat: Text.PlainText
+                        color: d.controlError.length > 0 ? Theme.palette.error : Theme.palette.textSecondary
+                        font.pixelSize: Theme.typography.secondaryText
+                        wrapMode: Text.Wrap
+                    }
+                    LogosButton {
+                        objectName: "peering.pairingWindowButton"
+                        visible: d.controlError.length === 0
+                        text: d.windowOpen ? qsTr("Stop") : qsTr("Accept pairing for 5 min")
+                        onClicked: root.pairingWindowRequested(d.windowOpen ? 0 : 300)
+                    }
+                }
+            }
+
+            // The window closes by itself; show that it did.
+            Timer {
+                interval: Math.max(1000, Number(d.status.pairing_window_ms || 0) + 500)
+                running: d.windowOpen
+                onTriggered: root.refreshRequested()
             }
 
             // A daemon on this computer: its local invite, no code.

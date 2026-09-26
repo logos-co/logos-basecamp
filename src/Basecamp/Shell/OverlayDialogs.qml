@@ -41,6 +41,7 @@ Item {
                                   || addApplicationDialog.visible
                                   || intentChooserDialog.visible
                                   || intentInstallDialog.visible
+                                  || pairingRequestDialog.visible
     property string sidebarTooltipText: ""
     property real   sidebarTooltipY:    0
 
@@ -157,6 +158,13 @@ Item {
 
     }
 
+    // Another runtime asks to pair (Settings -> Peering opened a pairing window).
+    PairingRequestDialog {
+        id: pairingRequestDialog
+        onConfirmRequested: (id) => backend.confirmPeerPairing(id)
+        onRejectRequested: (id) => backend.rejectPeerPairing(id)
+    }
+
     ConfirmationDialog {
         id: installErrorDialog
         objectName: "confirmationDialog.installError"
@@ -226,6 +234,14 @@ Item {
 
         function onLinkFailed(reason) {
             linkFailedToast.show(undefined, reason);
+        }
+
+        function onPeerPairingRequested(request) {
+            pairingRequestDialog.openWith(request);
+        }
+
+        function onPeeringChanged() {
+            pairingRequestDialog.syncWith(backend.peering.pending);
         }
 
         function onIntentInstallOffered(intent, candidates, details) {

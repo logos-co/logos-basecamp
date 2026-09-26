@@ -109,12 +109,20 @@ void PeeringController::subscribe()
     if (m_subscribed || !client) return;
     m_subscribed = true;
     QPointer<PeeringController> self(this);
-    for (const char* event : {"peersChanged", "pairingRequested", "importsChanged",
-                              "importStateChanged", "exportsChanged"})
+    for (const char* event : {"peersChanged", "importsChanged", "importStateChanged", "exportsChanged"})
         client->onEventWhenAvailable(kPeering, QString::fromLatin1(event),
                                      [self](const QString&, const QVariantList&) {
                                          if (self) self->refresh();
                                      });
+    client->onEventWhenAvailable(kPeering, QStringLiteral("pairingRequested"),
+                                 [self](const QString&, const QVariantList& args) {
+        if (!self) return;
+        const QVariantMap request = asMap(args.value(0));
+        if (request.value(QStringLiteral("needs_approval")).toBool()
+            && !request.value(QStringLiteral("id")).toString().isEmpty())
+            emit self->pairingRequested(request);
+        self->refresh();
+    });
 }
 
 void PeeringController::refresh()
@@ -194,6 +202,11 @@ void PeeringController::linkLocalDaemon(const QString& invitePath)
 void PeeringController::pairWith(const QString& host, int port)
 {
     manage(QStringLiteral("pair"), QStringLiteral("pairWith"), {host.trimmed(), port});
+}
+
+void PeeringController::openPairingWindow(int seconds)
+{
+    manage(QStringLiteral("window"), QStringLiteral("openPairingWindow"), {qMax(0, seconds)});
 }
 
 void PeeringController::confirmPairing(const QString& id)

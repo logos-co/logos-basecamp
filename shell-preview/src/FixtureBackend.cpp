@@ -178,6 +178,12 @@ void FixtureBackend::refreshPeering() { emit peeringChanged(); }
 void FixtureBackend::setPeeringEnabled(bool) { qInfo() << "FixtureBackend: setPeeringEnabled — no effect"; }
 void FixtureBackend::linkLocalDaemon(const QString&) { qInfo() << "FixtureBackend: linkLocalDaemon — no effect"; }
 void FixtureBackend::pairWithPeer(const QString&, int) { qInfo() << "FixtureBackend: pairWithPeer — no effect"; }
+// Opening the window brings up the fixture's "pairingRequest", to preview the consent dialog.
+void FixtureBackend::openPeerPairingWindow(int)
+{
+    const QJsonObject request = m_fixture.value("pairingRequest").toObject();
+    if (!request.isEmpty()) emit peerPairingRequested(request.toVariantMap());
+}
 void FixtureBackend::confirmPeerPairing(const QString&) { qInfo() << "FixtureBackend: confirmPeerPairing — no effect"; }
 void FixtureBackend::rejectPeerPairing(const QString&) { qInfo() << "FixtureBackend: rejectPeerPairing — no effect"; }
 void FixtureBackend::removePeer(const QString&) { qInfo() << "FixtureBackend: removePeer — no effect"; }

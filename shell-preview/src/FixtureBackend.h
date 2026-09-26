@@ -80,6 +80,7 @@ public:
     Q_INVOKABLE void setPeeringEnabled(bool enabled);
     Q_INVOKABLE void linkLocalDaemon(const QString& invitePath);
     Q_INVOKABLE void pairWithPeer(const QString& host, int port);
+    Q_INVOKABLE void openPeerPairingWindow(int seconds);
     Q_INVOKABLE void confirmPeerPairing(const QString& id);
     Q_INVOKABLE void rejectPeerPairing(const QString& id);
     Q_INVOKABLE void removePeer(const QString& peer);
@@ -108,6 +109,7 @@ signals:
     void peeringChanged();
     void peeringOperationCompleted(const QString& operation, bool success, const QString& error);
     void peerExportsFetched(const QString& peer, const QVariantList& exports);
+    void peerPairingRequested(const QVariantMap& request);
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void requiredPackagesChanged();
