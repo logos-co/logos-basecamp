@@ -11,7 +11,7 @@
 // The QObject the shell binds to, in place of MainUIBackend.
 //
 // Surface derived by enumerating what src/Basecamp/**.qml reads:
-// 16 properties, 23 invokables, 6 slots. No Logos.
+// 17 properties, 33 invokables, 6 slots. No Logos.
 class FixtureBackend : public QObject {
     Q_OBJECT
     Q_PROPERTY(int currentActiveSectionIndex READ currentActiveSectionIndex WRITE setCurrentActiveSectionIndex NOTIFY currentActiveSectionIndexChanged)
@@ -30,6 +30,7 @@ class FixtureBackend : public QObject {
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(bool appsLoading READ appsLoading NOTIFY appsLoadingChanged)
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
+    Q_PROPERTY(QVariantMap peering READ peering NOTIFY peeringChanged)
 
 public:
     explicit FixtureBackend(const QJsonObject& fixture, QObject* parent = nullptr);
@@ -50,6 +51,7 @@ public:
     bool repositoriesLoading() const;
     bool appsLoading() const;
     bool modulesLoading() const;
+    QVariantMap peering() const;
 
     Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
     Q_INVOKABLE void uninstallApp(const QString& name, const QString& repositoryUrl = QString());
@@ -74,6 +76,17 @@ public:
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
+    Q_INVOKABLE void refreshPeering();
+    Q_INVOKABLE void setPeeringEnabled(bool enabled);
+    Q_INVOKABLE void linkLocalDaemon(const QString& invitePath);
+    Q_INVOKABLE void pairWithPeer(const QString& host, int port);
+    Q_INVOKABLE void openPeerPairingWindow(int seconds);
+    Q_INVOKABLE void confirmPeerPairing(const QString& id);
+    Q_INVOKABLE void rejectPeerPairing(const QString& id);
+    Q_INVOKABLE void removePeer(const QString& peer);
+    Q_INVOKABLE void fetchPeerExports(const QString& peer);
+    Q_INVOKABLE void importPeerModule(const QString& peer, const QString& module, bool events);
+    Q_INVOKABLE void removePeerImport(const QString& name);
 
     // Not QML-bound: the shell reaches this through IShellHost.
     void setCurrentVisibleApp(const QString& name);
@@ -93,6 +106,10 @@ signals:
     void launcherAppsChanged();
     void loadingModulesChanged();
     void modulesLoadingChanged();
+    void peeringChanged();
+    void peeringOperationCompleted(const QString& operation, bool success, const QString& error);
+    void peerExportsFetched(const QString& peer, const QVariantList& exports);
+    void peerPairingRequested(const QVariantMap& request);
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void requiredPackagesChanged();

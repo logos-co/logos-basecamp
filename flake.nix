@@ -9,14 +9,16 @@
     # whose capability_module is the token authority, and that runtime runs in
     # a process of its own. Each input goes back to master as its PR merges
     # (cpp-sdk#169, protocol#97, plugin-qt#48, qt-sdk#60, loader-qt#21,
-    # liblogos#227, and the drafts stacked on them).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/runtime-process";
-    logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
-    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-mode";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/runtime-process";
+    # liblogos#227, and the drafts stacked on them). The peering branches sit
+    # on top (protocol#99, cpp-sdk#172, qt-sdk#63, plugin-qt#50, loader-qt#23,
+    # liblogos#230).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/peering";
+    logos-protocol.url = "github:logos-co/logos-protocol/feat/peering";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/peering";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/peering";
     logos-module.url = "github:logos-co/logos-module";
-    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-mode";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/runtime-process";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/peering";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/peering";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -42,7 +44,10 @@
     # capability-module#33, modules-state-module#6).
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module/feat/drop-legacy-mode";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/feat/drop-legacy-mode";
-    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/drop-legacy-mode";
+    # Decides peering's remote routes and scopes each import's facade
+    # (capability-module#35); liblogos compiles against the same engine header.
+    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/peering";
+    logos-liblogos.inputs.logos-capability-module.follows = "logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/feat/drop-legacy-mode";
     logos-package.url = "github:logos-co/logos-package";
     # package-manager-module#71 added installPlugin's `source`; pmui passes it
@@ -76,6 +81,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nix-bundle-dir.follows = "nix-bundle-dir";
     };
+    # peering_module, peering_identity and the facade host, logos_host_remote.
+    logos-peering.url = "github:logos-co/logos-peering";
+    logos-peering.inputs.logos-nix.follows = "logos-nix";
   };
 
   nixConfig = {
@@ -83,7 +91,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-lgx, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app, logos-peering }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -120,6 +128,7 @@
           { name = "nix-bundle-dir"; commit = revOf nix-bundle-dir; }
           { name = "nix-bundle-appimage"; commit = revOf nix-bundle-appimage; }
           { name = "nix-bundle-macos-app"; commit = revOf nix-bundle-macos-app; }
+          { name = "logos-peering"; commit = revOf logos-peering; }
         ];
       };
       # The BUILD platform for a given target. Bundlers and code generators RUN
@@ -161,6 +170,10 @@
         logosPackageManagerModuleLibPortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
         logosModulesStateModule = logos-modules-state-module.packages.${system}.default;
+        # Linking with other runtimes; logos-peering has no Windows build yet.
+        logosPeering =
+          if system == "x86_64-windows" then null
+          else logos-peering.packages.${system};
         logosPackageLib = logos-package.packages.${system}.lib;
         # Headers-only output (include/ with logos/semver.hpp + semver/, no
         # library). The app's AppsModel includes the shared semver comparator;
@@ -203,7 +216,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosPeering, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -232,7 +245,12 @@
           # host already ships in bin/, so the PE path needs a hostLibs strip
           # that nix-bundle-dir does not have yet. Unrelated to binBundleDir
           # below, which is the APP and therefore is the thing that ships them.
-          installedDev = map installDev [
+          # Linking with other runtimes. The runtime loads these only when
+          # Settings -> Peering turns it on (peering.json).
+          peeringModules = if logosPeering == null then [ ]
+            else [ logosPeering.peering_identity-lib logosPeering.peering_module-lib ];
+          logosHostRemote = if logosPeering == null then null else logosPeering.logos_host_remote;
+          installedDev = map installDev ([
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
@@ -242,19 +260,19 @@
             # Optional by construction: absent, the feed never arms.
             logosModulesStateModule
             packageManagerUIPlugin
-          ];
-          installedDistributed = map installPortable [
+          ] ++ peeringModules);
+          installedDistributed = map installPortable ([
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
             logosModulesStateModule
             packageManagerUIPlugin
-          ];
+          ] ++ peeringModules);
 
           # App package (development build)
           app = import ./nix/app.nix {
             inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
-            inherit logosQtMcp mainUIPlugin;
+            inherit logosQtMcp mainUIPlugin logosHostRemote;
             installedModules = installedDev;
           };
 
@@ -281,7 +299,7 @@
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
-            inherit mainUIPlugin;
+            inherit mainUIPlugin logosHostRemote;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;
@@ -304,7 +322,7 @@
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
             inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
-            inherit logosQtMcp mainUIPlugin;
+            inherit logosQtMcp mainUIPlugin logosHostRemote;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
             portable = true;

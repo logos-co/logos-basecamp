@@ -18,6 +18,7 @@
 class AppsModel;
 class CoreModuleManager;
 class PackageCoordinator;
+class PeeringController;
 class QWidget;
 class UIPluginManager;
 class IntentRegistry;
@@ -136,6 +137,9 @@ class MainUIBackend : public QObject {
     // kicked together (e.g. on tab show) share one spinner.
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
+    // Settings → Peering: see PeeringController::state().
+    Q_PROPERTY(QVariantMap peering READ peering NOTIFY peeringChanged)
+
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
                            ICoreRuntime* core = nullptr,
@@ -167,6 +171,7 @@ public:
     bool appsLoading() const;
     bool dependencyDataReady() const;
     bool modulesLoading() const;
+    QVariantMap peering() const;
 
     // Accessors for C++ coordination code (WorkspaceArea etc.) that needs
     // a handle to the managers directly. QML goes through the delegating
@@ -307,6 +312,19 @@ public slots:
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
 
+    // Peering — delegated to PeeringController.
+    Q_INVOKABLE void refreshPeering();
+    Q_INVOKABLE void setPeeringEnabled(bool enabled);
+    Q_INVOKABLE void linkLocalDaemon(const QString& invitePath);
+    Q_INVOKABLE void pairWithPeer(const QString& host, int port);
+    Q_INVOKABLE void openPeerPairingWindow(int seconds);
+    Q_INVOKABLE void confirmPeerPairing(const QString& id);
+    Q_INVOKABLE void rejectPeerPairing(const QString& id);
+    Q_INVOKABLE void removePeer(const QString& peer);
+    Q_INVOKABLE void fetchPeerExports(const QString& peer);
+    Q_INVOKABLE void importPeerModule(const QString& peer, const QString& module, bool events);
+    Q_INVOKABLE void removePeerImport(const QString& name);
+
 signals:
     void currentActiveSectionIndexChanged();
 
@@ -424,6 +442,11 @@ signals:
                                       const QString& url,
                                       bool success,
                                       const QString& error);
+    void peeringChanged();
+    void peeringOperationCompleted(const QString& operation, bool success, const QString& error);
+    void peerExportsFetched(const QString& peer, const QVariantList& exports);
+    // Another runtime asks to pair: OverlayDialogs asks the user to compare codes.
+    void peerPairingRequested(const QVariantMap& request);
 
 private:
     // Wires the intent signal graph and registers the shell's own provided
@@ -507,6 +530,7 @@ private:
     CoreModuleManager* m_coreModuleManager;
     UIPluginManager*   m_uiPluginManager;
     PackageCoordinator*    m_packageCoordinator;
+    PeeringController*     m_peeringController = nullptr;
     ModuleInstanceModel* m_uiModulesModel;
     ModuleInstanceModel* m_coreModulesModel;
 

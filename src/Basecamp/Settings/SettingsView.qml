@@ -15,6 +15,7 @@ Rectangle {
     property var    uiModulesModel:      null
     property var    coreModulesModel:    null
     property bool   modulesLoading:      false
+    property var    peering:             ({})
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -32,11 +33,29 @@ Rectangle {
     signal moduleUnloadRequested(string name)
     signal moduleInspectorBecameVisible()
 
+    signal peeringRefreshRequested()
+    signal peeringEnabledRequested(bool enabled)
+    signal peeringLinkLocalRequested(string invitePath)
+    signal peeringPairRequested(string host, int port)
+    signal peeringPairingWindowRequested(int seconds)
+    signal peeringConfirmRequested(string id)
+    signal peeringRejectRequested(string id)
+    signal peeringRemovePeerRequested(string peer)
+    signal peeringExportsRequested(string peer)
+    signal peeringImportRequested(string peer, string module, bool events)
+    signal peeringRemoveImportRequested(string name)
+
     function reportRepositoryResult(operation, url, success, error) {
         repositoriesView.reportOperationResult(operation, url, success, error)
     }
 
     function showRepositories() { d.selectedIndex = d.sectionRepositories }
+    function showPeering() { d.selectedIndex = d.sectionPeering }
+
+    function reportPeeringResult(operation, success, error) {
+        peeringView.reportOperationResult(operation, success, error)
+    }
+    function showPeerExports(peer, exports) { peeringView.showPeerExports(peer, exports) }
 
     QtObject {
         id: d
@@ -46,12 +65,14 @@ Rectangle {
         readonly property int sectionAppsInspector:   1
         readonly property int sectionModuleInspector: 2
         readonly property int sectionRepositories:    3
+        readonly property int sectionPeering:         4
 
         readonly property var sections: [
             { label: qsTr("Dashboard") },
             { label: qsTr("Apps Inspector") },
             { label: qsTr("Module Inspector") },
-            { label: qsTr("Package Repositories") }
+            { label: qsTr("Package Repositories") },
+            { label: qsTr("Peering") }
         ]
 
         property int selectedIndex: 0
@@ -226,6 +247,27 @@ Rectangle {
                                                    root.repositoryEnabledRequested(url, enabled)
                         onVisibleChanged:      if (visible)
                                                    root.repositoriesBecameVisible()
+                    }
+
+                    // 4 — Peering.
+                    PeeringView {
+                        id: peeringView
+
+                        peering: root.peering
+
+                        onRefreshRequested:      root.peeringRefreshRequested()
+                        onEnabledRequested:      enabled => root.peeringEnabledRequested(enabled)
+                        onLinkLocalRequested:    path => root.peeringLinkLocalRequested(path)
+                        onPairRequested:         (host, port) => root.peeringPairRequested(host, port)
+                        onPairingWindowRequested: seconds => root.peeringPairingWindowRequested(seconds)
+                        onConfirmRequested:      id => root.peeringConfirmRequested(id)
+                        onRejectRequested:       id => root.peeringRejectRequested(id)
+                        onRemovePeerRequested:   peer => root.peeringRemovePeerRequested(peer)
+                        onExportsRequested:      peer => root.peeringExportsRequested(peer)
+                        onImportRequested:       (peer, module, events) =>
+                                                     root.peeringImportRequested(peer, module, events)
+                        onRemoveImportRequested: name => root.peeringRemoveImportRequested(name)
+                        onVisibleChanged:        if (visible) root.peeringRefreshRequested()
                     }
                 }
             }
