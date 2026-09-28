@@ -15,6 +15,31 @@
 
 namespace {
 
+// A catalog row whose newest version publishes exactly `variants` in its
+// manifest's `main` map — the availability input.
+QVariantMap variantRow(const QString& name,
+                       const QString& repo,
+                       const QStringList& variants)
+{
+    QVariantMap mainMap;
+    for (const QString& v : variants) mainMap.insert(v, QStringLiteral("lib/e.so"));
+
+    QVariantMap manifest;
+    manifest.insert("version", QStringLiteral("1.0"));
+    manifest.insert("main",    mainMap);
+
+    QVariantMap entry;
+    entry.insert("rootHash", QStringLiteral("H"));
+    entry.insert("manifest", manifest);
+
+    QVariantMap r;
+    r.insert("name",          name);
+    r.insert("repositoryUrl", repo);
+    r.insert("type",          QStringLiteral("ui_qml"));
+    r.insert("versions",      QVariantList{entry});
+    return r;
+}
+
 QVariantMap row(const QString& name,
                 const QString& repo,
                 const QString& version,
@@ -327,7 +352,132 @@ private slots:
         QCOMPARE(m_proxy->visibleCount(), 1);
     }
 
+    // ── showUnavailable ────────────────────────────────────────────────
+    //
+    // Availability is its own axis, AND-ed with the rest. Defaults to hiding,
+    // because catalogs are published per OS/arch and build flavor and a host
+    // the catalog barely covers was otherwise shown mostly apps it can never
+    // install.
+
+    void showUnavailable_defaultsToHidingForeignPlatformRows()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        m_model->replaceCatalog({
+            variantRow("mine",    "r", {"linux-x86_64"}),
+            variantRow("foreign", "r", {"windows-x86_64"}),
+        });
+        QCOMPARE(m_proxy->visibleCount(), 1);
+        QCOMPARE(nameAt(0), QStringLiteral("mine"));
+    }
+
+    void showUnavailable_addsThemBack()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        m_model->replaceCatalog({
+            variantRow("mine",    "r", {"linux-x86_64"}),
+            variantRow("foreign", "r", {"windows-x86_64"}),
+        });
+        QSignalSpy spy(m_proxy.get(), &AppsFilterProxy::showUnavailableChanged);
+        m_proxy->setShowUnavailable(true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(m_proxy->visibleCount(), 2);
+    }
+
+    // Installed rows are exempt whatever the catalog now says: a catalog that
+    // drops our variant after the fact must not take the app's uninstall path
+    // with it.
+    void showUnavailable_neverHidesAnInstalledRow()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        m_model->replaceCatalog({variantRow("gone", "r", {"windows-x86_64"})});
+        QCOMPARE(m_proxy->visibleCount(), 0);
+
+        m_model->markInstalled("gone", "1.0", "H");
+        QCOMPARE(m_proxy->visibleCount(), 1);
+    }
+
+    // The install-plan proxy in OverlayDialogs opts out this way. Hiding a
+    // required package from the plan would omit the very reason the install
+    // is about to fail.
+    void showUnavailable_composesWithTheInstallStateFilter()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        m_model->replaceCatalog({
+            variantRow("mine",    "r", {"linux-x86_64"}),
+            variantRow("foreign", "r", {"windows-x86_64"}),
+        });
+        m_proxy->setShowUnavailable(true);
+        m_proxy->setInstallStateFilter("notInstalled");
+        // Both are uninstalled; availability did not eat the state filter.
+        QCOMPARE(m_proxy->visibleCount(), 2);
+    }
+
+    // A locally-installed app has NO catalog row, so it publishes no variants
+    // and computes as unavailable. It must still be listed — this is the case
+    // that broke every sideloaded app when the exemption was missing from the
+    // grid/list delegates, leaving their tiles inert and unlaunchable.
+    void showUnavailable_localOnlyInstalledAppStaysListed()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        QVariantMap installed;
+        installed.insert("name",    QStringLiteral("sideloaded"));
+        installed.insert("version", QStringLiteral("1.0"));
+        installed.insert("type",    QStringLiteral("ui_qml"));
+        // mergeLocalOnlyInstalled surfaces ONLY user-installed packages;
+        // without this the row is never created and the test passes vacuously
+        // against an empty model.
+        installed.insert("installType", QStringLiteral("user"));
+        m_model->mergeLocalOnlyInstalled({installed});
+
+        QCOMPARE(m_proxy->visibleCount(), 1);
+        QCOMPARE(nameAt(0), QStringLiteral("sideloaded"));
+    }
+
+    // App Manager stacks proxies: the per-repo and Local sections chain off
+    // the view's top proxy. Each link applies its OWN filter, so a chained
+    // proxy left at the hiding default undoes the parent's decision and the
+    // user sees nothing after asking to show unavailable. The chained ones opt
+    // out (showUnavailable: true) and let the parent decide once.
+    void showUnavailable_chainedProxyMustNotReapplyTheFilter()
+    {
+        m_model->setValidVariants({"linux-x86_64"});
+        m_model->replaceCatalog({variantRow("foreign", "r", {"windows-x86_64"})});
+        m_proxy->setShowUnavailable(true);
+        QCOMPARE(m_proxy->visibleCount(), 1);
+
+        // A section proxy over it, at the default: re-filters the row away.
+        AppsFilterProxy chained;
+        chained.setExcludeMainUi(false);
+        chained.setSourceModel(m_proxy.get());
+        QCOMPARE(chained.visibleCount(), 0);
+
+        // Opted out, as the App Manager's section proxies are.
+        chained.setShowUnavailable(true);
+        QCOMPARE(chained.visibleCount(), 1);
+    }
+
+    // The variant list lands on its own round trip, after the catalog. The
+    // proxy must re-filter when it does, or the grid keeps showing rows the
+    // model has since marked unavailable.
+    void showUnavailable_refiltersWhenTheVariantListArrivesLate()
+    {
+        m_model->replaceCatalog({variantRow("foreign", "r", {"windows-x86_64"})});
+        QCOMPARE(m_proxy->visibleCount(), 1);   // permissive until it answers
+
+        m_model->setValidVariants({"linux-x86_64"});
+        QCOMPARE(m_proxy->visibleCount(), 0);
+    }
+
 private:
+    QString nameAt(int proxyRow) const
+    {
+        int nameRole = -1;
+        const auto& roles = m_model->roleNames();
+        for (auto it = roles.cbegin(); it != roles.cend(); ++it)
+            if (it.value() == "name") nameRole = it.key();
+        return m_proxy->data(m_proxy->index(proxyRow, 0), nameRole).toString();
+    }
+
     std::unique_ptr<AppsModel>       m_model;
     std::unique_ptr<AppsFilterProxy> m_proxy;
 };

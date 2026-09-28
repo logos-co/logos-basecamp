@@ -20,6 +20,7 @@ class AppsFilterProxy : public QSortFilterProxyModel {
     // installed packages)
     Q_PROPERTY(bool    matchLocalOnly    READ matchLocalOnly     WRITE setMatchLocalOnly     NOTIFY matchLocalOnlyChanged)
     Q_PROPERTY(bool    excludeMainUi      READ excludeMainUi      WRITE setExcludeMainUi      NOTIFY excludeMainUiChanged)
+    Q_PROPERTY(bool    showUnavailable    READ showUnavailable    WRITE setShowUnavailable    NOTIFY showUnavailableChanged)
     Q_PROPERTY(QStringList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
     // The resolver's entries, in install order. Writable so QML can BIND it to
     // the backend rather than have the host reach in and call the setter — the
@@ -46,6 +47,7 @@ public:
     QString repositoryUrlFilter() const { return m_repositoryUrlFilter; }
     bool    matchLocalOnly()     const { return m_matchLocalOnly; }
     bool    excludeMainUi()      const { return m_excludeMainUi; }
+    bool    showUnavailable()    const { return m_showUnavailable; }
 
     void setTypeFilter(const QString& t);
     void setCategoryFilter(const QString& c);
@@ -54,6 +56,7 @@ public:
     void setRepositoryUrlFilter(const QString& url);
     void setMatchLocalOnly(bool v);
     void setExcludeMainUi(bool e);
+    void setShowUnavailable(bool show);
     QStringList requiredPackages() const;
     QVariantList requiredPackageEntries() const { return m_requiredPackageEntries; }
     Q_INVOKABLE void setRequiredPackages(const QVariantList& entries);
@@ -80,6 +83,7 @@ signals:
     void repositoryUrlFilterChanged();
     void matchLocalOnlyChanged();
     void excludeMainUiChanged();
+    void showUnavailableChanged();
     void requiredPackagesChanged();
     void installedCountChanged();
     void breakdownChanged();
@@ -102,6 +106,7 @@ private:
     QString m_repositoryUrlFilter;
     bool    m_matchLocalOnly     = false;
     bool    m_excludeMainUi      = true;
+    bool    m_showUnavailable    = false;
     QVariantList            m_requiredPackageEntries;
     QHash<QString, QString> m_requiredPackagesByName;
     QHash<QString, int>     m_requiredPackagesOrder;

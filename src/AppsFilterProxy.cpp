@@ -223,6 +223,14 @@ void AppsFilterProxy::setInstallStateFilter(const QString& s)
     emit installStateFilterChanged();
 }
 
+void AppsFilterProxy::setShowUnavailable(bool show)
+{
+    if (m_showUnavailable == show) return;
+    m_showUnavailable = show;
+    invalidateFilter();
+    emit showUnavailableChanged();
+}
+
 void AppsFilterProxy::setExcludeMainUi(bool e)
 {
     if (m_excludeMainUi == e) return;
@@ -313,6 +321,12 @@ bool AppsFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceP
         const QString c = capitalizeFirst(
             src->data(idx, AppsModelRoles::CategoryRole).toString());
         if (c != m_categoryFilter) return false;
+    }
+
+    if (!m_showUnavailable
+        && !src->data(idx, AppsModelRoles::HasInstallableVersionRole).toBool()
+        && !src->data(idx, AppsModelRoles::IsInstalledRole).toBool()) {
+        return false;
     }
 
     // Install-state filter.

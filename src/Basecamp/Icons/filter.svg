@@ -1,0 +1,12 @@
+<!-- Funnel, drawn as line art at #969696 — the same source colour as the
+     design-system toolbar icons (install.svg, refresh.svg) this sits beside.
+
+     The colour matters because LogosIcon tints through a MultiEffect, which
+     scales the requested colour by the SOURCE luminance: a white source would
+     come through at full strength and read brighter than its neighbours,
+     which land at ~59%. Stroked rather than filled for the same reason — a
+     solid funnel is a far heavier mass than the glyphs around it. -->
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M2.2 3.1h11.6a.4.4 0 0 1 .31.65L9.9 9.05v3.7a.4.4 0 0 1-.22.36l-2.4 1.2a.4.4 0 0 1-.58-.36V9.05L1.89 3.75a.4.4 0 0 1 .31-.65Z"
+        stroke="#969696" stroke-width="1.4" stroke-linejoin="round"/>
+</svg>

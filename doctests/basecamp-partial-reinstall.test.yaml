@@ -331,18 +331,30 @@ sections:
           EOF
         check_file: "www/logos-repo.json"
 
-      - title: "Prepare Basecamp's home"
+      - title: "Prepare Basecamp's user directory"
         text: |
-          Both runs share this directory, so what the first one installs is still
-          installed when the second one starts.
+          All three runs share `userdir`, so what the first one installs is still
+          installed when the next one starts.
+
+          `--user-dir` rather than a `HOME` override, because overriding `HOME`
+          does not isolate anything on macOS: Qt resolves `AppDataLocation` from
+          the password database, not `$HOME`, so the app writes to the real
+          `~/Library/Application Support/Logos/…` no matter what `HOME` says —
+          which both left the on-disk assertion below looking at an empty
+          directory and installed the fixture packages into the developer's (or
+          the runner's) own Basecamp. `LOGOS_USER_DIR`, which `--user-dir` sets,
+          is taken verbatim on every platform.
+
+          `HOME` stays set anyway: it keeps the rest of the app's scratch state
+          out of the way where the platform does honour it.
         run: |
           set -eu
-          chmod -R u+w home 2>/dev/null || true
-          rm -rf home
-          mkdir -p home
-          echo "home ready"
+          chmod -R u+w home userdir 2>/dev/null || true
+          rm -rf home userdir
+          mkdir -p home userdir
+          echo "user dir ready"
         expect_contains:
-          - "home ready"
+          - "user dir ready"
 
   - title: "Register the catalog"
     step: true
@@ -354,7 +366,7 @@ sections:
     steps:
       - title: "Add our catalog"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -371,6 +383,18 @@ sections:
               action: click
               target: "Package Repositories"
 
+            # The nav click only selects the section. `findByProperty` can see a
+            # page that is built but not on screen, and `click_object`
+            # synthesizes a real mouse click at the item's position — so without
+            # this wait the block can "type" a URL and "press" Add into a page
+            # that is not the one being displayed, and report every action as
+            # having succeeded. These two strings belong to the Repositories
+            # PAGE, not to its entry in the Settings nav.
+            - name: "The Repositories page is up"
+              action: wait_for
+              texts: ["Add a repository", "Paste the URL of a logos-repo.json index."]
+              timeout: 15000
+
             - name: "Type our catalog URL"
               action: set_property
               find_by: "objectName"
@@ -378,10 +402,39 @@ sections:
               property: "text"
               value: "https://127.0.0.1:8443/logos-repo.json"
 
+            # Add is `enabled: d.newRepoUrl.trim().length > 0`, so this is the
+            # proof that the property write reached the model — the runner does
+            # not check what setProperty replied, and a click on a disabled
+            # button is silently nothing.
+            # The screenshot rides here rather than on the assertion below:
+            # the runner captures AFTER an action, so one attached to a step
+            # that throws is never taken — the failing run's only visual has to
+            # come from the last step that succeeds. This is also the frame
+            # that answers whether the Repositories page was the one on screen.
+            - name: "The Add button went live"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "repositories.addButton"
+              property: "enabled"
+              value: true
+              screenshot: "partial-reinstall-before-add.png"
+
             - name: "Add our catalog"
               action: click_object
               find_by: "objectName"
               find_value: "repositories.addButton"
+
+            # A sleep, because a step that cannot fail is the only kind whose
+            # screenshot is guaranteed to be taken. RepositoriesView renders
+            # every failed add into `repositories.errorBanner`, so this frame
+            # separates the two ways this can go wrong: a banner means the
+            # click fired and addRepository answered (the text says why), no
+            # banner with the URL still sitting in the field means the click
+            # never reached the button at all.
+            - name: "Whatever the add did, on screen"
+              action: sleep
+              ms: 3000
+              screenshot: "partial-reinstall-after-add.png"
 
             # The display name comes out of logos-repo.json, so waiting for it is
             # what proves the catalog was fetched and parsed — not merely that a
@@ -392,13 +445,39 @@ sections:
             - name: "Our catalog is fetched and named"
               action: wait_for
               texts: ["Partial Reinstall Catalog"]
-              timeout: 60000
+              timeout: 45000
               screenshot: "partial-reinstall-catalog-added.png"
+
+      - title: "What the app and the server said about it"
+        text: |
+          Diagnostics, not an assertion. The runner echoes only the last 1500
+          characters of the app log on a failure, and a single `storage_module`
+          libp2p line is long enough to fill that on its own — so the one line
+          that would explain a registration that did not happen is pulled out
+          here instead. caddy's own log is printed for the same reason: a
+          rejected TLS handshake lands there and never reaches `access.log`, so
+          without it a failed fetch and a fetch that was never attempted look
+          identical from the outside.
+        run: |
+          set -eu
+          echo "--- app log: catalog / repository / TLS lines ---"
+          # Bounded read: storage_module's libp2p lines make this log large, and
+          # the registration happens at the end of the run anyway.
+          tail -c 2000000 ui-test-app.log \
+            | grep -aiE 'repositor|logos-repo|catalog|fetch failed|curl|certificate' \
+            | tail -40 || true
+          echo "--- caddy log: everything that is not a startup line ---"
+          grep -avE '"level":"info"' caddy.log | tail -20 || true
+          echo "diagnostics printed"
+        expect_contains:
+          - "diagnostics printed"
 
       - title: "The catalog was really fetched"
         text: |
           Asserted at the server, so a later empty download count cannot be
-          confused with a catalog that was never retrieved.
+          confused with a catalog that was never retrieved. The downloader
+          cache-busts this URL with a `?_lgpd_cb=` query, so the match is on the
+          path prefix rather than the whole URI.
         run: |
           set -eu
           jq -r '.request.uri // ""' access.log | sort | uniq -c | sort -rn
@@ -415,7 +494,7 @@ sections:
     steps:
       - title: "Install reinstall_demo"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -482,7 +561,7 @@ sections:
           jq -r '.request.uri // ""' access.log | sort | uniq -c | sort -rn
           jq -r 'select((.request.uri // "") | endswith(".lgx")) | .request.uri' access.log \
             | sort -u > install-run-lgx.txt
-          echo "fetched=$(wc -l < install-run-lgx.txt)"
+          echo "fetched=$(wc -l < install-run-lgx.txt | tr -d ' ')"
           cat install-run-lgx.txt
         expect_contains:
           - "fetched=3"
@@ -540,7 +619,7 @@ sections:
     steps:
       - title: "Open the app again and confirm"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -590,7 +669,7 @@ sections:
           tail -n +"$(( $(cat access_mark.txt) + 1 ))" access.log \
             | jq -r 'select((.request.uri // "") | endswith(".lgx")) | .request.uri' \
             | sort -u > reinstall-run-lgx.txt
-          echo "fetched=$(wc -l < reinstall-run-lgx.txt)"
+          echo "fetched=$(wc -l < reinstall-run-lgx.txt | tr -d ' ')"
           cat reinstall-run-lgx.txt
         expect_contains:
           - "fetched=1"
@@ -602,14 +681,21 @@ sections:
           reports a difference.
         run: |
           set -eu
+          # `--user-dir` puts this at a known path on every platform, but found
+          # rather than spelled out: a package installs under plugins/ or
+          # modules/ depending on its type, and naming the wrong one reports
+          # "not found" for a package that is sitting right there.
+          f=$(find userdir -type f -path '*reinstall_dep_b/manifest.json' 2>/dev/null | head -1)
           found=0
-          for f in home/.local/share/Logos/*/plugins/reinstall_dep_b/manifest.json \
-                   home/.local/share/Logos/*/modules/reinstall_dep_b/manifest.json; do
-            [ -f "$f" ] || continue
+          if [ -n "$f" ]; then
             found=1
+            echo "found: $f"
             echo "installed_hash_matches=$(jq -r --arg want "$(cat dep_b_hash_2.txt)" \
               'if (.hashes.root // "") == $want then "yes" else "no" end' "$f")"
-          done
+          else
+            echo "--- nothing matched; what the app actually wrote ---"
+            find userdir -type d \( -name plugins -o -name modules \) 2>/dev/null | head -10
+          fi
           [ "$found" = 1 ] || echo "installed_manifest=not-found"
         expect_contains:
           - "installed_hash_matches=yes"

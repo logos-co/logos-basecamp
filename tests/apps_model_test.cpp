@@ -114,6 +114,72 @@ QVariantMap makeCatalogRow(const QString& repo,
     return row;
 }
 
+// A catalog row whose newest version publishes exactly `variants` in its
+// manifest's `main` map — the availability input.
+QVariantMap variantRow(const QString& repo,
+                       const QString& name,
+                       const QStringList& variants)
+{
+    QVariantMap mainMap;
+    for (const QString& v : variants)
+        mainMap.insert(v, QStringLiteral("lib/entry.so"));
+
+    QVariantMap manifest;
+    manifest.insert(QStringLiteral("version"), QStringLiteral("1.0"));
+    manifest.insert(QStringLiteral("main"),    mainMap);
+
+    QVariantMap versionEntry;
+    versionEntry.insert(QStringLiteral("rootHash"), QStringLiteral("H"));
+    versionEntry.insert(QStringLiteral("manifest"), manifest);
+
+    QVariantMap row;
+    row.insert(QStringLiteral("name"),          name);
+    row.insert(QStringLiteral("repositoryUrl"), repo);
+    row.insert(QStringLiteral("versions"),      QVariantList{versionEntry});
+    return row;
+}
+
+void setManifestType(QVariantMap& row, const QString& type)
+{
+    QVariantList versions = row.value(QStringLiteral("versions")).toList();
+    QVariantMap entry = versions.first().toMap();
+    QVariantMap manifest = entry.value(QStringLiteral("manifest")).toMap();
+    manifest.insert(QStringLiteral("type"), type);
+    entry.insert(QStringLiteral("manifest"), manifest);
+    versions[0] = entry;
+    row.insert(QStringLiteral("versions"), versions);
+}
+
+// Read an availability role for `name` through the public role API.
+QVariant availabilityRole(const AppsModel& model,
+                          const QString& name,
+                          const QByteArray& roleName)
+{
+    int wanted = -1, nameRole = -1;
+    const auto& roles = model.roleNames();
+    for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
+        if (it.value() == roleName)  wanted = it.key();
+        if (it.value() == "name")    nameRole = it.key();
+    }
+    if (wanted < 0 || nameRole < 0) return {};
+    for (int i = 0; i < model.rowCount(); ++i) {
+        const QModelIndex idx = model.index(i, 0);
+        if (model.data(idx, nameRole).toString() == name)
+            return model.data(idx, wanted);
+    }
+    return {};
+}
+
+bool availableOf(const AppsModel& model, const QString& name)
+{
+    return availabilityRole(model, name, "hasInstallableVersion").toBool();
+}
+
+int reasonOf(const AppsModel& model, const QString& name)
+{
+    return availabilityRole(model, name, "notAvailableReason").toInt();
+}
+
 // Read InstallStatus for a (name, repo) row through the public role API.
 InstallStatus::Value statusOf(const AppsModel& model,
                                   const QString& name,
@@ -1608,6 +1674,140 @@ private slots:
         for (auto it = roles.cbegin(); it != roles.cend(); ++it)
             QVERIFY2(it.value() != "color",
                      "AppsModel must not expose a `color` role");
+    }
+
+    // ── Availability on this host ──────────────────────────────────────────
+    //
+    // Catalogs are published per OS/arch and build flavor. computeAvailability
+    // decides whether ANY version of a package is one this machine could
+    // install; the App Manager filters on it.
+
+    void availability_permissiveUntilTheVariantListArrives()
+    {
+        // getValidVariants is a separate round trip from the catalog. Starting
+        // at "unavailable" would blank the grid until it lands.
+        AppsModel model;
+        model.replaceCatalog({variantRow("repo1", "a", {"windows-x86_64"})});
+        QVERIFY2(availableOf(model, "a"),
+                 "rows must stay available while the valid-variant list is unknown");
+    }
+
+    void availability_foreignPlatformIsUnavailable()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        model.replaceCatalog({variantRow("repo1", "a", {"windows-x86_64"})});
+
+        QVERIFY(!availableOf(model, "a"));
+        QCOMPARE(reasonOf(model, "a"), int(AppsModel::PlatformMismatch));
+    }
+
+    // A dev-flavor host accepts ONLY "-dev" variants, so a release-only
+    // package is as uninstallable there as a foreign OS is.
+    void availability_buildFlavorMismatchIsUnavailable()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64-dev"});
+        model.replaceCatalog({variantRow("repo1", "a", {"linux-x86_64"})});
+
+        QVERIFY(!availableOf(model, "a"));
+        QCOMPARE(reasonOf(model, "a"), int(AppsModel::BuildFlavorMismatch));
+    }
+
+    void availability_matchingVariantIsAvailable()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        model.replaceCatalog({variantRow("repo1", "a", {"linux-x86_64"})});
+
+        QVERIFY(availableOf(model, "a"));
+        QCOMPARE(reasonOf(model, "a"), int(AppsModel::Available));
+    }
+
+    void availability_noVariantsPublished()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        model.replaceCatalog({variantRow("repo1", "a", {})});
+
+        QVERIFY(!availableOf(model, "a"));
+        QCOMPARE(reasonOf(model, "a"), int(AppsModel::NoVariantsPublished));
+    }
+
+    // A QML-only app can carry an empty `main` (no backend plugin) and
+    // installs everywhere.
+    void availability_uiQmlWithoutMainInstallsAnywhere()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        QVariantMap row = variantRow("repo1", "a", {});
+        setManifestType(row, "ui_qml");
+        model.replaceCatalog({row});
+
+        QVERIFY(availableOf(model, "a"));
+    }
+
+    // The list arrives AFTER the catalog in practice, so the late setter has
+    // to move rows that were already built — and say so, or the proxies over
+    // this model never re-filter.
+    void availability_lateVariantListRecomputesAndSignals()
+    {
+        AppsModel model;
+        model.replaceCatalog({variantRow("repo1", "a", {"windows-x86_64"})});
+        QVERIFY(availableOf(model, "a"));
+
+        QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+        model.setValidVariants({"linux-x86_64"});
+
+        QVERIFY(!availableOf(model, "a"));
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // Idempotent: re-setting the same list must not churn the views.
+    void availability_settingTheSameVariantListIsQuiet()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        model.replaceCatalog({variantRow("repo1", "a", {"windows-x86_64"})});
+
+        QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
+        model.setValidVariants({"linux-x86_64"});
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // Per version, so one servable version keeps the package: filtering on the
+    // newest alone would hide a package whose older release is installable.
+    void availability_oneServableVersionKeepsThePackage()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        QVariantMap row = variantRow("repo1", "a", {"linux-x86_64"});
+        QVariantList versions = row.value("versions").toList();
+        QVariantMap newest = versions.first().toMap();
+        newest.insert("sourceAvailable", false);
+        versions[0] = newest;
+        QVariantMap older = newest;
+        older.insert("sourceAvailable", true);
+        versions.append(older);
+        row.insert("versions", versions);
+        model.replaceCatalog({row});
+
+        QVERIFY(availableOf(model, "a"));
+    }
+
+    void availability_everyVersionRefusedByTheSourceIsUnavailable()
+    {
+        AppsModel model;
+        model.setValidVariants({"linux-x86_64"});
+        QVariantMap row = variantRow("repo1", "a", {"linux-x86_64"});
+        QVariantList versions = row.value("versions").toList();
+        QVariantMap only = versions.first().toMap();
+        only.insert("sourceAvailable", false);
+        versions[0] = only;
+        row.insert("versions", versions);
+        model.replaceCatalog({row});
+
+        QVERIFY(!availableOf(model, "a"));
     }
 };
 
