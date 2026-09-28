@@ -361,7 +361,7 @@ sections:
             - name: "App window opens"
               action: wait_for
               texts: ["Applications", "Settings"]
-              timeout: 25000
+              timeout: 20000
 
             - name: "Open Settings"
               action: click
@@ -383,13 +383,29 @@ sections:
               find_by: "objectName"
               find_value: "repositories.addButton"
 
-            # The URL is the row itself, so it lands as soon as the repository is
-            # registered. The display name would instead wait on a fetch.
-            - name: "Our catalog is listed"
+            # The display name comes out of logos-repo.json, so waiting for it is
+            # what proves the catalog was fetched and parsed — not merely that a
+            # row was added. Ending this block on the row alone let the app be
+            # killed before the repository reached disk, so the next launch had
+            # no catalog at all. It gets a generous wait because it is the only
+            # thing this block does.
+            - name: "Our catalog is fetched and named"
               action: wait_for
-              texts: ["https://127.0.0.1:8443/logos-repo.json"]
-              timeout: 45000
+              texts: ["Partial Reinstall Catalog"]
+              timeout: 60000
               screenshot: "partial-reinstall-catalog-added.png"
+
+      - title: "The catalog was really fetched"
+        text: |
+          Asserted at the server, so a later empty download count cannot be
+          confused with a catalog that was never retrieved.
+        run: |
+          set -eu
+          jq -r '.request.uri // ""' access.log | sort | uniq -c | sort -rn
+          echo "repo_json_hits=$(jq -r '.request.uri // ""' access.log \
+            | grep -c '^/logos-repo.json' || true)"
+        expect_contains:
+          - "repo_json_hits=1"
 
   - title: "Install the app and both dependencies"
     step: true
@@ -406,7 +422,7 @@ sections:
             - name: "App window opens"
               action: wait_for
               texts: ["Applications", "Settings"]
-              timeout: 25000
+              timeout: 20000
 
             - name: "Open the App Manager"
               action: click
@@ -417,16 +433,20 @@ sections:
             - name: "Our app is in the catalog"
               action: wait_for
               texts: ["Reinstall Demo"]
-              timeout: 40000
+              timeout: 35000
 
             - name: "Open the app"
               action: click_object
               find_by: "objectName"
               find_value: "appManager.app.reinstall_demo"
 
-            - name: "Let the dialog resolve"
-              action: sleep
-              ms: 3000
+            # A subcomponent row exists only in this dialog, and only once the
+            # resolver has answered — the dialog being ready, rather than a guess
+            # at how long that takes.
+            - name: "The dialog has resolved its subcomponents"
+              action: wait_for
+              texts: ["Reinstall Dep A"]
+              timeout: 20000
 
             - name: "The dialog is open"
               action: expect_property
@@ -441,9 +461,13 @@ sections:
               find_by: "objectName"
               find_value: "addApplicationDialog.primaryButton"
 
-            - name: "Let the downloads and installs finish"
-              action: sleep
-              ms: 20000
+            # The primary button reads Launch only in AddApplicationDialog's
+            # "launch" mode, i.e. once the install has finished and the app is
+            # healthy. That is the completion signal a sleep was approximating.
+            - name: "The install finishes"
+              action: wait_for
+              texts: ["Launch"]
+              timeout: 30000
 
       - title: "All three packages were fetched"
         text: |
@@ -523,7 +547,7 @@ sections:
             - name: "App window opens"
               action: wait_for
               texts: ["Applications", "Settings"]
-              timeout: 25000
+              timeout: 20000
 
             - name: "Open the App Manager"
               action: click
@@ -532,21 +556,18 @@ sections:
             - name: "Our app is listed"
               action: wait_for
               texts: ["Reinstall Demo"]
-              timeout: 40000
+              timeout: 35000
 
             - name: "Open the app"
               action: click_object
               find_by: "objectName"
               find_value: "appManager.app.reinstall_demo"
 
-            - name: "Let the dialog resolve the subcomponents"
-              action: sleep
-              ms: 4000
-
+            # This wait IS the dialog-resolved signal; no settle sleep needed.
             - name: "One subcomponent reads Reinstall"
               action: wait_for
               texts: ["Reinstall"]
-              timeout: 15000
+              timeout: 20000
               screenshot: "partial-reinstall-dialog.png"
 
             - name: "Confirm the reinstall"
@@ -554,9 +575,10 @@ sections:
               find_by: "objectName"
               find_value: "addApplicationDialog.primaryButton"
 
-            - name: "Let the reinstall finish"
-              action: sleep
-              ms: 20000
+            - name: "The reinstall finishes"
+              action: wait_for
+              texts: ["Launch"]
+              timeout: 30000
 
       - title: "Only the drifted dependency was fetched"
         text: |

@@ -543,6 +543,12 @@ void PackageCoordinator::cascadeUnloadForPackage(const QString& moduleName)
         }
         m_uiPluginManager->teardownUiPluginWidget(moduleName);
     }
+
+    // Emitted here rather than at each call site: whatever was just torn down
+    // has left the loaded lists, and every caller needs them re-read.
+    emit coreModulesChanged();
+    emit uiModulesChanged();
+    emit launcherAppsChanged();
 }
 
 void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
@@ -556,7 +562,19 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
 
     const QString requestId = m_pendingAction.intentRequestId;
     const bool    isUpgrade = m_pendingAction.isUpgrade;
+    const QVariantList catalogPlan = m_pendingAction.catalogPlan;
     m_pendingAction = {};
+
+    if (!catalogPlan.isEmpty()) {
+        QPointer<PackageCoordinator> selfResume(this);
+        QMetaObject::invokeMethod(this, [this, selfResume, moduleName, catalogPlan]() {
+            if (!selfResume) return;
+            for (const QString& replaced : replacedPackagesOf(catalogPlan))
+                cascadeUnloadForPackage(replaced);
+            downloadResolvedSequential(catalogPlan, moduleName, 0, QVariantList{});
+        }, Qt::QueuedConnection);   // off the click stack, as the cascade path does
+        return;
+    }
 
     QPointer<PackageCoordinator> selfDefer(this);
     QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade]() {
@@ -626,7 +644,13 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
     }
     qDebug() << "Cancelling pending package action for" << moduleName;
     const QString requestId = m_pendingAction.intentRequestId;
+    const bool wasCatalogInstall = !m_pendingAction.catalogPlan.isEmpty();
     m_pendingAction = {};
+    if (wasCatalogInstall) {
+        m_installRegistry->clearByTopLevel(moduleName);
+        emit catalogInstallStageChanged(moduleName, InstallStage::None);
+        return;
+    }
     finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
@@ -1710,6 +1734,10 @@ void PackageCoordinator::setOpStage(const QString& name, InstallStage::Value sta
 {
     if (!m_installRegistry->has(name)) return;
     if (m_installRegistry->stage(name) == static_cast<int>(stage)) return;
+    if (m_installRegistry->stage(name) == static_cast<int>(InstallStage::Installed)
+        && stage != InstallStage::Failed) {
+        return;
+    }
     m_installRegistry->setStage(name, stage);
     emit catalogInstallStageChanged(name, stage);
 }
@@ -1962,6 +1990,12 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
     const ResolvedSplit plan =
         splitResolved(resolved, m_installedVersionByName, m_installedHashByName);
 
+    QStringList neededNames, satisfiedNames;
+    for (const QVariant& v : plan.needed)    neededNames    << v.toMap().value("name").toString();
+    for (const QVariant& v : plan.satisfied) satisfiedNames << v.toMap().value("name").toString();
+    qInfo() << "Install plan for" << name << "— needs:" << neededNames
+            << "| already current:" << satisfiedNames;
+
     QList<InstallRegistry::PlannedPackage> planned;
     for (const QVariant& v : plan.needed) {
         const QVariantMap m = v.toMap();
@@ -1977,7 +2011,7 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
     for (const QVariant& v : plan.satisfied) {
         const QVariantMap m = v.toMap();
         const QString rowName = m.value("name").toString();
-        if (rowName.isEmpty() || rowName == name) continue;
+        if (rowName.isEmpty()) continue;
         m_installRegistry->beginOrTrack(rowName,
             m.value("version").toString(), m.value("rootHash").toString(),
             name, m.value("repositoryUrl").toString());
@@ -2007,7 +2041,77 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
             m_installRegistry->setStage(rowName, InstallStage::Queued);
     }
 
+    QStringList installedDependents;
+    QStringList loadedDependents;
+    if (!replaceImpactOf(plan.needed, &installedDependents, &loadedDependents).isEmpty()) {
+        // Lead with the verb the top-level row shows, so it reads like the
+        // PMUI dialog for the same action.
+        QString version;
+        int mode = 0;   // 0 upgrade, 1 downgrade, 2 reinstall
+        for (const QVariant& v : plan.needed) {
+            const QVariantMap m = v.toMap();
+            if (m.value("name").toString() != name) continue;
+            version = m.value("version").toString();
+            const QString action = depAction(m_installedVersionByName.value(name),
+                                             version,
+                                             m_installedHashByName.value(name),
+                                             m.value("rootHash").toString());
+            if (action == QLatin1String("downgrade"))      mode = 1;
+            else if (action == QLatin1String("reinstall")) mode = 2;
+            break;
+        }
+
+        m_pendingAction = {PendingOp::UninstallCascade, name, {}, /*intentRequestId=*/{},
+                           /*isUpgrade=*/true, plan.needed};
+        emit upgradeCascadeConfirmationRequested(name, version, mode,
+                                                 installedDependents, loadedDependents,
+                                                 m_lastResolvedChangesByName.value(name),
+                                                 /*requesterName=*/QString(),
+                                                 /*requesterBundled=*/false);
+        return;
+    }
+
     downloadResolvedSequential(plan.needed, name, 0, QVariantList{});
+}
+
+QStringList PackageCoordinator::replacedPackagesOf(const QVariantList& needed) const
+{
+    QStringList replaced;
+    for (const QVariant& v : needed) {
+        const QVariantMap m = v.toMap();
+        if (!entryCarriesDownload(m)) continue;
+        const QString rowName = m.value("name").toString();
+        if (rowName == QStringLiteral("main_ui")) continue;
+        if (m_installedNameSet.contains(rowName) && !replaced.contains(rowName))
+            replaced.append(rowName);
+    }
+    return replaced;
+}
+
+QStringList PackageCoordinator::replaceImpactOf(const QVariantList& needed,
+                                                QStringList* installedDependents,
+                                                QStringList* loadedDependents) const
+{
+    const QStringList replaced = replacedPackagesOf(needed);
+    if (replaced.isEmpty()) return {};
+
+    const QStringList deps = dependentsOfBatch(replaced);
+    const QStringList loadedDeps = m_uiPluginManager
+        ? m_uiPluginManager->intersectWithLoaded(deps)
+        : QStringList{};
+    if (installedDependents) *installedDependents = deps;
+    if (loadedDependents)    *loadedDependents    = loadedDeps;
+
+    // The replaced modules themselves count: reinstalling a running module
+    // stops it, whether or not anything else depends on it.
+    QStringList impact = loadedDeps;
+    const QStringList loadedCore = m_coreModuleManager
+        ? m_coreModuleManager->loadedModules()
+        : QStringList{};
+    for (const QString& r : replaced)
+        if (loadedCore.contains(r) && !impact.contains(r))
+            impact.append(r);
+    return impact;
 }
 
 void PackageCoordinator::downloadResolvedSequential(const QVariantList& planned,
@@ -2119,9 +2223,11 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
                       "installing over it instead";
     }
 
-    if (alreadyInstalled && !isEmbedded && !isSelf) {
+    if (alreadyInstalled && !isSelf) {
         cascadeUnloadForPackage(packageName);
+    }
 
+    if (alreadyInstalled && !isEmbedded && !isSelf) {
         LogosModules logos(m_logosAPI);
         QPointer<PackageCoordinator> self(this);
         logos.package_manager.uninstallPackageAsync(packageName,
