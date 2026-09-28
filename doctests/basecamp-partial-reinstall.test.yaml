@@ -246,6 +246,7 @@ sections:
           {
               auto_https off
               admin off
+              debug
           }
 
           :8443 {
@@ -264,7 +265,10 @@ sections:
           echo $! > caddy.pid
 
           for _ in $(seq 60); do
-            if curl --cacert localhost.crt --noproxy '*' -s -o /dev/null https://127.0.0.1:8443/; then
+            if CURL_CA_BUNDLE="$(pwd)/localhost.crt" \
+               NO_PROXY=127.0.0.1,localhost \
+               no_proxy=127.0.0.1,localhost \
+               curl -s -o /dev/null https://127.0.0.1:8443/; then
               echo "server up"
               exit 0
             fi
@@ -366,11 +370,12 @@ sections:
 
       Each launch sets the downloader's CA bundle explicitly. The downloader
       checks `CURL_CA_BUNDLE` before `SSL_CERT_FILE`, so both must point to
-      this local catalog's certificate.
+      this local catalog's certificate. It also excludes loopback from any
+      inherited HTTPS proxy; the catalog server only listens on loopback.
     steps:
       - title: "Add our catalog"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -498,7 +503,7 @@ sections:
     steps:
       - title: "Install reinstall_demo"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -623,7 +628,7 @@ sections:
     steps:
       - title: "Open the app again and confirm"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
