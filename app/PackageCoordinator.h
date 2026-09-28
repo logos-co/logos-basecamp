@@ -343,6 +343,10 @@ private:
         // right recovery for an uninstall and a disaster for an upgrade, which
         // would delete the package with nothing left to install the new version.
         bool        isUpgrade = false;
+        // Set only by the App Manager's own installs: the resolved plan, parked
+        // while the dialog is up. Non-empty means confirming resumes an install
+        // rather than answering a requester — nobody is waiting on an intent.
+        QVariantList catalogPlan;
     };
 
     // Subscribe to corePluginFileInstalled/uiPluginFileInstalled/
@@ -473,6 +477,10 @@ private:
     // Second half of confirmCatalogInstall, once the resolver has answered:
     // register what needs fetching as the download plan, settle the rest.
     void startResolvedInstall(const QString& name, const QVariantList& resolved);
+    QStringList replacedPackagesOf(const QVariantList& needed) const;
+    QStringList replaceImpactOf(const QVariantList& needed,
+                                QStringList* installedDependents,
+                                QStringList* loadedDependents) const;
     // Fetch the planned entries one at a time, accumulating what the install
     // loop consumes. Stops at the first failure — the install loop does too, so
     // the rest would never be installed.
