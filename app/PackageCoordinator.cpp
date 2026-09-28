@@ -6,6 +6,7 @@
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
 #include "RepositorySource.h"
+#include "PackageInstallDecision.h"
 #include "utils/DependencyBlocker.h"
 
 #include <QCoreApplication>
@@ -1998,9 +1999,6 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
     }
 
     const bool alreadyInstalled = m_installedNameSet.contains(packageName);
-    const bool isEmbedded =
-        m_installTypeByModule.value(packageName) == QLatin1String("embedded");
-
     // Never tear down or remove our own UI — same guard uninstallUiModule
     // carries, for the same reason: it would brick Basecamp mid-install.
     // AppsFilterProxy::excludeMainUi only hides it from the list; it is not a
@@ -2013,25 +2011,36 @@ void PackageCoordinator::installOnePackage(const QVariantMap& dl,
                       "installing over it instead";
     }
 
-    if (alreadyInstalled && !isEmbedded && !isSelf) {
-        cascadeUnloadForPackage(packageName);
-
+    if (alreadyInstalled && !isSelf) {
         LogosModules logos(m_logosAPI);
         QPointer<PackageCoordinator> self(this);
-        logos.package_manager.uninstallPackageAsync(packageName,
-            [self, dl, packageName, onDone](QVariantMap uninstallResult) {
+        // The install-type cache can be temporarily incomplete during a
+        // metadata refresh. Recheck the current package before removing it.
+        logos.package_manager.getInstalledPackagesAsync(
+            [self, dl, packageName, onDone](QVariantList installedPackages) {
                 if (!self) return;
-                if (!uninstallResult.value("success", false).toBool()) {
-                    const QString err = uninstallResult.value("error").toString();
-                    qWarning() << "Pre-install removal of" << packageName
-                               << "failed, aborting install:" << err;
-                    if (onDone)
-                        onDone(false, err.isEmpty()
-                                   ? QStringLiteral("Could not remove the installed version")
-                                   : err);
+                if (!shouldRemoveBeforeInstall(installedPackages, packageName)) {
+                    self->installDownloadedFile(dl, onDone);
                     return;
                 }
-                self->installDownloadedFile(dl, onDone);
+
+                self->cascadeUnloadForPackage(packageName);
+                LogosModules logos(self->m_logosAPI);
+                logos.package_manager.uninstallPackageAsync(packageName,
+                    [self, dl, packageName, onDone](QVariantMap uninstallResult) {
+                        if (!self) return;
+                        if (!uninstallResult.value("success", false).toBool()) {
+                            const QString err = uninstallResult.value("error").toString();
+                            qWarning() << "Pre-install removal of" << packageName
+                                       << "failed, aborting install:" << err;
+                            if (onDone)
+                                onDone(false, err.isEmpty()
+                                           ? QStringLiteral("Could not remove the installed version")
+                                           : err);
+                            return;
+                        }
+                        self->installDownloadedFile(dl, onDone);
+                    });
             });
         return;
     }
