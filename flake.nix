@@ -33,10 +33,8 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
-    # TODO: back to master once feat/storage-fetcher is merged.
-    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module?ref=feat/storage-fetcher";
-    # TODO: back to master once logos-storage-module#90 is merged.
-    logos-storage-module.url = "github:logos-co/logos-storage-module?ref=feat/node-running";
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
+    logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.0-rc1";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";

@@ -206,8 +206,7 @@ sections:
 
           echo "https://127.0.0.1:8443/storage_ui.lgx $(pwd)/storage_ui.lgx" > urls.txt
 
-          # TODO: use main once logos-modules-release-tool merges storage support.
-          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/feat/add-storage-as-lgx-provider/index.py
+          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/master/index.py
 
           PATH="$(pwd)/lgx/bin:$PATH" \
           SSL_CERT_FILE="$(pwd)/localhost.crt" NIX_SSL_CERT_FILE="$(pwd)/localhost.crt" \
