@@ -104,9 +104,13 @@ export async function assertResponsive(app, opts = {}) {
 // noise (nix/smoke-test.nix). File mode (BASECAMP_APP_LOG) no-ops when unset.
 const QML_ERROR_RE =
   /\.qml:\d+(?::\d+)?:?\s.*(Error|error:|is not a type|is not defined|No such file|Cannot assign|Unable to assign)/;
+// Catalog artwork is fetched over the network. An unavailable image already
+// falls back to the tile's label, so its transfer warning is not a QML error.
+const IMAGE_TRANSFER_RE = /QML QQuickImage: Error transferring https?:\/\//;
 
 export function scanForQmlErrors(text) {
-  return text.split("\n").filter((line) => QML_ERROR_RE.test(line));
+  return text.split("\n").filter((line) =>
+    QML_ERROR_RE.test(line) && !IMAGE_TRANSFER_RE.test(line));
 }
 
 const qmlErrorLogPath = process.env.BASECAMP_APP_LOG || null;
