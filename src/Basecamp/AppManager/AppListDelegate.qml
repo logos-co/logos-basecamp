@@ -148,21 +148,37 @@ ItemDelegate {
             spacing: 0
 
             LogosText {
+                id: nameLabel
                 Layout.fillWidth: true
                 text: d.displayName
                 font.pixelSize: Theme.typography.primaryText
                 font.weight: Theme.typography.weightMedium
                 color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle
                 elide: Text.ElideRight
+
+                HoverHandler { id: nameHover }
+                LogosToolTip {
+                    text: d.displayName
+                    placement: LogosToolTip.Top
+                    visible: nameHover.hovered && nameLabel.truncated
+                }
             }
 
             LogosText {
+                id: descLabel
                 Layout.fillWidth: true
                 text: d.description
                 font.pixelSize: Theme.typography.secondaryText
                 color: Theme.palette.textTertiary
                 elide: Text.ElideRight
                 visible: text.length > 0
+
+                HoverHandler { id: descHover }
+                LogosToolTip {
+                    text: d.description
+                    placement: LogosToolTip.Top
+                    visible: descHover.hovered && descLabel.truncated
+                }
             }
         }
 

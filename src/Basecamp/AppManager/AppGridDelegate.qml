@@ -200,7 +200,7 @@ ItemDelegate {
                 elide: Text.ElideRight
                 LogosToolTip {
                     text: d.displayName
-                    placement: LogosToolTip.Top
+                    placement: LogosToolTip.Bottom
                     visible: root.hovered && label.truncated
                 }
             }
