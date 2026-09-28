@@ -173,6 +173,7 @@ qt_add_qml_module(basecamp_icons_qml
     RESOURCES
         Basecamp/Icons/basecamp.svg
         Basecamp/Icons/dashboard.svg
+        Basecamp/Icons/filter.svg
         Basecamp/Icons/module.svg
         Basecamp/Icons/settings.svg
         Basecamp/Icons/tent.png

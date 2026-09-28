@@ -17,8 +17,17 @@ class InstallRegistry;
 class AppsModel : public QAbstractListModel, public AppsModelRoles {
     Q_OBJECT
     Q_PROPERTY(QStringList categories READ categories NOTIFY categoriesChanged)
+    Q_PROPERTY(QString hostVariant READ hostVariant NOTIFY hostVariantChanged)
 public:
     Q_ENUM(Roles)
+
+    enum NotAvailableReason {
+        Available           = 0,
+        NoVariantsPublished = 1,   // nothing offered — installable nowhere
+        BuildFlavorMismatch = 2,   // this OS/arch IS offered, wrong flavor
+        PlatformMismatch    = 3,   // OS/arch not offered at all
+    };
+    Q_ENUM(NotAvailableReason)
 
     explicit AppsModel(QObject* parent = nullptr);
 
@@ -29,8 +38,11 @@ public:
 
     QStringList categories() const;
 
+    QString hostVariant() const { return m_validVariants.value(0); }
+
 signals:
     void categoriesChanged();
+    void hostVariantChanged();
 
 public:
 
@@ -41,6 +53,8 @@ public:
 
 
     void replaceCatalog(const QVariantList& catalogRows);
+    void setValidVariants(const QStringList& variants);
+    QStringList validVariants() const { return m_validVariants; }
 
     // Append synthetic rows for installed packages that have no catalog row.
     // Marked by empty repositoryUrl
@@ -100,6 +114,8 @@ private:
         QString latestVersion;       // computed from versions[0].version
         QVariantList dependencies;
         QStringList provides;
+        bool hasInstallableVersion = true;
+        int  notAvailableReason = Available;   // NotAvailableReason
 
         // On-disk state
         QString installedVersion;
@@ -127,6 +143,7 @@ private:
     // row's repository. nullptr otherwise — see the .cpp for why.
     InstallRegistry* registryFor(const Row& r) const;
 
+    QStringList         m_validVariants;
     QList<Row>          m_rows;
     QHash<QString, int> m_indexByKey;     // (repo + "\n" + name) → row index
     QMultiHash<QString, int> m_indicesByName;

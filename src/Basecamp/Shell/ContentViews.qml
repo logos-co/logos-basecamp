@@ -29,6 +29,7 @@ Item {
         sourceModel:   backend.appsModel
         typeFilter:    "ui_qml"
         excludeMainUi: true
+        showUnavailable: appManagerView.showUnavailable
     }
 
     Connections {
@@ -96,6 +97,7 @@ Item {
             id: appManagerView
 
             appsProxy:      uiAppsProxy
+            hostVariant:    backend.appsModel ? backend.appsModel.hostVariant : ""
             repositories:   backend.repositories
             loading:        backend.appsLoading
             onAppClicked: function(name, repositoryUrl) {

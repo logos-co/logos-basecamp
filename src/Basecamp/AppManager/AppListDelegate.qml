@@ -69,8 +69,14 @@ ItemDelegate {
             !!root.appData && root.appData.supportsFullBleedIcon === true
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
         readonly property string installType:   root.appData ? (root.appData.installType || "") : ""
+        readonly property bool isAvailable:
+            !root.appData
+            || root.appData.hasInstallableVersion !== false
+            || d.isInstalled
+
         readonly property real tileOpacity:
-            (d.isInstalled || root.hovered) ? 1.0 : 0.55
+            !d.isAvailable                  ? 0.35
+            : (d.isInstalled || root.hovered) ? 1.0 : 0.55
 
         readonly property int tileSize: 40
 
@@ -99,7 +105,8 @@ ItemDelegate {
     padding: 0
     hoverEnabled: true
 
-    onClicked: root.appClicked(d.nameText, d.repositoryUrl)
+    // Inert when unavailable: opening it leads to an install that cannot run.
+    onClicked: if (d.isAvailable) root.appClicked(d.nameText, d.repositoryUrl)
 
     TapHandler {
         acceptedButtons: Qt.RightButton
@@ -198,21 +205,24 @@ ItemDelegate {
             Layout.preferredWidth: pillWidth
             Layout.alignment: Qt.AlignVCenter
             // Installed-but-stale states stay visible; NotInstalled only on hover.
-            visible: d.isInstalling
+            visible: !d.isAvailable
+                     || d.isInstalling
                      || d.installStage === InstallStage.Failed
                      || (d.installStatus !== InstallStatus.Installed
                          && (d.isInstalled || root.hovered))
             // While bytes are moving the badge counts them; the rest of the
             // install (verify, install) has no byte count, so it reverts to
             // the plain label instead of parking at 100%.
-            text: d.hasProgress ? DownloadFormat.label(d.dlReceived, d.dlTotal)
+            text: !d.isAvailable                                      ? qsTr("Not available")
+                : d.hasProgress ? DownloadFormat.label(d.dlReceived, d.dlTotal)
                 : d.isInstalling                                      ? qsTr("Installing…")
                 : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                 : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
                 : d.installStatus === InstallStatus.DowngradeAvailable    ? qsTr("Downgrade")
                 : d.installStatus === InstallStatus.DifferentHash         ? qsTr("Reinstall")
                                                                       : qsTr("Install")
-            color: d.isInstalling                                      ? Theme.palette.warning
+            color: !d.isAvailable                                      ? Theme.palette.textTertiary
+                 : d.isInstalling                                      ? Theme.palette.warning
                  : d.installStage === InstallStage.Failed              ? Theme.palette.error
                  : d.installStatus === InstallStatus.UpgradeAvailable      ? Theme.palette.info
                  : d.installStatus === InstallStatus.DowngradeAvailable    ? Theme.palette.info

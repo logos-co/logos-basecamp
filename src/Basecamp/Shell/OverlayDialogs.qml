@@ -173,6 +173,7 @@ Item {
         sourceModel:            backend.appsModel
         excludeMainUi:          false
         installStateFilter:     ""
+        showUnavailable:        true
         requiredPackageEntries: backend.requiredPackages
     }
 

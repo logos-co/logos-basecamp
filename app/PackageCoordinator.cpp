@@ -1037,9 +1037,23 @@ void PackageCoordinator::fetchUiPluginMetadata()
         emit self->uiModulesChanged();
         emit self->launcherAppsChanged();
         self->refreshDependencyInfo();
+        self->fetchValidVariants();
 
         // Kick off the App-Manager catalog fetch.
         self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
+    });
+}
+
+void PackageCoordinator::fetchValidVariants()
+{
+    if (!m_logosAPI || !m_appsModel) return;
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return;
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_manager.getValidVariantsAsync([self](QVariant result) {
+        if (!self || !self->m_appsModel) return;
+        self->m_appsModel->setValidVariants(result.toStringList());
     });
 }
 

@@ -65,8 +65,14 @@ ItemDelegate {
             !!root.appData && root.appData.supportsFullBleedIcon === true
         readonly property string repositoryUrl: root.appData ? (root.appData.repositoryUrl || "") : ""
         readonly property string installType:   root.appData ? (root.appData.installType || "") : ""
+        readonly property bool isAvailable:
+            !root.appData
+            || root.appData.hasInstallableVersion !== false
+            || d.isInstalled
+
         readonly property real tileOpacity:
-            (d.isInstalled || root.hovered) ? 1.0 : 0.55
+            !d.isAvailable            ? 0.35
+            : (d.isInstalled || root.hovered) ? 1.0 : 0.55
 
         readonly property int tileSize: root.tileSize
 
@@ -93,8 +99,7 @@ ItemDelegate {
     background: Item {}
     padding: 0
     hoverEnabled: true
-
-    onClicked: root.appClicked(d.nameText, d.repositoryUrl)
+    onClicked: if (d.isAvailable) root.appClicked(d.nameText, d.repositoryUrl)
 
     TapHandler {
         enabled: root.contextMenuEnabled
@@ -142,18 +147,21 @@ ItemDelegate {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottomMargin: Theme.spacing.tiny
                     width: (d.hasProgress || d.indeterminateProgress) ? 64 : implicitWidth
-                    visible: d.isInstalling
+                    visible: !d.isAvailable
+                             || d.isInstalling
                              || d.installStage === InstallStage.Failed
                              || (d.installStatus !== InstallStatus.Installed
                                  && (d.isInstalled || root.hovered))
-                    text: d.hasProgress ? DownloadFormat.percent(d.dlReceived, d.dlTotal)
+                    text: !d.isAvailable                                      ? qsTr("Not available")
+                        : d.hasProgress ? DownloadFormat.percent(d.dlReceived, d.dlTotal)
                         : d.isInstalling                                      ? qsTr("Installing…")
                         : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                         : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
                         : d.installStatus === InstallStatus.DowngradeAvailable    ? qsTr("Downgrade")
                         : d.installStatus === InstallStatus.DifferentHash         ? qsTr("Reinstall")
                                                                               : qsTr("Install")
-                    color: d.isInstalling                                      ? Theme.palette.warning
+                    color: !d.isAvailable                                      ? Theme.palette.textTertiary
+                         : d.isInstalling                                      ? Theme.palette.warning
                          : d.installStage === InstallStage.Failed              ? Theme.palette.error
                          : d.installStatus === InstallStatus.UpgradeAvailable      ? Theme.palette.info
                          : d.installStatus === InstallStatus.DowngradeAvailable    ? Theme.palette.info

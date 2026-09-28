@@ -21,6 +21,10 @@ Rectangle {
     function applySearch(query) { d.searchText = query }
     property var repositories: []
     property bool loading: false
+    property bool showUnavailable: false
+
+    // This host's variant, for the "nothing for this platform" empty state.
+    property string hostVariant: ""
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
     signal uninstallAppRequested(string name, string repositoryUrl)
@@ -77,6 +81,7 @@ Rectangle {
         sourceModel: root.appsProxy
         matchLocalOnly: true
         excludeMainUi: false
+        showUnavailable: true
     }
 
     color: Theme.palette.background
@@ -203,9 +208,11 @@ Rectangle {
 
                         loading: root.loading
                         viewMode: d.viewMode
+                        showUnavailable: root.showUnavailable
                         onReloadClicked: root.refreshRequested()
                         onRepositoriesClicked: root.navigateToRepositories()
                         onViewModeChangeRequested: (mode) => d.viewMode = mode
+                        onShowUnavailableRequested: (show) => root.showUnavailable = show
                     }
 
                     // Empty state — shown when no repositories are configured
@@ -258,6 +265,7 @@ Rectangle {
                                         sourceModel: root.appsProxy
                                         repositoryUrlFilter: modelData.url || ""
                                         excludeMainUi: false
+                                        showUnavailable: true
                                     }
 
                                     title: modelData.displayLabel
@@ -286,6 +294,7 @@ Rectangle {
                                     sourceModel: root.appsProxy
                                     matchLocalOnly: true
                                     excludeMainUi: false
+                                    showUnavailable: true
                                 }
 
                                 title: qsTr("local")
@@ -314,6 +323,26 @@ Rectangle {
 
                                 title: qsTr("No apps match your search.")
                                 subtitle: qsTr("Try a different search term.")
+                            }
+
+                            EmptyView {
+                                objectName: "appManager.noneForPlatformView"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: gridScroll.height
+                                visible: d.searchText.length === 0
+                                         && d.selectedCategoryIndex === 0
+                                         && !root.showUnavailable
+                                         && !root.loading
+                                         && root.repositories.length > 0
+                                         && root.appsProxy !== null
+                                         && root.appsProxy.visibleCount === 0
+
+                                title: qsTr("Nothing available for this platform")
+                                subtitle: (root.hostVariant.length > 0
+                                           && !root.hostVariant.startsWith("unknown"))
+                                          ? qsTr("No configured repository publishes a build for %1.")
+                                                .arg(root.hostVariant)
+                                          : qsTr("No configured repository publishes a build for this platform.")
                             }
                         }
                     }

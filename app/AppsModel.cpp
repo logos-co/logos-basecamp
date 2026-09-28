@@ -32,6 +32,103 @@ QString catalogIconUrl(const QVariantMap& row)
     const QString raw = row.value("icon").toString();
     return raw.contains(QLatin1String("://")) ? raw : QString();
 }
+
+// ── Availability on this host ───────────────────────────────────────────────
+//
+// DUPLICATE of logos-package-manager-ui's rule (src/PackageRowBuilder.cpp's
+// splitVariant / classifyNotAvailable, and RowActionResolver.h's
+// hasInstallableVersion). Same inputs, and they must give the same answer —
+// when they drift, the Package Manager and the App Manager show a different
+// set of packages for one catalog, which surfaces as a user report rather
+// than a failing test. Change one, change the other.
+//
+// The honest shared homes were a header in logos-package or a
+// `variantAvailable` stamp in package_downloader's getCatalog() beside the
+// `sourceAvailable` it already writes; both are cross-repo. If either lands,
+// delete this block.
+
+// Split "<os>-<arch>[-<flavor>]" into (base, flavor). A dev-flavor host
+// accepts ONLY "-dev" variants — PackageManagerLib::platformVariantsToTry
+// REPLACES the bare spelling rather than adding to it — so the flavor has to
+// be separable to tell "wrong flavor" from "wrong machine".
+std::pair<QString, QString> splitVariant(const QString& v)
+{
+    static const QSet<QString> kKnownFlavors = {
+        QStringLiteral("dev"), QStringLiteral("portable")
+    };
+    const int lastDash = v.lastIndexOf(QLatin1Char('-'));
+    if (lastDash <= 0) return {v, QString()};
+    const QString trailing = v.mid(lastDash + 1);
+    if (kKnownFlavors.contains(trailing)) return {v.left(lastDash), trailing};
+    return {v, QString()};
+}
+
+// Why the offered variants miss this host's. Only called when they do.
+AppsModel::NotAvailableReason classifyUnavailable(const QStringList& offered,
+                                                  const QStringList& valid)
+{
+    if (offered.isEmpty()) return AppsModel::NoVariantsPublished;
+    QSet<QString> hostBases;
+    for (const QString& v : valid) hostBases.insert(splitVariant(v).first);
+    for (const QString& v : offered) {
+        if (hostBases.contains(splitVariant(v).first))
+            return AppsModel::BuildFlavorMismatch;
+    }
+    return AppsModel::PlatformMismatch;
+}
+
+// True iff at least one of `versions` is one this host could install.
+//
+// Variant availability is decided by the NEWEST version's manifest (matching
+// PMUI); the download-source check is per version, so one servable version
+// keeps the package. Deliberately a property of the whole package: a
+// per-version answer would hide one whose newest release is unreachable but
+// whose older ones are not.
+bool computeAvailability(const QVariantList& versions,
+                         const QStringList& validVariants,
+                         AppsModel::NotAvailableReason* outReason)
+{
+    auto fail = [outReason](AppsModel::NotAvailableReason r) {
+        if (outReason) *outReason = r;
+        return false;
+    };
+    if (versions.isEmpty()) return fail(AppsModel::NoVariantsPublished);
+
+    const QVariantMap manifest =
+        versions.first().toMap().value(QStringLiteral("manifest")).toMap();
+
+    // The variants a package offers are the keys of its manifest's `main` map.
+    QStringList offered;
+    const QVariantMap mainMap = manifest.value(QStringLiteral("main")).toMap();
+    for (auto it = mainMap.constBegin(); it != mainMap.constEnd(); ++it) {
+        if (!it.key().isEmpty()) offered.append(it.key());
+    }
+
+    bool variantOk = false;
+    for (const QString& v : offered) {
+        if (validVariants.contains(v)) { variantOk = true; break; }
+    }
+    // A QML-only package can carry an empty `main` (no backend plugin); it
+    // installs everywhere.
+    if (!variantOk && offered.isEmpty()
+        && manifest.value(QStringLiteral("type")).toString() == QLatin1String("ui_qml")) {
+        variantOk = true;
+    }
+    if (!variantOk) return fail(classifyUnavailable(offered, validVariants));
+
+    // `sourceAvailable` is stamped per version by package_downloader under its
+    // download-source setting. A downloader predating it sends nothing, and
+    // everything defaults to servable.
+    for (const QVariant& v : versions) {
+        if (v.toMap().value(QStringLiteral("sourceAvailable"), true).toBool()) {
+            if (outReason) *outReason = AppsModel::Available;
+            return true;
+        }
+    }
+    // Every version refused by the download source. No variant reason applies:
+    // the package does build for this host, the transport is the problem.
+    return fail(AppsModel::Available);
+}
 }
 
 bool AppsModel::supportsFullBleedIcon(const QString& manifestVersion)
@@ -121,6 +218,8 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
         InstallRegistry* reg = registryFor(r);
         return reg ? reg->planStage(r.name) : static_cast<int>(InstallStage::None);
     }
+    case HasInstallableVersionRole: return r.hasInstallableVersion;
+    case NotAvailableReasonRole:    return r.notAvailableReason;
     }
     return {};
 }
@@ -157,6 +256,8 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {PlanDownloadReceivedRole, "planDownloadReceived"},
         {PlanDownloadTotalRole,    "planDownloadTotal"},
         {PlanInstallStageRole,     "planInstallStage"},
+        {HasInstallableVersionRole, "hasInstallableVersion"},
+        {NotAvailableReasonRole,    "notAvailableReason"},
     };
 }
 
@@ -306,7 +407,41 @@ void AppsModel::recomputeVersionDerivedFields(Row& r)
             r.provides.append(intent);
     }
 
+    // Availability on this host. An empty valid-variant list means
+    // package_manager has not answered yet: treat everything as installable
+    // rather than blanking the grid until it does.
+    NotAvailableReason reason = Available;
+    r.hasInstallableVersion = m_validVariants.isEmpty()
+        ? true
+        : computeAvailability(r.versions, m_validVariants, &reason);
+    r.notAvailableReason = static_cast<int>(reason);
+
     recomputeInstallStatus(r);
+}
+
+void AppsModel::setValidVariants(const QStringList& variants)
+{
+    if (variants == m_validVariants) return;
+    m_validVariants = variants;
+    emit hostVariantChanged();
+    if (m_rows.isEmpty()) return;
+
+    for (int i = 0; i < m_rows.size(); ++i) {
+        Row& r = m_rows[i];
+        const bool wasAvailable = r.hasInstallableVersion;
+        const int  wasReason    = r.notAvailableReason;
+
+        NotAvailableReason reason = Available;
+        r.hasInstallableVersion = m_validVariants.isEmpty()
+            ? true
+            : computeAvailability(r.versions, m_validVariants, &reason);
+        r.notAvailableReason = static_cast<int>(reason);
+
+        if (r.hasInstallableVersion != wasAvailable || r.notAvailableReason != wasReason) {
+            const QModelIndex mi = index(i);
+            emit dataChanged(mi, mi, {HasInstallableVersionRole, NotAvailableReasonRole});
+        }
+    }
 }
 
 // ── Mutation: bulk replace from catalog ────────────────────────────────────

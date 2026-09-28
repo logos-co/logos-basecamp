@@ -59,6 +59,12 @@ struct AppsModelRoles {
         PlanDownloadReceivedRole,
         PlanDownloadTotalRole,
         PlanInstallStageRole,    // InstallStage of the whole install this row's app started.
+        HasInstallableVersionRole, // bool — some version of this package is one
+                                   //   THIS host could install (computeAvailability
+                                   //   in AppsModel.cpp). True while the
+                                   //   valid-variant list is still unknown.
+        NotAvailableReasonRole,  // AppsModel::NotAvailableReason (int) — why not,
+                                 //   when the row is shown anyway.
     };
 };
 

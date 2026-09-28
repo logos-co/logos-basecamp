@@ -363,6 +363,7 @@ private:
     void fetchUiPluginMetadata();
 
     void tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft);
+    void fetchValidVariants();
     void buildCatalogIndexes(const QVariantList& catalog);
     void populateAppsModel(const QVariantList& catalog,
                            const QHash<QString, QString>& installedByName);
