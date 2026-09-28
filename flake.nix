@@ -39,8 +39,7 @@
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
-    # TODO: back to master once logos-package-manager-ui#86 is merged.
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui?ref=feat/download-source";
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
     # The UI otherwise brings its own package_manager and package_downloader,
     # so the closure carries two of each and the UI that drives installs sits
     # on the older one — the one with no VersionMismatch, and without the
