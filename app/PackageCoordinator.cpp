@@ -1586,18 +1586,63 @@ QVariantList PackageCoordinator::collectCatalogRequired(const QString& name,
     return out;
 }
 
+bool PackageCoordinator::alreadyOnDisk(const QString& installedVersion,
+                                       const QString& installedHash,
+                                       const QString& resolvedVersion,
+                                       const QString& resolvedHash)
+{
+    if (installedVersion.isEmpty()) return false;
+    const bool versionMatches =
+        resolvedVersion.isEmpty() || resolvedVersion == installedVersion;
+    const bool hashMatches =
+        resolvedHash.isEmpty() || installedHash.isEmpty()
+        || resolvedHash == installedHash;
+    return versionMatches && hashMatches;
+}
+
+bool PackageCoordinator::entryCarriesDownload(const QVariantMap& entry)
+{
+    return !entry.value(QStringLiteral("name")).toString().isEmpty()
+        && entry.value(QStringLiteral("error")).toString().isEmpty();
+}
+
+PackageCoordinator::ResolvedSplit PackageCoordinator::splitResolved(
+    const QVariantList& resolved,
+    const QHash<QString, QString>& installedVersions,
+    const QHash<QString, QString>& installedHashes)
+{
+    ResolvedSplit out;
+    for (const QVariant& v : resolved) {
+        const QVariantMap m = v.toMap();
+        // Nothing fetchable to compare — an error row, or one with no name.
+        if (!entryCarriesDownload(m)) {
+            out.needed.append(v);
+            continue;
+        }
+        const QString name = m.value(QStringLiteral("name")).toString();
+        if (alreadyOnDisk(installedVersions.value(name), installedHashes.value(name),
+                          m.value(QStringLiteral("version")).toString(),
+                          m.value(QStringLiteral("rootHash")).toString()))
+            out.satisfied.append(v);
+        else
+            out.needed.append(v);
+    }
+    return out;
+}
+
 QString PackageCoordinator::depAction(const QString& installedVersion,
                                       const QString& resolvedVersion,
                                       const QString& installedHash,
                                       const QString& resolvedHash)
 {
     if (installedVersion.isEmpty()) return QStringLiteral("install");
-    if (installedVersion == resolvedVersion) {
-        const bool hashKnown = !installedHash.isEmpty() && !resolvedHash.isEmpty();
-        if (hashKnown && installedHash != resolvedHash)
-            return QStringLiteral("reinstall");
+    // The same predicate the plan is built from.
+    if (alreadyOnDisk(installedVersion, installedHash, resolvedVersion, resolvedHash))
         return QStringLiteral("installed");
-    }
+    // Same version, so the hash is what differs: re-signed, re-published, or
+    // drifted on disk.
+    if (installedVersion == resolvedVersion)
+        return QStringLiteral("reinstall");
     // Directional: a resolved version OLDER than the installed one is a
     // downgrade, and labelling it "upgrade" understates what is about to happen.
     return logos::semver::compare(resolvedVersion.toStdString(),
@@ -1879,29 +1924,8 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
         return;
     }
 
-    // Register the plan up front, so the app's tile can show
-    // aggregate progress across everything this install downloads..
-    {
-        QList<InstallRegistry::PlannedPackage> plan;
-        for (const QVariant& v : m_lastResolvedRawByName.value(name)) {
-            const QVariantMap m = v.toMap();
-            const QString rowName = m.value("name").toString();
-            // Error rows carry no download.
-            if (rowName.isEmpty() || !m.value("error").toString().isEmpty())
-                continue;
-            plan.append({rowName,
-                         m.value("version").toString(),
-                         m.value("rootHash").toString(),
-                         m.value("size").toULongLong(),
-                         m.value("repositoryUrl").toString()});
-        }
-        if (!plan.isEmpty()) {
-            m_installRegistry->beginPlan(name, plan);
-        } else {
-            m_installRegistry->begin(name, /*targetVersion=*/{}, /*targetHash=*/{},
-                                     /*startedByTopLevel=*/name, repositoryUrl);
-        }
-    }
+    m_installRegistry->beginPlan(
+        name, {{name, /*version=*/{}, /*rootHash=*/{}, /*size=*/0, repositoryUrl}});
 
     emit catalogInstallStageChanged(name, InstallStage::Downloading);
 
@@ -1909,74 +1933,156 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
-    // Default IPC deadline (20s) is too tight when the catalog blob is many
-    // MB or the user is on a slow connection
-    constexpr int kDownloadIpcDeadlineMs = 5 * 60 * 1000;
-    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, QString(),
-        [self, name](QVariantList results) {
+    constexpr int kResolveIpcDeadlineMs = 2 * 60 * 1000;
+    logos.package_downloader.resolveDependenciesAsyncResult(depsJson, QString(),
+        [self, name](logos::AsyncResult<QVariantList> r) {
             if (!self) return;
-            if (!results.isEmpty())
-                self->m_lastResolvedRawByName.insert(name, results);
-
-            QVariantList toInstall;
-            for (const QVariant& v : results) {
-                const QVariantMap m = v.toMap();
-                const QString rowName = m.value("name").toString();
-                if (!m.value("error").toString().isEmpty()) {
-                    toInstall.append(v);
-                    continue;
-                }
-                const QString resolvedVersion  = m.value("version").toString();
-                const QString resolvedHash     = m.value("rootHash").toString();
-                const QString installedVersion = self->m_installedVersionByName.value(rowName);
-                const QString installedHash    = self->m_installedHashByName.value(rowName);
-                const bool versionMatches =
-                    !installedVersion.isEmpty()
-                    && (resolvedVersion.isEmpty()
-                        || resolvedVersion == installedVersion);
-                const bool hashMatches =
-                    resolvedHash.isEmpty()
-                    || installedHash.isEmpty()
-                    || resolvedHash == installedHash;
-                if (versionMatches && hashMatches) {
-                    self->m_installRegistry->beginOrTrack(
-                        rowName, resolvedVersion, resolvedHash, name,
-                        m.value("repositoryUrl").toString());
-                    self->m_installRegistry->setStage(rowName, InstallStage::Installed);
-                    continue;
-                }
-                toInstall.append(v);
+            if (!r.ok()) {
+                const QString detail = QString::fromStdString(r.error.message);
+                self->failCatalogInstall(name, detail.isEmpty()
+                    ? QStringLiteral("package_downloader did not reply")
+                    : detail);
+                return;
             }
+            if (r.value.isEmpty()) {
+                // An unsatisfiable constraint comes back as an error ROW, so an
+                // empty array is no verdict at all, not "nothing to do".
+                self->failCatalogInstall(
+                    name, QStringLiteral("could not resolve what %1 needs").arg(name));
+                return;
+            }
+            self->m_lastResolvedRawByName.insert(name, r.value);
+            self->startResolvedInstall(name, r.value);
+        },
+        Timeout(kResolveIpcDeadlineMs));
+}
 
-            if (toInstall.isEmpty()) {
-                // Nothing left to do after the skip-already-installed
-                // filter; treat as a successful no-op rather than Failed.
-                self->setOpStage(name, InstallStage::Installed);
-                emit self->catalogInstallFinished(name);
-                self->refreshOverlayAfterInstall(name);
-                QTimer::singleShot(1500, self.data(), [self, name]() {
-                    if (!self) return;
-                    self->m_installRegistry->clearByTopLevel(name);
-                });
+void PackageCoordinator::startResolvedInstall(const QString& name,
+                                              const QVariantList& resolved)
+{
+    const ResolvedSplit plan =
+        splitResolved(resolved, m_installedVersionByName, m_installedHashByName);
+
+    QList<InstallRegistry::PlannedPackage> planned;
+    for (const QVariant& v : plan.needed) {
+        const QVariantMap m = v.toMap();
+        if (!entryCarriesDownload(m)) continue;
+        planned.append({m.value("name").toString(),
+                        m.value("version").toString(),
+                        m.value("rootHash").toString(),
+                        m.value("size").toULongLong(),
+                        m.value("repositoryUrl").toString()});
+    }
+    if (!planned.isEmpty()) m_installRegistry->beginPlan(name, planned);
+
+    for (const QVariant& v : plan.satisfied) {
+        const QVariantMap m = v.toMap();
+        const QString rowName = m.value("name").toString();
+        if (rowName.isEmpty() || rowName == name) continue;
+        m_installRegistry->beginOrTrack(rowName,
+            m.value("version").toString(), m.value("rootHash").toString(),
+            name, m.value("repositoryUrl").toString());
+        m_installRegistry->setStage(rowName, InstallStage::Installed);
+    }
+
+    if (plan.needed.isEmpty()) {
+        setOpStage(name, InstallStage::Installed);
+        emit catalogInstallFinished(name);
+        refreshOverlayAfterInstall(name);
+        QPointer<PackageCoordinator> self(this);
+        QTimer::singleShot(1500, self.data(), [self, name]() {
+            if (!self) return;
+            self->m_installRegistry->clearByTopLevel(name);
+        });
+        return;
+    }
+
+    for (const QVariant& v : plan.needed) {
+        const QVariantMap m = v.toMap();
+        const QString rowName = m.value("name").toString();
+        if (rowName.isEmpty()) continue;
+        m_installRegistry->beginOrTrack(rowName,
+            m.value("version").toString(), m.value("rootHash").toString(),
+            name, m.value("repositoryUrl").toString());
+        if (!entryCarriesDownload(m))
+            m_installRegistry->setStage(rowName, InstallStage::Queued);
+    }
+
+    downloadResolvedSequential(plan.needed, name, 0, QVariantList{});
+}
+
+void PackageCoordinator::downloadResolvedSequential(const QVariantList& planned,
+                                                    const QString& topLevelName,
+                                                    int index,
+                                                    QVariantList downloaded)
+{
+    if (index >= planned.size()) {
+        setOpStage(topLevelName, InstallStage::Installing);
+        installResultsSequential(downloaded, topLevelName, 0);
+        return;
+    }
+
+    const QVariantMap entry = planned[index].toMap();
+    const QString rowName = entry.value("name").toString();
+
+    if (!entryCarriesDownload(entry)) {
+        downloaded.append(entry);
+        downloadResolvedSequential(planned, topLevelName, index + 1,
+                                   std::move(downloaded));
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    constexpr int kDownloadIpcDeadlineMs = 5 * 60 * 1000;
+    logos.package_downloader.downloadPinnedAsyncResult(
+        entry.value("repositoryUrl").toString(), rowName,
+        entry.value("version").toString(), entry.value("rootHash").toString(),
+        [self, planned, topLevelName, index, downloaded, entry, rowName]
+        (logos::AsyncResult<QVariantMap> r) mutable {
+            if (!self) return;
+            QVariantMap dl = r.ok() ? r.value : QVariantMap{};
+            if (dl.value("name").toString().isEmpty()) dl["name"] = rowName;
+            if (!r.ok() && dl.value("error").toString().isEmpty()) {
+                const QString detail = QString::fromStdString(r.error.message);
+                dl["error"] = detail.isEmpty()
+                    ? QStringLiteral("package_downloader did not reply")
+                    : detail;
+            }
+            const auto inheritFromPlan = [&dl, &entry](const QString& key) {
+                if (dl.value(key).toString().isEmpty())
+                    dl.insert(key, entry.value(key));
+            };
+            inheritFromPlan(QStringLiteral("version"));
+            inheritFromPlan(QStringLiteral("rootHash"));
+            inheritFromPlan(QStringLiteral("repositoryUrl"));
+
+            downloaded.append(dl);
+
+            if (!dl.value("error").toString().isEmpty()) {
+                self->setOpStage(topLevelName, InstallStage::Installing);
+                self->installResultsSequential(downloaded, topLevelName, 0);
                 return;
             }
 
-            for (const QVariant& v : toInstall) {
-                const QVariantMap m = v.toMap();
-                const QString rowName = m.value("name").toString();
-                if (rowName.isEmpty()) continue;
-                self->m_installRegistry->beginOrTrack(rowName,
-                    m.value("version").toString(),
-                    m.value("rootHash").toString(),
-                    name,
-                    m.value("repositoryUrl").toString());
-                self->m_installRegistry->setStage(rowName, InstallStage::Queued);
-            }
-
-            self->setOpStage(name, InstallStage::Installing);
-            self->installResultsSequential(toInstall, name, 0);
+            self->downloadResolvedSequential(planned, topLevelName, index + 1,
+                                             std::move(downloaded));
         },
         Timeout(kDownloadIpcDeadlineMs));
+}
+
+void PackageCoordinator::failCatalogInstall(const QString& name,
+                                            const QString& error)
+{
+    qWarning() << "confirmCatalogInstall failed for" << name << ":" << error;
+    m_installRegistry->fail(name, error);
+    emit catalogInstallStageChanged(name, InstallStage::Failed);
+    emit catalogInstallFailed(name, error);
+    QPointer<PackageCoordinator> self(this);
+    QTimer::singleShot(2500, self.data(), [self, name]() {
+        if (!self) return;
+        self->m_installRegistry->clearByTopLevel(name);
+    });
 }
 
 void PackageCoordinator::installOnePackage(const QVariantMap& dl,
