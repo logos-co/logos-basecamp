@@ -1,0 +1,604 @@
+name: "Reinstalling one drifted subcomponent: Basecamp fetches only what changed"
+output: basecamp-partial-reinstall.md
+release: ""
+
+intro: |
+  An app in the App Manager is rarely one package. `reinstall_demo` below is
+  three: the app itself plus two dependencies, each its own `.lgx` in the
+  catalog. When a catalog republishes **one** of them — same version number, new
+  contents, so a new `rootHash` — Basecamp's install dialog says so per
+  subcomponent: one row reads **Reinstall**, the others read **Installed**.
+
+  This doc-test proves that confirming that dialog downloads **only the drifted
+  package**. It is the regression test for
+  [basecamp#427](https://github.com/logos-co/logos-basecamp/issues/427), where
+  every subcomponent was refetched because the skip-what-is-current check ran on
+  the *results* of the download instead of before the request.
+
+  The proof is not the app's own account of itself: the catalog is served by a
+  local HTTPS server with an access log, and the assertion counts the `.lgx`
+  requests that actually reached it. Three on the first install, one on the
+  reinstall.
+
+what_you_build: |
+  A local HTTPS catalog holding a three-package app, an inspector-enabled
+  Basecamp, and two headless UI runs — one that installs all three
+  packages, and one that reinstalls after a single dependency is republished.
+
+what_you_learn:
+  - How an app with dependencies is published to a catalog as several `.lgx` packages
+  - How Basecamp's add-application dialog labels each subcomponent (Install / Upgrade / Downgrade / Reinstall / Installed)
+  - What makes a package "drift": the same version republished with different contents, so its `rootHash` changes
+  - That confirming a reinstall fetches only the subcomponents whose version or hash differs
+  - How to prove what an app downloaded from outside the app, using the serving side's access log
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`."
+  - "**`jq`**, **`openssl`** and **`python3`** on your `PATH`."
+
+sections:
+  - title: "Build the tools"
+    step: true
+    steps:
+      - title: "Build logos-qt-mcp"
+        text: "The UI driver: it talks to the inspector server inside the app."
+        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
+        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
+        check_file: "result-mcp"
+
+      - title: "Build Basecamp"
+        text: |
+          The development app — what a plain `nix build` gives you — with the
+          inspector enabled so the run can be driven. A dev build resolves
+          `<platform>-dev` variants, which is why the fixtures below carry both
+          spellings.
+        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#app\" -o result-app"
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app"
+        check_file: "result-app/bin/LogosBasecamp"
+
+      - title: "Build caddy"
+        text: "It serves the catalog and the packages over HTTPS, and logs every request."
+        run: "nix build nixpkgs#caddy -o caddy"
+        check_file: "caddy/bin/caddy"
+
+      - title: "Build the lgx tool"
+        text: "It packs each `.lgx` and stamps its content hashes; `index.py` reads them back."
+        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
+        check_file: "result-lgx/bin/lgx"
+
+  - title: "Craft a three-package app"
+    step: true
+    text: |
+      All three packages are QML-only (`ui_qml`) apps at **1.0.0**, hand-crafted
+      here so the catalog is entirely ours. The only thing that makes
+      `reinstall_demo` an app *with* subcomponents is its manifest's
+      `dependencies` array — that is what the resolver walks when the dialog
+      opens.
+    steps:
+      - title: "Write the package templates"
+        text: |
+          One template set for all three, stamped per package. `main` stays empty
+          because a `ui_qml` package has no binary entry point, and `view` names
+          the QML file Basecamp loads.
+        file:
+          path: build/partial/manifest.json.in
+          language: json
+          content: |
+            {
+              "author": "",
+              "category": "testing",
+              "dependencies": PLACEHOLDER_DEPS,
+              "description": "Partial-reinstall doc-test fixture (PLACEHOLDER_NAME)",
+              "display_name": "PLACEHOLDER_DISPLAY",
+              "icon": "",
+              "main": {},
+              "manifestVersion": "0.3.0",
+              "name": "PLACEHOLDER_NAME",
+              "type": "ui_qml",
+              "version": "1.0.0",
+              "view": "Main.qml"
+            }
+
+      - title: "Write the payload templates"
+        text: |
+          The variant payload: the module's own `metadata.json`, the view, and a
+          `qmldir` whose URI is derived from the package name. `PLACEHOLDER_BUILD`
+          is what we change later to republish one package — different bytes in
+          the payload mean a different `rootHash` for the same version.
+        file:
+          path: build/partial/metadata.json.in
+          language: json
+          content: |
+            {
+              "name": "PLACEHOLDER_NAME",
+              "display_name": "PLACEHOLDER_DISPLAY",
+              "version": "1.0.0",
+              "type": "ui_qml",
+              "category": "testing",
+              "description": "Partial-reinstall doc-test fixture (PLACEHOLDER_NAME)",
+              "view": "Main.qml",
+              "dependencies": PLACEHOLDER_DEPS
+            }
+
+      - title: "Write the view template"
+        file:
+          path: build/partial/Main.qml.in
+          language: qml
+          content: |
+            import QtQuick
+
+            Rectangle {
+                id: root
+                color: "#1e1e1e"
+                Text {
+                    anchors.centerIn: parent
+                    text: "PLACEHOLDER_DISPLAY (build PLACEHOLDER_BUILD)"
+                    color: "#ffffff"
+                    font.pixelSize: 24
+                }
+            }
+
+      - title: "Write the packing helper"
+        text: |
+          `pack.sh <name> <display> <deps-json> <build>` stamps the templates and
+          produces `www/<name>.lgx`: seed a plain **ustar** tar holding just the
+          manifest, then `lgx add` the payload into the host's platform variant,
+          which computes and stamps the content hashes. Re-running it for one
+          package with a different build number is exactly what a republish is.
+        file:
+          path: build/partial/pack.sh
+          language: bash
+          content: |
+            #!/usr/bin/env bash
+            set -eu
+
+            name="$1"; display="$2"; deps="$3"; build="$4"
+            here="$(cd "$(dirname "$0")" && pwd)"
+            root="$(cd "$here/../.." && pwd)"
+
+            case "$(uname -s) $(uname -m)" in
+              "Linux x86_64")   VARIANT=linux-x86_64 ;;
+              "Linux aarch64")  VARIANT=linux-arm64 ;;
+              "Darwin arm64")   VARIANT=darwin-arm64 ;;
+              "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+              *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+            esac
+
+            stamp() {
+              sed -e "s/PLACEHOLDER_NAME/$name/g" \
+                  -e "s/PLACEHOLDER_DISPLAY/$display/g" \
+                  -e "s/PLACEHOLDER_BUILD/$build/g" \
+                  -e "s|PLACEHOLDER_DEPS|$deps|g" "$1"
+            }
+
+            seed="$here/seed-$name"
+            payload="$here/payload-$name"
+            rm -rf "$seed" "$payload"
+            mkdir -p "$seed/variants" "$payload"
+
+            stamp "$here/manifest.json.in" > "$seed/manifest.json"
+            stamp "$here/metadata.json.in" > "$payload/metadata.json"
+            stamp "$here/Main.qml.in"      > "$payload/Main.qml"
+            echo "module com.logos.module.$name" > "$payload/qmldir"
+
+            mkdir -p "$root/www"
+            out="$root/www/$name.lgx"
+            rm -f "$out"
+            tar --format ustar -C "$seed" -czf "$out" manifest.json variants
+            # Both spellings: a portable build resolves "<platform>", a dev build
+            # resolves "<platform>-dev" and nothing else.
+            "$root/result-lgx/bin/lgx" add "$out" --variant "$VARIANT"      --files "$payload" -y
+            "$root/result-lgx/bin/lgx" add "$out" --variant "$VARIANT-dev"  --files "$payload" -y
+            "$root/result-lgx/bin/lgx" verify "$out"
+
+      - title: "Pack all three at build 1"
+        text: |
+          `reinstall_demo` declares both dependencies; the two dependencies
+          declare none.
+        run: |
+          set -eu
+          chmod +x build/partial/pack.sh
+          rm -rf www && mkdir -p www
+
+          build/partial/pack.sh reinstall_dep_a "Reinstall Dep A" '[]' 1
+          build/partial/pack.sh reinstall_dep_b "Reinstall Dep B" '[]' 1
+          build/partial/pack.sh reinstall_demo  "Reinstall Demo" \
+            '[{"name": "reinstall_dep_a", "version": ">=1.0.0"}, {"name": "reinstall_dep_b", "version": ">=1.0.0"}]' 1
+
+          ls www
+        expect_contains:
+          - "Package structure is valid"
+          - "reinstall_demo.lgx"
+          - "reinstall_dep_a.lgx"
+          - "reinstall_dep_b.lgx"
+
+  - title: "Serve the catalog over local HTTPS"
+    step: true
+    text: |
+      Basecamp accepts `https://` repository URLs only. The same server hands out
+      the packages, and its access log is what this doc-test measures.
+    steps:
+      - title: "Generate a certificate"
+        run: |
+          set -eu
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout localhost.key -out localhost.crt \
+            -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1"
+        check_file: "localhost.crt"
+
+      - title: "Start the HTTPS server"
+        text: |
+          The `log` directive is the point of the exercise: one JSON line per
+          request, so the packages Basecamp actually fetched can be counted
+          without asking Basecamp.
+        run: |
+          set -eu
+
+          cat > Caddyfile <<'EOF'
+          {
+              auto_https off
+              admin off
+          }
+
+          :8443 {
+              bind 127.0.0.1
+              tls localhost.crt localhost.key
+              root * www
+              file_server
+              log {
+                  output file access.log
+                  format json
+              }
+          }
+          EOF
+
+          ./caddy/bin/caddy run --config Caddyfile --adapter caddyfile > caddy.log 2>&1 &
+          echo $! > caddy.pid
+
+          for _ in $(seq 60); do
+            if curl -sk -o /dev/null https://127.0.0.1:8443/; then
+              echo "server up"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat caddy.log
+          exit 1
+        expect_contains:
+          - "server up"
+
+      - title: "Build index.json"
+        text: |
+          The index is the catalog's package list: one entry per package, each
+          carrying the manifest, the download URL and the `rootHash` that binds
+          the URL to specific bytes. `--fetch none` keeps the build offline by
+          pairing every URL with the local file it will be served from.
+        run: |
+          set -eu
+
+          : > urls.txt
+          for p in reinstall_demo reinstall_dep_a reinstall_dep_b; do
+            echo "https://127.0.0.1:8443/$p.lgx $(pwd)/www/$p.lgx" >> urls.txt
+          done
+
+          if [ ! -f index.py ]; then
+            curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/master/index.py
+          fi
+
+          PATH="$(pwd)/result-lgx/bin:$PATH" \
+            python3 index.py build urls.txt --no-icons --fetch none -o www/index.json
+
+          jq -r '.packages[] | "\(.name) \(.versions[0].manifest.version) \(.versions[0].rootHash[0:12])"' www/index.json
+        expect_contains:
+          - "reinstall_demo 1.0.0"
+          - "reinstall_dep_a 1.0.0"
+          - "reinstall_dep_b 1.0.0"
+
+      - title: "Record the dependency's first hash"
+        text: |
+          Keep it: after the republish this is what is on disk, and the catalog
+          will advertise something else.
+        run: |
+          set -eu
+          jq -r '.packages[] | select(.name == "reinstall_dep_b") | .versions[0].rootHash' \
+            www/index.json > dep_b_hash_1.txt
+          cat dep_b_hash_1.txt
+        check_file: "dep_b_hash_1.txt"
+
+      - title: "Write logos-repo.json"
+        text: "The repository descriptor Basecamp is pointed at."
+        run: |
+          set -eu
+          cat > www/logos-repo.json <<EOF
+          {
+            "schemaVersion": 1,
+            "name": "partial-reinstall-catalog",
+            "displayName": "Partial Reinstall Catalog",
+            "description": "Local catalog for this doc-test.",
+            "indexUrl": "https://127.0.0.1:8443/index.json",
+            "network": "logos.dev",
+            "trustedSigners": []
+          }
+          EOF
+        check_file: "www/logos-repo.json"
+
+      - title: "Prepare Basecamp's home"
+        text: |
+          Both runs share this directory, so what the first one installs is still
+          installed when the second one starts.
+        run: |
+          set -eu
+          chmod -R u+w home 2>/dev/null || true
+          rm -rf home
+          mkdir -p home
+          echo "home ready"
+        expect_contains:
+          - "home ready"
+
+  - title: "Register the catalog"
+    step: true
+    text: |
+      Each `ui_test` block gets a fixed 120 s budget from the runner, and the
+      block is what has to fit — so registering the repository and installing
+      from it are two launches rather than one long session. The repository is
+      written into the shared `home`, so the next launch already has it.
+    steps:
+      - title: "Add our catalog"
+        ui_test:
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 25000
+
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Open Package Repositories"
+              action: click
+              target: "Package Repositories"
+
+            - name: "Type our catalog URL"
+              action: set_property
+              find_by: "objectName"
+              find_value: "repositories.urlField"
+              property: "text"
+              value: "https://127.0.0.1:8443/logos-repo.json"
+
+            - name: "Add our catalog"
+              action: click_object
+              find_by: "objectName"
+              find_value: "repositories.addButton"
+
+            # The URL is the row itself, so it lands as soon as the repository is
+            # registered. The display name would instead wait on a fetch.
+            - name: "Our catalog is listed"
+              action: wait_for
+              texts: ["https://127.0.0.1:8443/logos-repo.json"]
+              timeout: 45000
+              screenshot: "partial-reinstall-catalog-added.png"
+
+  - title: "Install the app and both dependencies"
+    step: true
+    text: |
+      Nothing is installed yet, so all three packages are fetched — the control
+      for the measurement that follows.
+    steps:
+      - title: "Install reinstall_demo"
+        ui_test:
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 25000
+
+            - name: "Open the App Manager"
+              action: click
+              target: "Applications"
+
+            # Our app cannot appear unless the index was fetched and parsed, so
+            # this doubles as the check that the catalog is live.
+            - name: "Our app is in the catalog"
+              action: wait_for
+              texts: ["Reinstall Demo"]
+              timeout: 40000
+
+            - name: "Open the app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.reinstall_demo"
+
+            - name: "Let the dialog resolve"
+              action: sleep
+              ms: 3000
+
+            - name: "The dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              screenshot: "partial-reinstall-first-install.png"
+
+            - name: "Install it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+
+            - name: "Let the downloads and installs finish"
+              action: sleep
+              ms: 20000
+
+      - title: "All three packages were fetched"
+        text: |
+          Counted at the server, on distinct paths so a retry cannot inflate the
+          number. The per-path tally is printed first: if the app never reached
+          the catalog at all, that says so here rather than leaving a bare
+          `fetched=0` to explain.
+        run: |
+          set -eu
+          cp ui-test-app.log install-run-app.log
+          echo "--- everything the catalog server was asked for ---"
+          jq -r '.request.uri // ""' access.log | sort | uniq -c | sort -rn
+          jq -r 'select((.request.uri // "") | endswith(".lgx")) | .request.uri' access.log \
+            | sort -u > install-run-lgx.txt
+          echo "fetched=$(wc -l < install-run-lgx.txt)"
+          cat install-run-lgx.txt
+        expect_contains:
+          - "fetched=3"
+          - "/reinstall_demo.lgx"
+          - "/reinstall_dep_a.lgx"
+          - "/reinstall_dep_b.lgx"
+
+  - title: "Republish one dependency"
+    step: true
+    text: |
+      `reinstall_dep_b` is rebuilt at the **same version** with a different
+      payload, so the catalog now advertises a `rootHash` that does not match
+      what is on disk. Nothing else in the catalog changes. This is the situation
+      #427 was reported from.
+    steps:
+      - title: "Repack reinstall_dep_b at build 2 and rebuild the index"
+        run: |
+          set -eu
+          build/partial/pack.sh reinstall_dep_b "Reinstall Dep B" '[]' 2
+
+          PATH="$(pwd)/result-lgx/bin:$PATH" \
+            python3 index.py build urls.txt --no-icons --fetch none -o www/index.json
+
+          jq -r '.packages[] | select(.name == "reinstall_dep_b") | .versions[0].rootHash' \
+            www/index.json > dep_b_hash_2.txt
+
+          echo "version_changed=$(jq -r '.packages[] | select(.name == "reinstall_dep_b") | .versions[0].manifest.version' www/index.json)"
+          if [ "$(cat dep_b_hash_1.txt)" = "$(cat dep_b_hash_2.txt)" ]; then
+            echo "hash_changed=no"
+          else
+            echo "hash_changed=yes"
+          fi
+        expect_contains:
+          - "version_changed=1.0.0"
+          - "hash_changed=yes"
+
+      - title: "Mark the access log"
+        text: |
+          caddy holds the log file open for the life of the process, so the log is
+          not rotated — the line count so far is recorded instead, and the next
+          step reads only what is appended after it.
+        run: |
+          set -eu
+          wc -l < access.log | tr -d ' ' > access_mark.txt
+          echo "marked_at_line=$(cat access_mark.txt)"
+        check_file: "access_mark.txt"
+
+  - title: "Reinstall, and count what moved"
+    step: true
+    text: |
+      The app's tile now reports a hash difference, because one of the packages
+      it depends on does — so opening it raises the dialog instead of launching
+      it. The dialog labels `reinstall_dep_b` **Reinstall** and the other two
+      **Installed**, and confirming fetches exactly the one that drifted.
+    steps:
+      - title: "Open the app again and confirm"
+        ui_test:
+          launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-app/bin/LogosBasecamp'"
+          qt_mcp: "result-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 25000
+
+            - name: "Open the App Manager"
+              action: click
+              target: "Applications"
+
+            - name: "Our app is listed"
+              action: wait_for
+              texts: ["Reinstall Demo"]
+              timeout: 40000
+
+            - name: "Open the app"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.app.reinstall_demo"
+
+            - name: "Let the dialog resolve the subcomponents"
+              action: sleep
+              ms: 4000
+
+            - name: "One subcomponent reads Reinstall"
+              action: wait_for
+              texts: ["Reinstall"]
+              timeout: 15000
+              screenshot: "partial-reinstall-dialog.png"
+
+            - name: "Confirm the reinstall"
+              action: click_object
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+
+            - name: "Let the reinstall finish"
+              action: sleep
+              ms: 20000
+
+      - title: "Only the drifted dependency was fetched"
+        text: |
+          The regression assertion. Before the fix this read `fetched=3`: every
+          subcomponent was downloaded and the ones that were already current were
+          discarded afterwards.
+        run: |
+          set -eu
+          tail -n +"$(( $(cat access_mark.txt) + 1 ))" access.log \
+            | jq -r 'select((.request.uri // "") | endswith(".lgx")) | .request.uri' \
+            | sort -u > reinstall-run-lgx.txt
+          echo "fetched=$(wc -l < reinstall-run-lgx.txt)"
+          cat reinstall-run-lgx.txt
+        expect_contains:
+          - "fetched=1"
+          - "/reinstall_dep_b.lgx"
+
+      - title: "And the installed copy is now the republished one"
+        text: |
+          The catalog's second hash is what landed on disk, so the app no longer
+          reports a difference.
+        run: |
+          set -eu
+          found=0
+          for f in home/.local/share/Logos/*/plugins/reinstall_dep_b/manifest.json \
+                   home/.local/share/Logos/*/modules/reinstall_dep_b/manifest.json; do
+            [ -f "$f" ] || continue
+            found=1
+            echo "installed_hash_matches=$(jq -r --arg want "$(cat dep_b_hash_2.txt)" \
+              'if (.hashes.root // "") == $want then "yes" else "no" end' "$f")"
+          done
+          [ "$found" = 1 ] || echo "installed_manifest=not-found"
+        expect_contains:
+          - "installed_hash_matches=yes"
+
+  - title: "Shut down"
+    step: true
+    steps:
+      - title: "Stop the HTTPS server"
+        run: |
+          kill "$(cat caddy.pid)" 2>/dev/null || true
+          rm -f caddy.pid
+          echo "stopped"
+        expect_contains:
+          - "stopped"

@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
+#include <QHash>
 #include <QMap>
 #include <QSet>
 
@@ -423,6 +424,29 @@ private:
                                         const QString& repositoryUrl) const;
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;
+    // Whether a resolved entry is already on disk: same version, same rootHash.
+    static bool alreadyOnDisk(const QString& installedVersion,
+                              const QString& installedHash,
+                              const QString& resolvedVersion,
+                              const QString& resolvedHash);
+
+    // Named, and not one of the resolver's error rows. beginPlan gets exactly
+    // these, so the tile's denominator counts only what will be fetched.
+    static bool entryCarriesDownload(const QVariantMap& entry);
+
+    // The resolver's output partitioned by alreadyOnDisk. Error rows land in
+    // `needed`: they carry no download, but the install loop is what surfaces
+    // them as failures. Shared with depAction so the dialog's labels and the
+    // plan the confirm button runs cannot disagree (#427).
+    struct ResolvedSplit {
+        QVariantList needed;
+        QVariantList satisfied;
+    };
+    static ResolvedSplit splitResolved(
+        const QVariantList& resolved,
+        const QHash<QString, QString>& installedVersions,
+        const QHash<QString, QString>& installedHashes);
+
     static QString depAction(const QString& installedVersion,
                              const QString& resolvedVersion,
                              const QString& installedHash,
@@ -446,6 +470,19 @@ private:
     // Recompute resolver overlay from cached raw resolve + current disk state.
     // Keeps dep badges correct after the install registry is cleared.
     void refreshOverlayAfterInstall(const QString& topLevelName);
+    // Second half of confirmCatalogInstall, once the resolver has answered:
+    // register what needs fetching as the download plan, settle the rest.
+    void startResolvedInstall(const QString& name, const QVariantList& resolved);
+    // Fetch the planned entries one at a time, accumulating what the install
+    // loop consumes. Stops at the first failure — the install loop does too, so
+    // the rest would never be installed.
+    void downloadResolvedSequential(const QVariantList& planned,
+                                    const QString& topLevelName,
+                                    int index,
+                                    QVariantList downloaded);
+    // Failure before the install loop: the resolver did not answer, or answered
+    // with nothing.
+    void failCatalogInstall(const QString& name, const QString& error);
     void installResultsSequential(const QVariantList& results,
                                   const QString& topLevelName,
                                   int index,

@@ -185,6 +185,7 @@ jobs:
             doctests/basecamp-persistence.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
             doctests/basecamp-deep-links.test.yaml \
+            doctests/basecamp-partial-reinstall.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
