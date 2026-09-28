@@ -113,7 +113,10 @@ ItemDelegate {
     contentItem: Item {
         ColumnLayout {
             anchors.top: parent.top
-            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.spacing.small
+            anchors.rightMargin: Theme.spacing.small
             spacing: Theme.spacing.medium
 
             Item {
@@ -191,9 +194,11 @@ ItemDelegate {
             LogosText {
                 id: label
 
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: d.tileSize
+                objectName: "appGridDelegate.label"
+                Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 text: d.displayName
                 font.pixelSize: Theme.typography.subtitleText
                 color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle

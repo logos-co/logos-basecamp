@@ -63,6 +63,10 @@ if(LogosDesignSystem_FOUND)
         ${APPMANAGER_QML_DIR}/PackageRowDelegate.qml
         ${APPMANAGER_QML_DIR}/AppColors.qml
         ${APPMANAGER_QML_DIR}/DownloadFormat.qml
+        ${APPMANAGER_QML_DIR}/AppGrid.qml
+        ${APPMANAGER_QML_DIR}/AppGridDelegate.qml
+        ${APPMANAGER_QML_DIR}/AppListDelegate.qml
+        ${APPMANAGER_QML_DIR}/AppContextMenu.qml
     )
     # Resource paths are computed relative to CMAKE_CURRENT_SOURCE_DIR, and
     # these sit two directories up — without an alias each lands under a

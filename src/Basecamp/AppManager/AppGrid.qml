@@ -19,11 +19,16 @@ Item {
     QtObject {
         id: d
 
-        readonly property int gridCellWidth:  180
+        readonly property int gridMinCellWidth: 180
         readonly property int gridCellHeight: 162
         readonly property int listRowHeight: 64
 
         readonly property bool isList: root.viewMode === "list"
+        readonly property int gridColumns:
+            Math.max(1, Math.floor(root.width / gridMinCellWidth))
+        readonly property int gridCellWidth: root.width > 0
+                                             ? Math.floor(root.width / gridColumns)
+                                             : gridMinCellWidth
     }
 
     implicitHeight: grid.count === 0
