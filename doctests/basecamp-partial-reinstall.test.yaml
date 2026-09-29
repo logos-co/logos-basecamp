@@ -227,11 +227,25 @@ sections:
       Basecamp accepts `https://` repository URLs only. The same server hands out
       the packages, and its access log is what this doc-test measures.
     steps:
-      - title: "Generate a certificate"
+      - title: "Generate a local CA and server certificate"
         run: |
           set -eu
-          openssl req -x509 -newkey rsa:2048 -nodes -keyout localhost.key -out localhost.crt \
-            -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt \
+            -days 2 -subj "/CN=Partial Reinstall Test CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign"
+          openssl req -new -newkey rsa:2048 -nodes -keyout localhost.key \
+            -out localhost.csr -subj "/CN=localhost"
+          cat > localhost.ext <<'EOF'
+          basicConstraints=critical,CA:FALSE
+          keyUsage=critical,digitalSignature,keyEncipherment
+          extendedKeyUsage=serverAuth
+          subjectAltName=IP:127.0.0.1
+          EOF
+          openssl x509 -req -in localhost.csr -CA ca.crt -CAkey ca.key \
+            -CAcreateserial -out localhost.crt -days 2 -sha256 -extfile localhost.ext
+          openssl verify -CAfile ca.crt -verify_ip 127.0.0.1 \
+            -purpose sslserver localhost.crt
         check_file: "localhost.crt"
 
       - title: "Start the HTTPS server"
@@ -269,7 +283,7 @@ sections:
           echo $! > caddy.pid
 
           for _ in $(seq 60); do
-            if CURL_CA_BUNDLE="$(pwd)/localhost.crt" \
+            if CURL_CA_BUNDLE="$(pwd)/ca.crt" \
                NO_PROXY=127.0.0.1,localhost \
                no_proxy=127.0.0.1,localhost \
                curl -s -o /dev/null https://127.0.0.1:8443/; then
@@ -374,12 +388,12 @@ sections:
 
       Each launch sets the downloader's CA bundle explicitly. The downloader
       checks `CURL_CA_BUNDLE` before `SSL_CERT_FILE`, so both must point to
-      this local catalog's certificate. It also excludes loopback from any
+      this local catalog's CA certificate. It also excludes loopback from any
       inherited HTTPS proxy; the catalog server only listens on loopback.
     steps:
       - title: "Add our catalog"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/ca.crt\" SSL_CERT_FILE=\"$(pwd)/ca.crt\" NIX_SSL_CERT_FILE=\"$(pwd)/ca.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -507,7 +521,7 @@ sections:
     steps:
       - title: "Install reinstall_demo"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/ca.crt\" SSL_CERT_FILE=\"$(pwd)/ca.crt\" NIX_SSL_CERT_FILE=\"$(pwd)/ca.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -632,7 +646,7 @@ sections:
     steps:
       - title: "Open the app again and confirm"
         ui_test:
-          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/localhost.crt\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
+          launch: "sh -c 'HOME=\"$(pwd)/home\" CURL_CA_BUNDLE=\"$(pwd)/ca.crt\" SSL_CERT_FILE=\"$(pwd)/ca.crt\" NIX_SSL_CERT_FILE=\"$(pwd)/ca.crt\" NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost exec ./result-app/bin/LogosBasecamp --user-dir \"$(pwd)/userdir\"'"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
