@@ -25,12 +25,13 @@
 # THE IN-PROCESS IMAGE SET — this scoping IS the correctness of the gate:
 #   IN   bin/LogosBasecamp                the app
 #   IN   lib/liblogos_core.*              the single provider
-#   IN   plugins/*/*_replica_factory.*    QPluginLoader'd by LogosQmlBridge
 #   IN   plugins/main_ui/main_ui.*        QPluginLoader'd by Window
 #   OUT  bin/logos_host, bin/ui-host      SEPARATE PROCESSES; they correctly keep
 #                                         their own statics
 #   OUT  plugins/*/*_plugin.*             a ui_qml backend is loaded by ui-host,
 #                                         not by the app
+#   OUT  plugins/*/*_replica_factory.*    still shipped by module builds, never
+#                                         loaded: backends are dynamic replicas
 #   OUT  modules/**                       loaded by logos_host
 #
 # negativeControl = true builds the same script against a tree with a REAL
@@ -183,7 +184,7 @@ pkgs.runCommand "logos-basecamp-symbol-gate${pkgs.lib.optionalString negativeCon
   # logos-logoscore-cli, where `find` saw 0 of 2 real libraries. `[ -f ]`
   # elsewhere is fine, because test(1) follows symlinks and find does not.
   while IFS= read -r p; do [ -n "$p" ] && CONSUMERS+=("$(resolve_image "$p")"); done < <(
-    find -L "$ROOT/plugins" -type f \( -name '*_replica_factory.*' -o -name 'main_ui.*' \) 2>/dev/null \
+    find -L "$ROOT/plugins" -type f -name 'main_ui.*' 2>/dev/null \
       | grep -Ev '\.(txt|json)$' || true)
 
   echo "provider  = ''${PROVIDER#$ROOT/}"

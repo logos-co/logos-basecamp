@@ -320,10 +320,8 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
     // from basecamp to other apps
     // For ui_qml view modules, wire up any signals we care about from the
     // QtRO replica before QML sees the widget. The replica is already
-    // created inside LogosQmlBridge at this point (setViewModuleSocket was
-    // called in PluginLoader::onHostReady before pluginLoaded was emitted);
-    // it may not yet be Valid, but Qt signal/slot connections work regardless
-    // of replica state — the connection will fire when the source emits.
+    // created and Valid inside LogosQmlBridge at this point (PluginLoader
+    // waits for that before loading the QML), so its signals resolve here.
     if (type == UIPluginType::UiQml) {
         QQuickWidget* qw = m_qmlPluginWidgets.value(name);
         if (qw) {

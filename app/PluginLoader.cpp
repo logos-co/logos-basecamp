@@ -46,6 +46,11 @@ PluginLoader::PluginLoader(LogosAPI* logosAPI,
 
 namespace {
 
+// From ui-host's READY to its backend replica being Valid: one round trip for
+// the schema, answered even while the backend waits on synchronous IPC. Only a
+// wedged backend reaches this; one that exits fails the load at once.
+constexpr int kBackendReadyTimeoutMs = 30000;
+
 // Two frames of the primary screen's refresh, floored at one 60 Hz frame.
 int spinnerPaintDelayMs()
 {
@@ -389,21 +394,26 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     }
 
     auto onHostReady = [this, request, bridge, viewHost]() {
-        bridge->setViewModuleSocket(request.name, viewHost->socketName());
+        bridge->setViewModuleSocket(request.name, viewHost->socketName(),
+                                    viewHost->sourceName());
+        auto exitConn = std::make_shared<QMetaObject::Connection>(
+            connect(viewHost, &ViewModuleHost::processExited, bridge,
+                [bridge, name = request.name](int) { bridge->notifyViewModuleCrashed(name); }));
 
-        const QString base = QFileInfo(request.mainFilePath).absolutePath()
-            + QStringLiteral("/") + request.name
-            + QStringLiteral("_replica_factory");
-        for (const QString& suffix : { QStringLiteral(".dylib"),
-                                       QStringLiteral(".so"),
-                                       QStringLiteral(".dll") }) {
-            const QString factoryPath = base + suffix;
-            if (QFile::exists(factoryPath)) {
-                bridge->setViewReplicaPlugin(request.name, factoryPath);
-                break;
-            }
-        }
-        loadQmlView(request, bridge, viewHost);
+        bridge->prepareViewModule(request.name, kBackendReadyTimeoutMs,
+            [this, request, bridge, viewHost, exitConn](bool ok, const QString& error) {
+                QObject::disconnect(*exitConn);
+                if (!ok) {
+                    qWarning() << "Backend of" << request.name << "not ready:" << error;
+                    viewHost->stop();
+                    viewHost->deleteLater();
+                    delete bridge;
+                    setLoading(request.name, false);
+                    emit pluginLoadFailed(request.name, error);
+                    return;
+                }
+                loadQmlView(request, bridge, viewHost);
+            });
     };
 
     auto* timeout = new QTimer(this);
@@ -483,7 +493,9 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
                                    LogosQmlBridge* bridge,
                                    ViewModuleHost* viewHost)
 {
-    bridge->setParent(qmlWidget);
+    // The engine, not the widget: the replica must be gone before the engine
+    // prunes QML's property-cache entry for it (see LogosQmlBridge.h, module()).
+    bridge->setParent(qmlWidget->engine());
 
     // Attach BEFORE setSource() below, which is where QML actually runs: an app
     // calling logos.request() from Component.onCompleted would otherwise be an
@@ -511,6 +523,10 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
             QStringLiteral("Failed to load QML view for ") + request.name);
         return;
     }
+
+    // The backend went ready before this QML existed (see onHostReady), so
+    // tell the view now; views wait for viewModuleReadyChanged to show content.
+    bridge->replayViewModuleState();
 
     setLoading(request.name, false);
     emit pluginLoaded(request.name, qmlWidget, nullptr, UIPluginType::UiQml, viewHost);
