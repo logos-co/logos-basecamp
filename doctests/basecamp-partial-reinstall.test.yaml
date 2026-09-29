@@ -251,7 +251,11 @@ sections:
 
           :8443 {
               bind 127.0.0.1
-              tls localhost.crt localhost.key
+              # Use TLS 1.2 for this local fixture to avoid platform-specific
+              # TLS 1.3 key-exchange differences between OpenSSL and Caddy.
+              tls localhost.crt localhost.key {
+                  protocols tls1.2 tls1.2
+              }
               root * www
               file_server
               log {
