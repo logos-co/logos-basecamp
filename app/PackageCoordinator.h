@@ -104,7 +104,7 @@ public:
     // Returns whether the broker accepted the response; false means the
     // dispatch already ended (requester gone, or timed out) and nobody heard.
     using IntentResponder = std::function<bool(const QString& requestId, bool ok,
-                                               const QString& error)>;
+                                               const QString& error, const QVariant& data)>;
     void setIntentResponder(IntentResponder responder)
     { m_intentResponder = std::move(responder); }
 
@@ -122,7 +122,7 @@ public slots:
     // confirm_install intent; PMU then runs the install itself. Basecamp owns
     // no install flow of its own here — every install in the app is initiated
     // by package_manager_ui and confirmed through this gate.
-    Q_INVOKABLE void confirmInstallGate(const QString& name);
+    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {});
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
     Q_INVOKABLE void openApp(const QString& name,
@@ -131,7 +131,8 @@ public slots:
                              bool allowFastLaunch = true);
     Q_INVOKABLE void confirmCatalogInstall(const QString& name,
                                            const QString& repositoryUrl,
-                                           const QVariantMap& versionPins = QVariantMap());
+                                           const QVariantMap& versionPins = QVariantMap(),
+                                           const QStringList& optionalNames = {});
 
     // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
     // confirm dialog directly — the shell is both asker and decider here, so
@@ -145,7 +146,7 @@ public slots:
     // Cascade confirmation — called from QML once the user OKs the uninstall
     // or upgrade dialog. Unloads, then answers the intent recorded on the
     // pending action (or removes locally when there is none).
-    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {});
 
     // Multi-uninstall counterparts. confirm runs the cascade-unload for every
     // name in the batch, then answers the requester; cancel just answers.
@@ -286,7 +287,10 @@ private:
     // Empty id -> false, no call: that is how a shell-initiated flow is told it
     // owns the removal.
     bool finishIntent(const QString& requestId, bool ok,
-                      const QString& error = QString());
+                      const QString& error = QString(), const QVariant& data = QVariant());
+
+    QVariantList m_pendingOptionalPackages;
+    QVariantMap selectedOptionalPackages(const QStringList& names) const;
 
     IntentResponder m_intentResponder;
 

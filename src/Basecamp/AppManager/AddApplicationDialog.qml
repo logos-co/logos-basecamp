@@ -16,7 +16,7 @@ Dialog {
     // onCatalogInstallFailed; cleared on each (re)open.
     property string installError: ""
 
-    signal installRequested(string name, string repositoryUrl, var versionPins)
+    signal installRequested(string name, string repositoryUrl, var versionPins, var optionalNames)
     signal launchRequested(string name)
     signal versionChangeRequested(string name, string repositoryUrl, var versionPins)
     signal uninstallRequested(string name, string repositoryUrl)
@@ -24,6 +24,7 @@ Dialog {
     function openWith(metadata_) {
         root.metadata = metadata_ || ({})
         d.pickedVersions = ({})
+        d.optionalSelection = ({})
         root.installStage = root.metadata.installStage || InstallStage.None
         root.installError = ""   // clear any stale error from a prior open
         open()
@@ -56,6 +57,14 @@ Dialog {
         }
 
         property var pickedVersions: ({})
+        property var optionalSelection: ({})
+        readonly property var optionalPackages: root.metadata.optionalPackages || []
+
+        function selectedOptionalNames() {
+            return d.optionalPackages.filter(function(p) {
+                return !p.error && d.optionalSelection[p.name] !== false
+            }).map(function(p) { return p.name })
+        }
 
         // ── Target app derived fields ──
         readonly property string targetName:        root.metadata.name || ""
@@ -92,6 +101,8 @@ Dialog {
             return "install"
         }
         readonly property string actionText: {
+            if (root.metadata.resolutionPending && !d.installing && d.actionMode !== "launch")
+                return qsTr("Checking packages…")
             switch (d.actionMode) {
             case "installing": return d.stageLabel
             case "install":    return qsTr("Install")
@@ -118,7 +129,8 @@ Dialog {
             d.targetName.length > 0
             && !d.installing
             && d.installingBuckets === 0
-            && (d.actionMode === "launch" || !d.hasResolutionErrors)
+            && (d.actionMode === "launch"
+                || (!root.metadata.resolutionPending && !d.hasResolutionErrors))
 
         readonly property int totalDeps:
             root.requiredPackagesModel ? root.requiredPackagesModel.visibleCount : 0
@@ -449,7 +461,7 @@ Dialog {
                             return
                         }
                         root.installRequested(
-                            d.targetName, d.targetRepoUrl, d.buildVersionPins())
+                            d.targetName, d.targetRepoUrl, d.buildVersionPins(), d.selectedOptionalNames())
                     }
                     background: Rectangle {
                         radius: Theme.spacing.radiusXlarge
@@ -525,6 +537,46 @@ Dialog {
 
                     root.versionChangeRequested(
                         d.targetName, d.targetRepoUrl, d.buildVersionPins())
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.spacing.large
+            Layout.rightMargin: Theme.spacing.large
+            visible: d.optionalPackages.length > 0
+            LogosText {
+                text: qsTr("Optional Packages")
+                font.pixelSize: Theme.typography.panelTitleText
+            }
+            LogosText {
+                Layout.fillWidth: true
+                text: qsTr("Selected packages and their required dependencies will also be installed.")
+                wrapMode: Text.Wrap
+                color: Theme.palette.textSecondary
+            }
+            LogosListView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(d.optionalPackages.length * 44, 160)
+                clip: true
+                model: d.optionalPackages
+                delegate: LogosCheckbox {
+                    required property var modelData
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 44
+                    objectName: "addApplicationDialog.optional." + modelData.name
+                    text: modelData.name + (modelData.version ? " v" + modelData.version : "")
+                          + (modelData.error ? qsTr(" — unavailable") : "")
+                    enabled: !d.installing && !modelData.error
+                    checked: !modelData.error && d.optionalSelection[modelData.name] !== false
+                    onToggled: {
+                        var selected = Object.assign({}, d.optionalSelection)
+                        selected[modelData.name] = checked
+                        d.optionalSelection = selected
+                    }
+                    ToolTip.visible: hovered && !!modelData.error
+                    ToolTip.text: modelData.error || ""
                 }
             }
         }

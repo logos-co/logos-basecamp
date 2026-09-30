@@ -9,6 +9,14 @@
 
 namespace logos {
 
+inline QString appendOptionalRequests(const QString& depsJson, const QVariantList& requests)
+{
+    QJsonArray arr = QJsonDocument::fromJson(depsJson.toUtf8()).array();
+    for (const QVariant& request : requests)
+        arr.append(QJsonObject::fromVariantMap(request.toMap()));
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
 // The dependency-resolution request the INSTALL GATE sends.
 //
 // Names only the package the user is being asked about, and lets the resolver

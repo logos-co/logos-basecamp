@@ -29,6 +29,17 @@ private:
     }
 
 private slots:
+    void selectedOptionalsPreserveArtifactAndSignerPins()
+    {
+        const QVariantMap request{{"name", "storage_module"}, {"version", "0.3.0"},
+            {"repositoryUrl", "https://repo/"}, {"rootHash", "artifact"},
+            {"signer", "did:jwk:publisher"}};
+        const QJsonArray arr = parse(logos::appendOptionalRequests(
+            logos::gateResolverRequest("delivery_module", "https://repo/", "0.3.0"),
+            {request}));
+        QCOMPARE(arr.size(), 2);
+        QCOMPARE(arr.at(1).toObject(), QJsonObject::fromVariantMap(request));
+    }
     // The property the whole fix rests on: one entry, the subject only. Any
     // dependency added here would come back top-level and be filtered away.
     void requestNamesOnlyTheSubject()

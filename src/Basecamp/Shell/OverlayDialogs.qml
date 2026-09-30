@@ -109,7 +109,7 @@ Item {
         objectName: "confirmationDialog.upgradeCascade"
         mode: "upgradeCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
-        onContinueClicked: (name) => backend.confirmUninstallCascade(name)
+        onContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames())
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
@@ -122,7 +122,7 @@ Item {
         objectName: "confirmationDialog.installGate"
         mode: "installGate"
         displayNameLookup: _dialogDeps.displayNameLookup
-        onContinueClicked: (name) => backend.confirmInstallGate(name)
+        onContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames())
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
@@ -185,9 +185,9 @@ Item {
         onUninstallRequested: function(name, repositoryUrl) {
             backend.uninstallApp(name, repositoryUrl)
         }
-        onInstallRequested: function(name, repositoryUrl, versionPins) {
+        onInstallRequested: function(name, repositoryUrl, versionPins, optionalNames) {
             addApplicationDialog.installStage = InstallStage.Downloading
-            backend.confirmCatalogInstall(name, repositoryUrl, versionPins)
+            backend.confirmCatalogInstall(name, repositoryUrl, versionPins, optionalNames)
         }
         onLaunchRequested: function(name) {
             backend.onAppLauncherClicked(name)

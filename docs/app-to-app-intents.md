@@ -184,6 +184,14 @@ Anything else a provider returns is coerced to `failed` — free text in the cal
 
 It exists because attribution is not always enough. Showing who asked works when the user has context to judge against — they clicked something, and "Chat App wants to send funds" is a question they can answer. An *unsolicited* prompt to remove or downgrade one of your packages has no such context, and its correct answer is always no. A dialog whose right answer is unconditional can only cost you: it trains dismissal, and one mis-click is destructive and not undoable. So `basecamp.packages.confirm_uninstall` and `basecamp.packages.confirm_upgrade` are restricted to `package_manager_ui`, while `confirm_install` stays open — an app saying "you need X" is legitimate, and the shell already offers catalog installs an app's request provoked.
 
+The install and upgrade confirmations resolve optional packages throughout the
+required dependency tree. Available options start checked; unavailable options
+are disabled. An approved response includes `data.optionalPackages`, the selected
+resolver request objects with version, repository, artifact hash, and any signer
+pin preserved. Package Manager UI appends these to its download request so checked
+packages and their required dependencies are installed together. Unchecked
+optionals remain outside the install plan.
+
 Three properties are load-bearing. Denial answers `unavailable` **on the same floor** as "nothing provides it", so a refused app cannot learn the capability exists. An empty requester list is **refused**, not stored — it reads as "restricted to nobody" but would behave as unrestricted, so a typo must not silently open a destructive capability. And the list survives `rebuild()`, because it is code-declared policy rather than something read off disk.
 
 Its limit is the same one §6 sets out: an allow-list keyed on a self-declared module name is only as strong as the name, and nothing is signed. It raises the bar from "any installed app" to "an app that can successfully claim the name `package_manager_ui`". That is meaningfully better and it is not a proof.

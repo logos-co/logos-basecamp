@@ -92,6 +92,22 @@ Dialog {
     //               app, and a caller-supplied list would let it script this
     //               dialog. Empty = nothing else needs to change.
     property var depChanges: []
+    readonly property var mandatoryChanges: depChanges.filter(function(c) { return !c.optional; })
+    readonly property var optionalPackages: depChanges.filter(function(c) { return c.optional; })
+    property var optionalSelection: ({})
+
+    function resetOptionalSelection() {
+        var selected = {};
+        for (var i = 0; i < optionalPackages.length; ++i) {
+            var offer = optionalPackages[i];
+            if (!offer.error) selected[offer.name] = true;
+        }
+        optionalSelection = selected;
+    }
+
+    function selectedOptionalNames() {
+        return Object.keys(optionalSelection).filter(function(n) { return optionalSelection[n]; });
+    }
     // Whether `depChanges` is a CONCLUSION or just an absence. An empty list
     // means "nothing needs to change" only when the resolver actually ran;
     // when it could not (no repository to resolve against, or the call
@@ -164,6 +180,7 @@ Dialog {
         root.items = installedDeps_ || [];
         root.loadedItems = loadedDeps_ || [];
         root.depChanges = depChanges_ || [];
+        root.resetOptionalSelection();
         root.requesterName = requester_ || "";
         root._explicitClose = false;
         open();
@@ -185,6 +202,7 @@ Dialog {
         root.items = [];
         root.loadedItems = [];
         root.depChanges = depChanges_ || [];
+        root.resetOptionalSelection();
         root.requesterName = requester_ || "";
         root._explicitClose = false;
         open();
@@ -359,13 +377,15 @@ Dialog {
                     // The dep-change list below spells out the transitive set.
                     // When it's empty, say so plainly so a bare install still
                     // reads as a deliberate, complete confirmation.
-                    if ((root.depChanges || []).length === 0) {
+                    if (root.mandatoryChanges.length === 0) {
                         // Only a resolved empty set licenses the claim.
                         if (!root.depChangesResolved)
                             return iHead + " Its dependencies could not be "
                                  + "determined, so other packages may be "
                                  + "installed as well.";
-                        return iHead + " No other packages need to change.";
+                        return iHead + (root.optionalPackages.length > 0
+                            ? " Choose optional packages below."
+                            : " No other packages need to change.");
                     }
                     return iHead + " Installing it also applies the dependency "
                                  + "changes listed below:";
@@ -481,7 +501,7 @@ Dialog {
             Layout.fillWidth: true
             spacing: 6
             visible: (root.mode === "upgradeCascade" || root.mode === "installGate")
-                     && (root.depChanges || []).length > 0
+                     && root.mandatoryChanges.length > 0
 
             LogosText {
                 Layout.fillWidth: true
@@ -505,7 +525,7 @@ Dialog {
                     id: depChangeList
                     anchors.fill: parent
                     anchors.margins: 8
-                    model: root.depChanges
+                    model: root.mandatoryChanges
                     spacing: 4
                     clip: true
                     interactive: contentHeight > height
@@ -565,6 +585,45 @@ Dialog {
                             elide: Text.ElideMiddle
                         }
                     }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: (root.mode === "installGate" || root.mode === "upgradeCascade")
+                     && root.optionalPackages.length > 0
+            LogosText {
+                text: qsTr("Optional Packages")
+                font.weight: Theme.typography.weightBold
+            }
+            LogosText {
+                Layout.fillWidth: true
+                text: qsTr("Selected packages and their required dependencies will also be installed.")
+                wrapMode: Text.Wrap
+                color: Theme.palette.textSecondary
+            }
+            LogosListView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(root.optionalPackages.length * 44, 160)
+                clip: true
+                model: root.optionalPackages
+                delegate: LogosCheckbox {
+                    required property var modelData
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 44
+                    objectName: "confirmationDialog.optional." + modelData.name
+                    text: modelData.name + (modelData.version ? " v" + modelData.version : "")
+                          + (modelData.error ? qsTr(" — unavailable") : "")
+                    enabled: !modelData.error
+                    checked: !!root.optionalSelection[modelData.name]
+                    onToggled: {
+                        var selected = Object.assign({}, root.optionalSelection);
+                        selected[modelData.name] = checked;
+                        root.optionalSelection = selected;
+                    }
+                    ToolTip.visible: hovered && !!modelData.error
+                    ToolTip.text: modelData.error || ""
                 }
             }
         }

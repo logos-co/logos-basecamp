@@ -552,7 +552,7 @@ void PackageCoordinator::cascadeUnloadForPackage(const QString& moduleName)
     emit launcherAppsChanged();
 }
 
-void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
+void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames)
 {
     if (m_pendingAction.op != PendingOp::UninstallCascade
         || m_pendingAction.name != moduleName) {
@@ -564,6 +564,8 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     const QString requestId = m_pendingAction.intentRequestId;
     const bool    isUpgrade = m_pendingAction.isUpgrade;
     const QVariantList catalogPlan = m_pendingAction.catalogPlan;
+    const QVariantMap optionalSelection = selectedOptionalPackages(optionalNames);
+    m_pendingOptionalPackages.clear();
     m_pendingAction = {};
 
     if (!catalogPlan.isEmpty()) {
@@ -578,7 +580,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
     }
 
     QPointer<PackageCoordinator> selfDefer(this);
-    QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade]() {
+    QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade, optionalSelection]() {
         if (!selfDefer) return;
 
         cascadeUnloadForPackage(moduleName);
@@ -593,7 +595,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName)
         // version and install the new one; doing only the removal ourselves
         // would delete the package outright. Leave it installed (unloaded) —
         // the requester has already told the user the action failed.
-        if (!finishIntent(requestId, true) && !isUpgrade)
+        if (!finishIntent(requestId, true, QString(), optionalSelection) && !isUpgrade)
             performLocalRemoval({moduleName});
 
         emit coreModulesChanged();
@@ -664,11 +666,23 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
 // ---------------------------------------------------------------------------
 
 bool PackageCoordinator::finishIntent(const QString& requestId, bool ok,
-                                      const QString& error)
+                                      const QString& error, const QVariant& data)
 {
     if (requestId.isEmpty()) return false;
     if (!m_intentResponder) return false;
-    return m_intentResponder(requestId, ok, error);
+    return m_intentResponder(requestId, ok, error, data);
+}
+
+QVariantMap PackageCoordinator::selectedOptionalPackages(const QStringList& names) const
+{
+    QVariantList requests;
+    for (const auto& v : m_pendingOptionalPackages) {
+        const QVariantMap offer = v.toMap();
+        if (names.contains(offer.value("name").toString())
+            && !offer.contains("error"))
+            requests.append(offer.value("request"));
+    }
+    return {{QStringLiteral("optionalPackages"), requests}};
 }
 
 void PackageCoordinator::beginLocalUninstall(const QStringList& names,
@@ -736,8 +750,15 @@ void PackageCoordinator::resolveDepChangesThen(const QString& name,
         [self, then](QVariantList resolved) {
             if (!self) return;   // we are gone; the pending intent dies with us
             QVariantList changes;
+            self->m_pendingOptionalPackages.clear();
             for (const QVariant& v : resolved) {
                 const QVariantMap entry = v.toMap();
+                for (const QVariant& offer : entry.value("optionalDependencies").toList()) {
+                    QVariantMap change = offer.toMap();
+                    change.insert(QStringLiteral("optional"), true);
+                    changes.append(change);
+                    self->m_pendingOptionalPackages.append(offer);
+                }
                 const QString entryName = entry.value("name").toString();
                 if (entryName.isEmpty()) continue;
                 // The resolver echoes the requested package back as topLevel.
@@ -806,6 +827,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
 
     const QString name    = params.value(QStringLiteral("name")).toString();
     const QString version = params.value(QStringLiteral("version")).toString();
+    m_pendingOptionalPackages.clear();
 
     if (intent == QLatin1String("basecamp.packages.confirm_install")) {
         if (name.isEmpty()) {
@@ -885,7 +907,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
 
 // A fresh install unloads nothing, so both of these are just the answer — but
 // only for the package the pending dialog actually names.
-void PackageCoordinator::confirmInstallGate(const QString& name)
+void PackageCoordinator::confirmInstallGate(const QString& name, const QStringList& optionalNames)
 {
     if (m_pendingInstallName != name) {
         qWarning() << "confirmInstallGate for" << name
@@ -893,9 +915,11 @@ void PackageCoordinator::confirmInstallGate(const QString& name)
         return;
     }
     const QString requestId = m_pendingInstallRequestId;
+    const QVariantMap optionalSelection = selectedOptionalPackages(optionalNames);
+    m_pendingOptionalPackages.clear();
     m_pendingInstallRequestId.clear();
     m_pendingInstallName.clear();
-    finishIntent(requestId, true);
+    finishIntent(requestId, true, QString(), optionalSelection);
 }
 
 void PackageCoordinator::cancelInstallGate(const QString& name)
@@ -1884,6 +1908,11 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         : versionsList.first().toMap().value("manifest").toMap().value("version").toString();
 
     metadata["installStage"] = m_installRegistry->stage(name);
+    metadata["resolutionPending"] = requestOpen;
+    QVariantList optionalPackages;
+    for (const QVariant& v : m_lastResolvedRawByName.value(name))
+        optionalPackages.append(v.toMap().value("optionalDependencies").toList());
+    metadata["optionalPackages"] = optionalPackages;
 
     // {name, repo} entries so the filter pins each row to the resolver's
     // chosen repo and multi-repo names don't duplicate. Always at least the
@@ -1956,7 +1985,8 @@ void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
 
 void PackageCoordinator::confirmCatalogInstall(const QString& name,
                                                 const QString& repositoryUrl,
-                                                const QVariantMap& versionPins)
+                                                const QVariantMap& versionPins,
+                                                const QStringList& optionalNames)
 {
     if (!m_logosAPI || name.isEmpty()) return;
 
@@ -1971,7 +2001,16 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
 
     emit catalogInstallStageChanged(name, InstallStage::Downloading);
 
-    const QString depsJson = buildResolverDepsJson(name, repositoryUrl, versionPins);
+    QVariantList optionalRequests;
+    for (const QVariant& v : m_lastResolvedRawByName.value(name)) {
+        for (const QVariant& o : v.toMap().value("optionalDependencies").toList()) {
+            const QVariantMap offer = o.toMap();
+            if (optionalNames.contains(offer.value("name").toString()) && !offer.contains("error"))
+                optionalRequests.append(offer.value("request"));
+        }
+    }
+    const QString depsJson = logos::appendOptionalRequests(
+        buildResolverDepsJson(name, repositoryUrl, versionPins), optionalRequests);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);

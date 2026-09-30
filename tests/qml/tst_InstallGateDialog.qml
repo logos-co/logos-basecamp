@@ -3,6 +3,7 @@ import QtTest
 
 // Directory import, not `import Basecamp.Shell` — see tst_IntentInstallDialog.
 import "../../src/Basecamp/Shell"
+import Basecamp.AppManager
 
 // The install gate is a CONSENT screen: what it lists is what the user is
 // agreeing to install. It must never assert more than it knows.
@@ -26,6 +27,45 @@ TestCase {
         ConfirmationDialog {}
     }
 
+    Component { id: appDialogComp; AddApplicationDialog {} }
+    SignalSpy { id: installSpy; signalName: "installRequested" }
+
+    function test_app_install_passes_only_checked_available_optionals() {
+        var dlg = appDialogComp.createObject(testCase)
+        verify(dlg)
+        installSpy.target = dlg
+        installSpy.clear()
+        var metadata = { name: "chat", repositoryUrl: "https://repo/", selectedVersion: "0.3.0",
+            optionalPackages: [
+                { name: "storage_module", version: "0.3.0" },
+                { name: "missing_module", error: "no candidate" }
+            ] }
+        dlg.openWith(metadata)
+        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        dlg.metadata = Object.assign({}, metadata, {resolutionPending: true})
+        compare(primary.enabled, false)
+        dlg.metadata = metadata
+        compare(primary.enabled, true)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.missing_module") })
+        var available = findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module")
+        var unavailable = findChild(dlg.contentItem, "addApplicationDialog.optional.missing_module")
+        verify(available)
+        verify(unavailable)
+        compare(available.checked, true)
+        compare(unavailable.checked, false)
+        compare(unavailable.enabled, false)
+        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        compare(installSpy.count, 1)
+        compare(installSpy.signalArguments[0][3].length, 1)
+        compare(installSpy.signalArguments[0][3][0], "storage_module")
+        installSpy.clear()
+        mouseClick(available)
+        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        compare(installSpy.count, 1)
+        compare(installSpy.signalArguments[0][3].length, 0)
+        dlg.destroy()
+    }
+
     function bodyTextOf(dlg) {
         // The body paragraph is the only text carrying the claim; find it by
         // content rather than by index so layout changes don't break this.
@@ -40,6 +80,43 @@ TestCase {
     }
 
     // Baseline: a genuinely empty, genuinely resolved set may say so.
+    function test_available_optionals_default_checked_and_unavailable_disabled() {
+        var dlg = dialogComp.createObject(testCase)
+        verify(dlg)
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [
+            { name: "storage_module", optional: true, version: "0.3.0" },
+            { name: "missing_module", optional: true, error: "no candidate" }
+        ], "package_manager_ui", false)
+        compare(dlg.selectedOptionalNames().length, 1)
+        compare(dlg.selectedOptionalNames()[0], "storage_module")
+        tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.optional.missing_module") })
+        var available = findChild(dlg.contentItem, "confirmationDialog.optional.storage_module")
+        var unavailable = findChild(dlg.contentItem, "confirmationDialog.optional.missing_module")
+        verify(available)
+        verify(unavailable)
+        compare(available.checked, true)
+        compare(unavailable.checked, false)
+        compare(unavailable.enabled, false)
+        mouseClick(available)
+        compare(dlg.selectedOptionalNames().length, 0)
+        compare(dlg.mandatoryChanges.length, 0)
+        dlg.destroy()
+    }
+
+    function test_upgrade_optionals_reset_for_each_dialog() {
+        var dlg = dialogComp.createObject(testCase)
+        verify(dlg)
+        dlg.openWithUpgrade("delivery_module", "0.3.0", 0, [], [],
+            [{ name: "storage_module", optional: true, version: "0.3.0" }], "", true)
+        compare(dlg.selectedOptionalNames()[0], "storage_module")
+        dlg.optionalSelection = ({storage_module: false})
+        compare(dlg.selectedOptionalNames().length, 0)
+        dlg.close()
+        dlg.openWithUpgrade("delivery_module", "0.3.0", 0, [], [],
+            [{ name: "storage_module", optional: true, version: "0.3.0" }], "", true)
+        compare(dlg.selectedOptionalNames()[0], "storage_module")
+        dlg.destroy()
+    }
     function test_resolved_empty_set_may_claim_nothing_changes() {
         var dlg = dialogComp.createObject(testCase)
         verify(dlg)
