@@ -60,11 +60,14 @@ private slots:
             QVariantMap{{"manifest", QVariantMap{{"version", "1.0.0"}}}, {"rootHash", "1.0.0"}}});
         return o;
     }
-    void installedOptionalDefaultsToItsReleaseAndIsNotRequested() {
+    void installedOptionalIsResolvedAtItsInstalledRelease() {
         logos::OptionalDependencyPreview preview("chat", "repo");
         preview.setInstalled({{"rln", {"1.0.0", "1.0.0"}}});
         const auto next = preview.advance(response({{"chat", QStringList{"delivery"}}}, {versioned("rln", "delivery")}));
-        QCOMPARE(names(next), QStringList{"chat"});
+        // Resolved so its required packages (e.g. lez_rln) are listed.
+        const auto inputs = QJsonDocument::fromJson(next.toUtf8()).array();
+        QCOMPARE(inputs.size(), 2);
+        QCOMPARE(inputs[1].toObject().value("version").toString(), QStringLiteral("1.0.0"));
         QCOMPARE(preview.offers().size(), 1);
         const auto shown = preview.offers().first().toMap();
         QCOMPARE(shown.value("version").toString(), QStringLiteral("1.0.0"));

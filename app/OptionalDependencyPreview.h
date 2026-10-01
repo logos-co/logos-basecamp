@@ -16,8 +16,7 @@ public:
           m_pins(std::move(pins)), m_selection(std::move(selection)),
           m_optionalPins(std::move(optionalPins)) {}
 
-    // name -> {version, rootHash}. An installed optional defaults to its installed
-    // release and is requested only when the user picks another one.
+    // name -> {version, rootHash}. An installed optional defaults to its installed release.
     void setInstalled(QMap<QString, QPair<QString, QString>> installed) { m_installed = std::move(installed); }
     // Whether optionals that are not installed start selected.
     void setSelectNew(bool select) { m_selectNew = select; }
@@ -127,7 +126,8 @@ public:
                 m_optionalPins.remove(name);
                 picked = selectedOptionalRequests({offer}, {name});
             }
-            if (!picked.isEmpty() && keepsInstalledRelease(offer, picked.first().toMap())) continue;
+            // A kept installed release is still resolved so its required packages are listed;
+            // installs skip it as already on disk, and the gate answer leaves it out.
             optionalRequests.append(picked);
         }
         QMap<QString, QVariantMap> requests;
