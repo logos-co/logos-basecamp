@@ -707,11 +707,20 @@ QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) con
     const QVariantMap catalogRow = m_appsModel ? m_appsModel->rowDataByName(name, repo) : QVariantMap{};
     row.insert("optional", true);
     if (offer.contains("error")) row.insert("resolverError", offer.value("error"));
-    // An installed-only offer has no catalog row; its installed manifest names it.
+    // An installed-only offer has no catalog row; its installed manifest describes it.
+    QVariantMap installed;
+    if (catalogRow.isEmpty()) {
+        for (const QVariant& v : m_installedPackagesCache) {
+            const QVariantMap pkg = v.toMap();
+            const QString module = pkg.value("moduleName").toString();
+            if ((module.isEmpty() ? pkg.value("name").toString() : module) == name) { installed = pkg; break; }
+        }
+    }
     const QString displayName = catalogRow.value("displayName").toString();
     row.insert("displayName", !displayName.isEmpty() ? displayName
                                                      : m_displayNameByModule.value(name, name));
-    row.insert("description", catalogRow.value("description"));
+    row.insert("description", catalogRow.isEmpty() ? installed.value("description")
+                                                    : catalogRow.value("description"));
     row.insert("toVersion", offer.value("version"));
     row.insert("action", offer.contains("error") ? QStringLiteral("error")
         : depAction(m_installedVersionByName.value(name), offer.value("version").toString(),

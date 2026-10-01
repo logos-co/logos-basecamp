@@ -100,7 +100,8 @@ ItemDelegate {
                 visible: root.selectable
                 Layout.preferredWidth: 24
                 Layout.preferredHeight: 24
-                enabled: !root.installing && !d.isError
+                // Installed-only (not in the catalog): kept as installed, nothing to choose.
+                enabled: !root.installing && !d.isError && !(root.appRow && root.appRow.installedOnly)
                 checked: root.selected
                 onToggled: root.selectionToggled(checked)
                 ToolTip.visible: hovered && !!root.appRow.error

@@ -306,4 +306,20 @@ TestCase {
         verify(optional.itemAtIndex(7) !== null);
         cleanupHost(host);
     }
+
+    // An embedded module the catalog lacks: kept as installed, nothing to pick.
+    function test_installed_only_optional_has_no_choices() {
+        var host = openWithDeps(1, testCase.crampedWindow);
+        host.dialog.metadata = Object.assign({}, host.dialog.metadata, {optionalPackages: [
+            {name: "modules_state", displayName: "Module State", version: "0.1.0",
+             installedVersion: "0.1.0", installedOnly: true, action: "installed",
+             selected: false, versions: []}]});
+        waitForRendering(testCase);
+        var box = find(host, "addApplicationDialog.optional.modules_state");
+        verify(box.checked, "kept, whatever the backend's default");
+        verify(!box.enabled, "nothing to opt out of");
+        var combo = find(host, "packageRow.version.modules_state");
+        verify(!combo.visible, "no version picker");
+        cleanupHost(host);
+    }
 }

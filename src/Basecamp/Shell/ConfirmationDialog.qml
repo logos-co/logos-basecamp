@@ -131,6 +131,7 @@ Dialog {
     // The backend's default (`selected`) until the user toggles the row.
     function isOptionalSelected(p) {
         if (p.error || p.requiredFor) return false;
+        if (p.installedOnly) return true;
         const own = optionalSelection[p.name];
         return own !== undefined ? own : p.selected !== false;
     }
