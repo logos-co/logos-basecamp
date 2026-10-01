@@ -5,8 +5,8 @@
 // must ask the resolver the same question — and PMUI asks by naming ONE
 // package and letting the resolver walk the rest.
 //
-// The gate briefly reused PackageCoordinator::buildResolverDepsJson, which
-// pre-expands every dependency into the request for the App-Manager's
+// The gate briefly reused an App-Manager request builder, which
+// pre-expanded every dependency into the request for the App-Manager's
 // per-dependency version pins. Everything in the request returns
 // `topLevel: true`, and the gate filters top-level entries out as the subject
 // of its own dialog — so every dependency vanished, the dialog stated
@@ -71,12 +71,17 @@ private slots:
     {
         const QVariantMap request{{"name", "storage_module"}, {"version", "0.3.0"},
             {"repositoryUrl", "https://repo/"}, {"rootHash", "artifact"},
-            {"signer", "did:jwk:publisher"}};
-        const QJsonArray arr = parse(logos::appendOptionalRequests(
-            logos::gateResolverRequest("delivery_module", "https://repo/", "0.3.0"),
-            {request}));
-        QCOMPARE(arr.size(), 2);
-        QCOMPARE(arr.at(1).toObject(), QJsonObject::fromVariantMap(request));
+            {"signer", "did:jwk:publisher"}, {"optional", true}};
+        const QVariantMap offer{{"name", "storage_module"}, {"version", "0.3.0"}, {"request", request},
+            {"versions", QVariantList{QVariantMap{{"manifest", QVariantMap{{"version", "0.2.0"}}},
+                                                  {"rootHash", "older"}}}}};
+        const QVariantList picked = logos::selectedOptionalRequests({offer}, {"storage_module"},
+            {{"storage_module", "0.2.0"}});
+        QCOMPARE(picked.size(), 1);
+        QVariantMap expected = request;
+        expected.insert("version", "0.2.0");
+        expected.insert("rootHash", "older");
+        QCOMPARE(picked.first().toMap(), expected);
     }
     // The property the whole fix rests on: one entry, the subject only. Any
     // dependency added here would come back top-level and be filtered away.

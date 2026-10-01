@@ -103,9 +103,9 @@ void FixtureBackend::openApp(const QString& name, const QString& repositoryUrl, 
     qInfo() << "FixtureBackend: openApp — fixture build, no effect";
 }
 
-void FixtureBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins)
+void FixtureBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl)
 {
-    Q_UNUSED(name); Q_UNUSED(repositoryUrl); Q_UNUSED(versionPins);
+    Q_UNUSED(name); Q_UNUSED(repositoryUrl);
     qInfo() << "FixtureBackend: confirmCatalogInstall — fixture build, no effect";
 }
 

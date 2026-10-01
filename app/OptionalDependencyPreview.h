@@ -16,23 +16,40 @@ public:
           m_pins(std::move(pins)), m_selection(std::move(selection)),
           m_optionalPins(std::move(optionalPins)) {}
 
+    // Optionals already installed are kept as they are, so they are not offered.
+    void setExcluded(QSet<QString> names) { m_excluded = std::move(names); }
+
+    // The subject plus every required-row pin, so a pin applies even when the
+    // first pass fails; later passes keep only pins that are still mandatory.
     QString initialRequest() const
-    { return gateResolverRequest(m_subject, m_repository, m_pins.value(m_subject).toString()); }
+    {
+        QJsonArray arr{QJsonObject::fromVariantMap(subjectRequest())};
+        for (auto it = m_pins.cbegin(); it != m_pins.cend(); ++it)
+            if (it.key() != m_subject && !it.value().toString().isEmpty())
+                arr.append(QJsonObject{{"name", it.key()}, {"version", it.value().toString()}});
+        return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    }
 
     QString advance(const QVariantList& resolved)
     {
         QVariantMap graph;
         QMap<QString, QVariantMap> rows;
+        // Compare this pass's artifacts per name (a plan may hold two rows of one name).
+        QMap<QString, QStringList> artifacts;
         for (const QVariant& v : resolved) {
             const QVariantMap row = v.toMap();
-            const QString name = row.value("name").toString();
-            const QString artifact = row.value("version").toString() + "|" + row.value("rootHash").toString();
-            if (m_artifacts.contains(name) && m_artifacts.value(name) != artifact) {
+            artifacts[row.value("name").toString()].append(
+                row.value("version").toString() + "|" + row.value("rootHash").toString());
+        }
+        for (auto a = artifacts.begin(); a != artifacts.end(); ++a) {
+            a->sort();
+            const QString artifact = a->join(',');
+            if (m_artifacts.contains(a.key()) && m_artifacts.value(a.key()) != artifact) {
                 for (auto it = m_discovered.begin(); it != m_discovered.end();)
-                    if (it.value().value("requiredBy").toString() == name) it = m_discovered.erase(it);
+                    if (it.value().value("requiredBy").toString() == a.key()) it = m_discovered.erase(it);
                     else ++it;
             }
-            m_artifacts.insert(name, artifact);
+            m_artifacts.insert(a.key(), artifact);
         }
         for (const QVariant& v : resolved) {
             const QVariantMap row = v.toMap();
@@ -63,12 +80,12 @@ public:
             for (const QVariantMap& offer : m_discovered) {
                 if (offer.value("requiredBy").toString() != parent || offer.contains("error")) continue;
                 const QString name = offer.value("name").toString();
-                if (m_selection.value(name, true).toBool()) queue.append(name);
+                if (m_selection.value(name, true).toBool() && !m_excluded.contains(name)) queue.append(name);
             }
         }
 
         m_offers.clear();
-        QSet<QString> offered;
+        QMap<QString, int> offered;
         for (auto it = m_discovered.begin(); it != m_discovered.end();) {
             const auto offer = it.value();
             const QString name = offer.value("name").toString();
@@ -76,11 +93,15 @@ public:
                 it = m_discovered.erase(it);
                 continue;
             }
-            if (!mandatory.contains(name) && !offered.contains(name)) {
-                m_offers.append(offer);
-                offered.insert(name);
-            }
             ++it;
+            if (mandatory.contains(name) || m_excluded.contains(name)) continue;
+            // One row per name; an available offer wins over an unavailable one.
+            if (!offered.contains(name)) {
+                offered.insert(name, m_offers.size());
+                m_offers.append(offer);
+            } else if (m_offers.at(offered.value(name)).toMap().contains("error") && !offer.contains("error")) {
+                m_offers[offered.value(name)] = offer;
+            }
         }
 
         m_optionalNames.clear();
@@ -106,7 +127,7 @@ public:
             optionalRequests.append(picked);
         }
         QMap<QString, QVariantMap> requests;
-        requests.insert(m_subject, QJsonDocument::fromJson(initialRequest().toUtf8()).array().first().toObject().toVariantMap());
+        requests.insert(m_subject, subjectRequest());
         for (const QVariant& v : optionalRequests) {
             const QVariantMap request = v.toMap();
             requests.insert(request.value("name").toString(), request);
@@ -121,7 +142,7 @@ public:
             requests.insert(it.key(), request);
         }
         QJsonArray arr;
-        // The subject first keeps the resolver's top-level metadata stable.
+        // The subject first: the resolver emits its closure before the optionals.
         arr.append(QJsonObject::fromVariantMap(requests.take(m_subject)));
         for (const auto& request : requests) arr.append(QJsonObject::fromVariantMap(request));
         return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
@@ -132,7 +153,14 @@ public:
     QStringList optionalNames() const { return m_optionalNames; }
 
 private:
+    QVariantMap subjectRequest() const
+    {
+        return QJsonDocument::fromJson(gateResolverRequest(m_subject, m_repository,
+            m_pins.value(m_subject).toString()).toUtf8()).array().first().toObject().toVariantMap();
+    }
+
     QString m_subject, m_repository;
+    QSet<QString> m_excluded;
     QVariantMap m_pins, m_selection, m_optionalPins;
     QMap<QString, QVariantMap> m_discovered;
     QMap<QString, QString> m_artifacts;

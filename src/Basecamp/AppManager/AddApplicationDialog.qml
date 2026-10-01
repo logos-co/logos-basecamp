@@ -16,7 +16,7 @@ Dialog {
     // onCatalogInstallFailed; cleared on each (re)open.
     property string installError: ""
 
-    signal installRequested(string name, string repositoryUrl, var versionPins, var optionalNames, var optionalVersionPins)
+    signal installRequested(string name, string repositoryUrl)
     signal launchRequested(string name)
     signal versionChangeRequested(string name, string repositoryUrl, var versionPins, var optionalSelection, var optionalVersionPins)
     signal uninstallRequested(string name, string repositoryUrl)
@@ -80,12 +80,6 @@ Dialog {
                     picks[p.name] = picked
             })
             d.optionalPickedVersions = picks
-        }
-
-        function selectedOptionalNames() {
-            return d.optionalPackages.filter(function(p) {
-                return !p.error && d.optionalSelection[p.name] !== false
-            }).map(function(p) { return p.name })
         }
 
         // ── Target app derived fields ──
@@ -482,9 +476,7 @@ Dialog {
                             root.close()
                             return
                         }
-                        root.installRequested(
-                            d.targetName, d.targetRepoUrl, d.buildVersionPins(), d.selectedOptionalNames(),
-                            d.optionalPickedVersions)
+                        root.installRequested(d.targetName, d.targetRepoUrl)
                     }
                     background: Rectangle {
                         radius: Theme.spacing.radiusXlarge
@@ -567,7 +559,8 @@ Dialog {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: optionalHeading.implicitHeight + d.depsRowHeight + spacing
-            visible: d.optionalPackages.length > 0
+            // Launch installs nothing, so an installed app offers no optional choices here.
+            visible: d.optionalPackages.length > 0 && d.actionMode !== "launch"
             LogosText {
                 id: optionalHeading
                 Layout.fillWidth: true

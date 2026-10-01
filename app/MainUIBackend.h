@@ -276,11 +276,9 @@ public slots:
                              const QString& repositoryUrl,
                              const QVariantMap& versionPins = QVariantMap(),
                              bool allowFastLaunch = true);
-    Q_INVOKABLE void confirmCatalogInstall(const QString& name,
-                                           const QString& repositoryUrl,
-                                           const QVariantMap& versionPins = QVariantMap(),
-                                           const QStringList& optionalNames = {},
-                                           const QVariantMap& optionalVersionPins = {});
+    // Installs the dialog's last resolved preview, which already carries
+    // the version pins and optional selection.
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl);
     Q_INVOKABLE void notifyAddApplicationDialogClosed();
 
     // Core Module operations — routing rule: cascade-aware (load/unload)

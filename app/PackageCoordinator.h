@@ -137,11 +137,9 @@ public slots:
                              const QString& repositoryUrl,
                              const QVariantMap& versionPins = QVariantMap(),
                              bool allowFastLaunch = true);
-    Q_INVOKABLE void confirmCatalogInstall(const QString& name,
-                                           const QString& repositoryUrl,
-                                           const QVariantMap& versionPins = QVariantMap(),
-                                           const QStringList& optionalNames = {},
-                                           const QVariantMap& optionalVersionPins = {});
+    // Installs the dialog's last resolved preview, which already carries
+    // the version pins and optional selection.
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl);
 
     // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
     // confirm dialog directly — the shell is both asker and decider here, so
@@ -303,6 +301,7 @@ private:
     QString m_pendingPreviewName, m_pendingPreviewRepo, m_pendingPreviewVersion;
     int m_gatePreviewEpoch = 0;
     QVariantMap selectedOptionalPackages(const QStringList& names, const QVariantMap& versionPins) const;
+    void endGatePreview(const QString& name);
     QVariantMap optionalPackageRow(const QVariantMap& offer) const;
     QVariantList gatePreviewChanges(const QVariantList& resolved);
 
@@ -484,7 +483,8 @@ private:
                                 const QVariantMap& versionPins, const QVariantMap& selection,
                                 const QVariantMap& optionalPins, const QString& installedJson,
                                 std::function<bool()> current,
-                                std::function<void(QVariantList)> then);
+                                std::function<void(QVariantList)> then,
+                                const QSet<QString>& excluded = {});
     void resolveOptionalPreviewPass(std::shared_ptr<logos::OptionalDependencyPreview> preview,
                                     const QString& request, const QString& installedJson,
                                     QSet<QString> visited, std::function<bool()> current,

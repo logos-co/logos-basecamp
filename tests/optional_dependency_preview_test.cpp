@@ -20,6 +20,46 @@ class OptionalDependencyPreviewTest : public QObject {
         return out;
     }
 private slots:
+    void initialRequestCarriesRequiredRowPins() {
+        logos::OptionalDependencyPreview preview("chat", "repo", {{"delivery", "0.2.0"}});
+        QCOMPARE(names(preview.initialRequest()), (QStringList{"chat", "delivery"}));
+    }
+    void reofferedSelectionSurvivesAParentVersionChange() {
+        logos::OptionalDependencyPreview preview("chat", "repo", {{"delivery", "0.2.0"}});
+        const QVariantMap graph{{"chat", QStringList{"delivery"}}};
+        auto delivery = [](QString v) { return QVariantMap{{"name", "delivery"}, {"version", v}}; };
+        const auto first = preview.advance(response(graph, {offer("rln", "delivery")}, {delivery("0.3.0")}));
+        QVERIFY(names(first).contains("rln"));
+        // The resolver keeps listing a selected optional; the parent's new version must not drop it.
+        const auto second = preview.advance(response(graph, {offer("rln", "delivery")}, {delivery("0.2.0")}));
+        QCOMPARE(names(second), names(first));
+        QCOMPARE(preview.advance(response(graph, {offer("rln", "delivery")}, {delivery("0.2.0")})), second);
+    }
+    void duplicateRowsOfOneNameDoNotDropItsOffers() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        const QVariantMap graph{{"chat", QStringList{"d"}}};
+        const QVariantList rows{QVariantMap{{"name", "d"}, {"version", "1.0.0"}},
+                                QVariantMap{{"name", "d"}, {"version", "2.0.0"}}};
+        const auto first = preview.advance(response(graph, {offer("q", "d")}, rows));
+        QCOMPARE(preview.advance(response(graph, {offer("q", "d")}, rows)), first);
+        QCOMPARE(preview.optionalNames(), QStringList{"q"});
+    }
+    void availableOfferWinsOverAnUnavailableOneOfTheSameName() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        auto broken = offer("o", "a_mod");
+        broken.insert("error", "no candidate");
+        preview.advance(response({{"chat", QStringList{"a_mod", "b_mod"}}}, {broken, offer("o", "b_mod")}));
+        QCOMPARE(preview.offers().size(), 1);
+        QVERIFY(!preview.offers().first().toMap().contains("error"));
+        QCOMPARE(preview.optionalNames(), QStringList{"o"});
+    }
+    void excludedOptionalsAreNeitherOfferedNorRequested() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.setExcluded({"rln"});
+        const auto next = preview.advance(response({{"chat", QStringList{"delivery"}}}, {offer("rln", "delivery")}));
+        QCOMPARE(names(next), QStringList{"chat"});
+        QVERIFY(preview.offers().isEmpty());
+    }
     void invalidatedOptionalVersionUsesTheNewCheckedDefault() {
         logos::OptionalDependencyPreview preview("chat", "repo", {}, {}, {{"rln", "0.9.0"}});
         const auto next = preview.advance(response({}, {offer("rln", "chat", "1.0.0")}));

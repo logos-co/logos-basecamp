@@ -849,8 +849,8 @@ void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& opti
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
 { m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
-void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, const QStringList& optionalNames, const QVariantMap& optionalVersionPins)
-{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, versionPins, optionalNames, optionalVersionPins); }
+void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl)
+{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl); }
 void MainUIBackend::notifyAddApplicationDialogClosed()
 { m_packageCoordinator->notifyAddApplicationDialogClosed(); }
 

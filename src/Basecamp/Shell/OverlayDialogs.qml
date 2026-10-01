@@ -187,9 +187,9 @@ Item {
         onUninstallRequested: function(name, repositoryUrl) {
             backend.uninstallApp(name, repositoryUrl)
         }
-        onInstallRequested: function(name, repositoryUrl, versionPins, optionalNames, optionalVersionPins) {
+        onInstallRequested: function(name, repositoryUrl) {
             addApplicationDialog.installStage = InstallStage.Downloading
-            backend.confirmCatalogInstall(name, repositoryUrl, versionPins, optionalNames, optionalVersionPins)
+            backend.confirmCatalogInstall(name, repositoryUrl)
         }
         onLaunchRequested: function(name) {
             backend.onAppLauncherClicked(name)

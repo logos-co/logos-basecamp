@@ -565,9 +565,9 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
     const QString requestId = m_pendingAction.intentRequestId;
     const bool    isUpgrade = m_pendingAction.isUpgrade;
     const QVariantList catalogPlan = m_pendingAction.catalogPlan;
-    const QVariantMap optionalSelection = selectedOptionalPackages(optionalNames, optionalVersionPins);
-    m_pendingOptionalPackages.clear();
-    ++m_gatePreviewEpoch;
+    const QVariantMap optionalSelection = moduleName == m_pendingPreviewName
+        ? selectedOptionalPackages(optionalNames, optionalVersionPins) : QVariantMap{};
+    endGatePreview(moduleName);
     m_pendingAction = {};
 
     if (!catalogPlan.isEmpty()) {
@@ -647,7 +647,7 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
         // of them is always a no-op — don't even warn here.
         return;
     }
-    ++m_gatePreviewEpoch;
+    endGatePreview(moduleName);
     qDebug() << "Cancelling pending package action for" << moduleName;
     const QString requestId = m_pendingAction.intentRequestId;
     const bool wasCatalogInstall = !m_pendingAction.catalogPlan.isEmpty();
@@ -676,6 +676,16 @@ bool PackageCoordinator::finishIntent(const QString& requestId, bool ok,
     return m_intentResponder(requestId, ok, error, data);
 }
 
+// Only the dialog previewing `name` may end its preview; unrelated dialogs must
+// not cancel an in-flight gate resolution.
+void PackageCoordinator::endGatePreview(const QString& name)
+{
+    if (name.isEmpty() || name != m_pendingPreviewName) return;
+    ++m_gatePreviewEpoch;
+    m_pendingPreviewName.clear();
+    m_pendingOptionalPackages.clear();
+}
+
 QVariantMap PackageCoordinator::selectedOptionalPackages(const QStringList& names,
                                                          const QVariantMap& versionPins) const
 {
@@ -690,6 +700,7 @@ QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) con
     const QString repo = offer.value("repositoryUrl").toString();
     const QVariantMap catalogRow = m_appsModel ? m_appsModel->rowDataByName(name, repo) : QVariantMap{};
     row.insert("optional", true);
+    if (offer.contains("error")) row.insert("resolverError", offer.value("error"));
     row.insert("displayName", catalogRow.value("displayName").toString().isEmpty()
                                  ? name : catalogRow.value("displayName"));
     row.insert("description", catalogRow.value("description"));
@@ -914,10 +925,9 @@ void PackageCoordinator::confirmInstallGate(const QString& name, const QStringLi
     }
     const QString requestId = m_pendingInstallRequestId;
     const QVariantMap optionalSelection = selectedOptionalPackages(optionalNames, optionalVersionPins);
-    m_pendingOptionalPackages.clear();
     m_pendingInstallRequestId.clear();
     m_pendingInstallName.clear();
-    ++m_gatePreviewEpoch;
+    endGatePreview(name);
     finishIntent(requestId, true, QString(), optionalSelection);
 }
 
@@ -927,7 +937,7 @@ void PackageCoordinator::cancelInstallGate(const QString& name)
     const QString requestId = m_pendingInstallRequestId;
     m_pendingInstallRequestId.clear();
     m_pendingInstallName.clear();
-    ++m_gatePreviewEpoch;
+    endGatePreview(name);
     finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
@@ -1776,10 +1786,12 @@ void PackageCoordinator::resolveOptionalPreview(const QString& name, const QStri
                                                 const QVariantMap& optionalPins,
                                                 const QString& installedJson,
                                                 std::function<bool()> current,
-                                                std::function<void(QVariantList)> then)
+                                                std::function<void(QVariantList)> then,
+                                                const QSet<QString>& excluded)
 {
     auto preview = std::make_shared<logos::OptionalDependencyPreview>(
         name, repositoryUrl, versionPins, selection, optionalPins);
+    preview->setExcluded(excluded);
     resolveOptionalPreviewPass(preview, preview->initialRequest(), installedJson, {}, current, then);
 }
 
@@ -1789,8 +1801,17 @@ void PackageCoordinator::resolveOptionalPreviewPass(
     std::function<void(QVariantList)> then)
 {
     if (!current()) return;
+    // Errors keep the last offers attached, so the user can undo the selection that caused them.
+    auto fail = [preview, then](QVariantList rows) {
+        if (!rows.isEmpty() && !preview->offers().isEmpty()) {
+            QVariantMap first = rows.first().toMap();
+            first.insert("optionalDependencies", preview->offers());
+            rows[0] = first;
+        }
+        then(rows);
+    };
     if (visited.contains(request) || visited.size() >= 128) {
-        then({QVariantMap{{"name", preview->subject()},
+        fail({QVariantMap{{"name", preview->subject()},
                          {"error", QStringLiteral("dependency selections could not be resolved consistently")}}});
         return;
     }
@@ -1798,16 +1819,16 @@ void PackageCoordinator::resolveOptionalPreviewPass(
     QPointer<PackageCoordinator> self(this);
     LogosModules logos(m_logosAPI);
     logos.package_downloader.resolveDependenciesAsyncResult(request, installedJson,
-        [self, preview, request, installedJson, visited, current, then](logos::AsyncResult<QVariantList> result) {
+        [self, preview, request, installedJson, visited, current, then, fail](logos::AsyncResult<QVariantList> result) {
             if (!self || !current()) return;
             if (!result.ok() || result.value.isEmpty()) {
                 const QString detail = QString::fromStdString(result.error.message);
-                then({QVariantMap{{"name", preview->subject()}, {"error", detail.isEmpty()
+                fail({QVariantMap{{"name", preview->subject()}, {"error", detail.isEmpty()
                     ? QStringLiteral("could not resolve package dependencies") : detail}}});
                 return;
             }
             for (const QVariant& v : result.value)
-                if (v.toMap().contains("error")) { then(result.value); return; }
+                if (v.toMap().contains("error")) { fail(result.value); return; }
             const QString next = preview->advance(result.value);
             if (next != request) {
                 self->resolveOptionalPreviewPass(preview, next, installedJson, visited, current, then);
@@ -1901,6 +1922,9 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
     emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
                        /*requestOpen=*/true);
 
+    // This preview resolves without the installed set, so installed optionals
+    // must be excluded here; they are kept as they are.
+    const QSet<QString> installed(m_installedVersionByName.keyBegin(), m_installedVersionByName.keyEnd());
     QPointer<PackageCoordinator> self(this);
     resolveOptionalPreview(name, repositoryUrl, versionPins, optionalSelection, optionalVersionPins,
         QString(), [self, name, epoch]() {
@@ -1913,7 +1937,7 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
             self->m_lastResolvedRawByName.insert(name, resolved);
             self->m_lastResolvedChangesByName.insert(name, changes);
             self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes, false);
-        });
+        }, installed);
 }
 
 void PackageCoordinator::emitDialogMetadata(const QString& name,
@@ -2039,14 +2063,14 @@ void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
 }
 
 void PackageCoordinator::confirmCatalogInstall(const QString& name,
-                                                const QString& repositoryUrl,
-                                                const QVariantMap& versionPins,
-                                                const QStringList& optionalNames,
-                                                const QVariantMap& optionalVersionPins)
+                                                const QString& repositoryUrl)
 {
     if (!m_logosAPI || name.isEmpty()) return;
 
-    if (m_addPreviewPending) return;
+    if (m_addPreviewPending) {
+        emit catalogInstallStageChanged(name, InstallStage::None);
+        return;
+    }
 
     if (m_installRegistry->has(name)) {
         qDebug() << "confirmCatalogInstall: session for" << name
@@ -2059,9 +2083,6 @@ void PackageCoordinator::confirmCatalogInstall(const QString& name,
 
     emit catalogInstallStageChanged(name, InstallStage::Downloading);
 
-    Q_UNUSED(versionPins);
-    Q_UNUSED(optionalNames);
-    Q_UNUSED(optionalVersionPins);
     const QVariantList preview = m_lastResolvedRawByName.value(name);
     if (preview.isEmpty()) {
         failCatalogInstall(name, QStringLiteral("package preview is not ready"));
@@ -2159,9 +2180,16 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
 
         m_pendingAction = {PendingOp::UninstallCascade, name, {}, /*intentRequestId=*/{},
                            /*isUpgrade=*/true, plan.needed};
+        // Optionals were chosen in App Manager; this dialog only confirms that plan.
+        QVariantList reviewed;
+        for (const QVariant& v : m_lastResolvedChangesByName.value(name)) {
+            QVariantMap c = v.toMap();
+            c.remove("optional");
+            reviewed.append(c);
+        }
         emit upgradeCascadeConfirmationRequested(name, version, mode,
                                                  installedDependents, loadedDependents,
-                                                 m_lastResolvedChangesByName.value(name),
+                                                 reviewed,
                                                  /*requesterName=*/QString(),
                                                  /*requesterBundled=*/false);
         return;
