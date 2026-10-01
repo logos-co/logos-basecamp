@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Logos.Controls
 import Logos.Icons
 import Logos.Theme
+import Basecamp.AppManager
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
@@ -95,6 +96,7 @@ Dialog {
     readonly property var mandatoryChanges: depChanges.filter(function(c) { return !c.optional; })
     readonly property var optionalPackages: depChanges.filter(function(c) { return c.optional; })
     property var optionalSelection: ({})
+    property var optionalPickedVersions: ({})
 
     function resetOptionalSelection() {
         var selected = {};
@@ -103,6 +105,7 @@ Dialog {
             if (!offer.error) selected[offer.name] = true;
         }
         optionalSelection = selected;
+        optionalPickedVersions = ({});
     }
 
     function selectedOptionalNames() {
@@ -605,25 +608,28 @@ Dialog {
             }
             LogosListView {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(root.optionalPackages.length * 44, 160)
+                Layout.preferredHeight: Math.min(root.optionalPackages.length * 56, 168)
                 clip: true
                 model: root.optionalPackages
-                delegate: LogosCheckbox {
+                delegate: PackageRowDelegate {
                     required property var modelData
                     width: ListView.view ? ListView.view.width : 0
-                    height: 44
-                    objectName: "confirmationDialog.optional." + modelData.name
-                    text: modelData.name + (modelData.version ? " v" + modelData.version : "")
-                          + (modelData.error ? qsTr(" — unavailable") : "")
-                    enabled: !modelData.error
-                    checked: !!root.optionalSelection[modelData.name]
-                    onToggled: {
+                    height: 56
+                    appRow: modelData
+                    selectable: true
+                    selectionObjectName: "confirmationDialog.optional." + modelData.name
+                    selected: !!root.optionalSelection[modelData.name]
+                    selectedVersion: root.optionalPickedVersions[modelData.name] || ""
+                    onSelectionToggled: function(checked) {
                         var selected = Object.assign({}, root.optionalSelection);
                         selected[modelData.name] = checked;
                         root.optionalSelection = selected;
                     }
-                    ToolTip.visible: hovered && !!modelData.error
-                    ToolTip.text: modelData.error || ""
+                    onVersionPicked: function(name, version) {
+                        var picks = Object.assign({}, root.optionalPickedVersions);
+                        picks[name] = version;
+                        root.optionalPickedVersions = picks;
+                    }
                 }
             }
         }

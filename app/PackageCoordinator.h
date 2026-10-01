@@ -122,7 +122,7 @@ public slots:
     // confirm_install intent; PMU then runs the install itself. Basecamp owns
     // no install flow of its own here — every install in the app is initiated
     // by package_manager_ui and confirmed through this gate.
-    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {});
+    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
     Q_INVOKABLE void openApp(const QString& name,
@@ -132,7 +132,8 @@ public slots:
     Q_INVOKABLE void confirmCatalogInstall(const QString& name,
                                            const QString& repositoryUrl,
                                            const QVariantMap& versionPins = QVariantMap(),
-                                           const QStringList& optionalNames = {});
+                                           const QStringList& optionalNames = {},
+                                           const QVariantMap& optionalVersionPins = {});
 
     // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
     // confirm dialog directly — the shell is both asker and decider here, so
@@ -146,7 +147,7 @@ public slots:
     // Cascade confirmation — called from QML once the user OKs the uninstall
     // or upgrade dialog. Unloads, then answers the intent recorded on the
     // pending action (or removes locally when there is none).
-    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {});
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
 
     // Multi-uninstall counterparts. confirm runs the cascade-unload for every
     // name in the batch, then answers the requester; cancel just answers.
@@ -290,7 +291,8 @@ private:
                       const QString& error = QString(), const QVariant& data = QVariant());
 
     QVariantList m_pendingOptionalPackages;
-    QVariantMap selectedOptionalPackages(const QStringList& names) const;
+    QVariantMap selectedOptionalPackages(const QStringList& names, const QVariantMap& versionPins) const;
+    QVariantMap optionalPackageRow(const QVariantMap& offer) const;
 
     IntentResponder m_intentResponder;
 

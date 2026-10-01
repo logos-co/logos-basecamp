@@ -7,7 +7,9 @@ those declared by an application's required modules:
 ![Application installation before](optional-application-before.png)
 
 The updated dialogs show available optional packages checked by default and
-unavailable ones unchecked and disabled. The following captures render the real
+unavailable ones unchecked and disabled. Optional rows use the required-package
+layout, including resolved versions, version selectors, descriptions and status
+badges, with a checkbox to select each package. The following captures render the real
 QML components with test fixtures for available and unavailable packages; they
 are not end-to-end installation captures:
 

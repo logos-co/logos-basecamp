@@ -279,4 +279,31 @@ TestCase {
 
         cleanupHost(host);
     }
+
+    function test_optional_rows_match_required_layout_and_scroll_in_a_short_window() {
+        var host = openWithDeps(20, testCase.crampedWindow);
+        var optionals = [];
+        for (var i = 0; i < 8; ++i)
+            optionals.push({name: "optional_" + i, displayName: "Optional " + i,
+                version: "1.0.0", action: "install", description: "an optional package",
+                versions: [{manifest: {version: "1.0.0"}}]});
+        host.dialog.metadata = Object.assign({}, host.dialog.metadata, {optionalPackages: optionals});
+        var required = listOf(host);
+        var optional = find(host, "addApplicationDialog.optionalPackages");
+        compare(optional.width, required.width);
+        compare(optional.itemAtIndex(0).height, required.itemAtIndex(0).height);
+        compare(optional.itemAtIndex(0).leftPadding, required.itemAtIndex(0).leftPadding);
+        compare(optional.itemAtIndex(0).rightPadding, required.itemAtIndex(0).rightPadding);
+        verify(optional.height >= testCase.rowHeight);
+        verify(required.height >= testCase.rowHeight);
+        verify(optional.interactive);
+        verify(host.dialog.height <= host.height);
+        compare(find(host, "addApplicationDialog.showcase").height, testCase.showcaseHeight);
+        var footer = find(host, "addApplicationDialog.footerText");
+        compare(footer.height, footer.implicitHeight);
+        optional.positionViewAtEnd();
+        waitForRendering(testCase);
+        verify(optional.itemAtIndex(7) !== null);
+        cleanupHost(host);
+    }
 }

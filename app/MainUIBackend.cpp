@@ -835,16 +835,16 @@ void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordin
 void MainUIBackend::uninstallApp(const QString& n, const QString& repositoryUrl)
                                                              { m_packageCoordinator->uninstallApp(n, repositoryUrl); }
 void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
-void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames); }
+void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames, optionalVersionPins); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::cancelPendingUninstallApp(const QString& name)         { m_packageCoordinator->cancelPendingUninstallApp(name); }
-void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames) { m_packageCoordinator->confirmInstallGate(n, optionalNames); }
+void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
 { m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
-void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, const QStringList& optionalNames)
-{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, versionPins, optionalNames); }
+void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, const QStringList& optionalNames, const QVariantMap& optionalVersionPins)
+{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, versionPins, optionalNames, optionalVersionPins); }
 void MainUIBackend::notifyAddApplicationDialogClosed()
 { m_packageCoordinator->notifyAddApplicationDialogClosed(); }
 

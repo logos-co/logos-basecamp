@@ -252,7 +252,7 @@ public slots:
     // UIPluginManager; uninstall/upgrade cascade lives on PackageCoordinator.
     // cancelPendingAction fans out to both so the un-involved one no-ops.
     Q_INVOKABLE void confirmUnloadCascade(const QString& moduleName);
-    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {});
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
     Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
@@ -265,7 +265,7 @@ public slots:
     // PackageCoordinator, which forwards the decision to the module's
     // confirmInstall / cancelInstall gate. The app's only install
     // confirmation; basecamp initiates no installs of its own.
-    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {});
+    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
     // App-Manager catalog open — delegated to PackageCoordinator.
@@ -276,7 +276,8 @@ public slots:
     Q_INVOKABLE void confirmCatalogInstall(const QString& name,
                                            const QString& repositoryUrl,
                                            const QVariantMap& versionPins = QVariantMap(),
-                                           const QStringList& optionalNames = {});
+                                           const QStringList& optionalNames = {},
+                                           const QVariantMap& optionalVersionPins = {});
     Q_INVOKABLE void notifyAddApplicationDialogClosed();
 
     // Core Module operations — routing rule: cascade-aware (load/unload)

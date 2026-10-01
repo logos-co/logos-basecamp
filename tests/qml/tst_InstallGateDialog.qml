@@ -21,6 +21,8 @@ TestCase {
     id: testCase
     name: "InstallGateDialog"
     when: windowShown
+    width: 900
+    height: 1100
 
     Component {
         id: dialogComp
@@ -29,6 +31,75 @@ TestCase {
 
     Component { id: appDialogComp; AddApplicationDialog {} }
     SignalSpy { id: installSpy; signalName: "installRequested" }
+
+    function selectableOptional() {
+        return { name: "storage_module", displayName: "Storage Module", optional: true,
+            description: "Stores delivery messages", version: "0.3.0", action: "install",
+            versions: [
+                {manifest: {version: "0.3.0"}, rootHash: "new-artifact", action: "install"},
+                {manifest: {version: "0.2.0"}, rootHash: "old-artifact", action: "upgrade"}
+            ] }
+    }
+
+    function test_app_optional_version_picker_passes_choice_separately_from_required_pins() {
+        var dlg = appDialogComp.createObject(testCase)
+        installSpy.target = dlg
+        installSpy.clear()
+        dlg.openWith({name: "chat", selectedVersion: "0.3.0",
+            optionalPackages: [selectableOptional()]})
+        tryVerify(function() { return !!findChild(dlg.contentItem, "packageRow.version.storage_module") })
+        var combo = findChild(dlg.contentItem, "packageRow.version.storage_module")
+        compare(combo.displayText, "v.0.3.0")
+        compare(combo.count, 2)
+        combo.activated(1)
+        compare(combo.displayText, "v.0.2.0")
+        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        compare(installSpy.count, 1)
+        compare(installSpy.signalArguments[0][4].storage_module, "0.2.0")
+        verify(installSpy.signalArguments[0][2].storage_module === undefined)
+        installSpy.clear()
+        waitForRendering(testCase)
+        var checkbox = findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module")
+        mouseClick(checkbox)
+        compare(checkbox.checked, false)
+        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        compare(installSpy.signalArguments[0][3].length, 0)
+        dlg.destroy()
+    }
+
+    function test_gate_optional_version_picker_uses_resolved_version_and_resets() {
+        var dlg = dialogComp.createObject(testCase)
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [selectableOptional()], "", true)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "packageRow.version.storage_module") })
+        var combo = findChild(dlg.contentItem, "packageRow.version.storage_module")
+        compare(combo.displayText, "v.0.3.0")
+        combo.activated(1)
+        compare(combo.displayText, "v.0.2.0")
+        compare(dlg.optionalPickedVersions.storage_module, "0.2.0")
+        dlg.close()
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [selectableOptional()], "", true)
+        compare(dlg.optionalPickedVersions.storage_module, undefined)
+        dlg.destroy()
+    }
+
+    function test_app_reresolution_drops_optional_versions_that_no_longer_satisfy_constraints() {
+        var dlg = appDialogComp.createObject(testCase)
+        installSpy.target = dlg
+        installSpy.clear()
+        dlg.openWith({name: "chat", selectedVersion: "0.3.0",
+            optionalPackages: [selectableOptional()]})
+        tryVerify(function() { return !!findChild(dlg.contentItem, "packageRow.version.storage_module") })
+        findChild(dlg.contentItem, "packageRow.version.storage_module").activated(1)
+        var updated = selectableOptional()
+        updated.versions = [updated.versions[0]]
+        dlg.metadata = {name: "chat", selectedVersion: "0.3.0", optionalPackages: [updated]}
+        tryCompare(findChild(dlg.contentItem, "packageRow.version.storage_module"), "displayText", "v.0.3.0")
+        waitForRendering(testCase)
+        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        compare(installSpy.count, 1)
+        verify(installSpy.signalArguments[0][4].storage_module === undefined)
+        dlg.destroy()
+    }
 
     function test_app_install_passes_only_checked_available_optionals() {
         var dlg = appDialogComp.createObject(testCase)

@@ -6,8 +6,39 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 
 namespace logos {
+
+inline QVariantList selectedOptionalRequests(const QVariantList& offers,
+                                            const QStringList& names,
+                                            const QVariantMap& versionPins = {})
+{
+    QVariantList requests;
+    for (const QVariant& v : offers) {
+        const QVariantMap offer = v.toMap();
+        const QString name = offer.value("name").toString();
+        if (!names.contains(name) || offer.contains("error")) continue;
+        QVariantMap request = offer.value("request").toMap();
+        const QString picked = versionPins.value(name).toString();
+        if (!picked.isEmpty() && picked != offer.value("version").toString()) {
+            bool found = false;
+            for (const QVariant& candidate : offer.value("versions").toList()) {
+                const QVariantMap version = candidate.toMap();
+                if (!version.value("sourceAvailable", true).toBool()
+                    || version.value("manifest").toMap().value("version").toString() != picked)
+                    continue;
+                request.insert("version", picked);
+                request.insert("rootHash", version.value("rootHash"));
+                found = true;
+                break;
+            }
+            if (!found) continue;
+        }
+        requests.append(request);
+    }
+    return requests;
+}
 
 inline QString appendOptionalRequests(const QString& depsJson, const QVariantList& requests)
 {

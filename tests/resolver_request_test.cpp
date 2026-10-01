@@ -29,6 +29,44 @@ private:
     }
 
 private slots:
+    void optionalVersionSelectionUpdatesVersionAndArtifactTogether()
+    {
+        const QVariantMap request{{"name", "storage_module"}, {"version", "0.3.0"},
+            {"repositoryUrl", "https://repo/"}, {"rootHash", "new-artifact"},
+            {"signer", "did:jwk:publisher"}};
+        const QVariantMap older{{"manifest", QVariantMap{{"version", "0.2.0"}}},
+            {"rootHash", "old-artifact"}, {"sourceAvailable", true}};
+        const QVariantMap offer{{"name", "storage_module"}, {"version", "0.3.0"},
+            {"request", request}, {"versions", QVariantList{older}}};
+        const auto unchanged = logos::selectedOptionalRequests({offer}, {"storage_module"});
+        QCOMPARE(unchanged, QVariantList{request});
+        const auto selected = logos::selectedOptionalRequests({offer}, {"storage_module"},
+            {{"storage_module", "0.2.0"}});
+        QCOMPARE(selected.size(), 1);
+        const auto pinned = selected[0].toMap();
+        QCOMPARE(pinned.value("version").toString(), QStringLiteral("0.2.0"));
+        QCOMPARE(pinned.value("rootHash").toString(), QStringLiteral("old-artifact"));
+        QCOMPARE(pinned.value("repositoryUrl"), request.value("repositoryUrl"));
+        QCOMPARE(pinned.value("signer"), request.value("signer"));
+    }
+
+    void uncheckedAndUnavailableOptionalsNeverBecomeRequiredVersionPins()
+    {
+        const QVariantMap offer{{"name", "storage_module"}, {"version", "0.3.0"},
+            {"request", QVariantMap{{"name", "storage_module"}, {"version", "0.3.0"}}}};
+        QVERIFY(logos::selectedOptionalRequests({offer}, {}, {{"storage_module", "0.2.0"}}).isEmpty());
+        QVariantMap unavailable = offer;
+        unavailable.insert("error", "no candidate");
+        QVERIFY(logos::selectedOptionalRequests({unavailable}, {"storage_module"}).isEmpty());
+        QVERIFY(logos::selectedOptionalRequests({offer}, {"storage_module"},
+            {{"storage_module", "99.0.0"}}).isEmpty());
+        QVariantMap unserved = offer;
+        unserved.insert("versions", QVariantList{QVariantMap{
+            {"manifest", QVariantMap{{"version", "0.2.0"}}}, {"sourceAvailable", false}}});
+        QVERIFY(logos::selectedOptionalRequests({unserved}, {"storage_module"},
+            {{"storage_module", "0.2.0"}}).isEmpty());
+    }
+
     void selectedOptionalsPreserveArtifactAndSignerPins()
     {
         const QVariantMap request{{"name", "storage_module"}, {"version", "0.3.0"},

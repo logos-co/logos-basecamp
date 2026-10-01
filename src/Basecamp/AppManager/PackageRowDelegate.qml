@@ -13,7 +13,12 @@ ItemDelegate {
     // ─── Public API ───
     property var appRow: ({})
     property bool installing: false
+    property bool selectable: false
+    property bool selected: false
+    property string selectedVersion: ""
+    property string selectionObjectName: ""
     signal versionPicked(string name, string newVersion)
+    signal selectionToggled(bool checked)
 
     QtObject {
         id: d
@@ -21,9 +26,16 @@ ItemDelegate {
         readonly property string rowName: root.appRow ? (root.appRow.name || "") : ""
         readonly property string rowDisplayName:
             root.appRow ? (root.appRow.displayName || root.appRow.name || "") : ""
-        readonly property string action:  root.appRow ? (root.appRow.action || "") : ""
-        readonly property string toVersion: root.appRow ? (root.appRow.toVersion || "") : ""
-        readonly property bool   isError:   d.action === "error"
+        readonly property string action: {
+            const versions = root.appRow ? (root.appRow.versions || []) : []
+            for (var i = 0; i < versions.length; ++i)
+                if (versions[i] && versions[i].manifest && versions[i].manifest.version === d.toVersion && versions[i].action)
+                    return versions[i].action
+            return root.appRow ? (root.appRow.action || "") : ""
+        }
+        readonly property string toVersion: root.selectedVersion
+            || (root.appRow ? (root.appRow.toVersion || root.appRow.version || "") : "")
+        readonly property bool   isError: d.action === "error" || !!(root.appRow && root.appRow.error)
         readonly property bool   isInstalled:
             root.appRow ? (root.appRow.isInstalled === true) : false
         readonly property int rowStage:
@@ -76,21 +88,41 @@ ItemDelegate {
     contentItem: RowLayout {
         spacing: Theme.spacing.medium
 
-        LogosText {
-            id: nameLabel
+        RowLayout {
             Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 110
-            text: d.rowDisplayName
-            font.weight: Theme.typography.weightMedium
-            font.pixelSize: Theme.typography.primaryText
-            color: Theme.palette.text
-            elide: Text.ElideRight
+            Layout.preferredWidth: 150
+            Layout.minimumWidth: 150
+            Layout.maximumWidth: 150
+            spacing: Theme.spacing.small
 
-            HoverHandler { id: nameHover }
-            LogosToolTip {
+            LogosCheckbox {
+                objectName: root.selectionObjectName
+                visible: root.selectable
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 24
+                enabled: !root.installing && !d.isError
+                checked: root.selected
+                onToggled: root.selectionToggled(checked)
+                ToolTip.visible: hovered && !!root.appRow.error
+                ToolTip.text: root.appRow.error || ""
+            }
+
+            LogosText {
+                id: nameLabel
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 text: d.rowDisplayName
-                placement: LogosToolTip.Top
-                visible: nameHover.hovered && nameLabel.truncated
+                font.weight: Theme.typography.weightMedium
+                font.pixelSize: Theme.typography.primaryText
+                color: Theme.palette.text
+                elide: Text.ElideRight
+
+                HoverHandler { id: nameHover }
+                LogosToolTip {
+                    text: d.rowDisplayName
+                    placement: LogosToolTip.Top
+                    visible: nameHover.hovered && nameLabel.truncated
+                }
             }
         }
 
@@ -103,6 +135,7 @@ ItemDelegate {
 
             LogosComboBox {
                 id: versionCombo
+                objectName: "packageRow.version." + d.rowName
                 anchors.fill: parent
                 visible: d.usableVersions.length > 0
                 enabled: !root.installing && !d.isError
@@ -188,7 +221,7 @@ ItemDelegate {
             Layout.preferredWidth: pillWidth
             Layout.alignment: Qt.AlignVCenter
             text: {
-                if (d.isError) return qsTr("Conflict")
+                if (d.isError) return root.selectable ? qsTr("Unavailable") : qsTr("Conflict")
                 if (d.hasProgress) return DownloadFormat.label(d.dlReceived, d.dlTotal)
                 switch (d.rowStage) {
                 case InstallStage.Downloading: return qsTr("Downloading…")
