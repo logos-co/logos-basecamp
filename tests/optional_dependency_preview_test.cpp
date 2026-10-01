@@ -165,6 +165,46 @@ private slots:
         QCOMPARE(preview.offers().size(), 2);
         QCOMPARE(preview.optionalNames(), QStringList{"rln"});
     }
+    void installedOptionalTheCatalogLacksIsShownInstalledWithoutVersions() {
+        // modules_state is embedded in the app and never published to a catalog.
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.setInstalled({{"modules_state", {"0.1.0", "h"}}});
+        auto embedded = offer("modules_state", "chat");
+        embedded.insert("request", QVariantMap{{"name", "modules_state"}});
+        embedded.insert("error", "not in catalog");
+        // Never requested: the catalog cannot resolve it.
+        QCOMPARE(names(preview.advance(response({}, {embedded, offer("rln", "chat")}))),
+                 (QStringList{"chat", "rln"}));
+        QCOMPARE(preview.offers().size(), 2);
+        const auto shown = preview.offers().first().toMap();
+        QCOMPARE(shown.value("name").toString(), QStringLiteral("modules_state"));
+        QVERIFY(!shown.contains("error"));
+        QVERIFY(shown.value("installedOnly").toBool());
+        QCOMPARE(shown.value("version").toString(), QStringLiteral("0.1.0"));
+        QVERIFY(shown.value("versions").toList().isEmpty());
+        QVERIFY(shown.value("selected").toBool());
+    }
+    void installedOptionalOutsideTheRangeStaysUnavailable() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.setInstalled({{"modules_state", {"0.1.0", "h"}}});
+        auto embedded = offer("modules_state", "chat");
+        embedded.insert("request", QVariantMap{{"name", "modules_state"}, {"version", "^2.0.0"}});
+        embedded.insert("error", "not in catalog");
+        preview.advance(response({}, {embedded}));
+        QCOMPARE(preview.offers().size(), 1);
+        QVERIFY(preview.offers().first().toMap().contains("error"));
+    }
+    void resolverVerdictOnAnInstalledOptionalIsKept() {
+        // With the installed list the resolver checked the range; its error stands.
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.setInstalled({{"rln", {"0.1.0", ""}}});
+        auto old = offer("rln", "chat");
+        old.insert("error", "no release satisfies ^2.0.0");
+        old.insert("installedVersion", "0.1.0");
+        preview.advance(response({}, {old}));
+        QCOMPARE(preview.offers().size(), 1);
+        QVERIFY(preview.offers().first().toMap().contains("error"));
+    }
     void satisfiedInstalledParentStillMakesOffersReachable() {
         logos::OptionalDependencyPreview preview("chat", "repo");
         QCOMPARE(names(preview.advance(response({{"chat", QStringList{"installed"}},

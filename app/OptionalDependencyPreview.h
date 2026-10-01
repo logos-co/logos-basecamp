@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ResolverRequest.h"
+#include <logos/semver.hpp>
 #include <QMap>
 #include <QSet>
 
@@ -59,7 +60,7 @@ public:
             const auto edges = row.value("dependencyGraph").toMap();
             for (auto it = edges.cbegin(); it != edges.cend(); ++it) graph.insert(it.key(), it.value());
             for (const QVariant& o : row.value("optionalDependencies").toList()) {
-                const QVariantMap offer = o.toMap();
+                const QVariantMap offer = installedOnly(o.toMap());
                 m_discovered.insert(offer.value("requiredBy").toString() + QChar(31)
                                     + offer.value("name").toString(), offer);
             }
@@ -141,7 +142,8 @@ public:
         for (const QVariant& v : m_offers) {
             const QVariantMap offer = v.toMap();
             const QString name = offer.value("name").toString();
-            if (!m_optionalNames.contains(name)) continue;
+            // Not in the catalog: nothing to resolve, and the request would fail.
+            if (!m_optionalNames.contains(name) || offer.value("installedOnly").toBool()) continue;
             QVariantList picked = selectedOptionalRequests({offer}, {name}, m_optionalPins);
             if (picked.isEmpty()) {
                 // A required-version edit may invalidate an earlier optional
@@ -183,6 +185,33 @@ public:
     QStringList requiredFor(const QString& name) const { return m_requiredFor.value(name); }
 
 private:
+    // The dialog resolves without the installed list, so the catalog calls an installed
+    // package it lacks (an embedded module) unavailable. Show it as installed instead,
+    // with no other version to pick — what the resolver does given the installed list.
+    QVariantMap installedOnly(QVariantMap offer) const
+    {
+        const QString name = offer.value("name").toString();
+        if (!offer.contains("error") || offer.contains("installedVersion") || !m_installed.contains(name))
+            return offer;
+        const auto [version, hash] = m_installed.value(name);
+        QVariantMap request = offer.value("request").toMap();
+        const QString range = request.value("version").toString();
+        const QString pinnedHash = request.value("rootHash").toString();
+        if (!range.isEmpty() && !semver::satisfies(version.toStdString(), range.toStdString())) return offer;
+        if (!pinnedHash.isEmpty() && pinnedHash != hash) return offer;
+        offer.remove("error");
+        offer.insert("installedOnly", true);
+        offer.insert("installedVersion", version);
+        offer.insert("installedRootHash", hash);
+        offer.insert("version", version);
+        offer.insert("rootHash", hash);
+        offer.insert("versions", QVariantList{});
+        request.insert("version", version);
+        request.insert("rootHash", hash);
+        offer.insert("request", request);
+        return offer;
+    }
+
     bool isSelected(const QVariantMap& offer) const
     {
         if (offer.contains("error")) return false;
