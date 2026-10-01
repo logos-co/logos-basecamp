@@ -147,6 +147,19 @@ TestCase {
         dlg.destroy()
     }
 
+    function test_package_that_comes_only_with_an_optional_has_no_checkbox() {
+        var dlg = appDialogComp.createObject(testCase)
+        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", optionalPackages: [
+            { name: "rln", version: "0.10.0", action: "install" },
+            { name: "lez_rln", toVersion: "4.2.1", action: "install", optional: true,
+              requiredFor: ["rln"], description: "Required by RLN Module" }] })
+        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.rln") })
+        verify(findChild(dlg.contentItem, "addApplicationDialog.optional.rln").visible)
+        var child = findChild(dlg.contentItem, "addApplicationDialog.optional.lez_rln")
+        verify(!child || !child.visible)
+        dlg.destroy()
+    }
+
     function test_installed_app_lists_optionals_and_installs_pending_changes() {
         var dlg = appDialogComp.createObject(testCase)
         var installed = { name: "storage_module", version: "0.2.0", installedVersion: "0.2.0",

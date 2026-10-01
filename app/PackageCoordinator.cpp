@@ -1732,6 +1732,7 @@ QVariantList PackageCoordinator::computeDepChanges(
         c.insert(QStringLiteral("versions"),
                  m_versionsByRepoAndName.value(catalogKey(repoUrl, name)));
         c.insert("optional", m.value("optional", false));
+        if (m.contains("requiredFor")) c.insert("requiredFor", m.value("requiredFor"));
         if (c.value("isTopLevel").toBool()) out.prepend(c);
         else                                out.append(c);
     }
@@ -1850,6 +1851,8 @@ void PackageCoordinator::resolveOptionalPreviewPass(
                 QVariantMap row = v.toMap();
                 row.remove("optionalDependencies");
                 row.insert("optional", preview->optionalNames().contains(row.value("name").toString()));
+                const QStringList via = preview->requiredFor(row.value("name").toString());
+                if (!via.isEmpty()) row.insert("requiredFor", via);
                 if (!attached && row.value("name").toString() == preview->subject()) {
                     row.insert("optionalDependencies", preview->offers());
                     attached = true;
@@ -1860,6 +1863,37 @@ void PackageCoordinator::resolveOptionalPreviewPass(
         }, Timeout(2 * 60 * 1000));
 }
 
+// Optional rows for display: each offer, followed by the packages that come
+// only with it (no checkbox; "Required by ..."), so they are not mistaken for
+// the subject's own required packages.
+QVariantList PackageCoordinator::optionalRowsWithChildren(const QVariantList& offerRows,
+                                                          const QVariantList& changes) const
+{
+    QMap<QString, QString> displayNames;
+    for (const QVariant& v : offerRows)
+        displayNames.insert(v.toMap().value("name").toString(), v.toMap().value("displayName").toString());
+    QVariantList out;
+    QSet<QString> placed;
+    for (const QVariant& v : offerRows) {
+        out.append(v);
+        const QString root = v.toMap().value("name").toString();
+        for (const QVariant& cv : changes) {
+            QVariantMap child = cv.toMap();
+            const QStringList via = child.value("requiredFor").toStringList();
+            const QString name = child.value("name").toString();
+            if (via.isEmpty() || via.first() != root || placed.contains(name)) continue;
+            placed.insert(name);
+            QStringList by;
+            for (const QString& r : via) by.append(displayNames.value(r, r));
+            child.remove("versions");   // its version follows the optional that needs it
+            child.insert("optional", true);
+            child.insert("description", tr("Required by %1").arg(by.join(", ")));
+            out.append(child);
+        }
+    }
+    return out;
+}
+
 QVariantList PackageCoordinator::gatePreviewChanges(const QVariantList& resolved)
 {
     m_pendingOptionalPackages.clear();
@@ -1867,12 +1901,13 @@ QVariantList PackageCoordinator::gatePreviewChanges(const QVariantList& resolved
     for (const QVariant& v : resolved)
         for (const QVariant& offer : v.toMap().value("optionalDependencies").toList())
             m_pendingOptionalPackages.append(optionalPackageRow(offer.toMap()));
-    for (const QVariant& v : computeDepChanges(resolved, m_installedVersionByName)) {
+    const QVariantList all = computeDepChanges(resolved, m_installedVersionByName);
+    for (const QVariant& v : all) {
         const QVariantMap row = v.toMap();
         if (row.value("name").toString() == m_pendingPreviewName && !row.contains("error")) continue;
-        if (!row.value("optional").toBool()) changes.append(row);
+        if (!row.value("optional").toBool() && !row.contains("requiredFor")) changes.append(row);
     }
-    changes.append(m_pendingOptionalPackages);
+    changes.append(optionalRowsWithChildren(m_pendingOptionalPackages, all));
     return changes;
 }
 
@@ -1999,7 +2034,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     bool optionalChangesPending = false;
     for (const QVariant& v : changes) {
         const QVariantMap c = v.toMap();
-        if (c.value("optional").toBool() && !c.contains("error")
+        if ((c.value("optional").toBool() || c.contains("requiredFor")) && !c.contains("error")
             && c.value("action").toString() != QLatin1String("installed"))
             optionalChangesPending = true;
     }
@@ -2008,7 +2043,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
     for (const QVariant& v : m_lastResolvedRawByName.value(name))
         for (const QVariant& offer : v.toMap().value("optionalDependencies").toList())
             optionalPackages.append(optionalPackageRow(offer.toMap()));
-    metadata["optionalPackages"] = optionalPackages;
+    metadata["optionalPackages"] = optionalRowsWithChildren(optionalPackages, changes);
 
     // {name, repo} entries so the filter pins each row to the resolver's
     // chosen repo and multi-repo names don't duplicate. Always at least the
@@ -2024,7 +2059,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         overlay.reserve(changes.size());
         for (const QVariant& v : changes) {
             const QVariantMap c = v.toMap();
-            if (c.value("optional").toBool()) continue;
+            if (c.value("optional").toBool() || c.contains("requiredFor")) continue;
             AppsModel::ResolverRow rr;
             rr.name          = c.value("name").toString();
             rr.repositoryUrl = c.value("repositoryUrl").toString();

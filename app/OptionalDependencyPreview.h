@@ -113,6 +113,30 @@ public:
             const QString name = offer.value("name").toString();
             if (isSelected(offer)) m_optionalNames.append(name);
         }
+        // Packages that come only with selected optionals, and which optionals need them.
+        auto reachFrom = [&graph](const QString& root) {
+            QSet<QString> seen;
+            QStringList stack{root};
+            while (!stack.isEmpty()) {
+                const QString n = stack.takeLast();
+                if (seen.contains(n)) continue;
+                seen.insert(n);
+                for (const QVariant& dep : graph.value(n).toList()) {
+                    const QString name = dep.typeId() == QMetaType::QString
+                        ? dep.toString() : dep.toMap().value("name").toString();
+                    if (!name.isEmpty()) stack.append(name);
+                }
+            }
+            return seen;
+        };
+        const QSet<QString> own = reachFrom(m_subject);
+        m_requiredFor.clear();
+        for (const QString& root : m_optionalNames)
+            for (const QString& n : reachFrom(root))
+                if (n != root && !own.contains(n) && !m_optionalNames.contains(n)
+                    && !m_requiredFor.value(n).contains(root))
+                    m_requiredFor[n].append(root);
+
         QVariantList optionalRequests;
         for (const QVariant& v : m_offers) {
             const QVariantMap offer = v.toMap();
@@ -155,6 +179,8 @@ public:
     QVariantList offers() const { return m_offers; }
     QString subject() const { return m_subject; }
     QStringList optionalNames() const { return m_optionalNames; }
+    // The selected optionals that `name` comes with, when nothing else needs it.
+    QStringList requiredFor(const QString& name) const { return m_requiredFor.value(name); }
 
 private:
     bool isSelected(const QVariantMap& offer) const
@@ -208,5 +234,6 @@ private:
     QMap<QString, QString> m_artifacts;
     QVariantList m_offers;
     QStringList m_optionalNames;
+    QMap<QString, QStringList> m_requiredFor;
 };
 } // namespace logos

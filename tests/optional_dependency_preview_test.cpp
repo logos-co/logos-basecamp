@@ -20,6 +20,14 @@ class OptionalDependencyPreviewTest : public QObject {
         return out;
     }
 private slots:
+    void packagesThatComeOnlyWithAnOptionalNameIt() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.advance(response({{"chat", QStringList{"delivery"}}, {"delivery", QStringList{}},
+                                  {"rln", QStringList{"lez_rln"}}}, {offer("rln", "delivery")}));
+        QCOMPARE(preview.requiredFor("lez_rln"), QStringList{"rln"});
+        QVERIFY(preview.requiredFor("delivery").isEmpty());
+        QVERIFY(preview.requiredFor("rln").isEmpty());
+    }
     void initialRequestCarriesRequiredRowPins() {
         logos::OptionalDependencyPreview preview("chat", "repo", {{"delivery", "0.2.0"}});
         QCOMPARE(names(preview.initialRequest()), (QStringList{"chat", "delivery"}));

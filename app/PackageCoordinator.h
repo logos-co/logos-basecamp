@@ -304,6 +304,7 @@ private:
     void endGatePreview(const QString& name);
     QVariantMap optionalPackageRow(const QVariantMap& offer) const;
     QVariantList gatePreviewChanges(const QVariantList& resolved);
+    QVariantList optionalRowsWithChildren(const QVariantList& offerRows, const QVariantList& changes) const;
 
     IntentResponder m_intentResponder;
 

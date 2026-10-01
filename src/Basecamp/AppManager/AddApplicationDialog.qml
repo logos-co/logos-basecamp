@@ -68,7 +68,7 @@ Dialog {
         property var optionalPickedVersions: ({})
         // The backend's default (`selected`) until the user toggles the row.
         function isOptionalSelected(p) {
-            if (p.error) return false
+            if (p.error || p.requiredFor) return false
             const own = d.optionalSelection[p.name]
             return own !== undefined ? own : p.selected !== false
         }
@@ -593,11 +593,12 @@ Dialog {
                     required property var modelData
                     width: ListView.view ? ListView.view.width : 0
                     height: d.depsRowHeight
-                    leftPadding: Theme.spacing.large
+                    // A package that comes only with an optional sits under it, without a checkbox.
+                    leftPadding: Theme.spacing.large + (modelData.requiredFor ? 24 + Theme.spacing.small : 0)
                     rightPadding: Theme.spacing.large
                     appRow: modelData
                     installing: d.installing
-                    selectable: true
+                    selectable: !modelData.requiredFor
                     selectionObjectName: "addApplicationDialog.optional." + modelData.name
                     selected: d.isOptionalSelected(modelData)
                     selectedVersion: d.optionalPickedVersions[modelData.name] || ""

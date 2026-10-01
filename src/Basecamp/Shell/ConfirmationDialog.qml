@@ -121,7 +121,7 @@ Dialog {
         var selected = {};
         for (var i = 0; i < optionalPackages.length; ++i) {
             var offer = optionalPackages[i];
-            if (!offer.error) selected[offer.name] = offer.selected !== false;
+            if (!offer.error && !offer.requiredFor) selected[offer.name] = offer.selected !== false;
         }
         resolutionPending = false;
         optionalSelection = selected;
@@ -130,7 +130,7 @@ Dialog {
 
     // The backend's default (`selected`) until the user toggles the row.
     function isOptionalSelected(p) {
-        if (p.error) return false;
+        if (p.error || p.requiredFor) return false;
         const own = optionalSelection[p.name];
         return own !== undefined ? own : p.selected !== false;
     }
@@ -645,7 +645,8 @@ Dialog {
                     width: ListView.view ? ListView.view.width : 0
                     height: 56
                     appRow: modelData
-                    selectable: true
+                    // A package that comes only with an optional: no checkbox of its own.
+                    selectable: !modelData.requiredFor
                     selectionObjectName: "confirmationDialog.optional." + modelData.name
                     selected: root.isOptionalSelected(modelData)
                     selectedVersion: root.optionalPickedVersions[modelData.name] || ""
