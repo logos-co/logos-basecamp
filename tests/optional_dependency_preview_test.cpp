@@ -53,12 +53,38 @@ private slots:
         QVERIFY(!preview.offers().first().toMap().contains("error"));
         QCOMPARE(preview.optionalNames(), QStringList{"o"});
     }
-    void excludedOptionalsAreNeitherOfferedNorRequested() {
+    static QVariantMap versioned(QString name, QString parent) {
+        auto o = offer(name, parent, "2.0.0");
+        o.insert("versions", QVariantList{
+            QVariantMap{{"manifest", QVariantMap{{"version", "2.0.0"}}}, {"rootHash", "2.0.0"}},
+            QVariantMap{{"manifest", QVariantMap{{"version", "1.0.0"}}}, {"rootHash", "1.0.0"}}});
+        return o;
+    }
+    void installedOptionalDefaultsToItsReleaseAndIsNotRequested() {
         logos::OptionalDependencyPreview preview("chat", "repo");
-        preview.setExcluded({"rln"});
+        preview.setInstalled({{"rln", {"1.0.0", "1.0.0"}}});
+        const auto next = preview.advance(response({{"chat", QStringList{"delivery"}}}, {versioned("rln", "delivery")}));
+        QCOMPARE(names(next), QStringList{"chat"});
+        QCOMPARE(preview.offers().size(), 1);
+        const auto shown = preview.offers().first().toMap();
+        QCOMPARE(shown.value("version").toString(), QStringLiteral("1.0.0"));
+        QCOMPARE(shown.value("installedVersion").toString(), QStringLiteral("1.0.0"));
+        QVERIFY(shown.value("selected").toBool());
+    }
+    void pickingAnotherReleaseOfAnInstalledOptionalRequestsIt() {
+        logos::OptionalDependencyPreview preview("chat", "repo", {}, {}, {{"rln", "2.0.0"}});
+        preview.setInstalled({{"rln", {"1.0.0", "1.0.0"}}});
+        const auto next = preview.advance(response({{"chat", QStringList{"delivery"}}}, {versioned("rln", "delivery")}));
+        const auto inputs = QJsonDocument::fromJson(next.toUtf8()).array();
+        QCOMPARE(inputs.size(), 2);
+        QCOMPARE(inputs[1].toObject().value("version").toString(), QStringLiteral("2.0.0"));
+    }
+    void newOptionalsCanStartUnselected() {
+        logos::OptionalDependencyPreview preview("chat", "repo");
+        preview.setSelectNew(false);
         const auto next = preview.advance(response({{"chat", QStringList{"delivery"}}}, {offer("rln", "delivery")}));
         QCOMPARE(names(next), QStringList{"chat"});
-        QVERIFY(preview.offers().isEmpty());
+        QVERIFY(!preview.offers().first().toMap().value("selected").toBool());
     }
     void invalidatedOptionalVersionUsesTheNewCheckedDefault() {
         logos::OptionalDependencyPreview preview("chat", "repo", {}, {}, {{"rln", "0.9.0"}});

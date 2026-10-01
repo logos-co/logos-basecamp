@@ -484,7 +484,7 @@ private:
                                 const QVariantMap& optionalPins, const QString& installedJson,
                                 std::function<bool()> current,
                                 std::function<void(QVariantList)> then,
-                                const QSet<QString>& excluded = {});
+                                bool selectNew = true);
     void resolveOptionalPreviewPass(std::shared_ptr<logos::OptionalDependencyPreview> preview,
                                     const QString& request, const QString& installedJson,
                                     QSet<QString> visited, std::function<bool()> current,

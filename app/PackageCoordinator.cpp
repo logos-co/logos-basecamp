@@ -689,8 +689,14 @@ void PackageCoordinator::endGatePreview(const QString& name)
 QVariantMap PackageCoordinator::selectedOptionalPackages(const QStringList& names,
                                                          const QVariantMap& versionPins) const
 {
-    return {{QStringLiteral("optionalPackages"),
-             logos::selectedOptionalRequests(m_pendingOptionalPackages, names, versionPins)}};
+    // Only real changes: re-requesting an installed release would reinstall it.
+    QVariantList requests;
+    for (const QVariant& v : m_pendingOptionalPackages) {
+        const QVariantMap offer = v.toMap();
+        for (const QVariant& r : logos::selectedOptionalRequests({offer}, names, versionPins))
+            if (!logos::keepsInstalledRelease(offer, r.toMap())) requests.append(r);
+    }
+    return {{QStringLiteral("optionalPackages"), requests}};
 }
 
 QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) const
@@ -1787,11 +1793,15 @@ void PackageCoordinator::resolveOptionalPreview(const QString& name, const QStri
                                                 const QString& installedJson,
                                                 std::function<bool()> current,
                                                 std::function<void(QVariantList)> then,
-                                                const QSet<QString>& excluded)
+                                                bool selectNew)
 {
     auto preview = std::make_shared<logos::OptionalDependencyPreview>(
         name, repositoryUrl, versionPins, selection, optionalPins);
-    preview->setExcluded(excluded);
+    QMap<QString, QPair<QString, QString>> installed;
+    for (auto it = m_installedVersionByName.cbegin(); it != m_installedVersionByName.cend(); ++it)
+        installed.insert(it.key(), {it.value(), m_installedHashByName.value(it.key())});
+    preview->setInstalled(installed);
+    preview->setSelectNew(selectNew);
     resolveOptionalPreviewPass(preview, preview->initialRequest(), installedJson, {}, current, then);
 }
 
@@ -1922,9 +1932,9 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
     emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
                        /*requestOpen=*/true);
 
-    // This preview resolves without the installed set, so installed optionals
-    // must be excluded here; they are kept as they are.
-    const QSet<QString> installed(m_installedVersionByName.keyBegin(), m_installedVersionByName.keyEnd());
+    // For an installed app, optionals it does not have yet start unchecked, so
+    // opening it does not turn Launch into Install.
+    const bool selectNew = !m_installedVersionByName.contains(name);
     QPointer<PackageCoordinator> self(this);
     resolveOptionalPreview(name, repositoryUrl, versionPins, optionalSelection, optionalVersionPins,
         QString(), [self, name, epoch]() {
@@ -1937,7 +1947,7 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
             self->m_lastResolvedRawByName.insert(name, resolved);
             self->m_lastResolvedChangesByName.insert(name, changes);
             self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes, false);
-        }, installed);
+        }, selectNew);
 }
 
 void PackageCoordinator::emitDialogMetadata(const QString& name,
@@ -1985,6 +1995,15 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
 
     metadata["installStage"] = m_installRegistry->stage(name);
     metadata["resolutionPending"] = requestOpen;
+    // An installed app whose optional selection changes something installs instead of launching.
+    bool optionalChangesPending = false;
+    for (const QVariant& v : changes) {
+        const QVariantMap c = v.toMap();
+        if (c.value("optional").toBool() && !c.contains("error")
+            && c.value("action").toString() != QLatin1String("installed"))
+            optionalChangesPending = true;
+    }
+    metadata["optionalChangesPending"] = optionalChangesPending;
     QVariantList optionalPackages;
     for (const QVariant& v : m_lastResolvedRawByName.value(name))
         for (const QVariant& offer : v.toMap().value("optionalDependencies").toList())

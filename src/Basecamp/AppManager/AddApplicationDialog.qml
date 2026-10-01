@@ -66,6 +66,12 @@ Dialog {
         property var pickedVersions: ({})
         property var optionalSelection: ({})
         property var optionalPickedVersions: ({})
+        // The backend's default (`selected`) until the user toggles the row.
+        function isOptionalSelected(p) {
+            if (p.error) return false
+            const own = d.optionalSelection[p.name]
+            return own !== undefined ? own : p.selected !== false
+        }
         readonly property var optionalPackages: root.metadata.optionalPackages || []
         onOptionalPackagesChanged: {
             // Required-version changes resolve a new optional set. Keep a
@@ -112,7 +118,8 @@ Dialog {
             case InstallStatus.UpgradeAvailable:   return "update"
             case InstallStatus.DowngradeAvailable: return "downgrade"
             case InstallStatus.DifferentHash:      return "reinstall"
-            case InstallStatus.Installed:          return "launch"
+            case InstallStatus.Installed:
+                return root.metadata.optionalChangesPending ? "install" : "launch"
             }
             return "install"
         }
@@ -559,8 +566,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: optionalHeading.implicitHeight + d.depsRowHeight + spacing
-            // Launch installs nothing, so an installed app offers no optional choices here.
-            visible: d.optionalPackages.length > 0 && d.actionMode !== "launch"
+            visible: d.optionalPackages.length > 0
             LogosText {
                 id: optionalHeading
                 Layout.fillWidth: true
@@ -593,7 +599,7 @@ Dialog {
                     installing: d.installing
                     selectable: true
                     selectionObjectName: "addApplicationDialog.optional." + modelData.name
-                    selected: !modelData.error && d.optionalSelection[modelData.name] !== false
+                    selected: d.isOptionalSelected(modelData)
                     selectedVersion: d.optionalPickedVersions[modelData.name] || ""
                     onSelectionToggled: function(checked) {
                         var selected = Object.assign({}, d.optionalSelection)

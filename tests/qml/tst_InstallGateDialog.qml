@@ -147,13 +147,22 @@ TestCase {
         dlg.destroy()
     }
 
-    function test_installed_app_offers_no_optional_packages() {
+    function test_installed_app_lists_optionals_and_installs_pending_changes() {
         var dlg = appDialogComp.createObject(testCase)
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", installStatus: InstallStatus.Installed,
-            isInstalled: true, optionalPackages: [{ name: "storage_module", version: "0.3.0" }] })
-        waitForRendering(testCase)
-        var list = findChild(dlg.contentItem, "addApplicationDialog.optionalPackages")
-        verify(!list || !list.visible)
+        var installed = { name: "storage_module", version: "0.2.0", installedVersion: "0.2.0",
+            action: "installed", selected: true }
+        var notInstalled = { name: "rln", version: "1.0.0", action: "install", selected: false }
+        var metadata = { name: "chat", repositoryUrl: "https://repo/", installStatus: InstallStatus.Installed,
+            isInstalled: true, optionalPackages: [installed, notInstalled] }
+        dlg.openWith(metadata)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.rln") })
+        verify(findChild(dlg.contentItem, "addApplicationDialog.optionalPackages").visible)
+        compare(findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module").checked, true)
+        compare(findChild(dlg.contentItem, "addApplicationDialog.optional.rln").checked, false)
+        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        compare(primary.text, "Launch")
+        dlg.metadata = Object.assign({}, metadata, {optionalChangesPending: true})
+        compare(primary.text, "Install")
         dlg.destroy()
     }
 

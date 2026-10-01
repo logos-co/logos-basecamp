@@ -121,16 +121,23 @@ Dialog {
         var selected = {};
         for (var i = 0; i < optionalPackages.length; ++i) {
             var offer = optionalPackages[i];
-            if (!offer.error) selected[offer.name] = true;
+            if (!offer.error) selected[offer.name] = offer.selected !== false;
         }
         resolutionPending = false;
         optionalSelection = selected;
         optionalPickedVersions = ({});
     }
 
+    // The backend's default (`selected`) until the user toggles the row.
+    function isOptionalSelected(p) {
+        if (p.error) return false;
+        const own = optionalSelection[p.name];
+        return own !== undefined ? own : p.selected !== false;
+    }
+
     function selectedOptionalNames() {
         return optionalPackages.filter(function(p) {
-            return !p.error && optionalSelection[p.name] !== false;
+            return isOptionalSelected(p);
         }).map(function(p) { return p.name; });
     }
     // Whether `depChanges` is a CONCLUSION or just an absence. An empty list
@@ -640,7 +647,7 @@ Dialog {
                     appRow: modelData
                     selectable: true
                     selectionObjectName: "confirmationDialog.optional." + modelData.name
-                    selected: !modelData.error && root.optionalSelection[modelData.name] !== false
+                    selected: root.isOptionalSelected(modelData)
                     selectedVersion: root.optionalPickedVersions[modelData.name] || ""
                     onSelectionToggled: function(checked) {
                         var selected = Object.assign({}, root.optionalSelection);

@@ -16,8 +16,11 @@ public:
           m_pins(std::move(pins)), m_selection(std::move(selection)),
           m_optionalPins(std::move(optionalPins)) {}
 
-    // Optionals already installed are kept as they are, so they are not offered.
-    void setExcluded(QSet<QString> names) { m_excluded = std::move(names); }
+    // name -> {version, rootHash}. An installed optional defaults to its installed
+    // release and is requested only when the user picks another one.
+    void setInstalled(QMap<QString, QPair<QString, QString>> installed) { m_installed = std::move(installed); }
+    // Whether optionals that are not installed start selected.
+    void setSelectNew(bool select) { m_selectNew = select; }
 
     // The subject plus every required-row pin, so a pin applies even when the
     // first pass fails; later passes keep only pins that are still mandatory.
@@ -80,7 +83,7 @@ public:
             for (const QVariantMap& offer : m_discovered) {
                 if (offer.value("requiredBy").toString() != parent || offer.contains("error")) continue;
                 const QString name = offer.value("name").toString();
-                if (m_selection.value(name, true).toBool() && !m_excluded.contains(name)) queue.append(name);
+                if (isSelected(annotate(offer))) queue.append(name);
             }
         }
 
@@ -94,13 +97,14 @@ public:
                 continue;
             }
             ++it;
-            if (mandatory.contains(name) || m_excluded.contains(name)) continue;
+            if (mandatory.contains(name)) continue;
+            const QVariantMap shown = annotate(offer);
             // One row per name; an available offer wins over an unavailable one.
             if (!offered.contains(name)) {
                 offered.insert(name, m_offers.size());
-                m_offers.append(offer);
+                m_offers.append(shown);
             } else if (m_offers.at(offered.value(name)).toMap().contains("error") && !offer.contains("error")) {
-                m_offers[offered.value(name)] = offer;
+                m_offers[offered.value(name)] = shown;
             }
         }
 
@@ -108,8 +112,7 @@ public:
         for (const QVariant& v : m_offers) {
             const QVariantMap offer = v.toMap();
             const QString name = offer.value("name").toString();
-            if (!offer.contains("error") && m_selection.value(name, true).toBool())
-                m_optionalNames.append(name);
+            if (isSelected(offer)) m_optionalNames.append(name);
         }
         QVariantList optionalRequests;
         for (const QVariant& v : m_offers) {
@@ -124,6 +127,7 @@ public:
                 m_optionalPins.remove(name);
                 picked = selectedOptionalRequests({offer}, {name});
             }
+            if (!picked.isEmpty() && keepsInstalledRelease(offer, picked.first().toMap())) continue;
             optionalRequests.append(picked);
         }
         QMap<QString, QVariantMap> requests;
@@ -153,6 +157,43 @@ public:
     QStringList optionalNames() const { return m_optionalNames; }
 
 private:
+    bool isSelected(const QVariantMap& offer) const
+    {
+        if (offer.contains("error")) return false;
+        const bool byDefault = offer.contains("installedVersion") || m_selectNew;
+        return m_selection.value(offer.value("name").toString(), byDefault).toBool();
+    }
+
+    // Adds what is installed, and defaults an installed optional to that release.
+    QVariantMap annotate(QVariantMap offer) const
+    {
+        const QString name = offer.value("name").toString();
+        if (!offer.contains("installedVersion") && m_installed.contains(name)) {
+            offer.insert("installedVersion", m_installed.value(name).first);
+            offer.insert("installedRootHash", m_installed.value(name).second);
+        }
+        if (offer.contains("installedVersion") && !offer.contains("error") && !m_optionalPins.contains(name)) {
+            const QString version = offer.value("installedVersion").toString();
+            const QString hash = offer.value("installedRootHash").toString();
+            QVariantMap match;
+            for (const QVariant& v : offer.value("versions").toList()) {
+                const QVariantMap candidate = v.toMap();
+                if (candidate.value("manifest").toMap().value("version").toString() != version) continue;
+                if (match.isEmpty() || candidate.value("rootHash").toString() == hash) match = candidate;
+            }
+            if (!match.isEmpty()) {
+                offer.insert("version", version);
+                offer.insert("rootHash", match.value("rootHash"));
+                QVariantMap request = offer.value("request").toMap();
+                request.insert("version", version);
+                request.insert("rootHash", match.value("rootHash"));
+                offer.insert("request", request);
+            }
+        }
+        offer.insert("selected", isSelected(offer));
+        return offer;
+    }
+
     QVariantMap subjectRequest() const
     {
         return QJsonDocument::fromJson(gateResolverRequest(m_subject, m_repository,
@@ -160,7 +201,8 @@ private:
     }
 
     QString m_subject, m_repository;
-    QSet<QString> m_excluded;
+    QMap<QString, QPair<QString, QString>> m_installed;
+    bool m_selectNew = true;
     QVariantMap m_pins, m_selection, m_optionalPins;
     QMap<QString, QVariantMap> m_discovered;
     QMap<QString, QString> m_artifacts;
