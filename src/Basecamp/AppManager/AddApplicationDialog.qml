@@ -18,7 +18,7 @@ Dialog {
 
     signal installRequested(string name, string repositoryUrl, var versionPins, var optionalNames, var optionalVersionPins)
     signal launchRequested(string name)
-    signal versionChangeRequested(string name, string repositoryUrl, var versionPins)
+    signal versionChangeRequested(string name, string repositoryUrl, var versionPins, var optionalSelection, var optionalVersionPins)
     signal uninstallRequested(string name, string repositoryUrl)
 
     function openWith(metadata_) {
@@ -29,6 +29,12 @@ Dialog {
         root.installStage = root.metadata.installStage || InstallStage.None
         root.installError = ""   // clear any stale error from a prior open
         open()
+    }
+
+    function refreshPreview() {
+        root.metadata = Object.assign({}, root.metadata, {resolutionPending: true})
+        root.versionChangeRequested(d.targetName, d.targetRepoUrl, d.buildVersionPins(),
+                                    d.optionalSelection, d.optionalPickedVersions)
     }
 
     function markInstallComplete() {
@@ -552,8 +558,7 @@ Dialog {
                     nextPicks[rowName] = newVersion
                     d.pickedVersions = nextPicks
 
-                    root.versionChangeRequested(
-                        d.targetName, d.targetRepoUrl, d.buildVersionPins())
+                    root.refreshPreview()
                 }
             }
         }
@@ -601,11 +606,13 @@ Dialog {
                         var selected = Object.assign({}, d.optionalSelection)
                         selected[modelData.name] = checked
                         d.optionalSelection = selected
+                        root.refreshPreview()
                     }
                     onVersionPicked: function(name, version) {
                         var picks = Object.assign({}, d.optionalPickedVersions)
                         picks[name] = version
                         d.optionalPickedVersions = picks
+                        root.refreshPreview()
                     }
                 }
             }

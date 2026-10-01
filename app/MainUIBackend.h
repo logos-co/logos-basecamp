@@ -265,6 +265,9 @@ public slots:
     // PackageCoordinator, which forwards the decision to the module's
     // confirmInstall / cancelInstall gate. The app's only install
     // confirmation; basecamp initiates no installs of its own.
+    Q_INVOKABLE void refreshOptionalPreview(const QString& name, const QString& repositoryUrl,
+                                           const QVariantMap& versionPins, const QVariantMap& selection,
+                                           const QVariantMap& optionalPins, bool installGate = false);
     Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
@@ -397,6 +400,7 @@ signals:
     // only the first three, and Qt truncates silently on connect — so the QML
     // handler's requesterName / requesterBundled arrived undefined and the
     // "who asked" line never rendered.
+    void optionalGatePreviewUpdated(const QString& name, const QVariantList& changes, bool pending);
     void installGateConfirmationRequested(const QString& name,
                                           const QString& releaseTag,
                                           const QVariantList& depChanges,

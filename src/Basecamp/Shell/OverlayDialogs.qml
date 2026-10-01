@@ -111,6 +111,7 @@ Item {
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames(), upgradeCascadeDialog.optionalPickedVersions)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
+        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
     }
 
     // Install gate raised by package_manager_ui as `confirm_install` — the only
@@ -123,6 +124,7 @@ Item {
         mode: "installGate"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames(), installGateDialog.optionalPickedVersions)
+        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
@@ -192,8 +194,8 @@ Item {
         onLaunchRequested: function(name) {
             backend.onAppLauncherClicked(name)
         }
-        onVersionChangeRequested: function(name, repositoryUrl, versionPins) {
-            backend.openApp(name, repositoryUrl, versionPins, false)
+        onVersionChangeRequested: function(name, repositoryUrl, versionPins, selection, optionalPins) {
+            backend.refreshOptionalPreview(name, repositoryUrl, versionPins, selection, optionalPins, false)
         }
     }
 
@@ -287,6 +289,14 @@ Item {
             installGateDialog.openWithInstallGate(name, releaseTag, depChanges,
                                                   requesterName, requesterBundled,
                                                   depChangesResolved);
+        }
+
+        function onOptionalGatePreviewUpdated(name, changes, pending) {
+            const dialog = installGateDialog.visible && installGateDialog.moduleName === name
+                ? installGateDialog : upgradeCascadeDialog;
+            if (!dialog.visible || dialog.moduleName !== name) return;
+            dialog.resolutionPending = pending;
+            if (!pending) dialog.depChanges = changes;
         }
 
         function onInstallFailureNoticeRequested(name, errorMessage) {

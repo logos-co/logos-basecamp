@@ -97,6 +97,25 @@ Dialog {
     readonly property var optionalPackages: depChanges.filter(function(c) { return c.optional; })
     property var optionalSelection: ({})
     property var optionalPickedVersions: ({})
+    property bool resolutionPending: false
+    signal optionalPreviewRequested(string name, var selection, var versionPins)
+
+    function refreshPreview() {
+        resolutionPending = true;
+        optionalPreviewRequested(moduleName, optionalSelection, optionalPickedVersions);
+    }
+
+    onOptionalPackagesChanged: {
+        var picks = {};
+        optionalPackages.forEach(function(p) {
+            const picked = optionalPickedVersions[p.name];
+            if (!p.error && picked && (picked === p.version
+                || (p.versions || []).some(function(v) {
+                    return v && v.manifest && v.manifest.version === picked;
+                }))) picks[p.name] = picked;
+        });
+        optionalPickedVersions = picks;
+    }
 
     function resetOptionalSelection() {
         var selected = {};
@@ -104,12 +123,15 @@ Dialog {
             var offer = optionalPackages[i];
             if (!offer.error) selected[offer.name] = true;
         }
+        resolutionPending = false;
         optionalSelection = selected;
         optionalPickedVersions = ({});
     }
 
     function selectedOptionalNames() {
-        return Object.keys(optionalSelection).filter(function(n) { return optionalSelection[n]; });
+        return optionalPackages.filter(function(p) {
+            return !p.error && optionalSelection[p.name] !== false;
+        }).map(function(p) { return p.name; });
     }
     // Whether `depChanges` is a CONCLUSION or just an absence. An empty list
     // means "nothing needs to change" only when the resolver actually ran;
@@ -618,17 +640,19 @@ Dialog {
                     appRow: modelData
                     selectable: true
                     selectionObjectName: "confirmationDialog.optional." + modelData.name
-                    selected: !!root.optionalSelection[modelData.name]
+                    selected: !modelData.error && root.optionalSelection[modelData.name] !== false
                     selectedVersion: root.optionalPickedVersions[modelData.name] || ""
                     onSelectionToggled: function(checked) {
                         var selected = Object.assign({}, root.optionalSelection);
                         selected[modelData.name] = checked;
                         root.optionalSelection = selected;
+                        root.refreshPreview();
                     }
                     onVersionPicked: function(name, version) {
                         var picks = Object.assign({}, root.optionalPickedVersions);
                         picks[name] = version;
                         root.optionalPickedVersions = picks;
+                        root.refreshPreview();
                     }
                 }
             }
@@ -679,6 +703,7 @@ Dialog {
                     return "OK";
                 }
                 variant: LogosButton.Variant.Primary
+                enabled: !root.resolutionPending && !root.mandatoryChanges.some(function(c) { return !!c.error; })
                 onClicked: {
                     root._explicitClose = true;
                     root.continueClicked(root.moduleName);

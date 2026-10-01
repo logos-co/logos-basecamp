@@ -31,6 +31,8 @@ TestCase {
 
     Component { id: appDialogComp; AddApplicationDialog {} }
     SignalSpy { id: installSpy; signalName: "installRequested" }
+    SignalSpy { id: previewSpy; signalName: "versionChangeRequested" }
+    SignalSpy { id: gatePreviewSpy; signalName: "optionalPreviewRequested" }
 
     function selectableOptional() {
         return { name: "storage_module", displayName: "Storage Module", optional: true,
@@ -51,8 +53,14 @@ TestCase {
         var combo = findChild(dlg.contentItem, "packageRow.version.storage_module")
         compare(combo.displayText, "v.0.3.0")
         compare(combo.count, 2)
+        previewSpy.target = dlg
+        previewSpy.clear()
         combo.activated(1)
         compare(combo.displayText, "v.0.2.0")
+        compare(previewSpy.count, 1)
+        compare(previewSpy.signalArguments[0][4].storage_module, "0.2.0")
+        compare(findChild(dlg.contentItem, "addApplicationDialog.primaryButton").enabled, false)
+        dlg.metadata = Object.assign({}, dlg.metadata, {resolutionPending: false})
         mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
         compare(installSpy.count, 1)
         compare(installSpy.signalArguments[0][4].storage_module, "0.2.0")
@@ -62,6 +70,8 @@ TestCase {
         var checkbox = findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module")
         mouseClick(checkbox)
         compare(checkbox.checked, false)
+        compare(previewSpy.signalArguments[1][3].storage_module, false)
+        dlg.metadata = Object.assign({}, dlg.metadata, {resolutionPending: false})
         mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
         compare(installSpy.signalArguments[0][3].length, 0)
         dlg.destroy()
@@ -131,6 +141,8 @@ TestCase {
         compare(installSpy.signalArguments[0][3][0], "storage_module")
         installSpy.clear()
         mouseClick(available)
+        compare(primary.enabled, false)
+        dlg.metadata = metadata
         mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
         compare(installSpy.count, 1)
         compare(installSpy.signalArguments[0][3].length, 0)
@@ -171,6 +183,30 @@ TestCase {
         mouseClick(available)
         compare(dlg.selectedOptionalNames().length, 0)
         compare(dlg.mandatoryChanges.length, 0)
+        dlg.destroy()
+    }
+
+    function test_gate_checkbox_reresolves_and_discovered_optionals_default_checked() {
+        var dlg = dialogComp.createObject(testCase)
+        gatePreviewSpy.target = dlg
+        gatePreviewSpy.clear()
+        var rln = {name: "rln", optional: true, version: "0.10.0"}
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [rln], "", true)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.optional.rln") })
+        var button = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        waitForRendering(testCase)
+        verify(gatePreviewSpy.valid)
+        mouseClick(findChild(dlg.contentItem, "confirmationDialog.optional.rln"))
+        compare(gatePreviewSpy.count, 1)
+        compare(gatePreviewSpy.signalArguments[0][1].rln, false)
+        compare(button.enabled, false)
+        dlg.depChanges = [rln, {name: "nested", optional: true, version: "1.0.0"},
+            {name: "lez_rln", toVersion: "0.10.0", action: "install"}]
+        dlg.resolutionPending = false
+        compare(dlg.mandatoryChanges[0].name, "lez_rln")
+        compare(dlg.selectedOptionalNames().length, 1)
+        compare(dlg.selectedOptionalNames()[0], "nested")
+        compare(button.enabled, true)
         dlg.destroy()
     }
 

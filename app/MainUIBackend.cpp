@@ -145,6 +145,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     // UpgradeMode so a downgrade doesn't look like a bare uninstall.
     connect(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
             this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::optionalGatePreviewUpdated,
+            this, &MainUIBackend::optionalGatePreviewUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
             this,             &MainUIBackend::installGateConfirmationRequested);
     connect(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
@@ -839,6 +841,10 @@ void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList&
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::cancelPendingUninstallApp(const QString& name)         { m_packageCoordinator->cancelPendingUninstallApp(name); }
+void MainUIBackend::refreshOptionalPreview(const QString& n, const QString& repo,
+                                            const QVariantMap& pins, const QVariantMap& selection,
+                                            const QVariantMap& optionalPins, bool gate)
+{ m_packageCoordinator->refreshOptionalPreview(n, repo, pins, selection, optionalPins, gate); }
 void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)

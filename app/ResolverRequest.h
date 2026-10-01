@@ -64,10 +64,8 @@ inline QString appendOptionalRequests(const QString& depsJson, const QVariantLis
 // installed-set short-circuit, which is only applied to entries the caller
 // did not name — so already-satisfied deps would be listed as changes.
 //
-// PackageCoordinator::buildResolverDepsJson does pre-expand, deliberately:
-// the App-Manager dialog pins a version per dependency and a pin only travels
-// on its own entry. That builder is right for that flow and wrong for this
-// one; reusing it here is what caused the regression.
+// OptionalDependencyPreview applies per-row pins only after discovering the
+// reachable graph; it uses this same subject-only request for its first pass.
 inline QString gateResolverRequest(const QString& name,
                                    const QString& repositoryUrl,
                                    const QString& version)
