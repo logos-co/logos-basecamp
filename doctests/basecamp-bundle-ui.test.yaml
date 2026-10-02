@@ -1,0 +1,88 @@
+name: "Driving the Basecamp bundle's UI on Linux, macOS and Windows"
+output: basecamp-bundle-ui.md
+release: ""
+
+intro: |
+  One walk through the portable bundle's UI, on all three desktop platforms:
+  the shell, Settings, and the Package Manager. Linux and macOS build the
+  inspector-enabled bundle here and drive it headless. On Windows,
+  [logos-windows-ci](https://github.com/logos-co/logos-windows-ci)
+  cross-builds the same two outputs, stages them as directories named after
+  them, and runs this spec's second half on a Windows runner, through the
+  script `doctest emit-smoke` generates from it.
+
+what_you_build: "This `logos-basecamp` commit as the inspector-enabled portable bundle (`#bin-bundle-dir-inspector`), launched headless and driven through its shell, Settings and Package Manager views."
+
+what_you_learn:
+  - How one spec serves three platforms: a build half marked for the platforms with nix, and a run half every platform executes
+  - Why the build's out-links are named after the flake outputs
+  - How a UI test launches the bundle against a private user directory and home
+
+prerequisites:
+  - "**Linux or macOS:** Nix with flakes enabled, and Node.js, which runs the UI test driver."
+  - "**Windows:** the two outputs below, staged as `bin-bundle-dir-inspector/` and `logos-qt-mcp/`, plus Git Bash, Python 3 and Node.js."
+
+sections:
+  - title: "Build the bundle and the test driver"
+    step: true
+    platform: [linux, macos]
+    text: |
+      `#bin-bundle-dir-inspector` is the shipping portable bundle with the QML
+      inspector compiled in, so a test driver can attach. `#logos-qt-mcp` is
+      that driver's test framework. Each out-link is named after its output: on
+      Windows, logos-windows-ci stages the same outputs under those names, so
+      the next section runs unchanged there.
+    steps:
+      - title: "Build the inspector-enabled bundle"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+        code_block: "nix build '.#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+      - title: "Build the test framework"
+        run: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        code_block: "nix build '.#logos-qt-mcp' -o logos-qt-mcp"
+
+  - title: "Walk the UI"
+    step: true
+    platform: [linux, macos, windows]
+    text: |
+      The bundle starts headless against an empty user directory, with `HOME`
+      and `USERPROFILE` pointed into this run, so nothing it writes lands in
+      the real home directory. `LOGOS_NO_SCHEME_REGISTER=1` stops it
+      registering itself as the `basecamp://` handler.
+    steps:
+      - title: "Launch the bundle and walk the shell, Settings and the Package Manager"
+        ui_test:
+          setup:
+            - "mkdir -p home user"
+          launch: 'env HOME="$PWD/home" USERPROFILE="$PWD/home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/user"'
+          qt_mcp: "logos-qt-mcp"
+          launch_timeout: 180
+          tests:
+            - name: "The shell paints"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+              text: "The sidebar renders with **Applications** and **Settings**."
+              screenshot: "bundle-ui-shell.png"
+
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Settings opens"
+              action: wait_for
+              texts: ["Manage modules, apps and dashboards."]
+              timeout: 30000
+              text: "**Settings** opens on its dashboard."
+              screenshot: "bundle-ui-settings.png"
+
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            # Asserts the view, not the catalog: rows arrive later, over the network.
+            - name: "The Package Manager opens"
+              action: wait_for
+              texts: ["Manage your plugins and packages."]
+              timeout: 60000
+              text: "The **Package Manager** opens. It is a separate UI plugin, running in its own `ui-host` process."
+              screenshot: "bundle-ui-package-manager.png"

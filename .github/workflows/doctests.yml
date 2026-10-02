@@ -10,6 +10,9 @@ name: basecamp Doc-Tests
 #   basecamp-modules-bundle.test.yaml — the bundle twin: builds THIS commit as the
 #       real portable bundle (inspector-enabled #bin-bundle-dir-inspector) and runs
 #       the identical Modules-view walk against it.
+#   basecamp-bundle-ui.test.yaml — walks the inspector-enabled bundle's shell,
+#       Settings and Package Manager. Its second half also runs on Windows, in the
+#       `windows` job, through logos-windows-ci.
 #   (accounts/wallet cross-version specs are disabled — those packages are no
 #       longer published in the catalog.)
 # All specs run into one --report HTML (a dropdown switches between them).
@@ -129,6 +132,8 @@ jobs:
           # single --report HTML (a dropdown switches between them):
           #   basecamp-modules / basecamp-modules-bundle — the Modules-view walk
           #     against the dev app (#app) and the portable bundle.
+          #   basecamp-bundle-ui — shell, Settings and Package Manager on the
+          #     bundle; the `windows` job runs the same walk on Windows.
           #   basecamp-fullapi-ui — hermetic full-API check: a ui_qml plugin
           #     consumes the full_api contract via an interface dependency and
           #     drives every method type + receives typed events, all from local
@@ -180,6 +185,7 @@ jobs:
           nix run github:logos-co/logos-doctest -- run \
             doctests/basecamp-modules.test.yaml \
             doctests/basecamp-modules-bundle.test.yaml \
+            doctests/basecamp-bundle-ui.test.yaml \
             doctests/basecamp-fullapi-ui.test.yaml \
             doctests/basecamp-fullapi-ui-qml.test.yaml \
             doctests/basecamp-shortcut-bridge.test.yaml \
@@ -218,7 +224,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths basecamp-intents; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-bundle-ui basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths basecamp-intents; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -227,9 +233,20 @@ jobs:
             echo "Generated ${spec}.md successfully"
           done
 
+  # basecamp-bundle-ui's second half on a Windows runner. logos-windows-ci
+  # cross-builds the two outputs its first half builds, stages them under the
+  # same names, and uploads basecamp-doctest-report-windows-latest.
+  windows:
+    name: basecamp doc-tests (windows-latest)
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    with:
+      targets: bin-bundle-dir-inspector logos-qt-mcp
+      doctest-spec: doctests/basecamp-bundle-ui.test.yaml
+      doctest-artifact: basecamp-doctest-report
+
   publish-report:
     name: Publish report to GitHub Pages
-    needs: doctests
+    needs: [doctests, windows]
     # Run even when tests fail — a failing run is exactly when you want to open
     # the report. Skip on forks, where GITHUB_TOKEN can't push or comment.
     if: ${{ always() && github.event.pull_request.head.repo.fork != true }}
@@ -348,7 +365,7 @@ jobs:
           rm -rf "site/$BASE"
           mkdir -p "site/$BASE"
           found=""
-          for os in ubuntu-latest macos-latest; do
+          for os in ubuntu-latest macos-latest windows-latest; do
             src="artifacts/basecamp-doctest-report-$os/index.html"
             if [ -f "$src" ]; then
               mkdir -p "site/$BASE/$os"
@@ -365,7 +382,7 @@ jobs:
             echo "<style>body{font:16px system-ui;margin:40px;max-width:640px}a{color:#2563eb}</style>"
             echo "<h1>basecamp doc-test reports</h1>"
             echo "<p><strong>$BASE</strong> · commit <code>${GITHUB_SHA::7}</code></p><ul>"
-            for os in ubuntu-latest macos-latest; do
+            for os in ubuntu-latest macos-latest windows-latest; do
               if [ -d "site/$BASE/$os" ]; then
                 echo "<li><a href=\"./$os/\">$os</a></li>"
               fi
@@ -388,7 +405,7 @@ jobs:
                    "<a href=\"https://github.com/${GITHUB_REPOSITORY}\">${GITHUB_REPOSITORY##*/}</a>," \
                    "rendered as a two-column HTML report (each command/action run alongside its output).</p>"
               echo "<h2>Latest (main)</h2><ul>"
-              for os in ubuntu-latest macos-latest; do
+              for os in ubuntu-latest macos-latest windows-latest; do
                 if [ -d "site/$BASE/$os" ]; then
                   echo "<li><a href=\"./main/$os/\">$os</a></li>"
                 fi
