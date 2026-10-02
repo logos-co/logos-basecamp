@@ -297,6 +297,9 @@ sections:
               timeout: 60000
               text: "The non-blocking wrappers hold up across the release/master boundary too: the release-built UI fires async calls through the master-built proxy to the release-built provider."
               screenshot: "fullapi-xva-async-results.png"
+              # TM_RELEASE's UI draws results white on white (logos-test-modules#78 fixed master),
+              # so this matches the previous shot. Drop it when TM_RELEASE includes #78.
+              allow_unchanged_screenshot: true
 
   - title: "Cross-version B — UI + provider from master, proxy from the release"
     step: true
