@@ -10,6 +10,7 @@
 #include "IntentBroker.h"
 #include "IntentRegistry.h"
 
+#include <functional>
 #include <memory>
 
 #include <QDir>
@@ -33,11 +34,14 @@ public:
     QList<Delivered> requests;
     QList<QPair<QString, QVariantMap>> results;
     int receiverCount = 1;   // pretend the view has a handler
+    // Answers before deliverRequest returns, as the shell's QML handler does.
+    std::function<void(const QString&)> answerDuringDelivery;
 
     int deliverRequest(const QString& dispatchId, const QString& intent,
                        const QVariantMap& params, const QString& requesterName) override
     {
         requests.append({dispatchId, intent, params, requesterName});
+        if (answerDuringDelivery) answerDuringDelivery(dispatchId);
         return receiverCount;
     }
 
@@ -63,6 +67,9 @@ public:
     QStringList presented;
     QStringList dismissed;
     QVariantList lastProviders;
+    // Re-enter the broker before present()/dismiss() returns.
+    std::function<void(const QString&)> answerDuringPresent;
+    std::function<void(const QString&)> answerDuringDismiss;
 
     int present(const QString& dispatchId, const QString&, const QString&,
                 const QVariantList& providers) override
@@ -70,9 +77,14 @@ public:
         if (!mounted) return 0;
         presented.append(dispatchId);
         lastProviders = providers;
+        if (answerDuringPresent) answerDuringPresent(dispatchId);
         return 1;
     }
-    void dismiss(const QString& dispatchId) override { dismissed.append(dispatchId); }
+    void dismiss(const QString& dispatchId) override
+    {
+        dismissed.append(dispatchId);
+        if (answerDuringDismiss) answerDuringDismiss(dispatchId);
+    }
 };
 
 class FakeInstaller : public IntentInstaller {
@@ -194,6 +206,10 @@ private slots:
     void testRequesterDeathDropsSilently();
     void testAmbiguousWithNoChooserFailsRatherThanHangs();
     void testShellProviderIsNeverLoadedOrPresented();
+    void testShellAnsweringDuringDeliveryIsSafe();
+    void testProviderAnsweringDuringDeliveryIsSafe();
+    void testChooserAnsweringDuringPresentIsSafe();
+    void testChooserAnsweringDuringDismissIsSafe();
     void testAnAppProvidingItsOwnIntentSkipsTheChooser();
     void testNonCanonicalParamsAreRefusedAsBadRequest();
     void testBadRequestIsFlooredLikeUnavailable();
@@ -1908,6 +1924,137 @@ void TestIntentBroker::testDialogOpenedDuringDwellSuppressesTheReturn()
     spin(1200);
 
     QCOMPARE(w.presenter.presented, QStringList{ QStringLiteral("wallet_ui") });
+}
+
+// The four below answer from inside a call the broker makes. finish() then
+// erases the record the caller still holds an iterator to: a use-after-erase
+// that only valgrind/ASan sees, so each also checks the outcome.
+
+void TestIntentBroker::testShellAnsweringDuringDeliveryIsSafe()
+{
+    // ContentViews.qml answers settings.open/apps.open from its own handler.
+    QTemporaryDir root;
+    IntentRegistry registry;
+    const QString chat = writeApp(root, QStringLiteral("chat"),
+        R"({"uses":[{"intent":"basecamp.settings.open"}]})");
+    registry.rebuild({ { QStringLiteral("chat_ui"), plugin(chat) } }, nullptr, nullptr);
+    registry.registerShellProvider(QStringLiteral("main_ui"),
+                                   {QStringLiteral("basecamp.settings.open")}, {},
+                                   QStringLiteral("Logos"), QString());
+
+    FakePresenter presenter;
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(5000, 5000, 20);
+
+    FakeEndpoint chatEndpoint, shellEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+    broker.registerEndpoint(QStringLiteral("main_ui"), &shellEndpoint);
+    shellEndpoint.answerDuringDelivery = [&](const QString& dispatchId) {
+        QVERIFY(broker.submitResponse(&shellEndpoint, dispatchId, true, QVariantMap{}, QString()));
+    };
+
+    broker.submit(&chatEndpoint, QStringLiteral("req-1"),
+                  QStringLiteral("basecamp.settings.open"), {});
+    spin(80);
+
+    QCOMPARE(shellEndpoint.requests.size(), 1);
+    QCOMPARE(chatEndpoint.results.size(), 1);
+    QVERIFY(chatEndpoint.ok());
+    QCOMPARE(broker.pendingCount(), 0);
+}
+
+void TestIntentBroker::testProviderAnsweringDuringDeliveryIsSafe()
+{
+    // An app provider, so dispatch also goes through presentApp first.
+    QTemporaryDir root;
+    const QString chat = writeApp(root, QStringLiteral("chat"),
+        R"({"uses":[{"intent":"packages.show"}]})");
+    const QString pm = writeApp(root, QStringLiteral("pm"),
+        R"({"provides":[{"intent":"packages.show"}]})");
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("chat_ui"), plugin(chat) },
+                       { QStringLiteral("package_manager_ui"), plugin(pm) } },
+                     nullptr, nullptr);
+
+    FakePresenter presenter;
+    presenter.loaded << QStringLiteral("package_manager_ui");
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(1000, 1000, 20);
+    FakeChooser chooser;
+    broker.setChooser(&chooser);
+
+    FakeEndpoint chatEndpoint, pmEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+    broker.registerEndpoint(QStringLiteral("package_manager_ui"), &pmEndpoint);
+    pmEndpoint.answerDuringDelivery = [&](const QString& dispatchId) {
+        QVERIFY(broker.submitResponse(&pmEndpoint, dispatchId, true, QVariantMap{}, QString()));
+    };
+
+    submitAndConfirm(broker, chooser, &chatEndpoint, QStringLiteral("req-1"),
+                     QStringLiteral("packages.show"), QStringLiteral("package_manager_ui"));
+
+    QCOMPARE(pmEndpoint.requests.size(), 1);
+    QCOMPARE(presenter.presented.first(), QStringLiteral("package_manager_ui"));
+    QCOMPARE(chatEndpoint.results.size(), 1);
+    QVERIFY(chatEndpoint.ok());
+    QCOMPARE(broker.pendingCount(), 0);
+}
+
+void TestIntentBroker::testChooserAnsweringDuringPresentIsSafe()
+{
+    QTemporaryDir root;
+    IntentRegistry registry;
+    buildTwoProviderWorld(root, registry);
+
+    FakePresenter presenter;
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(1000, 1000, 20);
+    FakeChooser chooser;
+    broker.setChooser(&chooser);
+    chooser.answerDuringPresent = [&](const QString& dispatchId) {
+        broker.cancelChooser(dispatchId);
+    };
+    FakeEndpoint chatEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+    QSignalSpy asked(&broker, &IntentBroker::chooserRequested);
+
+    broker.submit(&chatEndpoint, QStringLiteral("req-1"), QStringLiteral("wallet.send"), {});
+    spin(80);
+
+    QCOMPARE(chooser.presented.size(), 1);
+    QCOMPARE(chatEndpoint.results.size(), 1);
+    QCOMPARE(chatEndpoint.error(), QStringLiteral("cancelled"));
+    QCOMPARE(broker.pendingCount(), 0);
+    QCOMPARE(asked.count(), 0);   // nothing left to ask about
+}
+
+void TestIntentBroker::testChooserAnsweringDuringDismissIsSafe()
+{
+    QTemporaryDir root;
+    IntentRegistry registry;
+    buildTwoProviderWorld(root, registry);
+
+    FakePresenter presenter;
+    presenter.loaded << QStringLiteral("wallet_a");
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(1000, 1000, 20);
+    FakeChooser chooser;
+    broker.setChooser(&chooser);
+    chooser.answerDuringDismiss = [&](const QString& dispatchId) {
+        broker.cancelChooser(dispatchId);
+    };
+    FakeEndpoint chatEndpoint, walletEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+    broker.registerEndpoint(QStringLiteral("wallet_a"), &walletEndpoint);
+
+    submitAndConfirm(broker, chooser, &chatEndpoint, QStringLiteral("req-1"),
+                     QStringLiteral("wallet.send"), QStringLiteral("wallet_a"));
+
+    QVERIFY(!chooser.dismissed.isEmpty());
+    QCOMPARE(chatEndpoint.results.size(), 1);
+    QCOMPARE(chatEndpoint.error(), QStringLiteral("cancelled"));
+    QVERIFY(walletEndpoint.requests.isEmpty());
+    QCOMPARE(broker.pendingCount(), 0);
 }
 
 QTEST_MAIN(TestIntentBroker)
