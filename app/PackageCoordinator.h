@@ -570,7 +570,8 @@ private:
     bool m_warnedPackageDownloaderMissing = false;
 
     // See withDownloaderStarted(). Only a successful start is remembered, so a
-    // failed one is tried again by the next call.
+    // failed one is tried again by the next call; stateChanged keeps it in
+    // step with starts and stops made by other consumers.
     bool m_downloaderStarted = false;
     QList<std::function<void()>> m_waitingForDownloaderStart;
     UIPluginManager*   m_uiPluginManager;

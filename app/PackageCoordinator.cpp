@@ -185,6 +185,13 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     m_packageDownloaderSubscribed = true;
 
     LogosModules logos(m_logosAPI);
+
+    // Another consumer may start or stop it. A stop is for everyone: the next
+    // operation here that needs it starts it again.
+    logos.package_downloader.on("stateChanged", [this](const QVariantList& data) {
+        m_downloaderStarted = data.value(0).toString() == QStringLiteral("running");
+    });
+
     logos.package_downloader.on("catalogChanged", [this](const QVariantList&) {
         // Only what something has asked for: nothing reads the rest.
         if (m_repositoriesWanted) refreshRepositories();
