@@ -124,7 +124,7 @@ Rectangle {
                 Layout.minimumWidth: 200
                 text: d.searchText
                 placeholderText: qsTr("Search apps…")
-                shortcutHint: "⌘K"
+                shortcutHint: searchShortcut.nativeText
                 onTextChanged: {
                     if (text !== d.searchText)
                         d.searchText = text
@@ -133,6 +133,7 @@ Rectangle {
 
             // ⌘K focuses + selects the search bar.
             Shortcut {
+                id: searchShortcut
                 sequence: "Ctrl+K"
                 context: Qt.WindowShortcut
                 enabled: root.visible

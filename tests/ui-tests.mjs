@@ -2137,6 +2137,16 @@ test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) =
   }, { timeout: 3000, interval: 200, description: "search bar to focus" });
 });
 
+// A hardcoded "⌘K" chip drew tofu on Windows and named the wrong key on Linux.
+test("search chips show the platform's shortcut text (⌘K on macOS, Ctrl+K elsewhere)", async (app) => {
+  await app.click("Applications");
+  const expected = process.platform === "darwin" ? "⌘K" : "Ctrl+K";
+  for (const name of ["welcomePage.search", "appManager.searchField", "settings.searchField"]) {
+    const bar = await requireObject(app, name);
+    assertEq(await evalOn(app, bar.id, "shortcutHint"), expected, `${name} shortcutHint`);
+  }
+});
+
 // --- App Manager "Local" section ---
 //
 // Two invariants for the synthetic "Local" repo bucket in AppManagerView:

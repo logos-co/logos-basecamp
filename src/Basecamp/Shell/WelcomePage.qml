@@ -24,8 +24,10 @@ Item {
         d.typeFilter = ""
     }
 
+    // `sequence`, not `sequences`: Qt 6.9's nativeText reads only `sequence`.
     Shortcut {
-        sequences: ["Ctrl+K"]
+        id: searchShortcut
+        sequence: "Ctrl+K"
         context: Qt.WindowShortcut
         enabled: root.visible
         onActivated: searchField.forceActiveFocus()
@@ -216,7 +218,7 @@ Item {
                             Layout.preferredHeight: d.searchFieldHeight
                             Layout.maximumHeight: d.searchFieldHeight
                             placeholderText: qsTr("Search...")
-                            shortcutHint: "⌘K"
+                            shortcutHint: searchShortcut.nativeText
                         }
 
                         FilterChip {

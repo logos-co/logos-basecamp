@@ -115,7 +115,7 @@ Rectangle {
                 placeholderText: d.selectedIndex === d.sectionAppsInspector
                                  ? qsTr("Search apps…")
                                  : qsTr("Search modules…")
-                shortcutHint: "⌘K"
+                shortcutHint: searchShortcut.nativeText
                 onTextChanged: {
                     if (text !== d.searchText)
                         d.searchText = text
@@ -123,6 +123,7 @@ Rectangle {
             }
 
             Shortcut {
+                id: searchShortcut
                 sequence: "Ctrl+K"
                 context: Qt.WindowShortcut
                 enabled: root.visible && d.searchable
