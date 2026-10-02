@@ -172,6 +172,9 @@ jobs:
           #     All tears down exactly the chain; the app reloads afterwards;
           #     unloading the chain's middle module cascades to its dependent
           #     only and leaves its own dependencies loaded.
+          #   basecamp-intents — app-to-app intents with QML-only fixtures from
+          #     tests/fixtures/intents: an undeclared request is refused, two
+          #     providers raise the chooser, and only the chosen one hears.
           #   basecamp-partial-reinstall is excluded while its local HTTPS
           #     catalog fails certificate verification on Ubuntu (curl error 60).
           nix run github:logos-co/logos-doctest -- run \
@@ -187,6 +190,7 @@ jobs:
             doctests/basecamp-persistence.test.yaml \
             doctests/basecamp-module-unload.test.yaml \
             doctests/basecamp-deep-links.test.yaml \
+            doctests/basecamp-intents.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
@@ -214,7 +218,7 @@ jobs:
 
       - name: Verify markdown generation
         run: |
-          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths; do
+          for spec in basecamp-modules basecamp-modules-bundle basecamp-fullapi-ui basecamp-fullapi-ui-qml basecamp-shortcut-bridge basecamp-package-lifecycle basecamp-missing-deps basecamp-dependency-gate basecamp-persistence basecamp-module-unload basecamp-failure-paths basecamp-intents; do
             nix run github:logos-co/logos-doctest -- generate \
               "doctests/${spec}.test.yaml" \
               --release-for logos-basecamp=${{ steps.commit.outputs.sha }} \
