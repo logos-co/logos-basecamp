@@ -27,6 +27,7 @@ Item {
     // `sequence`, not `sequences`: Qt 6.9's nativeText reads only `sequence`.
     Shortcut {
         id: searchShortcut
+        objectName: "welcomePage.searchShortcut"
         sequence: "Ctrl+K"
         context: Qt.WindowShortcut
         enabled: root.visible
