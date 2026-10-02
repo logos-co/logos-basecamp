@@ -216,6 +216,35 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     });
 }
 
+// The calls run whatever start() answers: a downloader that predates it refuses
+// the method and is running already, and any other failure surfaces on the
+// call itself.
+void PackageCoordinator::withDownloaderStarted(std::function<void()> then)
+{
+    if (m_downloaderStarted) {
+        then();
+        return;
+    }
+
+    m_waitingForDownloaderStart.append(std::move(then));
+    if (m_waitingForDownloaderStart.size() > 1) return;  // a start is on its way
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageCoordinator> self(this);
+    logos.package_downloader.startAsyncResult([self](logos::AsyncResult<QVariantMap> r) {
+        if (!self) return;
+        self->m_downloaderStarted = r.ok() && r.value.value("success").toBool();
+        if (!self->m_downloaderStarted) {
+            qWarning() << "PackageCoordinator: package_downloader.start did not succeed:"
+                       << (r.ok() ? r.value.value("error").toString()
+                                  : QString::fromStdString(r.error.message));
+        }
+        const QList<std::function<void()>> waiting =
+            std::exchange(self->m_waitingForDownloaderStart, {});
+        for (const auto& call : waiting) call();
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Read-only accessors over the caches.
 // ---------------------------------------------------------------------------
@@ -576,7 +605,9 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
             if (!selfResume) return;
             for (const QString& replaced : replacedPackagesOf(catalogPlan))
                 cascadeUnloadForPackage(replaced);
-            downloadResolvedSequential(catalogPlan, moduleName, 0, QVariantList{});
+            withDownloaderStarted([this, moduleName, catalogPlan]() {
+                downloadResolvedSequential(catalogPlan, moduleName, 0, QVariantList{});
+            });
         }, Qt::QueuedConnection);   // off the click stack, as the cascade path does
         return;
     }
@@ -628,14 +659,16 @@ void PackageCoordinator::remoteRefresh()
         return;
     }
 
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
-        if (!self) return;
-        const QString err = r.value(QStringLiteral("error")).toString();
-        if (!err.isEmpty())
-            qWarning() << "package_downloader.refreshCatalog reported:" << err;
-        self->refresh();
+    withDownloaderStarted([this]() {
+        LogosModules logos(m_logosAPI);
+        QPointer<PackageCoordinator> self(this);
+        logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
+            if (!self) return;
+            const QString err = r.value(QStringLiteral("error")).toString();
+            if (!err.isEmpty())
+                qWarning() << "package_downloader.refreshCatalog reported:" << err;
+            self->refresh();
+        });
     });
 }
 
@@ -1116,15 +1149,17 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
         : nullptr;
 
     if (dlClient && dlClient->isConnected()) {
-        QPointer<PackageCoordinator> self(this);
-        dlClient->invokeRemoteMethodAsync(
-            "package_downloader", "getCatalog", QVariantList{},
-            [self, installedByName](QVariant catalogVar) {
-                if (!self) return;
-                const QVariantList catalog = catalogVar.toList();
-                self->buildCatalogIndexes(catalog);
-                self->populateAppsModel(catalog, installedByName);
-            });
+        withDownloaderStarted([this, dlClient, installedByName]() {
+            QPointer<PackageCoordinator> self(this);
+            dlClient->invokeRemoteMethodAsync(
+                "package_downloader", "getCatalog", QVariantList{},
+                [self, installedByName](QVariant catalogVar) {
+                    if (!self) return;
+                    const QVariantList catalog = catalogVar.toList();
+                    self->buildCatalogIndexes(catalog);
+                    self->populateAppsModel(catalog, installedByName);
+                });
+        });
         return;
     }
 
@@ -1308,16 +1343,18 @@ void PackageCoordinator::refreshRepositories()
     ++m_repositoriesLoadingCount;
     if (!wasLoading) emit repositoriesLoadingChanged();
 
-    QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "listRepositories", QVariantList{},
-        [self](QVariant result) {
-            if (!self) return;
-            self->m_repositories = withDisplayLabels(result.toList());
-            const int remaining = --self->m_repositoriesLoadingCount;
-            emit self->repositoriesChanged();
-            if (remaining == 0) emit self->repositoriesLoadingChanged();
-        });
+    withDownloaderStarted([this, dlClient]() {
+        QPointer<PackageCoordinator> self(this);
+        dlClient->invokeRemoteMethodAsync(
+            "package_downloader", "listRepositories", QVariantList{},
+            [self](QVariant result) {
+                if (!self) return;
+                self->m_repositories = withDisplayLabels(result.toList());
+                const int remaining = --self->m_repositoriesLoadingCount;
+                emit self->repositoriesChanged();
+                if (remaining == 0) emit self->repositoriesLoadingChanged();
+            });
+    });
 }
 
 // add/remove/setEnabled share a {success, error} result shape. The
@@ -1353,8 +1390,10 @@ void PackageCoordinator::addRepository(const QString& url)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    invokeRepositoryMutation(this, dlClient, QStringLiteral("addRepository"),
-                             QStringLiteral("add"), url, QVariantList{url});
+    withDownloaderStarted([this, dlClient, url]() {
+        invokeRepositoryMutation(this, dlClient, QStringLiteral("addRepository"),
+                                 QStringLiteral("add"), url, QVariantList{url});
+    });
 }
 
 void PackageCoordinator::removeRepository(const QString& url)
@@ -1367,8 +1406,10 @@ void PackageCoordinator::removeRepository(const QString& url)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    invokeRepositoryMutation(this, dlClient, QStringLiteral("removeRepository"),
-                             QStringLiteral("remove"), url, QVariantList{url});
+    withDownloaderStarted([this, dlClient, url]() {
+        invokeRepositoryMutation(this, dlClient, QStringLiteral("removeRepository"),
+                                 QStringLiteral("remove"), url, QVariantList{url});
+    });
 }
 
 void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
@@ -1381,9 +1422,11 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    invokeRepositoryMutation(this, dlClient, QStringLiteral("setRepositoryEnabled"),
-                             QStringLiteral("setEnabled"), url,
-                             QVariantList{url, enabled});
+    withDownloaderStarted([this, dlClient, url, enabled]() {
+        invokeRepositoryMutation(this, dlClient, QStringLiteral("setRepositoryEnabled"),
+                                 QStringLiteral("setEnabled"), url,
+                                 QVariantList{url, enabled});
+    });
 }
 
 void PackageCoordinator::refreshDownloadSource()
@@ -1393,17 +1436,19 @@ void PackageCoordinator::refreshDownloadSource()
         : nullptr;
     if (!dlClient || !dlClient->isConnected()) return;
 
-    QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "getDownloadSource", QVariantList{},
-        [self](QVariant result) {
-            if (!self) return;
-            // A downloader without the method answers nothing: stays empty.
-            const QString source = result.toString();
-            if (source == self->m_downloadSource) return;
-            self->m_downloadSource = source;
-            emit self->downloadSourceChanged();
-        });
+    withDownloaderStarted([this, dlClient]() {
+        QPointer<PackageCoordinator> self(this);
+        dlClient->invokeRemoteMethodAsync(
+            "package_downloader", "getDownloadSource", QVariantList{},
+            [self](QVariant result) {
+                if (!self) return;
+                // A downloader without the method answers nothing: stays empty.
+                const QString source = result.toString();
+                if (source == self->m_downloadSource) return;
+                self->m_downloadSource = source;
+                emit self->downloadSourceChanged();
+            });
+    });
 }
 
 // The catalog refresh follows from the catalogChanged the downloader emits.
@@ -1418,21 +1463,23 @@ void PackageCoordinator::setDownloadSource(const QString& source)
         return;
     }
 
-    QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "setDownloadSource", QVariantList{source},
-        [self, source](QVariant result) {
-            if (!self) return;
-            const QVariantMap r = result.toMap();
-            const bool ok = r.value("success").toBool();
-            QString error = r.value("error").toString();
-            if (!ok && error.isEmpty())
-                error = QStringLiteral("package_downloader did not accept the download source");
-            emit self->repositoryOperationCompleted(QStringLiteral("setDownloadSource"),
-                                                    source, ok, error);
-            // Either way: a refused value must not stay selected.
-            self->refreshDownloadSource();
-        });
+    withDownloaderStarted([this, dlClient, source]() {
+        QPointer<PackageCoordinator> self(this);
+        dlClient->invokeRemoteMethodAsync(
+            "package_downloader", "setDownloadSource", QVariantList{source},
+            [self, source](QVariant result) {
+                if (!self) return;
+                const QVariantMap r = result.toMap();
+                const bool ok = r.value("success").toBool();
+                QString error = r.value("error").toString();
+                if (!ok && error.isEmpty())
+                    error = QStringLiteral("package_downloader did not accept the download source");
+                emit self->repositoryOperationCompleted(QStringLiteral("setDownloadSource"),
+                                                        source, ok, error);
+                // Either way: a refused value must not stay selected.
+                self->refreshDownloadSource();
+            });
+    });
 }
 
 void PackageCoordinator::refreshDependencyInfo()
@@ -1814,7 +1861,9 @@ void PackageCoordinator::resolveOptionalPreview(const QString& name, const QStri
         installed.insert(it.key(), {it.value(), m_installedHashByName.value(it.key())});
     preview->setInstalled(installed);
     preview->setSelectNew(selectNew);
-    resolveOptionalPreviewPass(preview, preview->initialRequest(), installedJson, {}, current, then);
+    withDownloaderStarted([this, preview, installedJson, current, then]() {
+        resolveOptionalPreviewPass(preview, preview->initialRequest(), installedJson, {}, current, then);
+    });
 }
 
 void PackageCoordinator::resolveOptionalPreviewPass(
@@ -2260,7 +2309,9 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
         return;
     }
 
-    downloadResolvedSequential(plan.needed, name, 0, QVariantList{});
+    withDownloaderStarted([this, needed = plan.needed, name]() {
+        downloadResolvedSequential(needed, name, 0, QVariantList{});
+    });
 }
 
 QStringList PackageCoordinator::replacedPackagesOf(const QVariantList& needed) const

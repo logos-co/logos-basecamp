@@ -375,6 +375,12 @@ private:
     // Subscribe to package_downloader's catalogChanged event
     void subscribeToPackageDownloaderEvents();
 
+    // package_downloader does nothing until a consumer starts it, so every
+    // operation that calls into it begins here. The first one starts it, and
+    // the ones that arrive before the answer wait for it. `then` runs only
+    // while this object is alive.
+    void withDownloaderStarted(std::function<void()> then);
+
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
     // seeds the installType cache for the UI-plugin subset; the full-scan pass
     // in refreshDependencyInfo overwrites it with the core-inclusive version.
@@ -550,6 +556,11 @@ private:
     bool m_packageDownloaderSubscribed = false;
     bool m_warnedPackageManagerMissing = false;
     bool m_warnedPackageDownloaderMissing = false;
+
+    // See withDownloaderStarted(). Only a successful start is remembered, so a
+    // failed one is tried again by the next call.
+    bool m_downloaderStarted = false;
+    QList<std::function<void()>> m_waitingForDownloaderStart;
     UIPluginManager*   m_uiPluginManager;
     AppsModel*         m_appsModel;
 
