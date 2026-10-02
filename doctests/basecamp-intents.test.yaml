@@ -142,6 +142,19 @@ sections:
     steps:
       - title: "Drive the intent flow"
         ui_test:
+          # An app left running by an earlier spec keeps the inspector port, and
+          # the driver would silently drive that app. Fail here instead.
+          setup:
+            - |
+              python3 - <<'PY'
+              import socket, sys, time
+              for _ in range(60):
+                  with socket.socket() as s:
+                      if s.connect_ex(("127.0.0.1", 3768)) != 0:
+                          sys.exit(0)
+                  time.sleep(1)
+              sys.exit("port 3768 is still held by another process")
+              PY
           launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/intents-user"
           qt_mcp: "result-mcp"
           launch_timeout: 300

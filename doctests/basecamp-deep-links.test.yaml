@@ -366,7 +366,9 @@ sections:
 
             # eval, because the Exec line quotes the path the way the entry does
             # and the shell has to unpick that the same way a launcher would.
-            eval "$COMMAND --user-dir \"$USER_DIR\"" >/tmp/link-fromentry.log 2>&1 &
+            # `exec` makes $! the app, not the eval subshell: otherwise the kill
+            # below misses it, and it keeps the inspector port for later specs.
+            eval "exec $COMMAND --user-dir \"$USER_DIR\"" >/tmp/link-fromentry.log 2>&1 &
             LAUNCHED=$!
           fi
 
