@@ -266,6 +266,16 @@ test("welcome: first launch shows the welcome page", async (app) => {
   }
 });
 
+// Nothing at launch reads the catalog, so nothing fetches it: no repository
+// list yet, nothing loading. The first view that needs it (a search below, or
+// the App Manager) starts package_downloader and fetches both.
+test("welcome: nothing fetches the catalog before a view needs it", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  assertEq(await evalOn(app, welcome.id, "backend.appsLoading"), false, "backend.appsLoading");
+  assertEq(await evalOn(app, welcome.id, "backend.repositories.length"), 0,
+           "backend.repositories.length");
+});
+
 // --- Welcome page: search, filters and Recently Closed -------------------
 // Placed before the navigation tests below, which click the welcome page away.
 // All of these drive the page through the inspector rather than synthesised
@@ -342,11 +352,12 @@ test("welcome: a query swaps Recently Closed for results", async (app) => {
 test("welcome: a query with no matches explains itself", async (app) => {
   await setQmlProperty(app, "welcomePage.search", 'text = "zzzzz-no-such-package"');
 
+  // A first query fetches the catalog, and the notice waits for that to end.
   await app.waitFor(async () => {
     if (await visibilityOf(app, "welcomePage.noResults") !== true) {
       throw new Error("no-results notice did not appear");
     }
-  }, { timeout: 5000, interval: 200, description: "no-results notice" });
+  }, { timeout: 30000, interval: 200, description: "no-results notice" });
 
   await setQmlProperty(app, "welcomePage.search", 'text = ""');
 });

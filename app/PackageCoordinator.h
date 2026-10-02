@@ -92,9 +92,10 @@ public:
     QString downloadSource() const { return m_downloadSource; }
     QVariantMap repositorySource(const QString& repositoryUrl) const;
 
-    // True during the initial catalog populate and during a user-initiated
-    // App Manager Reload (remoteRefresh). Background refreshes (file-install
-    // events, etc.) leave this false so they don't flash the overlay.
+    // True during the first catalog fetch (see requestCatalog) and during a
+    // user-initiated App Manager Reload (remoteRefresh). Background refreshes
+    // (file-install events, etc.) leave this false so they don't flash the
+    // overlay.
     bool appsLoading() const { return m_appsLoading; }
 
     // False until refreshDependencyInfo has completed at least once.
@@ -173,8 +174,9 @@ public slots:
     // → refreshDependencyInfo chain the file-install event subscriptions
     // trigger — used by the UI Modules tab's Reload button (forwarded from
     // UIPluginManager::refreshUiModules) and by MainUIBackend right after
-    // construction to do the first-time catalog load once all three managers
-    // are wired. Kept as a public slot rather than running from the ctor so
+    // construction to do the first-time scan once all three managers are
+    // wired. The catalog follows only once something has asked for it (see
+    // requestCatalog). Kept as a public slot rather than running from the ctor so
     // the initial uiPluginsFetched signal isn't emitted before listeners have
     // had a chance to connect.
     Q_INVOKABLE void refresh();
@@ -182,6 +184,16 @@ public slots:
     // User-initiated "Reload apps" from the App Manager. Forces the
     // downloader to re-fetch every enabled repo's logos-repo.json
     Q_INVOKABLE void remoteRefresh();
+
+    // The catalog is fetched the first time something needs it, not at launch:
+    // fetching it starts package_downloader, and with it the storage node.
+    // requestCatalog() fetches it (and the repository list) if nothing has yet;
+    // every refresh after that fetches them again. whenCatalogLoaded() runs
+    // `then` once a fetch has finished, at once if one already has, whether or
+    // not it found anything. `then` runs only while this object is alive.
+    Q_INVOKABLE void requestCatalog();
+    void whenCatalogLoaded(std::function<void()> then);
+    bool catalogFetched() const { return m_catalogFetched; }
 
     // Package-repository management — thin wrappers around the
     // package_downloader IPC surface
@@ -616,5 +628,23 @@ private:
     QVariantList m_repositories;
     int          m_repositoriesLoadingCount = 0;
     QString      m_downloadSource;
-    bool         m_appsLoading              = true;
+    bool         m_appsLoading              = false;
+
+    // See requestCatalog(). Nothing asks for the catalog or the repository
+    // list at launch; once something has, every refresh fetches them again.
+    bool m_catalogWanted        = false;
+    bool m_repositoriesWanted   = false;
+    bool m_catalogFetched       = false;
+    bool m_catalogFetchInFlight = false;
+    QList<std::function<void()>> m_waitingForCatalog;
+
+    // Fetch the repository list and the catalog now, showing appsLoading.
+    void fetchCatalogNow();
+
+    // A catalog fetch ended, found something or not: run what waited on it.
+    void catalogFetchFinished();
+
+    // openApp's fast path: emits launchAppRequested and returns true when the
+    // app's tile is installed and healthy.
+    bool fastLaunch(const QString& name, const QString& repositoryUrl);
 };

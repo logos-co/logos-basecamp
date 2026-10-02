@@ -308,6 +308,9 @@ public slots:
 
     Q_INVOKABLE void refreshRepositories();
     Q_INVOKABLE void refreshAppCatalog();
+    // Views that read the catalog call this when they show: it is fetched the
+    // first time something needs it, not at launch.
+    Q_INVOKABLE void requestCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);

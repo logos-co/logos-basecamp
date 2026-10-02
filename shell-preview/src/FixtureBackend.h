@@ -73,6 +73,7 @@ public:
     Q_INVOKABLE void refreshUiModules();
     Q_INVOKABLE void refreshRepositories();
     Q_INVOKABLE void refreshAppCatalog();
+    Q_INVOKABLE void requestCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);

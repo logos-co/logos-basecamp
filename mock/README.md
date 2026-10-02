@@ -16,7 +16,7 @@ On startup you should see:
 ```
 MockBackendFixture: ... — LOGOS_MOCK_FIXTURE exported
 MockBackendFixture: SDK mode is Mock — no IPC will be attempted.
-MockStore: seeded 12 canned call(s) from ...
+MockStore: seeded 14 canned call(s) from ...
 ```
 
 If the second line instead **warns** that the mode is Remote, stop and read

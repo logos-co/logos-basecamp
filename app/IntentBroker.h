@@ -77,6 +77,11 @@ public:
     // sorted. Nothing is returned: the request it came from is already finished.
     virtual void offerInstall(const QString& intent,
                               const QStringList& candidates) = 0;
+
+    // Nothing the catalog lists could service `intent`, as far as it is loaded.
+    // The shell fetches the catalog on demand, so it may not be yet: this lets
+    // the installer look again once it is, and offer then. Default: nothing.
+    virtual void nothingInstallable(const QString& /*intent*/) {}
 };
 
 // ── IntentBroker ─────────────────────────────────────────────────────────────

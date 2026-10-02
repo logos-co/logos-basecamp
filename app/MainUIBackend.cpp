@@ -372,8 +372,12 @@ void MainUIBackend::wireIntents()
                const QString& requesterName, const QVariantList& providers) {
             const int receivers = this->receivers(
                 SIGNAL(intentChooserRequested(QString, QString, QString, QVariantList)));
-            if (receivers > 0)
+            if (receivers > 0) {
+                // Its details and its not-installed section come from the
+                // catalog, which is fetched the first time something needs it.
+                if (m_packageCoordinator) m_packageCoordinator->requestCatalog();
                 emit intentChooserRequested(dispatchId, intent, requesterName, providers);
+            }
             return receivers;
         },
         [this](const QString& dispatchId) {
@@ -390,6 +394,19 @@ void MainUIBackend::wireIntents()
             for (const QString& name : candidates)
                 detailed.append(installCandidateDetails(name));
             emit intentInstallOffered(intent, candidates, detailed);
+        },
+        // The catalog is fetched the first time something needs it, so "no
+        // candidate" may only mean "not fetched yet": look again once it is.
+        [this](const QString& intent) {
+            if (!m_packageCoordinator || m_packageCoordinator->catalogFetched())
+                return;
+            m_packageCoordinator->whenCatalogLoaded([this, intent]() {
+                const QStringList candidates = m_intentRegistry
+                    ? m_intentRegistry->installableProvidersFor(intent)
+                    : QStringList{};
+                if (!candidates.isEmpty())
+                    m_intentInstaller->offerInstall(intent, candidates);
+            });
         });
     m_intentBroker->setInstaller(m_intentInstaller.get());
 
@@ -746,20 +763,23 @@ bool MainUIBackend::m_registryDeclares(const QString& intent) const
 
 void MainUIBackend::offerInstallForUnknownApp(const QString& appName)
 {
-    if (appName.isEmpty() || !m_appsModel)
+    if (appName.isEmpty() || !m_appsModel || !m_packageCoordinator)
         return;
 
-    const QVariantMap row = m_appsModel->rowDataByName(appName, QString());
-    if (row.isEmpty())
-        return;
+    // The offer needs the app's catalog row, which may not be fetched yet.
+    m_packageCoordinator->whenCatalogLoaded([this, appName]() {
+        const QVariantMap row = m_appsModel->rowDataByName(appName, QString());
+        if (row.isEmpty())
+            return;
 
-    const QVariantList detailed{ QVariantMap{
-        { QStringLiteral("moduleName"),    appName },
-        { QStringLiteral("displayName"),   displayNameFor(appName) },
-        { QStringLiteral("repositoryUrl"), repositoryUrlFor(appName) },
-    } };
+        const QVariantList detailed{ QVariantMap{
+            { QStringLiteral("moduleName"),    appName },
+            { QStringLiteral("displayName"),   displayNameFor(appName) },
+            { QStringLiteral("repositoryUrl"), repositoryUrlFor(appName) },
+        } };
 
-    emit intentInstallOffered(kAppLaunchIntent, QStringList{ appName }, detailed);
+        emit intentInstallOffered(kAppLaunchIntent, QStringList{ appName }, detailed);
+    });
 }
 
 int MainUIBackend::beginAppLaunch(const QString& dispatchId,
@@ -892,6 +912,7 @@ void MainUIBackend::endModulesLoading()
 
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
 void MainUIBackend::refreshAppCatalog()                                    { m_packageCoordinator->remoteRefresh(); }
+void MainUIBackend::requestCatalog()                                       { m_packageCoordinator->requestCatalog(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }

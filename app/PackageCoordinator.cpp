@@ -186,8 +186,9 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
 
     LogosModules logos(m_logosAPI);
     logos.package_downloader.on("catalogChanged", [this](const QVariantList&) {
-        refreshRepositories();
-        refresh();
+        // Only what something has asked for: nothing reads the rest.
+        if (m_repositoriesWanted) refreshRepositories();
+        if (m_catalogWanted) refresh();
     });
 
     // Live byte progress for whatever is downloading. Payload is
@@ -640,11 +641,54 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
 void PackageCoordinator::refresh()
 {
     fetchUiPluginMetadata();
+    if (m_repositoriesWanted) refreshRepositories();
+}
+
+void PackageCoordinator::requestCatalog()
+{
+    if (m_catalogWanted) return;
+    m_catalogWanted = true;
+    fetchCatalogNow();
+}
+
+void PackageCoordinator::whenCatalogLoaded(std::function<void()> then)
+{
+    if (m_catalogFetched) {
+        then();
+        return;
+    }
+
+    m_waitingForCatalog.append(std::move(then));
+    m_catalogWanted = true;
+    if (!m_catalogFetchInFlight) fetchCatalogNow();
+}
+
+void PackageCoordinator::fetchCatalogNow()
+{
+    if (!m_appsLoading) {
+        m_appsLoading = true;
+        emit appsLoadingChanged();
+    }
+
+    // The App Manager and the install offers label packages by repository.
     refreshRepositories();
+    tryFetchCatalog(m_installedVersionByName, /*retriesLeft=*/10);
+}
+
+void PackageCoordinator::catalogFetchFinished()
+{
+    m_catalogFetched = true;
+    m_catalogFetchInFlight = false;
+    const QList<std::function<void()>> waiting = std::exchange(m_waitingForCatalog, {});
+    for (const auto& then : waiting) then();
 }
 
 void PackageCoordinator::remoteRefresh()
 {
+    // A reload is a request too: the refresh below fetches both again.
+    m_catalogWanted = true;
+    m_repositoriesWanted = true;
+
     if (!m_appsLoading) {
         m_appsLoading = true;
         emit appsLoadingChanged();
@@ -1124,8 +1168,9 @@ void PackageCoordinator::fetchUiPluginMetadata()
         self->refreshDependencyInfo();
         self->fetchValidVariants();
 
-        // Kick off the App-Manager catalog fetch.
-        self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
+        // The catalog follows once something has asked for it.
+        if (self->m_catalogWanted)
+            self->tryFetchCatalog(installedByName, /*retriesLeft=*/10);
     });
 }
 
@@ -1144,6 +1189,8 @@ void PackageCoordinator::fetchValidVariants()
 
 void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft)
 {
+    m_catalogFetchInFlight = true;
+
     LogosAPIClient* dlClient = m_logosAPI
         ? m_logosAPI->getClient("package_downloader")
         : nullptr;
@@ -1158,6 +1205,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
                     const QVariantList catalog = catalogVar.toList();
                     self->buildCatalogIndexes(catalog);
                     self->populateAppsModel(catalog, installedByName);
+                    self->catalogFetchFinished();
                 });
         });
         return;
@@ -1169,6 +1217,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
             m_appsLoading = false;
             emit appsLoadingChanged();
         }
+        catalogFetchFinished();
         return;
     }
 
@@ -1334,6 +1383,9 @@ QString PackageCoordinator::repositoryLabelFor(const QVariantMap& catalogEntry) 
 
 void PackageCoordinator::refreshRepositories()
 {
+    // Whoever asked shows them, so every refresh after this one follows.
+    m_repositoriesWanted = true;
+
     LogosAPIClient* dlClient = m_logosAPI
         ? m_logosAPI->getClient("package_downloader")
         : nullptr;
@@ -1816,6 +1868,18 @@ void PackageCoordinator::openApp(const QString& name,
 {
     if (!m_logosAPI || name.isEmpty()) return;
 
+    if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
+
+    // Anything else reads the app's catalog row, which may not be fetched yet.
+    // A bundled app has no row before it is, so the fast path gets a second look.
+    whenCatalogLoaded([this, name, repositoryUrl, versionPins, allowFastLaunch]() {
+        if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
+        runResolverAndOpenDialog(name, repositoryUrl, versionPins);
+    });
+}
+
+bool PackageCoordinator::fastLaunch(const QString& name, const QString& repositoryUrl)
+{
     // Fast-launch only for the tile whose repo's rootHash matches what's
     // on disk. installStatus is already missing-deps-aware: AppsModel's
     // recomputeInstallStatus demotes a row with non-empty missingDeps to
@@ -1826,15 +1890,13 @@ void PackageCoordinator::openApp(const QString& name,
             m_appsModel->rowDataByName(name, repositoryUrl);
         tileStatus = row.value("installStatus").toInt();
     }
-    if (allowFastLaunch && tileStatus == InstallStatus::Installed) {
-        qDebug() << "openApp fast-path: installed (v="
-                 << m_installedVersionByName.value(name)
-                 << "), emitting launchAppRequested";
-        emit launchAppRequested(name);
-        return;
-    }
+    if (tileStatus != InstallStatus::Installed) return false;
 
-    runResolverAndOpenDialog(name, repositoryUrl, versionPins);
+    qDebug() << "openApp fast-path: installed (v="
+             << m_installedVersionByName.value(name)
+             << "), emitting launchAppRequested";
+    emit launchAppRequested(name);
+    return true;
 }
 
 void PackageCoordinator::notifyAddApplicationDialogClosed()

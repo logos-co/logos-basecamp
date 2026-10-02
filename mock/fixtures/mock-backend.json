@@ -179,6 +179,7 @@
     ],
     "package_manager.resolveFlatDependencies": [],
     "package_manager.resolveFlatDependents": [],
+    "package_downloader.start": { "success": true },
     "package_downloader.getCatalog": [
       {
         "name": "package_manager_ui",

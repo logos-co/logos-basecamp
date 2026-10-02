@@ -93,12 +93,18 @@ public:
     // longer changes anything, because the request is already answered.
     QStringList offered;          // intents suggested, in order
     QStringList lastCandidates;
+    QStringList nothing;          // intents the catalog had nothing for, in order
 
     void offerInstall(const QString& intent,
                       const QStringList& candidates) override
     {
         offered.append(intent);
         lastCandidates = candidates;
+    }
+
+    void nothingInstallable(const QString& intent) override
+    {
+        nothing.append(intent);
     }
 };
 
@@ -219,6 +225,7 @@ private slots:
     void testProviderWithNoHandlerAlsoTimesOut();
     void testActivationThatNeverCompletesEndsUnavailable();
     void testInstallableProviderIsOfferedNotDispatched();
+    void testNothingInstallableTellsTheInstaller();
     void testAnOfferIsIndistinguishableFromNoProviderAtAll();
     void testInstallableProvidersNeverReachResolve();
     void testSecondChoiceQueuesInsteadOfRepointingTheDialog();
@@ -1049,9 +1056,47 @@ void TestIntentBroker::testInstallableProviderIsOfferedNotDispatched()
     // made time-to-answer track how long they deliberated.
     QCOMPARE(installer.offered.size(), 1);
     QCOMPARE(installer.lastCandidates, QStringList{QStringLiteral("wallet_x")});
+    QVERIFY(installer.nothing.isEmpty());
     QCOMPARE(chatEndpoint.results.size(), 1);
     QCOMPARE(chatEndpoint.error(), QStringLiteral("unavailable"));
     QVERIFY(presenter.ensureCalls.isEmpty());   // nothing loaded on a catalog's word
+}
+
+// The shell fetches the catalog on demand, so an empty answer may only mean "not
+// fetched yet": the installer hears of it and can look again once it is.
+void TestIntentBroker::testNothingInstallableTellsTheInstaller()
+{
+    QTemporaryDir root;
+    IntentRegistry registry;
+    const QString requester = writeApp(root, QStringLiteral("chat_ui"), R"({
+        "name": "chat_ui", "type": "ui_qml",
+        "uses": [ { "intent": "wallet.send" } ]
+    })");
+    QMap<QString, QVariantMap> plugins;
+    plugins.insert(QStringLiteral("chat_ui"),
+                   QVariantMap{{QStringLiteral("installDir"), requester},
+                               {QStringLiteral("type"), QStringLiteral("ui_qml")}});
+    registry.rebuild(plugins, [](const QString& n) { return n; },
+                             [](const QString&) { return QString(); });
+
+    FakePresenter presenter;
+    IntentBroker broker(&registry, &presenter);
+    broker.setTimeouts(1000, 1000, 20);
+    FakeInstaller installer;
+    broker.setInstaller(&installer);
+
+    FakeEndpoint chatEndpoint;
+    broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+
+    broker.submit(&chatEndpoint, QStringLiteral("req-1"),
+                  QStringLiteral("wallet.send"), {});
+    spin(120);
+
+    QCOMPARE(installer.nothing, QStringList{QStringLiteral("wallet.send")});
+    QVERIFY(installer.offered.isEmpty());
+    // Answered exactly as before: the hook changes nothing the requester sees.
+    QCOMPARE(chatEndpoint.results.size(), 1);
+    QCOMPARE(chatEndpoint.error(), QStringLiteral("unavailable"));
 }
 
 void TestIntentBroker::testAnOfferIsIndistinguishableFromNoProviderAtAll()

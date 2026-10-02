@@ -230,6 +230,7 @@ void IntentBroker::startRequest(const QString& dispatchId)
             qWarning().noquote()
                 << "IntentBroker: nothing installed provides" << intent
                 << "and the catalog knows no package that would";
+            if (m_installer) m_installer->nothingInstallable(intent);
         }
 
         if (!installable.isEmpty() && m_installer) {

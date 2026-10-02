@@ -73,6 +73,16 @@ Item {
         readonly property string query: searchField.text.trim()
         readonly property bool searching: query.length > 0
 
+        // Results come from the catalog, which is fetched the first time
+        // something needs it: the first query here, unless something else was.
+        onSearchingChanged: if (searching && typeof backend !== "undefined" && backend !== null)
+                                backend.requestCatalog()
+        readonly property bool catalogLoading:
+            typeof backend !== "undefined" && backend !== null && backend.appsLoading
+        readonly property bool noMatches:
+            (typeFilter !== "core" ? appsProxy.visibleCount : 0)
+            + (typeFilter !== "ui_qml" ? packagesProxy.visibleCount : 0) === 0
+
         readonly property int greetingToSearch: 40
         readonly property int searchFieldHeight: 54
         readonly property int filterButtonSize: 50
@@ -329,10 +339,17 @@ Item {
                     LogosText {
                         objectName: "welcomePage.noResults"
                         Layout.fillWidth: true
-                        visible: (d.typeFilter !== "core" ? appsProxy.visibleCount : 0)
-                                 + (d.typeFilter !== "ui_qml" ? packagesProxy.visibleCount : 0)
-                                 === 0
+                        visible: d.noMatches && !d.catalogLoading
                         text: qsTr("No results for \u201C%1\u201D").arg(d.query)
+                        font.pixelSize: Theme.typography.subtitleText
+                        color: Theme.palette.textTertiary
+                    }
+
+                    LogosText {
+                        objectName: "welcomePage.searchingCatalog"
+                        Layout.fillWidth: true
+                        visible: d.noMatches && d.catalogLoading
+                        text: qsTr("Searching the catalog\u2026")
                         font.pixelSize: Theme.typography.subtitleText
                         color: Theme.palette.textTertiary
                     }

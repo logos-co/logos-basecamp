@@ -155,6 +155,9 @@ void FixtureBackend::refreshAppCatalog()
     qInfo() << "FixtureBackend: refreshAppCatalog — fixture build, no effect";
 }
 
+// The fixture's catalog is loaded from the start.
+void FixtureBackend::requestCatalog() {}
+
 void FixtureBackend::addRepository(const QString& url)
 {
     Q_UNUSED(url);

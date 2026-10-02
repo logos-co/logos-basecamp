@@ -20,6 +20,13 @@ Item {
     readonly property int sidebarSettings:   ShellSection.Settings
     readonly property int sidebarPackages:   ShellSection.PackageManager
 
+    // The App Manager shows the catalog, which is fetched the first time
+    // something needs it rather than at launch.
+    readonly property bool appManagerShown:
+        backend.currentActiveSectionIndex === root.sidebarAppManager
+    onAppManagerShownChanged: if (appManagerShown) backend.requestCatalog()
+    Component.onCompleted: if (appManagerShown) backend.requestCatalog()
+
     // The App Manager's view of the catalog. Declared here rather than handed
     // over by the backend: a filter proxy is view configuration, so it belongs
     // to whoever draws the view. Only the source model crosses, as a plain
