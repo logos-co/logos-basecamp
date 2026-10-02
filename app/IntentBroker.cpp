@@ -324,19 +324,24 @@ void IntentBroker::presentPendingChoice(const QString& dispatchId)
     if (it == m_pending.end() || it->choicePresented)
         return;
 
+    // Copies: the chooser may answer before present() returns (see dispatchTo).
+    const QString intent = it->intent;
+    const QString requesterName = it->requesterName;
+    const QVariantList providers = it->choiceProviders;
     const int shown = m_chooser
-        ? m_chooser->present(dispatchId, it->intent, it->requesterName,
-                             it->choiceProviders)
+        ? m_chooser->present(dispatchId, intent, requesterName, providers)
         : 0;
     if (shown == 0) {
-        qWarning() << "IntentBroker: no chooser mounted for" << it->intent
+        qWarning() << "IntentBroker: no chooser mounted for" << intent
                    << "— answering unavailable";
         failWithFloor(dispatchId, logos::intent::errUnavailable());
         return;
     }
+    it = m_pending.find(dispatchId);
+    if (it == m_pending.end())
+        return;
     it->choicePresented = true;
-    emit chooserRequested(dispatchId, it->intent, it->requesterName,
-                          it->choiceProviders);
+    emit chooserRequested(dispatchId, intent, requesterName, providers);
 }
 
 void IntentBroker::drainChoiceQueue()
@@ -398,6 +403,10 @@ void IntentBroker::chooseProvider(const QString& dispatchId, const QString& prov
     if (it->choicePresented) {
         if (m_chooser) m_chooser->dismiss(dispatchId);
         emit chooserDismissed(dispatchId);
+        // Either can re-enter the broker (see dispatchTo).
+        it = m_pending.find(dispatchId);
+        if (it == m_pending.end())
+            return;
         it->choicePresented = false;
     }
 
@@ -562,25 +571,38 @@ void IntentBroker::dispatchTo(const QString& dispatchId)
     it->isHandoff = m_registry
                  && m_registry->isHandoff(it->providerName, it->intent);
 
+    // Copies, and a fresh lookup after each call below: either can re-enter the
+    // broker (the shell answers before deliverRequest returns), and finish()
+    // erases the record `it` points into.
+    const QString providerName = it->providerName;
+    const QString intent = it->intent;
+    const QVariantMap params = it->params;
+    const QString requesterName = it->requesterName;
+
     // Not for the shell: it has no widget to raise, and its handler does its
     // own navigating (the repositories intent lands the user on Settings).
     // Calling presentApp here would either no-op or fight that.
-    if (m_presenter && !isShellProvider(it->providerName)) {
-        m_presenter->presentApp(it->providerName);
+    if (m_presenter && !isShellProvider(providerName)) {
+        m_presenter->presentApp(providerName);
+        it = m_pending.find(dispatchId);
+        if (it == m_pending.end())
+            return;
         it->didNavigate = true;
         it->navigatedAtMs = nowMs();
     }
 
-    const int receivers = provider->deliverRequest(dispatchId, it->intent,
-                                                   it->params, it->requesterName);
+    const int receivers = provider->deliverRequest(dispatchId, intent, params, requesterName);
+    it = m_pending.find(dispatchId);
+    if (it == m_pending.end())
+        return;   // answered during delivery
     it->providerHadHandler = (receivers > 0);
     if (receivers == 0) {
         // Declared the capability, shipped no handler. Left to time out rather
         // than failed immediately: a handler installed from an async Loader or
         // a later Component.onCompleted legitimately arrives after this point,
         // and the deadline is the honest bound on "it never showed up".
-        qWarning() << "IntentBroker: provider" << it->providerName
-                   << "has no handler for" << it->intent
+        qWarning() << "IntentBroker: provider" << providerName
+                   << "has no handler for" << intent
                    << "— the request will time out";
     }
 }
