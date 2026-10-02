@@ -2308,11 +2308,11 @@
         "process-stats": "process-stats"
       },
       "locked": {
-        "lastModified": 1790116830,
-        "narHash": "sha256-7nMAuHfoIjTUhZI0E7kt2C4rDpdfais8dnBuXQd7gLw=",
+        "lastModified": 1790896819,
+        "narHash": "sha256-noIqKrG03GCiBSQV64yegSVR9JRjsTSEm1bujVVR8ms=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "db45024f5c45ce5fc00ab76a6921985839ad7355",
+        "rev": "7d372f567f69e1946668966cd759e473fd15117a",
         "type": "github"
       },
       "original": {
