@@ -381,27 +381,18 @@ test("welcome: the filter chips scope which result rows show", async (app) => {
 // the shortcut for ShortcutBridge to mirror onto the host. The bridge logs
 // "bound N QML shortcut(s)" for the welcome pane when it picks it up.
 test("welcome: the page declares a ⌘K shortcut for the bridge to mirror", async (app) => {
-  const res = await app.inspector.send("findByType", { typeName: "QQuickShortcut" });
-  const shortcuts = res.matches ?? [];
-  if (shortcuts.length === 0) throw new Error("no Shortcut declared on the welcome page");
+  // By objectName: AppManager, Settings and package_manager_ui declare Ctrl+K too.
+  const sc = (await findByType(app, "QQuickShortcut"))
+    .find((m) => m.objectName === "welcomePage.searchShortcut");
+  if (!sc) throw new Error("no Shortcut declared on the welcome page");
 
-  let found = false;
-  for (const sc of shortcuts) {
-    const seq = await app.inspector.send("evaluate", {
-      objectId: sc.id, expression: "JSON.stringify({ s: nativeText, on: enabled })",
-    });
-    if (seq.error) continue;
-    const info = JSON.parse(seq.result);
-    if (typeof info.s === "string" && /K$/i.test(info.s)) {
-      if (info.on !== true) throw new Error(`⌘K shortcut present but enabled=${info.on}`);
-      found = true;
-      break;
-    }
+  const info = JSON.parse(
+    await evalOn(app, sc.id, "JSON.stringify({ s: nativeText, on: enabled })"));
+  if (typeof info.s !== "string" || !/K$/i.test(info.s)) {
+    throw new Error(
+      `welcome page Shortcut nativeText=${JSON.stringify(info.s)} (expected ⌘K or Ctrl+K)`);
   }
-  if (!found) {
-    throw new Error("no enabled ⌘K shortcut among "
-                  + `${shortcuts.length} declared shortcut(s)`);
-  }
+  if (info.on !== true) throw new Error(`⌘K shortcut present but enabled=${info.on}`);
 });
 
 // --- Welcome page (A2) — runs right after A1: navigating clicks the page away ---
