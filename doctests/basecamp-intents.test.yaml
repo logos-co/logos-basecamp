@@ -159,7 +159,8 @@ sections:
 
             - name: "Its view is up"
               action: wait_for
-              texts: ["RESULT"]
+              # Matching is exact: the label is "RESULT " + lastResult, which starts empty.
+              texts: ["RESULT "]
               timeout: 60000
               text: "The requester renders its result line, initially empty."
 
