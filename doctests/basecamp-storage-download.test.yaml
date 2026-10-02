@@ -39,7 +39,9 @@ sections:
         check_file: "result-mcp"
 
       - title: "Build the Basecamp bundle"
-        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
         code_block: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
         check_file: "result-bundle/bin/LogosBasecamp"
 

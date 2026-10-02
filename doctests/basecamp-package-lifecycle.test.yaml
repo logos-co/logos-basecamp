@@ -150,7 +150,9 @@ sections:
       shipping path.
     steps:
       - title: "Build the bundle"
-        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
           nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle

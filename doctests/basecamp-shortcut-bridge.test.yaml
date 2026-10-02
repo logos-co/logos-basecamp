@@ -30,8 +30,9 @@ intro: |
   The plugin author writes nothing new — declaring a `Shortcut { }` block in
   QML is enough.
 
-  This doc-test builds **this** basecamp commit as its normal development app
-  (`#app`), launches it headless, opens the **Applications** view (which
+  This doc-test builds **this** basecamp commit as its portable bundle with the
+  inspector (`#bin-bundle-dir-inspector`), launches it headless, opens the
+  **Applications** view (which
   declares `Shortcut { sequence: "Ctrl+K"; onActivated: … }` in
   `AppManagerView.qml`), and drives the bridge end-to-end: it locates the
   mirror the bridge installed for that ⌘K, fires it via the inspector, and
@@ -40,7 +41,7 @@ intro: |
   mirrored on pane switch and that firing the mirror does run the plugin's
   `onActivated` handler.
 
-what_you_build: "This `logos-basecamp` commit, built as the normal development app (`#app`, inspector-enabled by default). The **Applications** pane's QML declares a ⌘K shortcut; the bridge inside basecamp mirrors it as a real C++ QShortcut, which this doc-test exercises through the QML inspector."
+what_you_build: "This `logos-basecamp` commit, built as the portable bundle with the inspector compiled in (`#bin-bundle-dir-inspector`). The **Applications** pane's QML declares a ⌘K shortcut; the bridge inside basecamp mirrors it as a real C++ QShortcut, which this doc-test exercises through the QML inspector."
 
 what_you_learn:
   - "Why QML `Shortcut { }` blocks inside a `QQuickWidget` don't fire on their own — the offscreen `QQuickWindow` never satisfies `Qt.WindowShortcut`'s activeness check"
@@ -97,35 +98,36 @@ sections:
         code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
         check_file: "result-mcp"
 
-  - title: "Build the basecamp dev app"
+  - title: "Build the basecamp bundle"
     step: true
     text: |
-      Build **this** basecamp commit as the development app — the inspector is
-      compiled in by default so the driver can attach.
+      Build **this** basecamp commit as the portable bundle with the inspector
+      compiled in, so the driver can attach.
     steps:
-      - title: "Build the dev app"
-        text: |
-          The default package is `#app`, so from inside the clone this is
-          simply `nix build`:
-        run: "nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app"
+      - title: "Build the bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
         code_block: |
-          # From inside the clone this is simply: nix build
-          nix build 'github:logos-co/logos-basecamp{release}#app' -o result-app
-        check_file: "result-app/bin/LogosBasecamp"
+          # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
+        check_file: "result-bundle/bin/LogosBasecamp"
 
   - title: "Drive the ⌘K shortcut through the bridge"
     step: true
     text: |
-      Launch the dev app headless, open **Applications**, then use the
+      Launch the bundle headless, open **Applications**, then use the
       inspector to locate the C++ `QShortcut` mirror the bridge installed for
       ⌘K and fire it. The fact that the mirror is present at all is what
       proves the bridge ran on pane switch; firing its `activated` signal
       then runs the plugin's `onActivated:` handler, which focuses the search
       bar's inner `TextInput`.
     steps:
-      - title: "Launch and drive the dev app"
+      - title: "Launch and drive the bundle"
         ui_test:
-          launch: "./result-app/bin/LogosBasecamp"
+          # A private user dir: a Basecamp already running on the default one
+          # would take this launch over, and this one would exit.
+          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/shortcut-bridge"
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
@@ -133,7 +135,7 @@ sections:
               action: wait_for
               texts: ["Applications", "Package Manager", "Settings"]
               timeout: 60000
-              text: "The dev app launches headless. The sidebar renders with the section entries."
+              text: "The bundle launches headless. The sidebar renders with the section entries."
               screenshot: "shortcut-launch.png"
 
             # The Applications pane is where AppManagerView.qml declares its

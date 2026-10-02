@@ -34,10 +34,14 @@ sections:
       the next section runs unchanged there.
     steps:
       - title: "Build the inspector-enabled bundle"
-        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector; fi
         code_block: "nix build '.#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
       - title: "Build the test framework"
-        run: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
         code_block: "nix build '.#logos-qt-mcp' -o logos-qt-mcp"
 
   - title: "Walk the UI"

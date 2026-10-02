@@ -188,7 +188,9 @@ sections:
         # inspector switched on, so logos-qt-mcp can connect and drive the UI
         # headlessly. The inspector is OFF in the shipping bundle; everything else
         # about the two is the same.
-        run: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir'
           nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir' -o result-bundle

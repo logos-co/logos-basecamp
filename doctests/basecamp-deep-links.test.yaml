@@ -101,7 +101,9 @@ sections:
       The portable bundle, with the inspector compiled in.
     steps:
       - title: "Build the bundle"
-        run: "nix build \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector\" -o result-bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
           nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
@@ -310,12 +312,15 @@ sections:
           # .desktop file there and macOS failed this step every single run.
           if [ "$(uname -s)" = "Darwin" ]; then
             # The shipped .app, not result-bundle — the dir bundle has no plist.
-            # Already built by the build-macos-app job, so this is a cache hit.
-            # {release} is what pins this to the commit under test — the same
-            # form the result-bundle prerequisite uses. Without it this would
-            # quietly assert the plist of the default branch.
-            nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-macos-app" \
-              -o result-app || { echo "MACOS_APP_BUILD_FAILED"; exit 1; }
+            # CI hands it in as BASECAMP_MACOS_APP, built once by its build job.
+            # Otherwise {release} is what pins this to the commit under test —
+            # the same form the result-bundle prerequisite uses. Without it this
+            # would quietly assert the plist of the default branch.
+            if [ -n "${BASECAMP_MACOS_APP:-}" ]; then ln -sfn "$BASECAMP_MACOS_APP" result-app
+            else
+              nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-macos-app" \
+                -o result-app || { echo "MACOS_APP_BUILD_FAILED"; exit 1; }
+            fi
             PLIST="result-app/LogosBasecamp.app/Contents/Info.plist"
 
             SCHEMES=$(plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes json \
