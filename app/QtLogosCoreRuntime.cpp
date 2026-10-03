@@ -1,6 +1,5 @@
 #include "QtLogosCoreRuntime.h"
 
-#include "QtCoreTokens.h"
 #include "logos_qt_host_core.h"
 
 QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
@@ -15,8 +14,6 @@ QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
     coreConfig.bundledModulesDirs  = std::move(config.bundledModulesDirs);
     coreConfig.packageConfigJson   = std::move(config.packageConfigJson);
     coreConfig.shellName           = std::move(config.shellName);
-    // Core's module tokens, into the store this app's LogosAPI reads.
-    coreConfig.tokenListener       = logos::ui::saveCoreTokenToQtStore;
 
     m_core = std::make_unique<logos::qt::QtLogosCore>(argc, argv, std::move(coreConfig));
 }

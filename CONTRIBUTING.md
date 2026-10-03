@@ -46,7 +46,7 @@ nix build .#doctests -L            # C++ doctests
 `host-services-test` is the guard on the capability trust root: it asserts that a
 NON-`core` identity (ui-host, running `package_manager_ui`) actually *completes* a
 token-gated call chain, which is only possible when `capability_module` really
-received its `token_registry` / `token_delivery` host-services grant from the
+received its `token_delivery` host-services grant from the
 module loader this build pins. Run it after touching any of `logos-liblogos`,
 `logos-module-loader-qt`, `logos-protocol`, `logos-plugin-qt` or
 `logos-capability-module` pins — a loader that predates the grant makes

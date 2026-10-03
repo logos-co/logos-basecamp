@@ -281,7 +281,7 @@ sections:
               text: "The baked-in core modules report a **Loaded** status badge with an Unload action."
               screenshot: "basecamp-core-loaded.png"
 
-            # Give the stats timer (polls logos_core_get_module_stats every ~2s)
+            # Give the stats timer (polls core_service getModuleStats every ~2s)
             # a tick so the rendered rows carry live CPU/Mem values, then capture.
             - name: "Let the module stats populate"
               action: sleep

@@ -42,10 +42,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     , m_uiModulesModel(new ModuleInstanceModel(this))
     , m_coreModulesModel(new ModuleInstanceModel(this))
 {
-    if (!m_logosAPI) {
-        m_logosAPI = new LogosAPI("core", this);
-        m_ownsLogosAPI = true;
-    }
+    // The app's shell identity; never a stand-in calling as the host.
+    Q_ASSERT(m_logosAPI);
 
     // Order matters: CoreModuleManager must exist before UIPluginManager so
     // the latter's ctor can receive a valid pointer; UIPluginManager must

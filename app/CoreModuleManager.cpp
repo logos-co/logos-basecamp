@@ -89,11 +89,6 @@ QStringList CoreModuleManager::loadedModules() const
     return m_core->loadedModules();
 }
 
-bool CoreModuleManager::runtimeAdmitsConsumers() const
-{
-    return !m_core->shellCredential().isEmpty();
-}
-
 QString CoreModuleManager::admitConsumer(const QString& name)
 {
     return m_core->admitConsumer(name);

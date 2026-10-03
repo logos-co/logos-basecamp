@@ -108,7 +108,7 @@
     }
   ],
   "calls": {
-    "_comment_capability": "capability_module must appear here even though Basecamp never calls it directly. MockStore's seeder mints a TokenManager token for every module named by a key, and the host must hold a capability_module token to be admitted as the trusted channel when loading a ui_qml plugin.",
+    "_comment_capability": "capability_module must appear here even though Basecamp never calls it directly. MockStore's seeder mints a TokenManager token for every module named by a key, and each identity (the app's shell, every UI plugin) asks capability_module.requestModule for its token before its first call to a module.",
     "capability_module.requestModule": "mock-token-capability_module",
     "package_manager.setEmbeddedModulesDirectory": true,
     "package_manager.setUserModulesDirectory": true,

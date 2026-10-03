@@ -85,10 +85,9 @@ public:
     // into N calls and N parses per tick.
     virtual QVariantList allStats() const = 0;
 
-    // Once capability_module is the runtime's token authority, the app calls as
-    // its shell identity and the runtime admits its UI plugins. Empty otherwise,
-    // and then the app calls as "core" on the tokens it mirrors, as before.
-    virtual QString shellCredential() const { return {}; }
+    // The app calls as its shell identity, with the credential capability_module,
+    // the runtime's token authority, minted for it.
+    virtual QString shellCredential() const = 0;
     // A UI plugin's credential, minted by capability_module; empty when refused.
-    virtual QString admitConsumer(const QString& name) { (void)name; return {}; }
+    virtual QString admitConsumer(const QString& name) = 0;
 };

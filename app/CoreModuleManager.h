@@ -45,9 +45,7 @@ public:
     // progress, so callers should refresh their UI state.
     bool unloadModuleWithDependents(const QString& name);
 
-    // The runtime admits UI plugins once capability_module is its token
-    // authority; see ICoreRuntime::shellCredential.
-    bool runtimeAdmitsConsumers() const;
+    // A UI plugin's credential, admitted by the runtime; empty when refused.
     QString admitConsumer(const QString& name);
 
     // Cached as of the last timer tick, so up to ~2s stale; empty for modules
