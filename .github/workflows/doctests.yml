@@ -343,17 +343,17 @@ jobs:
   # they do at runtime; `assemble` tells the import gate so.
   windows:
     name: windows
-    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@feat/doctest-specs
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
     with:
       targets: bin-bundle-dir-inspector logos-qt-mcp intents-fixtures depsvc-lgx
       extra-targets: >-
         {"lgx": {"ref": "github:logos-co/logos-package#packages.x86_64-windows.lgx"},
          "lgpm": {"ref": "github:logos-co/logos-package-manager#packages.x86_64-windows.cli-portable"},
-         "port-test_fullapi_cpp": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_cpp.install-portable"},
-         "port-test_fullapi_rust": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_rust.install-portable"},
-         "port-test_fullapi_proxy": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_proxy.install-portable"},
-         "port-test_fullapi_ui": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_ui.install-portable"},
-         "port-test_fullapi_ui_qml": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_ui_qml.install-portable"}}
+         "port-test_fullapi_cpp": {"ref": "github:logos-co/logos-test-modules#modules.x86_64-windows.test_fullapi_cpp.install-portable"},
+         "port-test_fullapi_rust": {"ref": "github:logos-co/logos-test-modules#modules.x86_64-windows.test_fullapi_rust.install-portable"},
+         "port-test_fullapi_proxy": {"ref": "github:logos-co/logos-test-modules#modules.x86_64-windows.test_fullapi_proxy.install-portable"},
+         "port-test_fullapi_ui": {"ref": "github:logos-co/logos-test-modules#modules.x86_64-windows.test_fullapi_ui.install-portable"},
+         "port-test_fullapi_ui_qml": {"ref": "github:logos-co/logos-test-modules#modules.x86_64-windows.test_fullapi_ui_qml.install-portable"}}
       assemble: >-
         {"port-test_fullapi_cpp": ["bin-bundle-dir-inspector/bin"],
          "port-test_fullapi_rust": ["bin-bundle-dir-inspector/bin"],
