@@ -15726,11 +15726,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1790986826,
+        "lastModified": 1790987276,
         "narHash": "sha256-jKCUuuET9jqLe4MZo7pTs6PMXDX6NxQL4QQhtV8cf3U=",
         "owner": "logos-co",
         "repo": "logos-package-manager-ui",
-        "rev": "fe7bbebe2fc49d078ebcf0217f82b243a59baa09",
+        "rev": "033c31c541cc80abc2cd64cd2258842ac03357fc",
         "type": "github"
       },
       "original": {
