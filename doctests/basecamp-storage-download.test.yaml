@@ -4,9 +4,9 @@ release: ""
 
 intro: |
   Basecamp can fetch packages over Logos Storage if the catalog's index
-  advertises a `logos:<cid>`. When the storage node is not running, it falls
-  back to the package's HTTPS URL. This tutorial proves both paths end to end
-  in the Basecamp UI.
+  advertises a `logos:<network>:<cid>` URL. When the storage node is not
+  running, it falls back to the package's HTTPS URL. This tutorial proves both
+  paths end to end in the Basecamp UI.
 
 what_you_build: "A release-like environment to install a package in Basecamp over Logos Storage and over HTTPS."
 
@@ -194,21 +194,15 @@ sections:
 
       - title: "Build index.json"
         text: |
-          `index.json` holds the package metadata, including the CID and the
-          HTTPS URL. It is built from a minimal sidecar that carries the CID.
+          `index.json` lists the package with two URLs: the storage one first,
+          the HTTPS one second. The storage URL names the network, `logos.dev`,
+          which must equal the node's, otherwise the downloader ignores the CID.
         run: |
           set -eu
 
-          cat > www/sidecar.json <<EOF
-          {
-            "sha256": "$(sha256sum storage_ui.lgx | cut -d' ' -f1)",
-            "cid": "$(cat cid.txt)"
-          }
-          EOF
+          echo "logos:logos.dev:$(cat cid.txt) https://127.0.0.1:8443/storage_ui.lgx $(pwd)/storage_ui.lgx" > urls.txt
 
-          echo "https://127.0.0.1:8443/storage_ui.lgx $(pwd)/storage_ui.lgx" > urls.txt
-
-          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/master/index.py
+          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/main/index.py
 
           PATH="$(pwd)/lgx/bin:$PATH" \
           SSL_CERT_FILE="$(pwd)/localhost.crt" NIX_SSL_CERT_FILE="$(pwd)/localhost.crt" \
@@ -216,13 +210,13 @@ sections:
 
           jq . www/index.json
         expect_contains:
-          - "logos:"
+          - "logos:logos.dev:"
 
       - title: "Check that the index advertises both the CID and the HTTPS URL"
         text: |
           The HTTPS URL is the fallback, used when the CID is not available.
         run: |
-          jq -er --arg cid "logos:$(cat cid.txt)" '
+          jq -er --arg cid "logos:logos.dev:$(cat cid.txt)" '
             .packages[0].versions[0].urls
             | (index($cid) != null) and (index("https://127.0.0.1:8443/storage_ui.lgx") != null)
           ' www/index.json
@@ -232,9 +226,6 @@ sections:
       - title: "Write logos-repo.json"
         text: |
           `logos-repo.json` tells Basecamp where to fetch packages from.
-
-          `network` must equal the node's, otherwise the downloader ignores
-          the CID.
         run: |
           set -eu
 
@@ -245,7 +236,6 @@ sections:
             "displayName": "Doctest Catalog",
             "description": "Local catalog for this doc-test.",
             "indexUrl": "https://127.0.0.1:8443/index.json",
-            "network": "logos.dev",
             "trustedSigners": []
           }
           EOF
@@ -388,7 +378,7 @@ sections:
       - title: "Check that the package came from the Storage network"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=1 https=0"
 
@@ -506,7 +496,7 @@ sections:
           Each launch writes its own log, so the counts cover this run alone.
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
@@ -610,7 +600,7 @@ sections:
       - title: "Check that the package came from HTTPS"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
@@ -725,7 +715,7 @@ sections:
       - title: "Check that the package came from the Storage network"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=1 https=0"
 
@@ -821,7 +811,7 @@ sections:
       - title: "Check that the package came from HTTPS"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
