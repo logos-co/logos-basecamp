@@ -52,7 +52,8 @@ sections:
           - "package_downloader"
 
       - title: "Build the Storage node"
-        run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1#logos-storage-nim' -o storage-node"
+        text: "Pinned: later revisions pin a nim-libp2p commit that nix cannot fetch from its default branch."
+        run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1&rev=e0f4c062c76cb61d88b05dd8fbc999d4d342684c#logos-storage-nim' -o storage-node"
         check_file: "storage-node/bin/storage"
 
       - title: "Build caddy"
