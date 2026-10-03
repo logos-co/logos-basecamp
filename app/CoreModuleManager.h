@@ -45,6 +45,11 @@ public:
     // progress, so callers should refresh their UI state.
     bool unloadModuleWithDependents(const QString& name);
 
+    // The runtime admits UI plugins once capability_module is its token
+    // authority; see ICoreRuntime::shellCredential.
+    bool runtimeAdmitsConsumers() const;
+    QString admitConsumer(const QString& name);
+
     // Cached as of the last timer tick, so up to ~2s stale; empty for modules
     // the poller hasn't seen yet.
     QVariantMap moduleStats(const QString& name) const;

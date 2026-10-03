@@ -6,6 +6,8 @@
 # ($ORIGIN first), so a skew kills exactly one platform; and Mach-O binds
 # lazily, so it dies at the first call, not at load. That was #361's
 # "Module process crashed: package_manager", with every Linux job green.
+# A consumer that names the library as @loader_path/ binds the sibling on
+# macOS too (package_downloader's GNU libiconv beside Qt's Apple one).
 #
 # Windows is out: a PE has no `nm -D` symbol table. negativeControl plants a
 # real skew and asserts the gate REJECTS it.
@@ -41,7 +43,7 @@ pkgs.runCommand "logos-basecamp-link-gate${pkgs.lib.optionalString negativeContr
   # `|| rc=$?` because runCommand runs this under `set -e`: a bare non-zero
   # exit here aborts before the gate can report its own verdict.
   rc=0
-  python3 ${./link-gate.py} "$ROOT" "${tp}nm" "${fmt}" || rc=$?
+  python3 ${./link-gate.py} "$ROOT" "${tp}nm" "${fmt}" "${tp}objdump" || rc=$?
 
   echo
   ${if negativeControl then ''

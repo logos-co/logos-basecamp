@@ -728,12 +728,16 @@ WRAPPER_EOF
         break
       fi
     done
-    for _x in "" ".exe"; do
-      if [ -f "${logosLiblogos}/bin/logos_host$_x" ]; then
-        cp -L "${logosLiblogos}/bin/logos_host$_x" "$out/bin/"
-        echo "Installed logos_host$_x"
-        break
-      fi
+    # Every module host liblogos ships: a plain module runs in logos_host_plain,
+    # which the loader looks for next to the program.
+    for _host in logos_host logos_host_plain; do
+      for _x in "" ".exe"; do
+        if [ -f "${logosLiblogos}/bin/$_host$_x" ]; then
+          cp -L "${logosLiblogos}/bin/$_host$_x" "$out/bin/"
+          echo "Installed $_host$_x"
+          break
+        fi
+      done
     done
     ''}
     ${pkgs.lib.optionalString useMockBackend ''
@@ -744,7 +748,7 @@ WRAPPER_EOF
     # real code that still needs somewhere to run. It reads LOGOS_MOCK_FIXTURE
     # (exported by MockBackendFixture, inherited through QProcess) and serves
     # that backend's own outbound calls from the same fixture.
-    for _f in "$out/bin/logos_host" "$out/bin/logoscore"; do
+    for _f in "$out/bin/logos_host" "$out/bin/logos_host_plain" "$out/bin/logoscore"; do
       if [ -e "$_f" ]; then
         echo "ERROR: mock build staged a module-runtime binary: $_f" >&2
         exit 1

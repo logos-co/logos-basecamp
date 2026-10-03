@@ -12,6 +12,9 @@ QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
     coreConfig.modulesDirs         = std::move(config.modulesDirs);
     coreConfig.persistenceBasePath = std::move(config.persistenceBasePath);
     coreConfig.accessPolicyJson    = std::move(config.accessPolicyJson);
+    coreConfig.bundledModulesDirs  = std::move(config.bundledModulesDirs);
+    coreConfig.packageConfigJson   = std::move(config.packageConfigJson);
+    coreConfig.shellName           = std::move(config.shellName);
     // Core's module tokens, into the store this app's LogosAPI reads.
     coreConfig.tokenListener       = logos::ui::saveCoreTokenToQtStore;
 
@@ -29,6 +32,11 @@ QStringList  QtLogosCoreRuntime::knownModules() const     { return m_core->known
 QStringList  QtLogosCoreRuntime::loadedModules() const    { return m_core->loadedModules(); }
 void         QtLogosCoreRuntime::refreshModules()         { m_core->refreshModules(); }
 QVariantList QtLogosCoreRuntime::allStats() const         { return m_core->allStats(); }
+QString      QtLogosCoreRuntime::shellCredential() const  { return m_core->shellCredential(); }
+QString      QtLogosCoreRuntime::admitConsumer(const QString& name)
+{
+    return m_core->admitConsumer(name);
+}
 
 bool QtLogosCoreRuntime::loadModule(const QString& name, LoadPolicy policy)
 {

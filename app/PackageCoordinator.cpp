@@ -5,7 +5,6 @@
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
-#include "LogosBasecampPaths.h"
 #include "RepositorySource.h"
 #include "PackageInstallDecision.h"
 #include "utils/DependencyBlocker.h"
@@ -116,12 +115,8 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
 
     LogosModules logos(m_logosAPI);
 
-    // Configure the package_manager module's directories so it knows where
-    // to install.
-    logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
-    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
-    logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
-    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    // package_manager's directories are set by the runtime as it loads
+    // (main.cpp's package config): its setters answer only the runtime.
 
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;

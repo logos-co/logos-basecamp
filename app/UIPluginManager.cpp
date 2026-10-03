@@ -71,6 +71,11 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
             return core && core->loadModule(dep);
         },
         this);
+    if (m_coreModuleManager && m_coreModuleManager->runtimeAdmitsConsumers()) {
+        m_pluginLoader->setAdmitConsumer([core = m_coreModuleManager](const QString& name) {
+            return core->admitConsumer(name);
+        });
+    }
     connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoaded,
             this, &UIPluginManager::onPluginLoaded);
     connect(m_pluginLoader, &logos::ui::UiPluginLoader::pluginLoadFailed,

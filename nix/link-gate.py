@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 
-root, nm, fmt = sys.argv[1], sys.argv[2], sys.argv[3]
+root, nm, fmt, objdump = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 macho = fmt == "macho"
 suffix = ".dylib" if macho else ".so"
 libdir = os.path.join(root, "lib")
@@ -21,6 +21,20 @@ def syms(path, which):
 
 def rel(p):
     return os.path.relpath(p, root)
+
+
+def names_sibling(consumer, base):
+    """A Mach-O consumer naming `base` as @loader_path/ binds the copy beside it,
+    as Linux does, so the platforms agree. @rpath/ may resolve to lib/'s copy."""
+    if not macho:
+        return False
+    out = subprocess.run([objdump, "--macho", "--dylibs-used", consumer],
+                         capture_output=True, text=True).stdout
+    for line in out.splitlines()[1:]:
+        ref = line.strip().split(" ")[0]
+        if os.path.basename(ref) == base:
+            return ref in ("@loader_path/" + base, "@loader_path/./" + base)
+    return False
 
 
 libs = []
@@ -68,7 +82,7 @@ for base in sorted(elsewhere):
             wanted = syms(consumer, "undefined")
             from_lib, from_beside = wanted & in_lib, wanted & beside
             examined += 1
-            if from_lib == from_beside:
+            if from_lib == from_beside or names_sibling(consumer, base):
                 continue
             failures += 1
             print("FAIL  %s" % rel(consumer))
