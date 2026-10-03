@@ -4,7 +4,7 @@ name: basecamp Doc-Tests
 # one job per spec per OS; the specs and what each covers are listed at the
 # `doctests` job. Basecamp itself is built ONCE per OS, by `build`, into portable
 # trees the spec jobs download: they never build Basecamp, and need no cache for it.
-# basecamp-bundle-ui's run half also runs on Windows, in the `windows` job.
+# Every spec's run half also runs on Windows, in the `windows` job.
 # `basecamp doc-tests (<os>)` is one verdict per OS over its build and specs.
 #
 # ──────────────────────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ jobs:
         #     bundle. (Its dev-app twin, basecamp-modules, is not run here: the
         #     walk is identical, and the dev app is covered by build.yml's tests.)
         #   basecamp-bundle-ui — shell, Settings and Package Manager on the
-        #     bundle; the `windows` job runs the same walk on Windows.
+        #     bundle.
         #   basecamp-fullapi-ui — hermetic full-API check: a ui_qml plugin
         #     consumes the full_api contract via an interface dependency and
         #     drives every method type + receives typed events, all from local
@@ -335,24 +335,46 @@ jobs:
           if [ "$failed" -ne 0 ]; then echo "::error::$failed of $total job(s) for $OS did not pass"; exit 1; fi
           echo "All $total job(s) for $OS passed."
 
-  # A spec's run half on a Windows runner, for the specs that have one.
-  # logos-windows-ci cross-builds the outputs the build half names (once, in its
-  # own cross-build job), stages them under those names, and uploads
-  # basecamp-doctest-report-<spec>-windows-latest.
+  # Every spec's run half on Windows runners, from ONE cross-build.
+  # logos-windows-ci builds the targets and extra-targets once, stages each under
+  # its name (the names the build halves give their out-links), runs each spec on
+  # its own runner and uploads basecamp-doctest-report-<spec>-windows-latest.
+  # The test-modules fixtures import Qt and the SDK from the bundle's bin/, as
+  # they do at runtime; `assemble` tells the import gate so.
   windows:
-    name: ${{ matrix.spec }} (windows-latest)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - spec: basecamp-bundle-ui
-            targets: bin-bundle-dir-inspector logos-qt-mcp
-    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    name: windows
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@feat/doctest-specs
     with:
-      instance: ${{ matrix.spec }}
-      targets: ${{ matrix.targets }}
-      doctest-spec: doctests/${{ matrix.spec }}.test.yaml
-      doctest-artifact: basecamp-doctest-report-${{ matrix.spec }}
+      targets: bin-bundle-dir-inspector logos-qt-mcp intents-fixtures depsvc-lgx
+      extra-targets: >-
+        {"lgx": {"ref": "github:logos-co/logos-package#packages.x86_64-windows.lgx"},
+         "lgpm": {"ref": "github:logos-co/logos-package-manager#packages.x86_64-windows.cli-portable"},
+         "port-test_fullapi_cpp": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_cpp.install-portable"},
+         "port-test_fullapi_rust": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_rust.install-portable"},
+         "port-test_fullapi_proxy": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_proxy.install-portable"},
+         "port-test_fullapi_ui": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_ui.install-portable"},
+         "port-test_fullapi_ui_qml": {"ref": "github:logos-co/logos-test-modules/feat/windows-modules#modules.x86_64-windows.test_fullapi_ui_qml.install-portable"}}
+      assemble: >-
+        {"port-test_fullapi_cpp": ["bin-bundle-dir-inspector/bin"],
+         "port-test_fullapi_rust": ["bin-bundle-dir-inspector/bin"],
+         "port-test_fullapi_proxy": ["bin-bundle-dir-inspector/bin"],
+         "port-test_fullapi_ui": ["bin-bundle-dir-inspector/bin"],
+         "port-test_fullapi_ui_qml": ["bin-bundle-dir-inspector/bin"]}
+      doctest-specs: >-
+        doctests/basecamp-modules-bundle.test.yaml
+        doctests/basecamp-bundle-ui.test.yaml
+        doctests/basecamp-fullapi-ui.test.yaml
+        doctests/basecamp-fullapi-ui-qml.test.yaml
+        doctests/basecamp-shortcut-bridge.test.yaml
+        doctests/basecamp-package-lifecycle.test.yaml
+        doctests/basecamp-missing-deps.test.yaml
+        doctests/basecamp-dependency-gate.test.yaml
+        doctests/basecamp-failure-paths.test.yaml
+        doctests/basecamp-persistence.test.yaml
+        doctests/basecamp-module-unload.test.yaml
+        doctests/basecamp-deep-links.test.yaml
+        doctests/basecamp-intents.test.yaml
+      doctest-artifact: basecamp-doctest-report
 
   publish-report:
     name: Publish report to GitHub Pages
