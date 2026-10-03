@@ -11,6 +11,8 @@ import Basecamp.Common
 
 Rectangle {
     id: root
+    // For UI tests: `loading` says when the catalog is in.
+    objectName: "appManager.view"
 
     // ─── Public API ───
     property var appsProxy: null

@@ -424,6 +424,23 @@ sections:
               action: click
               target: "Applications"
 
+            - name: "Its catalog is in"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
+              timeout: 30000
+
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -439,7 +456,6 @@ sections:
               property: "visible"
               value: true
               timeout: 30000
-              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -576,6 +592,23 @@ sections:
               action: click
               target: "Applications"
 
+            - name: "Its catalog is in"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
+              timeout: 30000
+
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -591,7 +624,6 @@ sections:
               property: "visible"
               value: true
               timeout: 30000
-              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -716,6 +748,23 @@ sections:
               action: click
               target: "Applications"
 
+            - name: "Its catalog is in"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
+              timeout: 30000
+
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -731,7 +780,6 @@ sections:
               property: "visible"
               value: true
               timeout: 30000
-              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -839,6 +887,23 @@ sections:
               action: click
               target: "Applications"
 
+            - name: "Its catalog is in"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
+              timeout: 30000
+
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -853,7 +918,6 @@ sections:
               property: "visible"
               value: true
               timeout: 30000
-              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
