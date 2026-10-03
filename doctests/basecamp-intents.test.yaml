@@ -237,6 +237,15 @@ sections:
               texts: ["Choose an app"]
               timeout: 30000
               text: "Both providers are offered, sorted by module name so the order is stable. Every string here is drawn by the shell using the same labels as the sidebar — a requesting app cannot influence how a provider is presented, and a provider cannot dress itself up."
+
+            - name: "Provider B is offered"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_b"
+              property: "visible"
+              value: true
+              timeout: 30000
+              text: "The title exists before the dialog opens, so the wait above passes at once; the row is visible only once the chooser is open."
               screenshot: "intents-chooser.png"
 
             - name: "Pick Provider B"
@@ -278,6 +287,14 @@ sections:
               find_value: "btnManual"
               text: "`test.manual` goes to a fixture that holds the request open until someone clicks. The two providers above answer on a timer, which proves routing but says nothing about *when* the user acts — and the return trip is defined by that moment."
 
+            - name: "The manual provider is offered"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_manual"
+              property: "visible"
+              value: true
+              timeout: 30000
+
             - name: "Choose the manual provider"
               action: click_object
               find_by: "objectName"
@@ -311,6 +328,14 @@ sections:
               find_by: "objectName"
               find_value: "btnHandoff"
               text: "`test.handoff` is serviced by the SAME app, holds the request open the same way, and answers with the same `ok:true` on the same button. The only difference is `\"handoff\": true` in its `metadata.json`."
+
+            - name: "The manual provider is offered again"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "intentProvider_intent_provider_manual"
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Choose the manual provider again"
               action: click_object

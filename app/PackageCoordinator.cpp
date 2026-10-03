@@ -222,6 +222,20 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         }
         qInfo() << "Downloaded" << data.at(0).toString() << "from" << data.at(1).toString();
     });
+
+    // A reloaded instance starts stopped, and the next operation here starts it.
+    // The status can arrive off the GUI thread.
+    QPointer<PackageCoordinator> self(this);
+    logos.package_downloader.onSubscriptionStatus([self](logos::SubStatus status, std::uint64_t) {
+        if (status == logos::SubStatus::Armed) return;
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self]() {
+            if (self) self->m_downloaderStarted = false;
+        }, Qt::QueuedConnection);
+    });
+
+    // Started as soon as it is loaded, as before it had start(): the storage
+    // node it brings up comes up at launch, and a stop in the Storage UI sticks.
+    withDownloaderStarted([]() {});
 }
 
 // The calls run whatever start() answers: a downloader that predates it refuses
