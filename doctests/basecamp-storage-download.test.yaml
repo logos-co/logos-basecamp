@@ -386,8 +386,7 @@ sections:
     step: true
     text: |
       The Storage UI can stop the node. With the node stopped, the package
-      comes from HTTPS, and the download leaves the node alone. The Storage
-      UI starts it again afterwards.
+      comes from HTTPS, and nothing but the Storage UI starts the node again.
     steps:
       - title: "Stop the node, reinstall, and start it again"
         ui_test:
@@ -516,21 +515,23 @@ sections:
               find_by: "objectName"
               find_value: "sidebar.app.storage_ui"
 
-            - name: "The node is still stopped"
-              action: wait_for
-              texts: ["Start", "Stopped"]
-              timeout: 30000
-              text: "The download did not restart the node."
-
-            - name: "Start it again"
-              action: click
-              target: "Start"
-
             - name: "The node is running again"
               action: wait_for
               texts: ["Stop"]
               timeout: 60000
-              text: "The node the downloader stopped talking to comes back from the Storage UI."
+              text: "The reinstalled Storage UI starts the node when it opens, as it does whenever its view is created."
+
+      - title: "Check that nothing else started the node"
+        text: |
+          Between the stop and the reinstalled Storage UI, the node stayed
+          stopped: the App Manager's first use and the download left it alone.
+        run: |
+          awk '/StorageModuleImpl::stop called/ { stopped = 1; next }
+               stopped && /Loading UI module: "storage_ui"/ { exit }
+               stopped && /StorageModuleImpl::start called/ { starts++ }
+               END { print "starts while stopped: " starts + 0 }' ui-test-app.log
+        expect_contains:
+          - "starts while stopped: 0"
 
       - title: "Check that the package came from HTTPS"
         text: |
