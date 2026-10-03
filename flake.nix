@@ -11,14 +11,15 @@
     # (cpp-sdk#169, protocol#97, plugin-qt#48, qt-sdk#60, loader-qt#21,
     # liblogos#227, and the drafts stacked on them). The peering branches sit
     # on top (protocol#99, cpp-sdk#172, qt-sdk#63, plugin-qt#50, loader-qt#23,
-    # liblogos#230).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/peering";
-    logos-protocol.url = "github:logos-co/logos-protocol/feat/peering";
-    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/peering";
-    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/peering";
+    # liblogos#230), and the tcp removal on them (protocol#102, cpp-sdk#176,
+    # qt-sdk#65, plugin-qt#54, loader-qt#26, liblogos#234).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/drop-legacy-remote";
+    logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-remote";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-remote";
+    logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/drop-legacy-remote";
     logos-module.url = "github:logos-co/logos-module";
-    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/peering";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/peering";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-remote";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/drop-legacy-remote";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
