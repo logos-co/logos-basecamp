@@ -384,13 +384,14 @@ private:
     // install directories.
     void subscribeToPackageInstallationEvents();
 
-    // Subscribe to package_downloader's catalogChanged event
+    // Subscribe to package_downloader's events, and start it once it is loaded.
     void subscribeToPackageDownloaderEvents();
 
-    // package_downloader does nothing until a consumer starts it, so every
-    // operation that calls into it begins here. The first one starts it, and
-    // the ones that arrive before the answer wait for it. `then` runs only
-    // while this object is alive.
+    // package_downloader does nothing until a consumer starts it. Basecamp starts
+    // it once it is loaded, and every operation that calls into it begins here,
+    // which starts it again after a reload or a failed start. The operations that
+    // arrive before the answer wait for it. `then` runs only while this object is
+    // alive.
     void withDownloaderStarted(std::function<void()> then);
 
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
@@ -571,7 +572,8 @@ private:
 
     // See withDownloaderStarted(). Only a successful start is remembered, so a
     // failed one is tried again by the next call; stateChanged keeps it in
-    // step with starts and stops made by other consumers.
+    // step with starts and stops made by other consumers, and losing the
+    // instance (an unload or reload) clears it.
     bool m_downloaderStarted = false;
     QList<std::function<void()>> m_waitingForDownloaderStart;
     UIPluginManager*   m_uiPluginManager;

@@ -267,8 +267,9 @@ test("welcome: first launch shows the welcome page", async (app) => {
 });
 
 // Nothing at launch reads the catalog, so nothing fetches it: no repository
-// list yet, nothing loading. The first view that needs it (a search below, or
-// the App Manager) starts package_downloader and fetches both.
+// list yet, nothing loading. package_downloader is started at launch, but the
+// first view that needs the catalog (a search below, or the App Manager)
+// fetches both.
 test("welcome: nothing fetches the catalog before a view needs it", async (app) => {
   const welcome = await requireWelcomePage(app);
   assertEq(await evalOn(app, welcome.id, "backend.appsLoading"), false, "backend.appsLoading");
