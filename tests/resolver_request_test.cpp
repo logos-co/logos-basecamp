@@ -149,6 +149,45 @@ private slots:
                      QVariantList{noVersion, noName})).size(), 0);
     }
 
+    // A dependency no enabled catalog serves, installed here (a bundled module):
+    // the retry list carries its installed copy, so the resolver keeps it.
+    void installedFallbackAddsTheInstalledCopyOfAnUnservedDependency()
+    {
+        const QVariantList resolved{QVariantMap{{"name", "storage_module"},
+            {"error", "no candidate matches 'storage_module'"}}};
+        const QVariantList installed{QVariantMap{{"moduleName", "storage_module"},
+            {"version", "3.0.0"}, {"hashes", QVariantMap{{"root", "h_storage"}}}}};
+
+        const QJsonArray retry = parse(logos::installedFallback("", resolved, installed, "storage_ui"));
+        QCOMPARE(retry.size(), 1);
+        QCOMPARE(retry.at(0).toObject().value("name").toString(), QStringLiteral("storage_module"));
+        QCOMPARE(retry.at(0).toObject().value("version").toString(), QStringLiteral("3.0.0"));
+        QCOMPARE(retry.at(0).toObject().value("rootHash").toString(), QStringLiteral("h_storage"));
+
+        // What the list already holds is kept.
+        const QString existing = logos::installedPackagesJson(QVariantList{
+            QVariantMap{{"moduleName", "chat_module"}, {"version", "2.0.0"}}});
+        QCOMPARE(parse(logos::installedFallback(existing, resolved, installed, "storage_ui")).size(), 2);
+    }
+
+    // No retry when it would change nothing, so the preview fails as before.
+    void installedFallbackIsEmptyWhenARetryWouldChangeNothing()
+    {
+        const QVariantList installed{QVariantMap{{"moduleName", "storage_module"}, {"version", "3.0.0"}}};
+        const QVariantList failedDep{QVariantMap{{"name", "storage_module"}, {"error", "no candidate"}}};
+
+        // Not installed.
+        QVERIFY(logos::installedFallback("", failedDep, {}, "storage_ui").isEmpty());
+        // The subject itself: top-level packages always resolve from a catalog.
+        QVERIFY(logos::installedFallback("", failedDep, installed, "storage_module").isEmpty());
+        // Already in the list: the resolver had it and still failed.
+        QVERIFY(logos::installedFallback(logos::installedPackagesJson(installed),
+                                         failedDep, installed, "storage_ui").isEmpty());
+        // No error at all.
+        QVERIFY(logos::installedFallback("", {QVariantMap{{"name", "storage_module"}}},
+                                         installed, "storage_ui").isEmpty());
+    }
+
     // Optional fields are omitted rather than sent empty — an empty
     // repositoryUrl would scope the resolver to a repo that does not exist.
     void emptyOptionalFieldsAreOmitted()

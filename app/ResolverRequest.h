@@ -108,4 +108,46 @@ inline QString installedPackagesJson(const QVariantList& installed)
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
+// The installed list to retry a catalog-only resolve with: `installedJson` plus
+// the installed copy of each package `resolved` reports no catalog could serve,
+// typically a module bundled with Basecamp while the catalog that lists it is
+// disabled. The resolver then keeps that copy if it satisfies the range; every
+// other package still resolves to its newest catalog release. Empty when a retry
+// would change nothing: the failed package is the subject itself, is not
+// installed, or is in the list already.
+inline QString installedFallback(const QString& installedJson, const QVariantList& resolved,
+                                 const QVariantList& installed, const QString& subject)
+{
+    QJsonArray list = QJsonDocument::fromJson(installedJson.toUtf8()).array();
+    QStringList listed;
+    for (const QJsonValue& v : list)
+        listed.append(v.toObject().value(QStringLiteral("name")).toString());
+
+    bool added = false;
+    for (const QVariant& v : resolved) {
+        const QVariantMap row = v.toMap();
+        const QString name = row.value(QStringLiteral("name")).toString();
+        if (!row.contains(QStringLiteral("error")) || name.isEmpty()
+            || name == subject || listed.contains(name))
+            continue;
+        for (const QVariant& p : installed) {
+            const QVariantMap m = p.toMap();
+            const QString module = m.value(QStringLiteral("moduleName")).toString().isEmpty()
+                                   ? m.value(QStringLiteral("name")).toString()
+                                   : m.value(QStringLiteral("moduleName")).toString();
+            if (module != name) continue;
+            const QJsonArray entry =
+                QJsonDocument::fromJson(installedPackagesJson(QVariantList{m}).toUtf8()).array();
+            for (const QJsonValue& e : entry) {
+                list.append(e);
+                added = true;
+            }
+            listed.append(name);
+            break;
+        }
+    }
+    return added ? QString::fromUtf8(QJsonDocument(list).toJson(QJsonDocument::Compact))
+                 : QString();
+}
+
 } // namespace logos
