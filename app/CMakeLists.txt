@@ -290,6 +290,8 @@ set(PROJECT_SOURCES
     utils/LoggingConfig.cpp
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
+    utils/ModuleConfigOption.h
+    utils/ModuleConfigOption.cpp
     utils/DependencyBlocker.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp

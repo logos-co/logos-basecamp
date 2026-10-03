@@ -2,6 +2,8 @@
 
 #include "logos_qt_host_core.h"
 
+#include <nlohmann/json.hpp>
+
 QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
 {
     // Translate Basecamp's Config into the runtime's. The two are separate
@@ -11,6 +13,11 @@ QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
     coreConfig.modulesDirs         = std::move(config.modulesDirs);
     coreConfig.persistenceBasePath = std::move(config.persistenceBasePath);
     coreConfig.accessPolicyJson    = std::move(config.accessPolicyJson);
+    if (config.moduleConfigJson) {
+        const nlohmann::json modules = nlohmann::json::parse(*config.moduleConfigJson, nullptr, false);
+        if (modules.is_object())
+            for (const auto& [name, document] : modules.items()) coreConfig.moduleConfigs[name] = document;
+    }
     coreConfig.bundledModulesDirs  = std::move(config.bundledModulesDirs);
     coreConfig.packageConfigJson   = std::move(config.packageConfigJson);
     coreConfig.shellName           = std::move(config.shellName);

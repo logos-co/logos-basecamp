@@ -37,6 +37,9 @@ public:
         // nullopt = install no policy (enforcement off). Distinct from an empty
         // string, which some runtimes read as "clear the existing policy".
         std::optional<std::string> accessPolicyJson;
+        // {"<module>": <document>}: each module's configuration, which the
+        // runtime hands it as it starts. nullopt = none.
+        std::optional<std::string> moduleConfigJson;
         // Where the app ships its own modules: a reserved name
         // (capability_module, package_manager, ...) then resolves only from them.
         std::vector<std::string>   bundledModulesDirs;

@@ -9,14 +9,16 @@
     # whose capability_module is the token authority, and that runtime runs in
     # a process of its own. Each input goes back to master as its PR merges
     # (cpp-sdk#169, protocol#97, plugin-qt#48, qt-sdk#60, loader-qt#21,
-    # liblogos#227, and the drafts stacked on them).
-    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/runtime-process";
-    logos-protocol.url = "github:logos-co/logos-protocol/feat/drop-legacy-mode";
-    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/drop-legacy-mode";
+    # liblogos#227, and the drafts stacked on them, up to method scopes and
+    # module configuration: cpp-sdk#174, protocol#101, plugin-qt#53, loader-qt#25,
+    # capability#37, liblogos#232).
+    logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk/feat/method-scopes";
+    logos-protocol.url = "github:logos-co/logos-protocol/feat/method-scopes";
+    logos-plugin-qt.url = "github:logos-co/logos-plugin-qt/feat/method-scopes";
     logos-qt-sdk.url = "github:logos-co/logos-qt-sdk/feat/runtime-process";
     logos-module.url = "github:logos-co/logos-module";
-    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/drop-legacy-mode";
-    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/runtime-process";
+    logos-module-loader-qt.url = "github:logos-co/logos-module-loader-qt/feat/method-scopes";
+    logos-liblogos.url = "github:logos-co/logos-liblogos/feat/method-scopes";
     # ONE logos-protocol, and ONE logos-qt-host, in what the app stages.
     # logos-qt-host bakes sizeof(LogosAPIClient) into its own `operator new`
     # while logos-protocol DEFINES that constructor, so a second protocol is an
@@ -44,7 +46,7 @@
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module/feat/drop-legacy-mode";
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.0";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
-    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/drop-legacy-mode";
+    logos-capability-module.url = "github:logos-co/logos-capability-module/feat/method-scopes";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module/feat/drop-legacy-mode";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";

@@ -6,6 +6,7 @@
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
+#include "ModuleConfigOption.h"
 #include "links/LinkUrl.h"
 #include "links/LinkUrlInbox.h"
 #include "links/SchemeRegistrar.h"
@@ -162,6 +163,8 @@ int main(int argc, char *argv[])
     // nothing (enforcement off) — Basecamp's default, unchanged. See the
     // logos_core_set_access_policy call further down.
     QByteArray accessPolicyJson;
+    // Each module's configuration, {"<module>": <document>}; empty for none.
+    QByteArray moduleConfigJson;
 
     // A `basecamp://` URL this process was launched with, read out of the
     // parser block below. Empty for an ordinary launch.
@@ -191,6 +194,12 @@ int main(int argc, char *argv[])
                            "file, or inline JSON."),
             QStringLiteral("enforce|path|json"));
         parser.addOption(accessPolicyOption);
+        QCommandLineOption moduleConfigOption(QStringLiteral("module-config"),
+            QStringLiteral("Each module's configuration, as a JSON object keyed by "
+                           "module name: a path to a JSON file, or inline JSON. A "
+                           "module gets its document as it starts."),
+            QStringLiteral("path|json"));
+        parser.addOption(moduleConfigOption);
         // An explicit option, not a bare positional: the value comes from a
         // scheme handler and is attacker-influenced, and one that happened to
         // look like a flag must not be read as one. Matches what the Windows
@@ -236,6 +245,20 @@ int main(int argc, char *argv[])
                 return 1;
             }
             accessPolicyJson = resolved.policyJson.toUtf8();
+        }
+
+        // Same precedence: the flag, then LOGOS_MODULE_CONFIG.
+        const QString moduleConfigArg = parser.isSet(moduleConfigOption)
+            ? parser.value(moduleConfigOption)
+            : QString::fromUtf8(qgetenv("LOGOS_MODULE_CONFIG"));
+        if (!moduleConfigArg.trimmed().isEmpty()) {
+            const auto resolved = LogosBasecamp::resolveModuleConfig(moduleConfigArg);
+            if (!resolved.ok) {
+                // Starting anyway would run the modules without what was asked for.
+                std::cerr << resolved.error.toStdString() << std::endl;
+                return 1;
+            }
+            moduleConfigJson = resolved.configJson.toUtf8();
         }
 
         if (parser.isSet(userDirOption)) {
@@ -418,6 +441,10 @@ int main(int argc, char *argv[])
         coreConfig.accessPolicyJson = std::string(accessPolicyJson.constData(),
                                                   accessPolicyJson.size());
     }
+    // Not logged: a module's configuration is its own business.
+    if (!moduleConfigJson.isEmpty())
+        coreConfig.moduleConfigJson = std::string(moduleConfigJson.constData(),
+                                                  moduleConfigJson.size());
 
     // Heap-allocated deliberately. ~LogosCore is what calls
     // logos_core_cleanup(), and it has to run at the explicit reset() during

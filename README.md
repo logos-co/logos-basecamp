@@ -255,12 +255,32 @@ target:
   '{"version":1,"mode":"enforce","restrictions":{"accounts_module":{"allowedCallers":["accounts_ui"]}}}'
 ```
 
-`mode` is the switch — only `"enforce"` activates gating, and `enforce` is
-shorthand for exactly `{"version":1,"mode":"enforce","restrictions":{}}`. An
-unreadable file or malformed JSON aborts startup rather than booting wide open.
-Equivalent to setting the `LOGOS_ACCESS_POLICY` env var (the flag wins), which
-is the way in for a launch with no argv — a double-clicked bundle or a desktop
-entry. The same flag and spellings work on the `logoscore` CLI.
+`mode` is the switch — `"enforce"` activates gating, `"explicit"` gates only the
+modules the document names, and `enforce` is shorthand for exactly
+`{"version":1,"mode":"enforce","restrictions":{}}`. A version 2 document also
+grants methods per caller and restricts operators (see liblogos's README). An
+unreadable file, malformed JSON, or a document the runtime refuses (an unknown
+mode, say) aborts startup rather than booting wide open. Equivalent to setting
+the `LOGOS_ACCESS_POLICY` env var (the flag wins), which is the way in for a
+launch with no argv — a double-clicked bundle or a desktop entry. The same flag
+and spellings work on the `logoscore` CLI.
+
+#### Module configuration (`--module-config`)
+
+`--module-config` gives modules their configuration: a JSON object keyed by
+module name, inline or as a path to a file. Each module gets its document as
+it starts, before anything can call it, and again whenever it starts again.
+
+```bash
+./result/bin/LogosBasecamp --module-config '{"my_module":{"endpoint":"https://example.org"}}'
+./result/bin/LogosBasecamp --module-config ./modules.json
+```
+
+`LOGOS_MODULE_CONFIG` does the same (the flag wins). An unreadable file, JSON
+that is not such an object, or a module that cannot take its configuration (a
+build without it, or a Qt plugin module) stops startup or that module's load
+rather than running it unconfigured. Configuration never carries authority:
+grants belong in `--access-policy`.
 
 #### Development Shell
 
