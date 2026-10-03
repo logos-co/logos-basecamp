@@ -33,10 +33,11 @@ pkgs.stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
     # run-standalone.sh resolves siblings by walking up from mock/tests, so it
-    # needs the repo laid out as <root>/mock/tests/.
-    mkdir -p workspace/logos-basecamp
-    cp -r . workspace/logos-basecamp/ 2>/dev/null || true
-    chmod -R u+w workspace
+    # needs the repo laid out as <root>/mock/tests/. Beside the source, not inside
+    # it: copying `.` into a subdirectory gives up where readdir order puts it.
+    mkdir -p "$NIX_BUILD_TOP/workspace/logos-basecamp"
+    cp -r . "$NIX_BUILD_TOP/workspace/logos-basecamp/"
+    chmod -R u+w "$NIX_BUILD_TOP/workspace"
     runHook postBuild
   '';
 
@@ -51,7 +52,7 @@ pkgs.stdenv.mkDerivation {
     # silently picks its rcc, which fails with a version #error.
     export RCC="${pkgs.qt6.qtbase}/libexec/rcc"
     export MOC="${pkgs.qt6.qtbase}/libexec/moc"
-    bash workspace/logos-basecamp/mock/tests/run-standalone.sh
+    bash "$NIX_BUILD_TOP/workspace/logos-basecamp/mock/tests/run-standalone.sh"
     runHook postCheck
   '';
 

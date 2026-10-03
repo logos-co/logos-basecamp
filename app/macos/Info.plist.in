@@ -43,6 +43,12 @@
             </array>
         </dict>
     </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Basecamp connects to other Logos apps on your network when you link it with them.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_logos._tcp</string>
+    </array>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>NSHumanReadableCopyright</key>

@@ -32,6 +32,7 @@ bool FixtureBackend::repositoriesLoading() const { return m_fixture.value("repos
 QString FixtureBackend::downloadSource() const { return m_fixture.value("downloadSource").toString(QStringLiteral("any")); }
 bool FixtureBackend::appsLoading() const { return m_fixture.value("appsLoading").toBool(); }
 bool FixtureBackend::modulesLoading() const { return m_fixture.value("modulesLoading").toBool(); }
+QVariantMap FixtureBackend::peering() const { return m_fixture.value("peering").toObject().toVariantMap(); }
 
 QString FixtureBackend::displayNameFor(const QString& moduleName) const
 {
@@ -186,6 +187,28 @@ void FixtureBackend::setDownloadSource(const QString& source)
     Q_UNUSED(source);
     qInfo() << "FixtureBackend: setDownloadSource — fixture build, no effect";
 }
+
+// Peering: the fixture's "peering" object is the whole state; actions are no-ops.
+void FixtureBackend::refreshPeering() { emit peeringChanged(); }
+void FixtureBackend::setPeeringEnabled(bool) { qInfo() << "FixtureBackend: setPeeringEnabled — no effect"; }
+void FixtureBackend::linkLocalDaemon(const QString&) { qInfo() << "FixtureBackend: linkLocalDaemon — no effect"; }
+void FixtureBackend::pairWithPeer(const QString&, int) { qInfo() << "FixtureBackend: pairWithPeer — no effect"; }
+// Opening the window brings up the fixture's "pairingRequest", to preview the consent dialog.
+void FixtureBackend::openPeerPairingWindow(int)
+{
+    const QJsonObject request = m_fixture.value("pairingRequest").toObject();
+    if (!request.isEmpty()) emit peerPairingRequested(request.toVariantMap());
+}
+void FixtureBackend::confirmPeerPairing(const QString&) { qInfo() << "FixtureBackend: confirmPeerPairing — no effect"; }
+void FixtureBackend::rejectPeerPairing(const QString&) { qInfo() << "FixtureBackend: rejectPeerPairing — no effect"; }
+void FixtureBackend::removePeer(const QString&) { qInfo() << "FixtureBackend: removePeer — no effect"; }
+void FixtureBackend::fetchPeerExports(const QString& peer)
+{
+    const QJsonObject offered = m_fixture.value("peerExports").toObject();
+    emit peerExportsFetched(peer, offered.value(peer).toArray().toVariantList());
+}
+void FixtureBackend::importPeerModule(const QString&, const QString&, bool) { qInfo() << "FixtureBackend: importPeerModule — no effect"; }
+void FixtureBackend::removePeerImport(const QString&) { qInfo() << "FixtureBackend: removePeerImport — no effect"; }
 
 void FixtureBackend::setCurrentVisibleApp(const QString& name)
 {

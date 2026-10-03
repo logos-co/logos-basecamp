@@ -6,6 +6,7 @@
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
+#include "PeeringSettings.h"
 #include "links/LinkUrl.h"
 #include "links/LinkUrlInbox.h"
 #include "links/SchemeRegistrar.h"
@@ -25,6 +26,7 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QStyleHints>
+#include <QSysInfo>
 #include <QStandardPaths>
 #include <iostream>
 #include <memory>
@@ -391,6 +393,18 @@ int main(int argc, char *argv[])
         {"embedded_ui_plugins_dirs", QJsonArray{LogosBasecampPaths::embeddedPluginsDirectory()}},
         {"user_ui_plugins_dir", LogosBasecampPaths::pluginsDirectory()},
     }).toJson(QJsonDocument::Compact).toStdString();
+
+    // Linking with other runtimes: off until Settings -> Peering turns it on.
+    {
+        const auto peering = LogosBasecamp::loadPeeringSettings(
+            LogosBasecamp::peeringSettingsPath(LogosBasecampPaths::baseDirectory()));
+        if (!peering.error.isEmpty())
+            qWarning().noquote() << "Peering stays off:" << peering.error;
+        coreConfig.peeringConfigJson = LogosBasecamp::peeringRuntimeConfig(
+            peering, LogosBasecamp::defaultPeeringName(QSysInfo::machineHostName()));
+        if (coreConfig.peeringConfigJson)
+            qInfo() << "Peering is on: the runtime loads peering_module.";
+    }
 
     // Inter-module access policy. DEFAULT: none — passing NULL clears any
     // policy so no enforcement runs, and any loaded module may call any other.

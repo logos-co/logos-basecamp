@@ -42,6 +42,9 @@ public:
         std::vector<std::string>   bundledModulesDirs;
         // package_manager's directories, which the runtime applies as it loads.
         std::optional<std::string> packageConfigJson;
+        // Linking with other runtimes (peering_module's configuration);
+        // nullopt leaves peering off.
+        std::optional<std::string> peeringConfigJson;
         // The app's own identity at the runtime.
         std::string                shellName;
     };

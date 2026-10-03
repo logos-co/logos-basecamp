@@ -3,7 +3,7 @@
 # producing a Basecamp that serves fixture data and contains no Logos runtime.
 # Exposed only via the .#app-mock output — never from a release target.
 # See mock/README.md.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
+{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false, logosHostRemote ? null }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -740,6 +740,12 @@ WRAPPER_EOF
         fi
       done
     done
+    ${pkgs.lib.optionalString (logosHostRemote != null) ''
+    # An imported module's facade host, from logos-peering: found next to
+    # logos_runtime like the other hosts.
+    cp -L "${logosHostRemote}/bin/logos_host_remote" "$out/bin/"
+    echo "Installed logos_host_remote"
+    ''}
     ''}
     ${pkgs.lib.optionalString useMockBackend ''
     # Mock build: no MODULE runtime. logoscore and logos_host exist to run
@@ -749,7 +755,7 @@ WRAPPER_EOF
     # real code that still needs somewhere to run. It reads LOGOS_MOCK_FIXTURE
     # (exported by MockBackendFixture, inherited through QProcess) and serves
     # that backend's own outbound calls from the same fixture.
-    for _f in "$out/bin/logos_runtime" "$out/bin/logos_host" "$out/bin/logos_host_plain" "$out/bin/logoscore"; do
+    for _f in "$out/bin/logos_runtime" "$out/bin/logos_host" "$out/bin/logos_host_plain" "$out/bin/logos_host_remote" "$out/bin/logoscore"; do
       if [ -e "$_f" ]; then
         echo "ERROR: mock build staged a module-runtime binary: $_f" >&2
         exit 1

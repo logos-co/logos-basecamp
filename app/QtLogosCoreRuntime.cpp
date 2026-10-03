@@ -13,6 +13,7 @@ QtLogosCoreRuntime::QtLogosCoreRuntime(int argc, char** argv, Config config)
     coreConfig.accessPolicyJson    = std::move(config.accessPolicyJson);
     coreConfig.bundledModulesDirs  = std::move(config.bundledModulesDirs);
     coreConfig.packageConfigJson   = std::move(config.packageConfigJson);
+    coreConfig.peeringConfigJson   = std::move(config.peeringConfigJson);
     coreConfig.shellName           = std::move(config.shellName);
 
     m_core = std::make_unique<logos::qt::QtLogosCore>(argc, argv, std::move(coreConfig));
