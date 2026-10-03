@@ -1,0 +1,11 @@
+{
+  "name": "depsvc",
+  "display_name": "Dep Service",
+  "version": "2.1.0",
+  "type": "core",
+  "interface": "universal",
+  "category": "testing",
+  "description": "Dependency-gate doc-test fixture: the module every pin points at",
+  "main": "depsvc_plugin",
+  "dependencies": []
+}

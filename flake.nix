@@ -508,6 +508,21 @@
           # Then: LOGOS_QT_MCP=./result-mcp node tests/ui-tests.mjs --ci ./result/bin/LogosBasecamp
           logos-qt-mcp = logosQtMcp;
 
+          # Doc-test fixtures, as outputs so a spec's Windows leg can stage them
+          # like the bundle. basecamp-intents: its QML-only apps, as files.
+          intents-fixtures = buildPkgs.runCommandLocal "basecamp-intents-fixtures" { } ''
+            cp -r ${./tests/fixtures/intents} $out
+          '';
+          # basecamp-dependency-gate: the module that spec writes out, as an .lgx.
+          # PMU's builder: already locked, and its mingw Qt is the bundle's.
+          depsvc-lgx =
+            let builder = logos-package-manager-ui.inputs.logos-module-builder; in
+            (builder.lib.mkLogosModule {
+              src = ./tests/fixtures/depsvc;
+              configFile = ./tests/fixtures/depsvc/metadata.json;
+              flakeInputs = { logos-module-builder = builder; };
+            }).packages.${system}.lgx-portable;
+
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
 
