@@ -131,6 +131,9 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
         // just re-introduce the offscreen-window problem.
         auto* mirror = new QShortcut(seq, m_host);
         mirror->setContext(Qt::ApplicationShortcut);
+        // Named after its QML shortcut, so a UI test can find this one mirror.
+        if (!obj->objectName().isEmpty())
+            mirror->setObjectName(QStringLiteral("shortcutBridge.mirror.") + obj->objectName());
         mirror->setEnabled(obj->property("enabled").toBool());
         // UniqueConnection makes this loop safe on two axes:
         //   * a QML Shortcut can declare multiple sequences (each mirrored)

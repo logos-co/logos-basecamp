@@ -134,6 +134,7 @@ Rectangle {
             // ⌘K focuses + selects the search bar.
             Shortcut {
                 id: searchShortcut
+                objectName: "appManager.searchShortcut"
                 sequence: "Ctrl+K"
                 context: Qt.WindowShortcut
                 enabled: root.visible

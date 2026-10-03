@@ -110,6 +110,38 @@ private slots:
         QCOMPARE(mirrorCount(&host), 3);
     }
 
+    void mirrorIsNamedAfterItsQmlShortcut()
+    {
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* stack = new QStackedWidget(&host);
+        layout->addWidget(stack);
+
+        auto* pane = makePane(
+            "import QtQuick 2.15\n"
+            "Item {\n"
+            "  Shortcut { objectName: \"sc\"; sequence: \"Ctrl+K\" }\n"
+            "  Shortcut { sequence: \"Ctrl+F\" }\n"
+            "}\n",
+            stack);
+        stack->addWidget(pane);
+        host.show();
+        pump();
+
+        ShortcutBridge bridge(&host, stack);
+        pump();
+
+        auto* named = host.findChild<QShortcut*>(QStringLiteral("shortcutBridge.mirror.sc"));
+        QVERIFY(named);
+        QCOMPARE(named->key(), QKeySequence(QStringLiteral("Ctrl+K")));
+        // An unnamed QML shortcut leaves its mirror unnamed.
+        QCOMPARE(mirrorCount(&host), 2);
+        int unnamed = 0;
+        for (QShortcut* sc : host.findChildren<QShortcut*>())
+            if (sc->objectName().isEmpty()) ++unnamed;
+        QCOMPARE(unnamed, 1);
+    }
+
     void nonQuickPaneIsIgnored()
     {
         QWidget host;

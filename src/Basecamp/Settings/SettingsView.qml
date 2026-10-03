@@ -124,6 +124,7 @@ Rectangle {
 
             Shortcut {
                 id: searchShortcut
+                objectName: "settings.searchShortcut"
                 sequence: "Ctrl+K"
                 context: Qt.WindowShortcut
                 enabled: root.visible && d.searchable
