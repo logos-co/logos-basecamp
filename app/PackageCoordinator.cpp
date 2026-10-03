@@ -1967,6 +1967,16 @@ void PackageCoordinator::resolveOptionalPreviewPass(
                     ? QStringLiteral("could not resolve package dependencies") : detail}}});
                 return;
             }
+            // A package no enabled catalog serves may still be installed: resolve
+            // again keeping that copy (see logos::installedFallback).
+            const QString fallback = logos::installedFallback(
+                installedJson, result.value, self->m_installedPackagesCache, preview->subject());
+            if (!fallback.isEmpty()) {
+                QSet<QString> again = visited;
+                again.remove(request);
+                self->resolveOptionalPreviewPass(preview, request, fallback, again, current, then);
+                return;
+            }
             for (const QVariant& v : result.value)
                 if (v.toMap().contains("error")) { fail(result.value); return; }
             const QString next = preview->advance(result.value);
