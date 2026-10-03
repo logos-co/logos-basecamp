@@ -116,7 +116,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The bundle runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. No network access is needed — everything inspected here ships inside the bundle."
+  - "**Linux, macOS or Windows.** The bundle runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. No network access is needed — everything inspected here ships inside the bundle."
+  - "**Windows:** the two outputs the build steps below link, staged as `bin-bundle-dir-inspector/` and `logos-qt-mcp/`, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "Dev app vs. portable bundle"
@@ -145,25 +146,25 @@ sections:
 
   - title: "Build the qt-mcp test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness the
       doc-test uses to connect to the bundle's QML inspector and drive it. Build it
-      once and link it as `./result-mcp`.
+      once and link it as `./logos-qt-mcp`.
     steps:
       - title: "Build logos-qt-mcp"
-        # QT_MCP_FLAKE lets you point this at a local logos-qt-mcp checkout to
-        # validate an inspector change before it is published, e.g.
-        #   export QT_MCP_FLAKE=path:/abs/path/to/logos-qt-mcp
-        # Unset (CI / normal runs) it builds the published flake shown below.
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit's portable bundle — the self-contained
-      `#bin-bundle-dir` directory you ship — and link it as `./result-bundle`. The
+      `#bin-bundle-dir` directory you ship — and link it as `./bin-bundle-dir`. The
       build compiles the app and every bundled module/plugin through Nix, so the
       first build is slow (subsequent runs hit the cache).
 
@@ -189,15 +190,15 @@ sections:
         # headlessly. The inspector is OFF in the shipping bundle; everything else
         # about the two is the same.
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir' -o bin-bundle-dir
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
         post_text: |
           The bundle is self-contained: the launcher lives at
-          `result-bundle/bin/LogosBasecamp`, with `lib/` (Qt + app libraries),
+          `bin-bundle-dir/bin/LogosBasecamp`, with `lib/` (Qt + app libraries),
           `modules/` (bundled core modules) and `plugins/` (bundled UI plugins)
           all alongside it.
 
@@ -206,26 +207,30 @@ sections:
           > builds — `#bin-bundle-dir` (shown above) is what you release.
 
       - title: "Confirm the bundled UI plugins"
+        platform: [linux, macos, windows]
         text: |
           The UI plugins **Settings → Apps Inspector** will list are carried
           under `plugins/` — confirm the package manager UI shipped in the
           bundle. Basecamp's own shell is carried there too, as a `main_ui`
           plugin that links Qt and nothing else, so the assertion below is
           that `main_ui` is PRESENT.
-        run: "ls result-bundle/plugins"
+        run: "ls bin-bundle-dir-inspector/plugins"
+        code_block: "ls bin-bundle-dir/plugins"
         expect_contains:
           - "package_manager_ui"
         extra_run:
-          run: "ls result-bundle/plugins | grep -qx main_ui && echo 'main_ui present' || echo 'main_ui MISSING'"
+          run: "ls bin-bundle-dir-inspector/plugins | grep -qx main_ui && echo 'main_ui present' || echo 'main_ui MISSING'"
           expect_contains:
             - "main_ui present"
 
       - title: "Confirm the bundled core modules"
+        platform: [linux, macos, windows]
         text: |
           The core modules the runtime loads are carried under `modules/` —
           confirm the package manager, package downloader, and capability module
           are present:
-        run: "ls result-bundle/modules"
+        run: "ls bin-bundle-dir-inspector/modules"
+        code_block: "ls bin-bundle-dir/modules"
         expect_contains:
           - "package_manager"
           - "package_downloader"
@@ -233,6 +238,7 @@ sections:
 
   - title: "Launch the bundle and walk its sidebar"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle binary headless and drive its UI: confirm the sidebar
       renders, open **Applications**, open the **Package Manager**, then go into
@@ -242,8 +248,10 @@ sections:
     steps:
       - title: "Launch and drive the bundle"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/modules-bundle-home"'
+          launch: 'env HOME="$PWD/testdata/modules-bundle-home" USERPROFILE="$PWD/testdata/modules-bundle-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/modules-bundle-user"'
+          qt_mcp: "logos-qt-mcp"
           # The bundle is already built (previous step), so the launch only has to
           # boot the binary and open the inspector port — allow time for a cold
           # first boot before the inspector is expected to answer.
@@ -291,6 +299,15 @@ sections:
             - name: "Open Settings"
               action: click
               target: "Settings"
+
+            # Its texts exist while hidden, so wait_for alone can pass early.
+            - name: "Settings is shown"
+              action: expect_property
+              find_by: "text"
+              find_value: "Manage modules, apps and dashboards."
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Settings view loads"
               action: wait_for

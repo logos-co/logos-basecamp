@@ -46,6 +46,8 @@ prerequisites:
     mkdir -p ~/.config/nix
     echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
     ```
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required."
+  - "**Windows:** the two outputs the build steps below link, staged as `bin-bundle-dir-inspector/` and `logos-qt-mcp/`, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "What registers the scheme, and what the socket is for"
@@ -86,31 +88,36 @@ sections:
 
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) connects to the
       app's QML inspector and drives it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       The portable bundle, with the inspector compiled in.
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Seed a link target"
     step: true
+    platform: [linux, macos, windows]
     text: |
       `basecamp://app/<name>` only brings forward an app that is actually
       installed, so the run needs one on disk. A hand-written QML-only app is
@@ -187,6 +194,7 @@ sections:
 
   - title: "Cold start: the link launches the app"
     step: true
+    platform: [linux, macos, windows]
     text: |
       This is the click that happens when Basecamp is closed. The OS would run
       the registered command with the URL appended; the step below runs exactly
@@ -207,8 +215,10 @@ sections:
     steps:
       - title: "Launch with a basecamp:// URL, as the OS would"
         ui_test:
-          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://app/link_target_demo"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/links-home"'
+          launch: 'env HOME="$PWD/testdata/links-home" USERPROFILE="$PWD/testdata/links-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/links-user" --uri=basecamp://app/link_target_demo'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens"
@@ -251,6 +261,7 @@ sections:
 
   - title: "The registered command, run the way the OS runs it"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Every step above launches the binary with `--uri=` written out by hand.
       That is what the OS ends up running, but *nothing so far has checked that*
@@ -273,8 +284,12 @@ sections:
       declares the `basecamp` scheme, then drives the bundle's own binary. The
       scheme name is defined once, in `LinkUrl::scheme()`, and the plist is the
       one place that can silently drift from it.
+
+      **On Windows the registration is a registry key**, and the Windows steps
+      below read the command back from it.
     steps:
       - title: "Register, then launch from the generated Exec line"
+        platform: [linux, macos]
         run: |
           set -u
           export QT_QPA_PLATFORM=offscreen
@@ -289,7 +304,7 @@ sections:
           rm -rf "$XDG_DATA_HOME"
           mkdir -p "$XDG_DATA_HOME"
 
-          BIN="$PWD/result-bundle/bin/LogosBasecamp"
+          BIN="$PWD/bin-bundle-dir-inspector/bin/LogosBasecamp"
           DESKTOP="$XDG_DATA_HOME/applications/logos-basecamp.desktop"
 
           # Its own user-dir — same reason as the warm-path step below: a
@@ -311,10 +326,10 @@ sections:
           # is what LaunchServices reads), so the wait below could never find a
           # .desktop file there and macOS failed this step every single run.
           if [ "$(uname -s)" = "Darwin" ]; then
-            # The shipped .app, not result-bundle — the dir bundle has no plist.
+            # The shipped .app, not the dir bundle — that has no plist.
             # CI hands it in as BASECAMP_MACOS_APP, built once by its build job.
             # Otherwise {release} is what pins this to the commit under test —
-            # the same form the result-bundle prerequisite uses. Without it this
+            # the same form the bundle prerequisite uses. Without it this
             # would quietly assert the plist of the default branch.
             if [ -n "${BASECAMP_MACOS_APP:-}" ]; then ln -sfn "$BASECAMP_MACOS_APP" result-app
             else
@@ -411,8 +426,165 @@ sections:
           the fastest way to explain a link that does nothing on a machine that
           upgraded from a build which wrote the old form.
 
+      - title: "On Windows: a helper that stops what it starts"
+        platform: [windows]
+        text: |
+          The two Windows steps below start Basecamp themselves. Git Bash's `&`
+          and `kill` do not reach a native program's process tree, so each
+          launch is held in a kill-on-close job object instead.
+        file:
+          path: build/links/winjob.py
+          language: python
+          content: |
+            import ctypes, subprocess
+            from ctypes import wintypes
+
+
+            class _Basic(ctypes.Structure):  # JOBOBJECT_BASIC_LIMIT_INFORMATION
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                            ("PerJobUserTimeLimit", ctypes.c_int64), ("LimitFlags", wintypes.DWORD),
+                            ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t),
+                            ("ActiveProcessLimit", wintypes.DWORD), ("Affinity", ctypes.c_size_t),
+                            ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+
+            class _Limits(ctypes.Structure):  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+                _fields_ = [("Basic", _Basic), ("IoInfo", ctypes.c_uint64 * 6),
+                            ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+            kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                         ctypes.c_void_p, wintypes.DWORD]
+            kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+            kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            ntdll = ctypes.WinDLL("ntdll")
+            ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+
+
+            class Job:
+                """`command` (an argv list, or a command line as the shell runs it), output to `log`."""
+
+                def __init__(self, command, log, env):
+                    self.log = open(log, "w")
+                    # Started suspended (0x4), so nothing it starts can escape the job.
+                    self.proc = subprocess.Popen(command, stdout=self.log, stderr=subprocess.STDOUT,
+                                                 env=env, creationflags=0x4)
+                    self.job = kernel32.CreateJobObjectW(None, None)
+                    limits = _Limits()
+                    limits.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    if not (self.job
+                            and kernel32.SetInformationJobObject(self.job, 9, ctypes.byref(limits),
+                                                                 ctypes.sizeof(limits))
+                            and kernel32.AssignProcessToJobObject(self.job, int(self.proc._handle))):
+                        self.proc.kill()
+                        raise OSError("no job object: error %d" % ctypes.get_last_error())
+                    ntdll.NtResumeProcess(int(self.proc._handle))
+
+                def running(self):
+                    return self.proc.poll() is None
+
+                def stop(self):
+                    kernel32.TerminateJobObject(self.job, 1)
+                    self.proc.wait(timeout=30)
+                    self.log.close()
+
+
+            def read(path):
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    return f.read()
+
+      - title: "On Windows: register, then run the command the registry holds"
+        platform: [windows]
+        text: |
+          On Windows the registrar writes `HKCU\Software\Classes\basecamp`, and the
+          shell runs its `shell\open\command` with the clicked URL in place of
+          `%1`. This reads that command back and runs it the same way. A handler
+          already registered on the machine (an installed Basecamp, say) is
+          exported first and imported back afterwards.
+        file:
+          path: build/links/register.py
+          language: python
+          content: |
+            import os, subprocess, sys, time, winreg
+            from winjob import Job, read
+
+            exe = os.path.abspath(r"bin-bundle-dir-inspector\bin\LogosBasecamp.exe")
+            user_dir = os.path.abspath(r"testdata\links-user-register")
+            url = "basecamp://app/link_target_demo"
+            key = r"Software\Classes\basecamp"
+            backup = os.path.abspath(r"build\links\handler-before.reg")
+            env = {k: v for k, v in os.environ.items() if k != "LOGOS_NO_SCHEME_REGISTER"}
+            env.update(QT_QPA_PLATFORM="offscreen", QT_FORCE_STDERR_LOGGING="1")
+
+
+            def registered_command():
+                try:
+                    return winreg.QueryValue(winreg.HKEY_CURRENT_USER, key + r"\shell\open\command")
+                except OSError:
+                    return ""
+
+
+            def reg(*args):
+                return subprocess.run(["reg", *args], capture_output=True).returncode == 0
+
+
+            had_handler = reg("export", "HKCU\\" + key, backup, "/y")
+            reg("delete", "HKCU\\" + key, "/f")
+            try:
+                # A launch whose only job is to register; waits on the registry, not a timer.
+                app = Job([exe, "--user-dir", user_dir], r"build\links\register.log", env)
+                for _ in range(90):
+                    if exe.lower() in registered_command().lower():
+                        break
+                    time.sleep(1)
+                app.stop()
+
+                command = registered_command()
+                print("REGISTERED_COMMAND=" + command)
+                if '"--uri=%1"' not in command:
+                    print("COMMAND_DOES_NOT_PASS_THE_URL_AS_URI")
+                    sys.exit(1)
+                print("SCHEME_HANDLER_DECLARED")
+
+                # The shell's substitution: %1 becomes the URL, the rest runs as written.
+                app = Job(command.replace("%1", url) + ' --user-dir "%s"' % user_dir,
+                          r"build\links\fromentry.log", env)
+                for _ in range(90):
+                    if "dispatching link request" in read(r"build\links\fromentry.log") or not app.running():
+                        break
+                    time.sleep(1)
+                app.stop()
+                log = read(r"build\links\fromentry.log")
+                if "for intent basecamp.apps.launch" in log:
+                    print("REGISTERED_COMMAND_DELIVERED_THE_URL")
+                else:
+                    print("REGISTERED_COMMAND_DROPPED_THE_URL")
+                    print(log[-3000:])
+            finally:
+                reg("delete", "HKCU\\" + key, "/f")
+                if had_handler:
+                    reg("import", backup)
+
+      - title: "On Windows: run it"
+        platform: [windows]
+        run: |
+          chmod -R u+w testdata/links-user-register 2>/dev/null || true
+          rm -rf testdata/links-user-register
+          cp -a testdata/links-user testdata/links-user-register
+          python3 build/links/register.py
+        expect_contains:
+          - "SCHEME_HANDLER_DECLARED"
+          - "REGISTERED_COMMAND_DELIVERED_THE_URL"
+
   - title: "The shell's own web-reachable intents"
     step: true
+    platform: [linux, macos, windows]
     text: |
       `basecamp://app/<name>` is sugar. The general form names an intent
       directly, and the shell provides four that a link may reach — all
@@ -432,8 +604,10 @@ sections:
     steps:
       - title: "basecamp.settings.open"
         ui_test:
-          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.settings.open"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/links-home"'
+          launch: 'env HOME="$PWD/testdata/links-home" USERPROFILE="$PWD/testdata/links-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/links-user" --uri=basecamp://intent/basecamp.settings.open'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens"
@@ -451,8 +625,10 @@ sections:
 
       - title: "basecamp.apps.open"
         ui_test:
-          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.apps.open"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/links-home"'
+          launch: 'env HOME="$PWD/testdata/links-home" USERPROFILE="$PWD/testdata/links-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/links-user" --uri=basecamp://intent/basecamp.apps.open'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens"
@@ -470,8 +646,10 @@ sections:
 
       - title: "basecamp.repositories.manage"
         ui_test:
-          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.repositories.manage"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/links-home"'
+          launch: 'env HOME="$PWD/testdata/links-home" USERPROFILE="$PWD/testdata/links-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/links-user" --uri=basecamp://intent/basecamp.repositories.manage'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens"
@@ -489,8 +667,10 @@ sections:
 
       - title: "An intent outside that set is refused"
         ui_test:
-          launch: "env LOGOS_NO_SCHEME_REGISTER=1 ./result-bundle/bin/LogosBasecamp --user-dir ./testdata/links-user --uri=basecamp://intent/basecamp.packages.confirm_uninstall"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/links-home"'
+          launch: 'env HOME="$PWD/testdata/links-home" USERPROFILE="$PWD/testdata/links-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/links-user" --uri=basecamp://intent/basecamp.packages.confirm_uninstall'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "The app starts normally"
@@ -508,6 +688,7 @@ sections:
 
   - title: "Warm: a second launch hands over its URL"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Now the click that happens while Basecamp is already up. On Linux the OS
       starts a second process regardless — it has no way to know one is running
@@ -519,6 +700,7 @@ sections:
       booting a second runtime against the same `plugins/` and `module_data/`.
     steps:
       - title: "Start one instance, then click a link at it"
+        platform: [linux, macos]
         run: |
           set -u
           export LOGOS_NO_SCHEME_REGISTER=1
@@ -527,7 +709,7 @@ sections:
           # broken" rather than "there is no X server". The ui_test steps get
           # this from the harness; a raw shell step does not.
           export QT_QPA_PLATFORM=offscreen
-          BIN=./result-bundle/bin/LogosBasecamp
+          BIN=./bin-bundle-dir-inspector/bin/LogosBasecamp
 
           # ITS OWN USER-DIR, not the shared one. The guard keys its socket on
           # the resolved user-dir, so sharing one couples every step that starts
@@ -650,6 +832,84 @@ sections:
           `waitForReadyRead()` on the GUI thread, which freezes the running app
           for the whole timeout whenever something connects and sends nothing —
           trivial to trigger, and it looks like a hang rather than a link bug.
+
+      - title: "On Windows: start one instance, then click a link at it"
+        platform: [windows]
+        text: |
+          The same two processes, held by the job helper above. The first
+          instance's single-instance socket listens before its runtime reports
+          it started, so the second goes once that line is in the log.
+        file:
+          path: build/links/warm.py
+          language: python
+          content: |
+            import os, subprocess, sys, time
+            from winjob import Job, read
+
+            exe = os.path.abspath(r"bin-bundle-dir-inspector\bin\LogosBasecamp.exe")
+            user_dir = os.path.abspath(r"testdata\links-user-warm")
+            env = dict(os.environ, LOGOS_NO_SCHEME_REGISTER="1", QT_QPA_PLATFORM="offscreen",
+                       QT_FORCE_STDERR_LOGGING="1")
+            first_log, second_log = r"build\links\first.log", r"build\links\second.log"
+
+            first = Job([exe, "--user-dir", user_dir], first_log, env)
+            try:
+                for _ in range(120):
+                    if "Logos Core started successfully" in read(first_log) or not first.running():
+                        break
+                    time.sleep(1)
+                if not first.running():
+                    print("FIRST_INSTANCE_DIED")
+                    print(read(first_log)[-3000:])
+                    sys.exit(1)
+
+                # What the shell runs when the link is clicked.
+                start = time.time()
+                second = Job([exe, "--user-dir", user_dir, "--uri=basecamp://app/link_target_demo"],
+                             second_log, env)
+                try:
+                    rc = second.proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    rc = None
+                elapsed = time.time() - start
+                second.stop()
+                print("SECOND_EXIT_CODE=%s" % rc)
+                print("SECOND_ELAPSED=%ds" % elapsed)
+                if rc == 0 and elapsed < 10:
+                    print("SECOND_INSTANCE_FORWARDED_AND_EXITED")
+                if "Logos Core started successfully" in read(second_log):
+                    print("SECOND_INSTANCE_BOOTED_A_RUNTIME")
+                else:
+                    print("SECOND_INSTANCE_STARTED_NO_RUNTIME")
+
+                for _ in range(60):
+                    if "dispatching link request" in read(first_log):
+                        break
+                    time.sleep(1)
+                log = read(first_log)
+                if "dispatching link request" in log:
+                    print("FIRST_INSTANCE_HANDLED_THE_LINK")
+                else:
+                    print("FIRST_INSTANCE_NEVER_SAW_THE_LINK")
+                    print(log[-3000:])
+                if "for intent basecamp.apps.launch" in log:
+                    print("FIRST_INSTANCE_GOT_THE_RIGHT_INTENT")
+            finally:
+                first.stop()
+
+      - title: "On Windows: run it"
+        platform: [windows]
+        run: |
+          chmod -R u+w testdata/links-user-warm 2>/dev/null || true
+          rm -rf testdata/links-user-warm
+          cp -a testdata/links-user testdata/links-user-warm
+          python3 build/links/warm.py
+        expect_contains:
+          - "SECOND_EXIT_CODE=0"
+          - "SECOND_INSTANCE_FORWARDED_AND_EXITED"
+          - "SECOND_INSTANCE_STARTED_NO_RUNTIME"
+          - "FIRST_INSTANCE_HANDLED_THE_LINK"
+          - "FIRST_INSTANCE_GOT_THE_RIGHT_INTENT"
 
   - title: "Why a link is not the shell"
     text: |

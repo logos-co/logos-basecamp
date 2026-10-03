@@ -60,7 +60,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. No network access is needed."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. No network access is needed."
+  - "**Windows:** the two outputs the build steps below link, staged as `bin-bundle-dir-inspector/` and `logos-qt-mcp/`, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "Why the bridge exists"
@@ -88,33 +89,38 @@ sections:
 
   - title: "Build the qt-mcp test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the
       harness the doc-test uses to connect to the app's QML inspector and
-      drive it. Build it once and link it as `./result-mcp`.
+      drive it. Build it once and link it as `./logos-qt-mcp`.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle with the inspector
       compiled in, so the driver can attach.
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Drive the ⌘K shortcut through the bridge"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless, open **Applications**, then use the
       inspector to locate the C++ `QShortcut` mirror the bridge installed for
@@ -125,10 +131,12 @@ sections:
     steps:
       - title: "Launch and drive the bundle"
         ui_test:
+          setup:
+            - 'mkdir -p "$PWD/testdata/shortcut-bridge-home"'
           # A private user dir: a Basecamp already running on the default one
           # would take this launch over, and this one would exit.
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/shortcut-bridge"
-          qt_mcp: "result-mcp"
+          launch: 'env HOME="$PWD/testdata/shortcut-bridge-home" USERPROFILE="$PWD/testdata/shortcut-bridge-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/shortcut-bridge-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"
@@ -153,26 +161,28 @@ sections:
               text: "The Applications view renders. Its QML root declares a `Shortcut { sequence: \"Ctrl+K\"; onActivated: searchBar.textInput.forceActiveFocus() }` that the bridge should have just mirrored."
               screenshot: "shortcut-applications.png"
 
-            # This is the load-bearing assertion: locate the mirror by its
-            # `key` property and invoke `activated`. QShortcut.key stringifies
-            # as NativeText ("⌘K" / U+2318 on macOS, "Ctrl+K" elsewhere), and
-            # logos-doctest interpolates find_value into a JS string literal —
-            # so we close the literal and pick the platform form at runtime.
-            # If the bridge did NOT run, findByProperty returns 0 matches and
-            # call_method throws "element not found" — the doc-test fails
-            # loudly with a clear message pointing at the exact regression.
-            #
-            # If the bridge DID run, `activated` fires on the C++ mirror,
-            # onWiredShortcut translates that back to the QML shortcut, and
-            # its onActivated handler calls forceActiveFocus + selectAll on
-            # the search bar's TextInput — the same thing a real ⌘K press
-            # would produce.
+            # The load-bearing assertion. Each mirror is named after the QML
+            # shortcut it mirrors, so this finds the Applications view's own
+            # one. It polls: the bridge rebinds a moment after the switch, and
+            # until then only the previous pane's mirror exists.
+            - name: "The bridge mirrored the Applications view's ⌘K"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "shortcutBridge.mirror.appManager.searchShortcut"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The bridge names each mirror after the QML `Shortcut` it mirrors, so the inspector can find the one for `appManager.searchShortcut`: a C++ `QShortcut`, enabled because the Applications view is visible. If the bridge did not run on the pane switch, there is no such object and this step fails."
+
+            # `activated` on the C++ mirror reaches onWiredShortcut, which
+            # re-emits it on the QML shortcut: its onActivated focuses and
+            # selects the search bar, as a real ⌘K press would.
             - name: "Fire the ⌘K shortcut mirror the bridge installed"
               action: call_method
-              find_by: "key"
-              find_value: '" + (process.platform === "darwin" ? "\u2318K" : "Ctrl+K") + "'
+              find_by: "objectName"
+              find_value: "shortcutBridge.mirror.appManager.searchShortcut"
               method: "activated"
-              text: "We locate the C++ `QShortcut` the bridge mirrored for ⌘K and invoke its `activated` signal via the inspector. This is the exact same signal Qt's shortcut map would fire on a real key press. If the bridge failed to mirror the shortcut, the lookup fails and this step surfaces the regression."
+              text: "We invoke the mirror's `activated` signal via the inspector. This is the exact same signal Qt's shortcut map would fire on a real key press."
               screenshot: "shortcut-fired.png"
         post_text: |
           What this run proved end-to-end:
@@ -184,7 +194,8 @@ sections:
             `AppManagerView.qml`.
           - The bridge installed a real `QShortcut(Ctrl+K,
             Qt::ApplicationShortcut)` on the host `MainContainer`, visible
-            to the inspector via its `key` property.
+            to the inspector under the name
+            `shortcutBridge.mirror.appManager.searchShortcut`.
           - Invoking that mirror's `activated` signal ran the plugin's
             `onActivated:` handler unchanged — which is what a real ⌘K key
             press would trigger. The plugin QML was not modified for this

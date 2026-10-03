@@ -70,7 +70,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+  - "**Windows:** the build steps' outputs, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and one `port-<module>/` per module, plus Git Bash, Python 3 and Node.js."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
 
 sections:
   - title: "Who depends on whom"
@@ -109,20 +110,24 @@ sections:
 
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build '.#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the inspector-enabled portable bundle
-      and link it as `./result-bundle`.
+      and link it as `./bin-bundle-dir-inspector`.
 
       > The `{release}` in the URL pins the build to a specific commit: the
       > doc-test runner expands it to a concrete ref. Locally that is this
@@ -131,18 +136,19 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
       - title: "Confirm the bundled (protected) core modules"
+        platform: [linux, macos, windows]
         text: |
           The three protected modules are carried inside the bundle under
           `modules/`:
-        run: "ls result-bundle/modules"
+        run: "ls bin-bundle-dir-inspector/modules"
         expect_contains:
           - "package_manager"
           - "package_downloader"
@@ -150,25 +156,31 @@ sections:
 
   - title: "Stage the full-API module chain into a user-dir"
     step: true
+    platform: [linux, macos]
     text: |
       Build the two providers, the proxy, and the UI plugin from
       `logos-test-modules` as **portable** install outputs, then assemble a
       `--user-dir` by plain copy: core modules under `modules/`, the UI plugin
       under `plugins/`. No catalog, no network at runtime.
     steps:
-      - title: "Build and stage the modules"
+      - title: "Build the modules"
         run: |
           set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy test_fullapi_ui; do
+            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "port-$m"
+          done
+      - title: "Stage them into a user-dir"
+        platform: [linux, macos, windows]
+        run: |
+          set -e
           chmod -R u+w testdata/module-unload 2>/dev/null || true
           rm -rf testdata/module-unload
           mkdir -p testdata/module-unload/modules testdata/module-unload/plugins
           for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy; do
-            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "result-port-$m"
-            cp -RL "result-port-$m/modules/." testdata/module-unload/modules/
+            cp -RL "port-$m/modules/." testdata/module-unload/modules/
           done
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" --out-link result-port-ui
-          cp -RL result-port-ui/plugins/. testdata/module-unload/plugins/
+          cp -RL port-test_fullapi_ui/plugins/. testdata/module-unload/plugins/
           chmod -R u+w testdata/module-unload
           echo "modules:"; ls testdata/module-unload/modules
           echo "plugins:"; ls testdata/module-unload/plugins
@@ -180,6 +192,7 @@ sections:
 
   - title: "Protected, leaf, cascade, and reload — one narrative"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the staged user-dir and drive all
       five stories in one session. Per-row toggles are clicked by their stable
@@ -196,8 +209,10 @@ sections:
     steps:
       - title: "Drive the unload flows"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/module-unload"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/module-unload-home"'
+          launch: 'env HOME="$PWD/testdata/module-unload-home" USERPROFILE="$PWD/testdata/module-unload-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/module-unload"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"

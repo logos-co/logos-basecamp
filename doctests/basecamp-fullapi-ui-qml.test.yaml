@@ -46,32 +46,39 @@ prerequisites:
   - |
     **Network access** to fetch the flakes and Nix binary cache. Once everything
     is built, the run itself is offline — no catalog download, no peer connection.
+  - "**Windows:** the build steps' outputs, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and one `port-<module>/` per module, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       Build the logos-qt-mcp driver that connects to the app's QML inspector.
     steps:
       - title: "Build logos-qt-mcp"
-        run: "nix build \"${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}\" -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build '.#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build the inspector-enabled portable bundle — the same shippable dir
       bundle, with the QML inspector compiled in so the driver can attach.
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
-        code_block: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
-        check_file: "result-bundle/bin/LogosBasecamp"
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Install the provider + QML-only UI into a user-dir"
     step: true
+    platform: [linux, macos]
     text: |
       Build the `test_fullapi_cpp` provider and the `test_fullapi_ui_qml`
       QML-only UI plugin from `logos-test-modules` as **portable** install
@@ -79,16 +86,21 @@ sections:
       `modules/`, the UI plugin under `plugins/`. No `lgpd`, no catalog, no
       network.
     steps:
-      - title: "Build and stage the modules"
+      - title: "Build the modules"
         run: |
           set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          for m in test_fullapi_cpp test_fullapi_ui_qml; do
+            nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.$m.install-portable" --out-link "port-$m"
+          done
+      - title: "Stage them into a user-dir"
+        platform: [linux, macos, windows]
+        run: |
+          set -e
           rm -rf testdata/fullapi-qml
           mkdir -p testdata/fullapi-qml/modules testdata/fullapi-qml/plugins
-          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-cpp
-          cp -RL result-port-cpp/modules/. testdata/fullapi-qml/modules/
-          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_ui_qml.install-portable" --out-link result-port-ui-qml
-          cp -RL result-port-ui-qml/plugins/. testdata/fullapi-qml/plugins/
+          cp -RL port-test_fullapi_cpp/modules/. testdata/fullapi-qml/modules/
+          cp -RL port-test_fullapi_ui_qml/plugins/. testdata/fullapi-qml/plugins/
           chmod -R u+w testdata/fullapi-qml
           echo "modules:"; ls testdata/fullapi-qml/modules
           echo "plugins:"; ls testdata/fullapi-qml/plugins
@@ -98,6 +110,7 @@ sections:
 
   - title: "Launch Basecamp and drive the QML-only plugin"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle against the assembled user-dir and drive the QML-only
       Full API UI plugin headlessly: open it, run every QML-expressible method
@@ -106,8 +119,10 @@ sections:
     steps:
       - title: "Drive the plugin"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-qml"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/fullapi-qml-home"'
+          launch: 'env HOME="$PWD/testdata/fullapi-qml-home" USERPROFILE="$PWD/testdata/fullapi-qml-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/fullapi-qml"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"

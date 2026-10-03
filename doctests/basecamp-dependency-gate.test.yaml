@@ -60,7 +60,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+  - "**Windows:** the outputs the build steps below link, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/`, `lgx/`, `lgpm/` and `depsvc-lgx/`, plus Git Bash, Python 3 and Node.js."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
 
 sections:
   - title: "Seven apps, one dependency, seven pins"
@@ -98,6 +99,7 @@ sections:
 
   - title: "Build the tools"
     step: true
+    platform: [linux, macos]
     text: |
       The UI driver, the packaging CLI (keys, signing, `.lgx`), and the local
       package installer. The installer must be the **portable** build: it is
@@ -105,20 +107,23 @@ sections:
       app will not look.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
       - title: "Build the lgx packaging CLI"
-        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
-        check_file: "result-lgx/bin/lgx"
+        run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
+        check_file: "lgx/bin/lgx"
 
       - title: "Build the portable package manager"
-        run: "nix build 'github:logos-co/logos-package-manager#cli-portable' -o result-lgpm"
-        check_file: "result-lgpm/bin/lgpm"
+        run: "nix build 'github:logos-co/logos-package-manager#cli-portable' -o lgpm"
+        check_file: "lgpm/bin/lgpm"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle — the same
       self-contained directory you ship, with the QML inspector compiled in so
@@ -129,15 +134,16 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Two publishers, both trusted"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Generate two real Ed25519 publisher identities and anchor **both** in the
       keyring. Anchoring both is the point: the difference between
@@ -152,10 +158,10 @@ sections:
         run: |
           rm -rf build/depgate
           mkdir -p build/depgate/keys build/depgate/keyring
-          ./result-lgx/bin/lgx keygen --name publisher-a --output-dir build/depgate/keys
-          ./result-lgx/bin/lgx keygen --name publisher-b --output-dir build/depgate/keys
-          ./result-lgx/bin/lgx keyring add publisher-a "$(cat build/depgate/keys/publisher-a.did)" --dir build/depgate/keyring
-          ./result-lgx/bin/lgx keyring add publisher-b "$(cat build/depgate/keys/publisher-b.did)" --dir build/depgate/keyring
+          ./lgx/bin/lgx{exe} keygen --name publisher-a --output-dir build/depgate/keys
+          ./lgx/bin/lgx{exe} keygen --name publisher-b --output-dir build/depgate/keys
+          ./lgx/bin/lgx{exe} keyring add publisher-a "$(cat build/depgate/keys/publisher-a.did)" --dir build/depgate/keyring
+          ./lgx/bin/lgx{exe} keyring add publisher-b "$(cat build/depgate/keys/publisher-b.did)" --dir build/depgate/keyring
           # A pin with no `x` member is unparseable, and reports signer_mismatch
           # for the wrong reason — the suite would stay green documenting it.
           for k in publisher-a publisher-b; do
@@ -164,13 +170,14 @@ sections:
               || { echo "FATAL: $k.did carries no public key"; exit 1; }
           done
           echo "both DIDs carry a public key"
-          ./result-lgx/bin/lgx keyring list --dir build/depgate/keyring
+          ./lgx/bin/lgx{exe} keyring list --dir build/depgate/keyring
         expect_contains:
           - "publisher-a"
           - "publisher-b"
 
   - title: "Build, sign and install the dependency"
     step: true
+    platform: [linux, macos, windows]
     text: |
       `depsvc` is an ordinary universal module — the same five files
       `nix flake init -t github:logos-co/logos-module-builder` scaffolds. Only
@@ -266,22 +273,45 @@ sections:
                 return "depsvc 2.1.0 is running.";
             }
 
-      - title: "Build the .lgx, sign it as publisher-b, install it"
+      - title: "Windows builds the same files, from the repo"
+        platform: [linux, macos]
+        text: |
+          Windows has no Nix to build these files with. Basecamp's flake builds
+          the same five from `tests/fixtures/depsvc/` (`#depsvc-lgx`), and
+          logos-windows-ci stages that `.lgx` as `depsvc-lgx/`. This keeps the
+          two copies identical.
+        run: |
+          src="$(nix eval --impure --raw --expr "(builtins.fetchTree \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}\").outPath")"
+          diff -r "$src/tests/fixtures/depsvc" build/depgate/depsvc && echo "identical to tests/fixtures/depsvc"
+        expect_contains:
+          - "identical to tests/fixtures/depsvc"
+
+      - title: "Build the .lgx"
+        platform: [linux, macos]
         text: |
           `#lgx-portable` (not `#lgx`) emits the plain platform variant the
-          portable bundle installs and loads. The archive comes out of the Nix
-          store read-only and `lgx sign` writes in place, hence the copy.
-          `--require-signatures` makes the install itself verify the signature
-          against the keyring rather than take it on trust.
+          portable bundle installs and loads.
         run: |
           nix build "path:$PWD/build/depgate/depsvc#lgx-portable" -o build/depgate/result-depsvc
           cp -f build/depgate/result-depsvc/*.lgx build/depgate/depsvc.lgx
+
+      - title: "On Windows: take the .lgx built from the same files"
+        platform: [windows]
+        run: cp -f depsvc-lgx/*.lgx build/depgate/depsvc.lgx
+
+      - title: "Sign it as publisher-b, install it"
+        text: |
+          The archive comes out of the Nix store read-only and `lgx sign`
+          writes in place, hence the copy above.
+          `--require-signatures` makes the install itself verify the signature
+          against the keyring rather than take it on trust.
+        run: |
           chmod u+w build/depgate/depsvc.lgx
-          ./result-lgx/bin/lgx sign build/depgate/depsvc.lgx -k publisher-b -d build/depgate/keys
+          ./lgx/bin/lgx{exe} sign build/depgate/depsvc.lgx -k publisher-b -d build/depgate/keys
           chmod -R u+w testdata/depgate-user 2>/dev/null || true
           rm -rf testdata/depgate-user
           mkdir -p testdata/depgate-user/modules testdata/depgate-user/plugins
-          ./result-lgpm/bin/lgpm \
+          ./lgpm/bin/lgpm{exe} \
             --modules-dir testdata/depgate-user/modules \
             --ui-plugins-dir testdata/depgate-user/plugins \
             --keyring build/depgate/keyring --require-signatures \
@@ -301,14 +331,15 @@ sections:
           inside the bundle, so there is no `manifest.sig` for a pin to check
           against — by construction, not by accident.
         run: |
-          grep -o '"version": "[^"]*"' result-bundle/modules/capability_module/manifest.json
-          ls result-bundle/modules/capability_module/manifest.sig 2>&1 || echo "no manifest.sig — embedded package"
+          grep -o '"version": "[^"]*"' bin-bundle-dir-inspector/modules/capability_module/manifest.json
+          ls bin-bundle-dir-inspector/modules/capability_module/manifest.sig 2>&1 || echo "no manifest.sig — embedded package"
         expect_contains:
           - '"version": "1.0.0"'
           - "no manifest.sig — embedded package"
 
   - title: "Seed the seven apps"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Each app is four files: the root `manifest.json` the scanner reads, the
       module's own `metadata.json`, a QML view, and a `qmldir`. The view
@@ -389,6 +420,7 @@ sections:
 
   - title: "Drive every verdict"
     step: true
+    platform: [linux, macos, windows]
     text: |
       One launch, all seven apps. The order is deliberate: the four the gate
       **admits** are clicked first, while no dialog has ever opened, so
@@ -399,8 +431,10 @@ sections:
     steps:
       - title: "Click all seven"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/depgate-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/depgate-home"'
+          launch: 'env HOME="$PWD/testdata/depgate-home" USERPROFILE="$PWD/testdata/depgate-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/depgate-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"
@@ -726,6 +760,7 @@ sections:
 
   - title: "What the resolver actually said"
     step: true
+    platform: [linux, macos, windows]
     text: |
       The signer row names two DIDs that are generated fresh on every run, so
       no literal text assertion can reach them. The app's own log can: it
@@ -739,12 +774,15 @@ sections:
         run: |
           DID_A=$(cat build/depgate/keys/publisher-a.did)
           DID_B=$(cat build/depgate/keys/publisher-b.did)
-          grep -o 'blocked by deps ( "[a-z]*" )' ui-test-app.log | sort -u
-          grep -q "pinned to signer $DID_A" ui-test-app.log \
+          # The Windows script keeps each step's app log under ui-test-logs/.
+          log=ui-test-app.log
+          [ -f "$log" ] || log=$(ls ui-test-logs/*.log | tail -1)
+          grep -o 'blocked by deps ( "[a-z]*" )' "$log" | sort -u
+          grep -q "pinned to signer $DID_A" "$log" \
             && echo "pin required publisher-a"
-          grep -q "it is signed by $DID_B" ui-test-app.log \
+          grep -q "it is signed by $DID_B" "$log" \
             && echo "installed package signed by publisher-b"
-          grep -q "not a did:jwk carrying an Ed25519 key" ui-test-app.log \
+          grep -q "not a did:jwk carrying an Ed25519 key" "$log" \
             || echo "every pin carried a real key"
         expect_contains:
           - 'blocked by deps ( "absent" )'

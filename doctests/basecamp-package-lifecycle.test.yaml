@@ -69,7 +69,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
+  - "**Windows:** the outputs the build steps below link, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and `lgx/`, plus Git Bash, Python 3 and Node.js."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
   - |
     **If upgrading from Basecamp 0.1.1 or lower:**
 
@@ -122,25 +123,29 @@ sections:
 
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
       - title: "Build the lgx packaging CLI"
         text: |
           [`lgx`](https://github.com/logos-co/logos-package) is the packaging
           tool — used below to add the payload to each fixture package and stamp
           its content hashes.
-        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
-        check_file: "result-lgx/bin/lgx"
+        run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
+        check_file: "lgx/bin/lgx"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle — the same
       self-contained directory you ship, with the QML inspector compiled in so
@@ -151,15 +156,16 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Craft the two LGX fixture packages"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Write the package files once as templates, then stamp each of the two
       versions (**0.1.1** and **0.2.1**) into a manifest, a metadata file, and
@@ -245,21 +251,14 @@ sections:
           content: |
             module com.logos.module.test_qml_only
 
-      - title: "Stamp both versions and pack the .lgx files"
+      - title: "Pick the platform variant and where the packages go"
+        platform: [linux, macos]
         text: |
-          Detect the host's platform variant (the portable bundle installs plain
-          variant names — no `-dev` suffix), then build each version in two
-          moves: seed a package that contains only the stamped manifest (a plain
-          **ustar** tar — see above), then `lgx add` the payload directory into
-          the platform variant, which also computes and stamps the manifest's
-          content hashes. `lgx verify` confirms each result is a valid (unsigned)
-          package.
-
+          The portable bundle installs plain variant names — no `-dev` suffix.
           The archives land at a **fixed absolute path**
           (`/tmp/basecamp-pkglife/`) because the UI run later passes that path
           into the app over the inspector, where a relative path would be
-          ambiguous. A fresh, empty `--user-dir` for the run is created
-          alongside.
+          ambiguous.
         run: |
           case "$(uname -s) $(uname -m)" in
             "Linux x86_64")   VARIANT=linux-x86_64 ;;
@@ -268,8 +267,35 @@ sections:
             "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
             *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
           esac
-          rm -rf /tmp/basecamp-pkglife
-          mkdir -p /tmp/basecamp-pkglife
+          echo "$VARIANT" > build/pkglife/variant
+          echo /tmp/basecamp-pkglife > build/pkglife/dir
+          cat build/pkglife/variant build/pkglife/dir
+
+      - title: "On Windows: the platform variant and where the packages go"
+        platform: [windows]
+        text: |
+          The app turns `file:///tmp/basecamp-pkglife/…` into `\tmp\basecamp-pkglife\…`
+          on the drive it runs from, while Git Bash's `/tmp` is the user's temp
+          directory. So the packages go to that drive's `\tmp`.
+        run: |
+          echo windows-x86_64 > build/pkglife/variant
+          cygpath -u "$(pwd -W | cut -c1-2)/tmp/basecamp-pkglife" > build/pkglife/dir
+          cat build/pkglife/variant build/pkglife/dir
+
+      - title: "Stamp both versions and pack the .lgx files"
+        text: |
+          Build each version in two
+          moves: seed a package that contains only the stamped manifest (a plain
+          **ustar** tar — see above), then `lgx add` the payload directory into
+          the platform variant, which also computes and stamps the manifest's
+          content hashes. `lgx verify` confirms each result is a valid (unsigned)
+          package. A fresh, empty `--user-dir` for the run is created
+          alongside.
+        run: |
+          VARIANT=$(cat build/pkglife/variant)
+          DIR=$(cat build/pkglife/dir)
+          rm -rf "$DIR"
+          mkdir -p "$DIR"
           for v in 0.1.1 0.2.1; do
             seed="build/pkglife/seed-$v"
             payload="build/pkglife/payload-$v"
@@ -279,15 +305,15 @@ sections:
             sed "s/PLACEHOLDER_VERSION/$v/g" build/pkglife/metadata.json.in > "$payload/metadata.json"
             sed "s/PLACEHOLDER_VERSION/$v/g" build/pkglife/Main.qml.in      > "$payload/Main.qml"
             cp build/pkglife/qmldir "$payload/qmldir"
-            tar --format ustar -C "$seed" -czf "/tmp/basecamp-pkglife/test_qml_only-$v.lgx" manifest.json variants
-            ./result-lgx/bin/lgx add "/tmp/basecamp-pkglife/test_qml_only-$v.lgx" \
+            tar --format ustar -C "$seed" -czf "$DIR/test_qml_only-$v.lgx" manifest.json variants
+            ./lgx/bin/lgx{exe} add "$DIR/test_qml_only-$v.lgx" \
               --variant "$VARIANT" --files "$payload" -y
-            ./result-lgx/bin/lgx verify "/tmp/basecamp-pkglife/test_qml_only-$v.lgx"
+            ./lgx/bin/lgx{exe} verify "$DIR/test_qml_only-$v.lgx"
           done
           chmod -R u+w testdata/pkglife-user 2>/dev/null || true
           rm -rf testdata/pkglife-user
           mkdir -p testdata/pkglife-user/modules testdata/pkglife-user/plugins
-          ls /tmp/basecamp-pkglife
+          ls "$DIR"
         expect_contains:
           - "Package structure is valid"
           - "test_qml_only-0.1.1.lgx"
@@ -295,6 +321,7 @@ sections:
 
   - title: "Install, upgrade, and uninstall — one narrative"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the empty user-dir and drive the whole
       lifecycle. Installs are initiated by the bundled **Package Manager** app
@@ -310,8 +337,10 @@ sections:
     steps:
       - title: "Drive the package lifecycle"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/pkglife-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/pkglife-home"'
+          launch: 'env HOME="$PWD/testdata/pkglife-home" USERPROFILE="$PWD/testdata/pkglife-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/pkglife-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"

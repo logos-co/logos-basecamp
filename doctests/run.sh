@@ -27,9 +27,11 @@
 # set DOCTEST, e.g.:  DOCTEST="nix run path:../../logos-doctest --" ./run.sh
 #
 # To validate a local logos-qt-mcp change (e.g. the inspector command timeout)
-# before it is published, point the specs' qt-mcp build at a local checkout:
-#   QT_MCP_FLAKE=path:/abs/path/to/logos-qt-mcp ./run.sh
-# Unset, the specs build the published flake (github:logos-co/logos-qt-mcp).
+# before it is published, point the specs at a local checkout. basecamp-modules
+# reads QT_MCP_FLAKE; the bundle spec takes a built tree in BASECAMP_QT_MCP:
+#   QT_MCP_FLAKE=path:/abs/path/to/logos-qt-mcp \
+#   BASECAMP_QT_MCP=$(nix build path:/abs/path/to/logos-qt-mcp --no-link --print-out-paths) ./run.sh
+# Unset, they build the published flake and Basecamp's pin of it, respectively.
 #
 set -euo pipefail
 

@@ -72,6 +72,15 @@ sections:
               action: click
               target: "Settings"
 
+            # Its texts exist while hidden, so wait_for alone can pass early.
+            - name: "Settings is shown"
+              action: expect_property
+              find_by: "text"
+              find_value: "Manage modules, apps and dashboards."
+              property: "visible"
+              value: true
+              timeout: 30000
+
             - name: "Settings opens"
               action: wait_for
               texts: ["Manage modules, apps and dashboards."]

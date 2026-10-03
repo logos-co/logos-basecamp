@@ -65,7 +65,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
+  - "**Windows:** the outputs the build steps below link, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/`, `lgx/` and `port-test_fullapi_cpp/`, plus Git Bash, Python 3 and Node.js."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but no catalog packages are downloaded or installed here."
   - |
     **If upgrading from Basecamp 0.1.1 or lower:**
 
@@ -83,25 +84,29 @@ prerequisites:
 sections:
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
       - title: "Build the lgx packaging CLI"
         text: |
           [`lgx`](https://github.com/logos-co/logos-package) is the packaging
           tool — used below to add the payload to the fixture package and stamp
           its content hashes.
-        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
-        check_file: "result-lgx/bin/lgx"
+        run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
+        check_file: "lgx/bin/lgx"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle — the same
       self-contained directory you ship, with the QML inspector compiled in so
@@ -110,15 +115,27 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
+
+      - title: "Build the core module the second fixture repacks"
+        text: |
+          `test_fullapi_cpp` from
+          [`logos-test-modules`](https://github.com/logos-co/logos-test-modules),
+          as a portable install output: the same hermetic source the full-API
+          doc-tests use, so it is known to load inside the bundle.
+        run: |
+          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_cpp.install-portable" -o port-test_fullapi_cpp
+        check_file: "port-test_fullapi_cpp/modules/test_fullapi_cpp/manifest.json"
 
   - title: "Craft the LGX fixture packages: an app and a core module"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Two fixtures. First a QML-only (`ui_qml`) app, version 0.1.1. An `.lgx` is a gzipped
       **ustar** tar: a `manifest.json` at the root and the payload under
@@ -201,9 +218,34 @@ sections:
           content: |
             module com.logos.module.test_persist_qml
 
+      - title: "Pick the platform variant and where the packages go"
+        platform: [linux, macos]
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   VARIANT=linux-x86_64 ;;
+            "Linux aarch64")  VARIANT=linux-arm64 ;;
+            "Darwin arm64")   VARIANT=darwin-arm64 ;;
+            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          echo "$VARIANT" > build/persist/variant
+          echo /tmp/basecamp-persist > build/persist/dir
+          cat build/persist/variant build/persist/dir
+
+      - title: "On Windows: the platform variant and where the packages go"
+        platform: [windows]
+        text: |
+          The app turns `file:///tmp/basecamp-persist/…` into `\tmp\basecamp-persist\…`
+          on the drive it runs from, while Git Bash's `/tmp` is the user's temp
+          directory. So the packages go to that drive's `\tmp`.
+        run: |
+          echo windows-x86_64 > build/persist/variant
+          cygpath -u "$(pwd -W | cut -c1-2)/tmp/basecamp-persist" > build/persist/dir
+          cat build/persist/variant build/persist/dir
+
       - title: "Pack the .lgx and prepare an empty user-dir"
         text: |
-          Detect the host's platform variant, seed the package with the
+          Seed the package with the
           manifest (plain **ustar** — the LGX reader doesn't speak macOS
           `tar`'s default pax headers), `lgx add` the payload, and verify. The
           archives land at a **fixed absolute path** (`/tmp/basecamp-persist/`)
@@ -216,39 +258,32 @@ sections:
           that carries state from the first launch to the second.
         run: |
           set -e
-          case "$(uname -s) $(uname -m)" in
-            "Linux x86_64")   VARIANT=linux-x86_64 ;;
-            "Linux aarch64")  VARIANT=linux-arm64 ;;
-            "Darwin arm64")   VARIANT=darwin-arm64 ;;
-            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
-            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
-          esac
-          chmod -R u+w /tmp/basecamp-persist 2>/dev/null || true
-          rm -rf /tmp/basecamp-persist
-          mkdir -p /tmp/basecamp-persist
+          VARIANT=$(cat build/persist/variant)
+          DIR=$(cat build/persist/dir)
+          chmod -R u+w "$DIR" 2>/dev/null || true
+          rm -rf "$DIR"
+          mkdir -p "$DIR"
           seed="build/persist/seed"
           rm -rf "$seed"
           mkdir -p "$seed/variants"
           cp build/persist/manifest.json "$seed/manifest.json"
-          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx manifest.json variants
-          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx \
+          tar --format ustar -C "$seed" -czf "$DIR/test_persist_qml-0.1.1.lgx" manifest.json variants
+          ./lgx/bin/lgx{exe} add "$DIR/test_persist_qml-0.1.1.lgx" \
             --variant "$VARIANT" --files build/persist/payload -y
-          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_persist_qml-0.1.1.lgx
+          ./lgx/bin/lgx{exe} verify "$DIR/test_persist_qml-0.1.1.lgx"
           chmod -R u+w testdata/persist-user 2>/dev/null || true
           rm -rf testdata/persist-user
           mkdir -p testdata/persist-user/modules testdata/persist-user/plugins
-          ls /tmp/basecamp-persist
+          ls "$DIR"
         expect_contains:
           - "Package structure is valid"
           - "test_persist_qml-0.1.1.lgx"
 
-      - title: "Build and pack the core-module fixture"
+      - title: "Pack the core-module fixture"
         text: |
           A core module's payload is **compiled code**, so it can't be
-          hand-written like the QML app — instead, build the `test_fullapi_cpp`
-          module from [`logos-test-modules`](https://github.com/logos-co/logos-test-modules)
-          as a portable install output (the same hermetic source the full-API
-          doc-tests use, so it is known to load inside the bundle). That
+          hand-written like the QML app — instead, repack the `test_fullapi_cpp`
+          install output built above. That
           output *is* an installed package — a stamped `manifest.json`, a
           `variant` marker, and the shared library with its bundled deps — so
           repacking it as an `.lgx` is the hand-crafting recipe in reverse:
@@ -258,9 +293,8 @@ sections:
           the variant payload, and let it restamp the content hashes.
         run: |
           set -e
-          SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
-          nix build "${TEST_MODULES_FLAKE:-github:logos-co/logos-test-modules}#modules.$SYSTEM.test_fullapi_cpp.install-portable" --out-link result-port-module
-          SRC=result-port-module/modules/test_fullapi_cpp
+          DIR=$(cat build/persist/dir)
+          SRC=port-test_fullapi_cpp/modules/test_fullapi_cpp
           VARIANT=$(cat "$SRC/variant")
           payload=build/persist/module-payload
           seed=build/persist/module-seed
@@ -276,26 +310,31 @@ sections:
           # the install gate's dialog text embeds the version, and the UI
           # runner's text assertions are exact-match, so a spec-owned version
           # keeps that text deterministic whatever version upstream ships.
-          # (jq runs via nix so the host needs nothing installed.)
-          nix run nixpkgs#jq -- '.version = "0.0.1"' "$SRC/manifest.json" > "$seed/manifest.json"
+          python3 - "$SRC/manifest.json" "$seed/manifest.json" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1]))
+          manifest["version"] = "0.0.1"
+          json.dump(manifest, open(sys.argv[2], "w"), indent=2)
+          PY
           chmod -R u+w "$payload" "$seed"
           # The module's entry point (per-variant `main` in its manifest,
           # e.g. test_fullapi_cpp_plugin.dylib) — lgx add needs it explicitly
           # when the payload is a directory.
-          MAIN=$(nix run nixpkgs#jq -- -r --arg v "$VARIANT" '.main[$v]' "$SRC/manifest.json")
-          [ -n "$MAIN" ] && [ "$MAIN" != "null" ]
-          echo "main: $MAIN (upstream version: $(nix run nixpkgs#jq -- -r .version "$SRC/manifest.json"))"
-          tar --format ustar -C "$seed" -czf /tmp/basecamp-persist/test_fullapi_cpp.lgx manifest.json variants
-          ./result-lgx/bin/lgx add /tmp/basecamp-persist/test_fullapi_cpp.lgx \
+          MAIN=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["main"].get(sys.argv[2], ""))' "$SRC/manifest.json" "$VARIANT")
+          [ -n "$MAIN" ]
+          echo "main: $MAIN (upstream version: $(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$SRC/manifest.json"))"
+          tar --format ustar -C "$seed" -czf "$DIR/test_fullapi_cpp.lgx" manifest.json variants
+          ./lgx/bin/lgx{exe} add "$DIR/test_fullapi_cpp.lgx" \
             --variant "$VARIANT" --files "$payload" --main "$MAIN" -y
-          ./result-lgx/bin/lgx verify /tmp/basecamp-persist/test_fullapi_cpp.lgx
-          ls /tmp/basecamp-persist
+          ./lgx/bin/lgx{exe} verify "$DIR/test_fullapi_cpp.lgx"
+          ls "$DIR"
         expect_contains:
           - "Package structure is valid"
           - "test_fullapi_cpp.lgx"
 
   - title: "First launch: install the app and the core module"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the empty user-dir and install the
       fixture the only way Basecamp installs anything: the bundled **Package
@@ -308,8 +347,10 @@ sections:
     steps:
       - title: "Install and open the app"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/persist-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/persist-home"'
+          launch: 'env HOME="$PWD/testdata/persist-home" USERPROFILE="$PWD/testdata/persist-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/persist-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"
@@ -458,6 +499,7 @@ sections:
 
   - title: "Second launch: the app and the module are still there"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Shut the first instance down and launch a fresh one against the **same**
       user-dir. Nothing is installed in this run and no reload workaround is
@@ -469,8 +511,10 @@ sections:
     steps:
       - title: "Relaunch and verify both packages survived"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/persist-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/persist-home"'
+          launch: 'env HOME="$PWD/testdata/persist-home" USERPROFILE="$PWD/testdata/persist-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/persist-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "The bundle relaunches against the same user-dir"
@@ -577,6 +621,7 @@ sections:
 
   - title: "Third launch: move everything — the bundle is truly portable"
     step: true
+    platform: [linux, macos, windows]
     text: |
       A **portable** build claims more than surviving a restart: nothing may
       tie the bundle to *where it was built*, nor the installed state to
@@ -590,7 +635,7 @@ sections:
       - title: "Copy the bundle out of the store, move the user-dir"
         text: |
           `cp -R` on the out-link is the honest test: it follows the
-          `result-bundle` symlink but preserves the symlinks *inside* the
+          `bin-bundle-dir-inspector` symlink but preserves the symlinks *inside* the
           bundle (all relative — Qt framework `Versions/Current` links and
           the like), so the copy is exactly what a user gets by copying the
           folder. The user-dir is **moved**, not copied, and the source
@@ -605,10 +650,14 @@ sections:
           chmod -R u+w build/persist/moved 2>/dev/null || true
           rm -rf build/persist/moved
           mkdir -p build/persist/moved/bundle
-          cp -R result-bundle/. build/persist/moved/bundle
+          cp -R bin-bundle-dir-inspector/. build/persist/moved/bundle
           chmod -R u+w build/persist/moved/bundle
-          mv testdata/persist-user build/persist/moved/user
-          rm -f /tmp/basecamp-persist/*.lgx
+          # Windows can keep a file of the stopped app open for a moment.
+          for try in 1 2 3 4 5; do
+            mv testdata/persist-user build/persist/moved/user && break
+            sleep 2
+          done
+          rm -f "$(cat build/persist/dir)"/*.lgx
           # List the moved tree AND the installed payloads inside it — the
           # plugins/ and modules/ dirs themselves were pre-created empty, so
           # only their contents prove the installs are coming along.
@@ -619,6 +668,7 @@ sections:
           - "test_fullapi_cpp"
 
       - title: "Prove the copy is self-contained: zero store references in its dynamic-link metadata"
+        platform: [linux, macos]
         text: |
           Raw bytes are the wrong thing to grep — harmless `/nix/store`
           strings survive in debug text. What decides whether the copy runs
@@ -653,10 +703,106 @@ sections:
         expect_contains:
           - "BUNDLE-IS-SELF-CONTAINED"
 
+      - title: "On Windows: where every import of the copy resolves"
+        platform: [windows]
+        text: |
+          A Windows PE names the DLLs it imports by file name alone, so there is
+          no store path to look for. Nor can the launch below settle it: Git
+          Bash's `PATH` would quietly lend the copy a DLL it lacks. What decides
+          it is where each import resolves — next to the importing file, in the
+          bundle's `bin/`, or in Windows itself. This script reads the import
+          and delay-load tables of every `.exe` and `.dll` in the copy.
+        file:
+          path: build/persist/pe_imports.py
+          language: python
+          content: |
+            import os, struct, sys
+
+            # Windows' own DLLs, as logos-windows-ci's import-closure gate lists them.
+            WINDOWS = set("""
+                kernel32 ntdll user32 advapi32 ws2_32 mswsock shell32 ole32 oleaut32 version
+                winmm netapi32 userenv authz mpr crypt32 bcrypt bcryptprimitives secur32
+                dbghelp psapi imm32 gdi32 comdlg32 shlwapi iphlpapi dnsapi wtsapi32 setupapi
+                winspool rpcrt4 msvcrt uxtheme dwmapi d3d9 d3d11 d3d12 dxgi dwrite opengl32
+                wldap32 normaliz winhttp wininet ncrypt cfgmgr32 powrprof propsys oleacc avrt
+                ucrtbase d2d1 shcore odbc32
+            """.split())
+
+
+            def imported_dlls(data):
+                """The DLL names in a PE's import and delay-load import tables."""
+                pe = struct.unpack_from("<I", data, 0x3C)[0]
+                sections, = struct.unpack_from("<H", data, pe + 6)
+                optional_size, = struct.unpack_from("<H", data, pe + 20)
+                optional = pe + 24
+                pe32_plus = struct.unpack_from("<H", data, optional)[0] == 0x20B
+                directories = optional + (112 if pe32_plus else 96)
+                table = [struct.unpack_from("<IIII", data, optional + optional_size + 40 * i + 8)
+                         for i in range(sections)]
+
+                def offset(rva):
+                    for size, address, raw_size, raw in table:
+                        if address <= rva < address + max(size, raw_size):
+                            return rva - address + raw
+                    return None
+
+                names = []
+                # (data directory entry, descriptor size, offset of its name field)
+                for entry, size, name_field in ((1, 20, 12), (13, 32, 4)):
+                    rva, = struct.unpack_from("<I", data, directories + 8 * entry)
+                    at = offset(rva) if rva else None
+                    while at is not None:
+                        name_rva, = struct.unpack_from("<I", data, at + name_field)
+                        if not name_rva:
+                            break
+                        start = offset(name_rva)
+                        names.append(data[start:data.index(b"\0", start)].decode("ascii", "replace"))
+                        at += size
+                return names
+
+
+            bundle = sys.argv[1]
+            bin_names = {n.lower() for n in os.listdir(os.path.join(bundle, "bin"))}
+            scanned, outside = 0, []
+            for directory, _, files in os.walk(bundle):
+                here = {n.lower() for n in os.listdir(directory)}
+                for name in files:
+                    if not name.lower().endswith((".exe", ".dll")):
+                        continue
+                    path = os.path.join(directory, name)
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    if data[:2] != b"MZ":
+                        continue
+                    scanned += 1
+                    for dll in imported_dlls(data):
+                        low = dll.lower()
+                        if low.startswith(("api-ms-win-", "ext-ms-")) or os.path.splitext(low)[0] in WINDOWS:
+                            continue
+                        if low not in here and low not in bin_names:
+                            outside.append(os.path.relpath(path, bundle) + " -> " + dll)
+
+            for line in outside:
+                print("RESOLVES OUTSIDE THE BUNDLE:", line)
+            qt_conf = os.path.join(bundle, "bin", "qt.conf")
+            relative = not os.path.exists(qt_conf) or "/nix/store" not in open(qt_conf).read()
+            print("scanned", scanned, "PE files;", len(outside), "imports resolve outside the bundle;",
+                  "qt.conf is relative" if relative else "qt.conf names the store")
+            if scanned and not outside and relative:
+                print("BUNDLE-IS-SELF-CONTAINED")
+
+      - title: "On Windows: prove the copy is self-contained"
+        platform: [windows]
+        run: python3 build/persist/pe_imports.py build/persist/moved/bundle
+        expect_contains:
+          - "BUNDLE-IS-SELF-CONTAINED"
+
       - title: "Launch from the moved copies and verify everything still works"
         ui_test:
-          launch: "./build/persist/moved/bundle/bin/LogosBasecamp --user-dir ./build/persist/moved/user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/persist-home"'
+          launch: 'env HOME="$PWD/testdata/persist-home" USERPROFILE="$PWD/testdata/persist-home" LOGOS_NO_SCHEME_REGISTER=1 ./build/persist/moved/bundle/bin/LogosBasecamp{exe} --user-dir "$PWD/build/persist/moved/user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "The relocated bundle boots against the relocated user-dir"

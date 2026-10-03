@@ -64,19 +64,23 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but nothing from it is downloaded or installed here."
+  - "**Windows:** the outputs the build steps below link, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and `lgx/`, plus Git Bash, Python 3 and Node.js."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is needed to fetch the flakes and the Nix binary cache; during the run Basecamp may refresh its default catalog in the background, but nothing from it is downloaded or installed here."
 
 sections:
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
       - title: "Build the lgx packaging CLI"
         text: |
@@ -84,11 +88,12 @@ sections:
           tool — used below to add the payload to the fixture package and stamp
           its content hashes. (Only the *valid* package needs it; breaking a
           file requires no tooling at all.)
-        run: "nix build 'github:logos-co/logos-package#lgx' -o result-lgx"
-        check_file: "result-lgx/bin/lgx"
+        run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
+        check_file: "lgx/bin/lgx"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle — the same
       self-contained directory you ship, with the QML inspector compiled in so
@@ -97,15 +102,16 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Craft one valid package — and break it twice"
     step: true
+    platform: [linux, macos, windows]
     text: |
       The valid fixture is a QML-only (`ui_qml`) app, hand-built exactly the
       way the package-lifecycle doc-test documents: a stamped `manifest.json`
@@ -175,6 +181,37 @@ sections:
           content: |
             module com.logos.module.test_failpath_qml
 
+      - title: "Pick the platform variant and where the files go"
+        platform: [linux, macos]
+        text: |
+          Everything lands at a **fixed absolute path**
+          (`/tmp/basecamp-failpath/`) because the UI run passes these paths
+          into the app over the inspector, where a relative path would be
+          ambiguous.
+        run: |
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")   VARIANT=linux-x86_64 ;;
+            "Linux aarch64")  VARIANT=linux-arm64 ;;
+            "Darwin arm64")   VARIANT=darwin-arm64 ;;
+            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          echo "$VARIANT" > build/failpath/variant
+          echo /tmp/basecamp-failpath > build/failpath/dir
+          cat build/failpath/variant build/failpath/dir
+
+      - title: "On Windows: the platform variant and where the files go"
+        platform: [windows]
+        text: |
+          The app turns `file:///tmp/basecamp-failpath/…` into `\tmp\basecamp-failpath\…`
+          on the drive it runs from, while Git Bash's `/tmp` is the user's temp
+          directory. So the files go to that drive's `\tmp`, and the error
+          messages quote the same `/tmp/…` paths as on Linux and macOS.
+        run: |
+          echo windows-x86_64 > build/failpath/variant
+          cygpath -u "$(pwd -W | cut -c1-2)/tmp/basecamp-failpath" > build/failpath/dir
+          cat build/failpath/variant build/failpath/dir
+
       - title: "Pack the valid .lgx, then derive the two broken files"
         text: |
           Build the valid package (`lgx verify` proves it), then break it:
@@ -185,39 +222,31 @@ sections:
           - **`not-a-package.lgx`** — a sentence of plain text with an `.lgx`
             extension. Not gzip, not tar, not close.
 
-          Everything lands at a **fixed absolute path**
-          (`/tmp/basecamp-failpath/`) because the UI run passes these paths
-          into the app over the inspector, where a relative path would be
-          ambiguous. A fresh, empty `--user-dir` is created alongside — and
+          A fresh, empty `--user-dir` is created alongside — and
           since nothing in this spec ever completes an install, it is expected
           to stay empty.
         run: |
-          case "$(uname -s) $(uname -m)" in
-            "Linux x86_64")   VARIANT=linux-x86_64 ;;
-            "Linux aarch64")  VARIANT=linux-arm64 ;;
-            "Darwin arm64")   VARIANT=darwin-arm64 ;;
-            "Darwin x86_64")  VARIANT=darwin-x86_64 ;;
-            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
-          esac
-          chmod -R u+w /tmp/basecamp-failpath 2>/dev/null || true
-          rm -rf /tmp/basecamp-failpath
-          mkdir -p /tmp/basecamp-failpath
+          VARIANT=$(cat build/failpath/variant)
+          DIR=$(cat build/failpath/dir)
+          chmod -R u+w "$DIR" 2>/dev/null || true
+          rm -rf "$DIR"
+          mkdir -p "$DIR"
           seed="build/failpath/seed"
           rm -rf "$seed"
           mkdir -p "$seed/variants"
           cp build/failpath/manifest.json "$seed/manifest.json"
-          tar --format ustar -C "$seed" -czf /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx manifest.json variants
-          ./result-lgx/bin/lgx add /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx \
+          tar --format ustar -C "$seed" -czf "$DIR/test_failpath_qml-0.1.1.lgx" manifest.json variants
+          ./lgx/bin/lgx{exe} add "$DIR/test_failpath_qml-0.1.1.lgx" \
             --variant "$VARIANT" --files build/failpath/payload -y
-          ./result-lgx/bin/lgx verify /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx
-          head -c 400 /tmp/basecamp-failpath/test_failpath_qml-0.1.1.lgx \
-            > /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx
+          ./lgx/bin/lgx{exe} verify "$DIR/test_failpath_qml-0.1.1.lgx"
+          head -c 400 "$DIR/test_failpath_qml-0.1.1.lgx" \
+            > "$DIR/test_failpath_qml-truncated.lgx"
           printf 'This is not an LGX package, whatever the extension claims.\n' \
-            > /tmp/basecamp-failpath/not-a-package.lgx
+            > "$DIR/not-a-package.lgx"
           chmod -R u+w testdata/failpath-user 2>/dev/null || true
           rm -rf testdata/failpath-user
           mkdir -p testdata/failpath-user/modules testdata/failpath-user/plugins
-          ls /tmp/basecamp-failpath
+          ls "$DIR"
         expect_contains:
           - "Package structure is valid"
           - "test_failpath_qml-0.1.1.lgx"
@@ -226,6 +255,7 @@ sections:
 
   - title: "Feed the broken files to the Package Manager"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the empty user-dir and hand each
       broken file to the bundled **Package Manager** app the way every local
@@ -246,8 +276,10 @@ sections:
     steps:
       - title: "Drive both failures, then the intact-file counter-proof"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/failpath-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/failpath-home"'
+          launch: 'env HOME="$PWD/testdata/failpath-home" USERPROFILE="$PWD/testdata/failpath-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/failpath-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"

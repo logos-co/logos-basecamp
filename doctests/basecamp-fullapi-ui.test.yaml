@@ -53,50 +53,62 @@ prerequisites:
   - |
     **Network access** to fetch the flakes and Nix binary cache. Once everything
     is built, the run itself is offline — no catalog download, no peer connection.
+  - "**Windows** runs the main walk, not the cross-version ones: the build steps' outputs, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and one `port-<module>/` per module, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       Build the logos-qt-mcp driver that connects to the app's QML inspector.
     steps:
       - title: "Build logos-qt-mcp"
-        run: "nix build \"${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}\" -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build '.#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build the inspector-enabled portable bundle — the same shippable dir bundle,
       with the QML inspector compiled in so the driver can attach.
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle; fi
-        code_block: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle"
-        check_file: "result-bundle/bin/LogosBasecamp"
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector; fi
+        code_block: "nix build '.#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Install the full_api modules into a user-dir"
     step: true
+    platform: [linux, macos]
     text: |
       Build the two providers, the proxy, and the UI plugin from
       `logos-test-modules` as **portable** install outputs, then assemble a
       `--user-dir` by plain copy: core modules under `modules/`, the UI plugin
       under `plugins/`. No `lgpd`, no catalog, no network.
     steps:
-      - title: "Build and stage the modules"
+      - title: "Build the modules"
         run: |
           set -e
           SYSTEM=$(nix eval --impure --raw --expr 'builtins.currentSystem')
+          for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy test_fullapi_ui; do
+            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "port-$m"
+          done
+      - title: "Stage them into a user-dir"
+        platform: [linux, macos, windows]
+        run: |
+          set -e
           rm -rf testdata/fullapi
           mkdir -p testdata/fullapi/modules testdata/fullapi/plugins
           for m in test_fullapi_cpp test_fullapi_rust test_fullapi_proxy; do
-            nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.$m.install-portable" --out-link "result-port-$m"
-            cp -RL "result-port-$m/modules/." testdata/fullapi/modules/
+            cp -RL "port-$m/modules/." testdata/fullapi/modules/
           done
-          nix build "github:logos-co/logos-test-modules#modules.$SYSTEM.test_fullapi_ui.install-portable" --out-link result-port-ui
-          cp -RL result-port-ui/plugins/. testdata/fullapi/plugins/
+          cp -RL port-test_fullapi_ui/plugins/. testdata/fullapi/plugins/
           chmod -R u+w testdata/fullapi
           echo "modules:"; ls testdata/fullapi/modules
           echo "plugins:"; ls testdata/fullapi/plugins
@@ -108,6 +120,7 @@ sections:
 
   - title: "Launch Basecamp and drive the UI plugin"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle against the assembled user-dir and drive the Full API UI
       plugin headlessly: open it, run every method type against the C++ provider,
@@ -116,8 +129,10 @@ sections:
     steps:
       - title: "Drive the plugin"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/fullapi-home"'
+          launch: 'env HOME="$PWD/testdata/fullapi-home" USERPROFILE="$PWD/testdata/fullapi-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/fullapi"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"
@@ -200,6 +215,8 @@ sections:
 
   - title: "Cross-version A — UI + provider from the module-builder release, proxy from master"
     step: true
+    # The release's module-builder has no Windows target.
+    platform: [linux, macos]
     text: |
       The same `full_api` chain, but with its components built from **different
       module-builder toolchains**: the UI plugin and the C++ provider from the
@@ -256,8 +273,10 @@ sections:
 
       - title: "Drive the version-mixed chain (UI@release → proxy@master → provider@release)"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-xva"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/fullapi-xva-home"'
+          launch: 'env HOME="$PWD/testdata/fullapi-xva-home" USERPROFILE="$PWD/testdata/fullapi-xva-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/fullapi-xva"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens (cross-version A)"
@@ -306,6 +325,8 @@ sections:
 
   - title: "Cross-version B — UI + provider from master, proxy from the release"
     step: true
+    # The release's module-builder has no Windows target.
+    platform: [linux, macos]
     text: |
       The mirror image: UI plugin and C++ provider from master, proxy from the
       release (`0.2.3`). Same hermetic assembly and drive, with the release/master
@@ -350,8 +371,10 @@ sections:
 
       - title: "Drive the version-mixed chain (UI@master → proxy@release → provider@master)"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/fullapi-xvb"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/fullapi-xvb-home"'
+          launch: 'env HOME="$PWD/testdata/fullapi-xvb-home" USERPROFILE="$PWD/testdata/fullapi-xvb-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/fullapi-xvb"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens (cross-version B)"

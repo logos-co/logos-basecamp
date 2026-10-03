@@ -45,6 +45,8 @@ prerequisites:
     mkdir -p ~/.config/nix
     echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
     ```
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required."
+  - "**Windows:** the outputs the build steps below link, staged as `bin-bundle-dir-inspector/`, `logos-qt-mcp/` and `intents-fixtures/`, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "Two files, two readers"
@@ -74,32 +76,44 @@ sections:
 
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle, with the QML
       inspector compiled in so the driver can attach.
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
+      - title: "Build the fixtures"
+        text: |
+          The fixture apps from `tests/fixtures/intents/`, as a flake output, so a
+          checkout is not needed (and Windows can stage them like the bundle).
+        run: nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#intents-fixtures" -o intents-fixtures
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#intents-fixtures' -o intents-fixtures"
+        check_file: "intents-fixtures/stage.sh"
 
   - title: "Seed the three fixture apps"
     step: true
+    platform: [linux, macos, windows]
     text: |
       The fixtures live in the repo at `tests/fixtures/intents/` and are staged
       by a script rather than written out here, because the same three apps are
@@ -115,13 +129,11 @@ sections:
         the same intent.
     steps:
       - title: "Stage the fixtures into a throwaway user dir"
-        # The harness runs in a scratch dir with no checkout, so take the
-        # fixtures from the same source the bundle was built from.
+        # bash: a staged copy may have lost stage.sh's exec bit.
         run: |
           chmod -R u+w testdata/intents-user 2>/dev/null || true
           rm -rf testdata/intents-user
-          src="$(nix eval --impure --raw --expr "(builtins.fetchTree \"${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}\").outPath")"
-          "$src/tests/fixtures/intents/stage.sh" testdata/intents-user
+          bash intents-fixtures/stage.sh testdata/intents-user
           ls testdata/intents-user/plugins
         code_block: |
           # From inside a clone of logos-basecamp:
@@ -134,6 +146,7 @@ sections:
 
   - title: "Refusal, the chooser, and isolation"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the seeded user-dir and drive the
       flow. Everything inside the chooser and the apps is addressed by stable
@@ -157,8 +170,9 @@ sections:
                   time.sleep(1)
               sys.exit("port 3768 is still held by another process")
               PY
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/intents-user"
-          qt_mcp: "result-mcp"
+            - 'mkdir -p "$PWD/testdata/intents-home"'
+          launch: 'env HOME="$PWD/testdata/intents-home" USERPROFILE="$PWD/testdata/intents-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/intents-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"

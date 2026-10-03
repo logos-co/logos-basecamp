@@ -53,7 +53,8 @@ prerequisites:
     ```
 
     Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
-  - "**A Linux or macOS machine.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+  - "**Linux, macOS or Windows.** The app runs headless via `QT_QPA_PLATFORM=offscreen`, so no display is required. Network access is only needed to fetch the flakes and the Nix binary cache — the run itself is offline."
+  - "**Windows:** the two outputs the build steps below link, staged as `bin-bundle-dir-inspector/` and `logos-qt-mcp/`, plus Git Bash, Python 3 and Node.js."
 
 sections:
   - title: "How a dependency goes missing"
@@ -86,17 +87,21 @@ sections:
 
   - title: "Build the UI test driver"
     step: true
+    platform: [linux, macos]
     text: |
       [`logos-qt-mcp`](https://github.com/logos-co/logos-qt-mcp) is the harness
       the doc-test uses to connect to the app's QML inspector and drive it.
     steps:
       - title: "Build logos-qt-mcp"
-        run: 'nix build "${QT_MCP_FLAKE:-github:logos-co/logos-qt-mcp}" -o result-mcp'
-        code_block: "nix build 'github:logos-co/logos-qt-mcp' -o result-mcp"
-        check_file: "result-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
 
   - title: "Build the Basecamp bundle"
     step: true
+    platform: [linux, macos]
     text: |
       Build **this** basecamp commit as the portable bundle — the same
       self-contained directory you ship, with the QML inspector compiled in so
@@ -106,15 +111,16 @@ sections:
     steps:
       - title: "Build the bundle"
         run: |
-          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" result-bundle
-          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o result-bundle; fi
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
         code_block: |
           # From inside the clone this is simply: nix build '.#bin-bundle-dir-inspector'
-          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o result-bundle
-        check_file: "result-bundle/bin/LogosBasecamp"
+          nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
 
   - title: "Seed the broken app"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Write the four files of an installed QML-only app. The manifest's
       `display_name` ("Missing Deps Demo") is what the sidebar shows; its
@@ -214,6 +220,7 @@ sections:
 
   - title: "The marker, the gate, and the dialog"
     step: true
+    platform: [linux, macos, windows]
     text: |
       Launch the bundle headless against the seeded user-dir and drive the
       flow. The sidebar app tile renders icon-only (its name is a tooltip),
@@ -224,8 +231,10 @@ sections:
     steps:
       - title: "Drive the missing-deps flow"
         ui_test:
-          launch: "./result-bundle/bin/LogosBasecamp --user-dir ./testdata/missing-deps-user"
-          qt_mcp: "result-mcp"
+          setup:
+            - 'mkdir -p "$PWD/testdata/missing-deps-home"'
+          launch: 'env HOME="$PWD/testdata/missing-deps-home" USERPROFILE="$PWD/testdata/missing-deps-home" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp{exe} --user-dir "$PWD/testdata/missing-deps-user"'
+          qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
             - name: "App window opens with the sidebar visible"
@@ -241,27 +250,16 @@ sections:
               text: "The package scan found `missing_deps_demo` in the user dir's `plugins/` and the sidebar lists it under its `display_name`. Installed-but-broken apps are not hidden — the user can see what they have, and the marker (next step) tells them what's wrong."
               screenshot: "missing-deps-launch.png"
 
-            # Generous margin on purpose. The next step is `expect_property`,
-            # which the runner emits as a one-shot assertion — unlike
-            # `wait_for` there is no polling, so this sleep is the entire
-            # safety margin. And it can't be traded for "click first, retry
-            # the dialog": a click that lands before the missing-set is
-            # published passes the gate and really does attempt the load,
-            # which the spec can't recover from. The work being waited on is
-            # two IPC round-trips per installed package on a cold headless
-            # launch.
-            - name: "Give the dependency resolution a moment to complete"
-              action: sleep
-              ms: 20000
-              text: "The missing-set is computed asynchronously after the package list arrives: one `resolveFlatDependencies` round-trip per installed package."
-
+            # Polls until the marker is set. The click below must not come
+            # earlier: before the missing-set is published, the gate lets the load through.
             - name: "The sidebar tile carries the missing-deps marker"
               action: expect_property
               find_by: "objectName"
               find_value: "sidebar.app.missing_deps_demo"
               property: "hasMissingDeps"
               value: true
-              text: "The tile's `hasMissingDeps` state is set — this is what draws the red cross in its top-right corner. The screenshot shows the marker; the property assertion pins the state itself."
+              timeout: 60000
+              text: "The missing-set is computed asynchronously after the package list arrives, one `resolveFlatDependencies` round-trip per installed package. Once it is published, the tile's `hasMissingDeps` state is set — this is what draws the red cross in its top-right corner. The screenshot shows the marker; the property assertion pins the state itself."
               screenshot: "missing-deps-marker.png"
 
             - name: "…and the app is not loaded"
