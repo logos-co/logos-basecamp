@@ -424,12 +424,6 @@ sections:
               action: click
               target: "Applications"
 
-            - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
-              timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
-
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -437,6 +431,15 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -551,12 +554,6 @@ sections:
               action: click
               target: "Applications"
 
-            - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
-              timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
-
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -564,6 +561,15 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -666,12 +672,6 @@ sections:
               action: click
               target: "Applications"
 
-            - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
-              timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
-
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
@@ -679,6 +679,15 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
@@ -763,18 +772,21 @@ sections:
               action: click
               target: "Applications"
 
-            - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
-              timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
-
             - name: "Open the storage_ui details"
               action: call_method
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
               method: "openDetails"
               args: []
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+              text: "The installed tile shows before the catalog is in, and its details open once it is. Basecamp fetches the catalog the first time something needs it, here the App Manager."
 
             - name: "Uninstall it"
               action: click_object
