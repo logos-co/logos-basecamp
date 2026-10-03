@@ -464,6 +464,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it with the node stopped"
               action: click_object
               find_by: "objectName"
@@ -594,6 +616,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it without storage_module"
               action: click_object
               find_by: "objectName"
@@ -712,6 +756,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it with storage_module back"
               action: click_object
               find_by: "objectName"
@@ -737,14 +803,15 @@ sections:
     steps:
       - title: "Move the node to logos.test"
         text: |
-          The catalog stays on `logos.dev`.
+          The catalog stays on `logos.dev`. The node has rewritten its
+          configuration by now, so we read the network back with `jq`.
         run: |
           set -eu
 
           sed -i 's/"logos.dev"/"logos.test"/' home/.logos_storage/config.json
-          grep network home/.logos_storage/config.json
+          echo "network=$(jq -r .network home/.logos_storage/config.json)"
         expect_contains:
-          - '"network": "logos.test"'
+          - "network=logos.test"
 
       - title: "Reinstall with the networks apart"
         ui_test:
@@ -810,6 +877,28 @@ sections:
               action: click_object
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
+
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
 
             - name: "Install it from another network"
               action: click_object
