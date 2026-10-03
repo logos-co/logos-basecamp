@@ -35,6 +35,11 @@ QString      QtLogosCoreRuntime::admitConsumer(const QString& name)
     return m_core->admitConsumer(name);
 }
 
+void QtLogosCoreRuntime::onRuntimeExit(std::function<void(const QString& reason)> handler)
+{
+    m_core->onRuntimeExit(std::move(handler));
+}
+
 bool QtLogosCoreRuntime::loadModule(const QString& name, LoadPolicy policy)
 {
     LogosLoadDeps deps = LOGOS_LOAD_REQUIRED_AND_OPTIONAL;

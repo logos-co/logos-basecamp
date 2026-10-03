@@ -12,16 +12,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1790296007,
-        "narHash": "sha256-kYIGrgnWcL32hrFCS/amRQPpaDLwUhvLFPe2KvPFDOM=",
+        "lastModified": 1790536314,
+        "narHash": "sha256-OBKBSClFZIqda4+1DsGaPKIpf7jlixvgHxsdSNN098E=",
         "owner": "logos-co",
         "repo": "logos-container-subprocess",
-        "rev": "bbf884922535d98ebbb3ad91b0032e326f408417",
+        "rev": "18293312a63407a12330292580ca168126f0dcef",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "fix/windows-stop-while-starting",
+        "ref": "feat/runtime-process",
         "repo": "logos-container-subprocess",
         "type": "github"
       }
@@ -338,15 +338,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1788383494,
-        "narHash": "sha256-5v+cBtuoYoywVn6OquuuwJRRIxqWQGBFvru9+IhfrJw=",
+        "lastModified": 1790365563,
+        "narHash": "sha256-zaftg19xRkulrdS9GnEArSBkEt4v/LXJGBL11fTJel0=",
         "owner": "logos-co",
         "repo": "logos-container",
-        "rev": "641d21108781a353eed9f0567f15776fee06af40",
+        "rev": "3ef2486f986dc10bdb3788999179339838c24d15",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/runtime-process",
         "repo": "logos-container",
         "type": "github"
       }
@@ -711,15 +712,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1788383494,
-        "narHash": "sha256-5v+cBtuoYoywVn6OquuuwJRRIxqWQGBFvru9+IhfrJw=",
+        "lastModified": 1790365563,
+        "narHash": "sha256-zaftg19xRkulrdS9GnEArSBkEt4v/LXJGBL11fTJel0=",
         "owner": "logos-co",
         "repo": "logos-container",
-        "rev": "641d21108781a353eed9f0567f15776fee06af40",
+        "rev": "3ef2486f986dc10bdb3788999179339838c24d15",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "feat/runtime-process",
         "repo": "logos-container",
         "type": "github"
       }
@@ -1704,16 +1706,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1791031671,
-        "narHash": "sha256-Xo0rflYyM3NmLLF2xjfwrD+QS+0Imiab62WzEP9HzIw=",
+        "lastModified": 1791031703,
+        "narHash": "sha256-ki2QnlTh58bV0/UQguu7GgYUVJf/IdlKddNBsdz8o+c=",
         "owner": "logos-co",
         "repo": "logos-cpp-sdk",
-        "rev": "0dc0adcc641de1444c75550768c9c7ebcdc31874",
+        "rev": "1cb7a7491dc5bd92aa7e4e7db29470a60eb9c139",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "feat/drop-legacy-mode",
+        "ref": "feat/runtime-process",
         "repo": "logos-cpp-sdk",
         "type": "github"
       }
@@ -2329,16 +2331,16 @@
         "process-stats": "process-stats"
       },
       "locked": {
-        "lastModified": 1791034902,
-        "narHash": "sha256-e60W3wHYNCKrY8tTazSCTHgMj/rWciMDAfpKIEtaXXY=",
+        "lastModified": 1791034903,
+        "narHash": "sha256-2hqy5r9GIWIh9qV+6OXqI9hQegKs1hyoICBO35+efN4=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "582f102ad3d051e214e6330734b3937f7d6c6bed",
+        "rev": "37ef296bfc019c0b9b417ee452ea20cef2e2ccd2",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "feat/drop-legacy-mode",
+        "ref": "feat/runtime-process",
         "repo": "logos-liblogos",
         "type": "github"
       }
@@ -21513,16 +21515,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1791031694,
-        "narHash": "sha256-I9WjRxNzdnUBS0y2lfgxPJsZNYuWkTYaHiHViax1UsY=",
+        "lastModified": 1791031713,
+        "narHash": "sha256-1m6QzB0fWFPkByTV1CXJUso2FIiToQ7ibnCbHr46UIU=",
         "owner": "logos-co",
         "repo": "logos-qt-sdk",
-        "rev": "4f6924b43f77432d2c717ef1710bc92824582664",
+        "rev": "384c603798cdfbe68730c50935d4d00c30bbd1b8",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "feat/drop-legacy-mode",
+        "ref": "feat/runtime-process",
         "repo": "logos-qt-sdk",
         "type": "github"
       }

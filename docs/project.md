@@ -110,14 +110,14 @@ The SDK wrapper (`LogosAPI` from logos-cpp-sdk) is used on top of the C API to p
 
 ### Runtime Calls
 
-Basecamp is a named shell, `basecamp`. It configures liblogos through the C API before start, then does everything about Logos Modules through `core_service`, over its shell binding: `logos::qt::QtLogosCore` (logos-qt-sdk) wraps both, behind `ICoreRuntime` (`app/QtLogosCoreRuntime.cpp`). capability_module, the token authority, ships in the bundle and runs in-process; without it `start()` throws and the app exits.
+Basecamp is a named shell, `basecamp`. It starts the runtime in a process of its own (`bin/logos_runtime`), then does everything about Logos Modules through `core_service`, over its shell binding: `logos::qt::QtLogosCore` (logos-qt-sdk) wraps both, behind `ICoreRuntime` (`app/QtLogosCoreRuntime.cpp`). capability_module, the token authority, ships in the bundle and runs inside `logos_runtime`, so no token store shares Basecamp's process with the UI Apps it loads; without it `start()` throws and the app exits. If the runtime stops on its own, Basecamp says why and quits. `nix build .#runtime-process-test` measures the separation in what each process maps.
 
 **Initialization and startup** (`app/main.cpp`):
 
 | Call | Purpose |
 |------|---------|
 | `LogosCore::Config` | Modules directories (embedded, user-writable), bundled directories, package config, the shell name `basecamp`, all before start |
-| `start()` | `logos_core_start()`, then take the shell binding |
+| `start()` | `logos_runtime_spawn()` with that configuration, then take the shell binding it answers with |
 | `loadModule("package_manager", RequiredAndOptional)` | core_service `loadModule`: auto-load the package manager at startup, with its required dependencies and any installed optional ones |
 | `loadedModules()` | core_service `listModules("loaded")`: initial status display |
 
@@ -161,7 +161,7 @@ logos.package_manager.on("corePluginFileInstalled", [](const QVariantList& data)
 
 **Files:** `app/main.cpp`
 
-**Purpose:** Initializes the Qt application, configures plugin directories (embedded + user-writable), calls `logos_core_start()` to boot the runtime, auto-loads the `package_manager` module, creates the `LogosAPI` instance, creates the main window, starts a stats polling timer (2s interval), starts the QML inspector (if enabled), and runs the event loop. On exit, calls `logos_core_cleanup()`.
+**Purpose:** Initializes the Qt application, configures plugin directories (embedded + user-writable), starts the runtime in its own process, auto-loads the `package_manager` module, creates the `LogosAPI` instance, creates the main window, starts a stats polling timer (2s interval), starts the QML inspector (if enabled), and runs the event loop. On exit, stops the runtime, which unloads its modules in order.
 
 ### Window
 
@@ -269,7 +269,7 @@ main()
  ├─ QApplication(argc, argv)
  ├─ modules dirs: <app>/../modules, ~/.local/share/.../modules  # Embedded (read-only), user (writable)
  ├─ bundled dirs, package config, shell "basecamp"    # Protected input, before start
- ├─ start()                                            # logos_core_start (capability in-process as the token authority, core_service), then the shell binding
+ ├─ start()                                            # spawns logos_runtime (capability as the token authority, core_service), then the shell binding
  ├─ loadModule("package_manager", REQUIRED_AND_OPTIONAL)  # Through core_service; the runtime sets its dirs
  ├─ loadedModules()                                    # Log loaded modules
  ├─ LogosAPI as "basecamp"                             # The shell's own identity
@@ -457,7 +457,8 @@ All directory paths are managed via the `LogosBasecampPaths` utility class.
 |----------|-------------|
 | `bin/LogosBasecamp` | Main application executable |
 | `lib/liblogos_core.{so,dylib}` | Core library (from logos-liblogos) |
-| `bin/logos_host` | Module subprocess host (from logos-liblogos) |
+| `bin/logos_runtime` | The runtime, in a process of its own (from logos-liblogos) |
+| `bin/logos_host`, `bin/logos_host_plain` | Module subprocess hosts (from logos-liblogos) |
 | `modules/` | Embedded Logos Module bundles |
 | `plugins/*/` | Embedded UI App bundles |
 

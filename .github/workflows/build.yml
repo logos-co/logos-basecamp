@@ -209,6 +209,10 @@ jobs:
       - name: Host-services grant guard
         run: nix build .#host-services-test -L
 
+      # The token store runs in logos_runtime, never in the app's process.
+      - name: Runtime process separation
+        run: nix build .#runtime-process-test -L
+
       # The one control that mechanically enforces the one-runtime invariant:
       # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is
       # DEFINED by exactly one image among those sharing a process, and the
@@ -293,6 +297,10 @@ jobs:
       # real .app bundle (same pairing as integration-test-bundle above).
       - name: Host-services grant guard
         run: nix build .#host-services-test-bundle -L
+
+      # macOS twin of the Linux job's runtime-process guard, on the .app bundle.
+      - name: Runtime process separation
+        run: nix build .#runtime-process-test-bundle -L
 
       # The one control that mechanically enforces the one-runtime invariant:
       # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is

@@ -87,7 +87,8 @@ trap "rm -rf '${TEMP_DIR}' '${CERTS_DIR}'" EXIT
 APP_BUNDLE="${TEMP_DIR}/LogosBasecamp.app"
 CONTENTS="${APP_BUNDLE}/Contents"
 ENTITLEMENTS="./app/macos/LogosBasecamp.entitlements"
-# logos_host runs the modules, and some of them JIT (RandomX in monerod_module): only it gets allow-jit.
+# The module hosts run the modules, and some of them JIT (RandomX in monerod_module): only they get allow-jit.
+# logos_runtime, which holds the token authority, loads only the bundle's own code: it keeps library validation.
 HOST_ENTITLEMENTS="./app/macos/logos_host.entitlements"
 KEYCHAIN_NAME="build.keychain"
 KEYCHAIN_DB_PATH="${HOME}/Library/Keychains/${KEYCHAIN_NAME}-db"
@@ -242,14 +243,19 @@ if [[ "$MODE" =~ ^(sign|both)$ ]]; then
   for exe in \
       "${CONTENTS}/MacOS/LogosBasecamp.bin" \
       "${CONTENTS}/MacOS/logos-basecamp" \
+      "${CONTENTS}/MacOS/logos_runtime" \
       "${CONTENTS}/MacOS/logos_host" \
+      "${CONTENTS}/MacOS/logos_host_plain" \
       "${CONTENTS}/MacOS/ui-host" \
       "${CONTENTS}/MacOS/logoscore"; do
       if [[ -f "${exe}" ]]; then
-          ents="${ENTITLEMENTS}"
-          [[ "${exe}" == */logos_host ]] && ents="${HOST_ENTITLEMENTS}"
+          ents=(--entitlements "${ENTITLEMENTS}")
+          [[ "${exe}" == */logos_host || "${exe}" == */logos_host_plain ]] \
+              && ents=(--entitlements "${HOST_ENTITLEMENTS}")
+          [[ "${exe}" == */logos_runtime ]] && ents=()
           echo "  Signing: ${exe}"
-          codesign_with_retry "${CODESIGN_OPTS[@]}" --entitlements "${ents}" "${exe}" \
+          # bash 3.2 (macOS) calls an empty array unbound under set -u.
+          codesign_with_retry "${CODESIGN_OPTS[@]}" ${ents[@]+"${ents[@]}"} "${exe}" \
               || { echo "ERROR: failed to sign ${exe}"; exit 1; }
       fi
   done

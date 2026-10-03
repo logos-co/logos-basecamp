@@ -26,6 +26,8 @@ public:
     // Fixed credentials: the mock runtime has no authority, and nothing checks them.
     QString      shellCredential() const override;
     QString      admitConsumer(const QString& name) override;
+    // Nothing runs, so nothing stops.
+    void         onRuntimeExit(std::function<void(const QString& reason)>) override {}
 
 private:
     QJsonArray  m_modules;          // immutable, from the fixture
