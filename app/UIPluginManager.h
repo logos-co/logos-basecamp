@@ -15,14 +15,17 @@
 #include "logos_api_client.h"
 #include "IComponent.h"
 
+class LogosQmlBridge;
 class QQuickWidget;
 class QTimer;
-class PluginLoader;
 class ViewModuleHost;
 class CoreModuleManager;
 class PackageCoordinator;
 class IntentBridgeAdapter;
-enum class UIPluginType;
+namespace logos::ui {
+class UiPluginLoader;
+enum class UiPluginKind;
+}
 
 // UIPluginManager — owns UI plugin widget lifecycle in this process.
 //
@@ -74,8 +77,8 @@ public:
     // m_uiPluginMetadata without this class having to talk to the module.
     void setPackageCoordinator(PackageCoordinator* packageCoordinator);
 
-    // Forwarded to PluginLoader, which attaches each ui_qml app's bridge as it
-    // loads. Pass-through, so this class never has to know what an intent is.
+    // Each ui_qml app's bridge is attached as it loads, before its QML runs.
+    // Pass-through, so this class never has to know what an intent is.
     void setIntentAdapter(IntentBridgeAdapter* adapter);
 
     // Unmounts every in-process UI plugin widget. Must run WHILE the shell's
@@ -217,8 +220,8 @@ signals:
 
 private slots:
     void onPluginLoaded(const QString& name, QWidget* widget,
-                        IComponent* component, UIPluginType type,
-                        ViewModuleHost* viewHost);
+                        IComponent* component, logos::ui::UiPluginKind kind,
+                        ViewModuleHost* viewHost, LogosQmlBridge* bridge);
     void onPluginLoadFailed(const QString& name, const QString& error);
 
     void onPmuiInstallProgress(int progressType, const QString& packageName,
@@ -325,7 +328,7 @@ private:
     // PackageCoordinator::uninstallApp's deferral — last click wins.
     QString                 m_pendingGatedLoadName;
     QMetaObject::Connection m_pendingGatedLoadConn;
-    PluginLoader*      m_pluginLoader;      // owned (parent=this)
+    logos::ui::UiPluginLoader* m_pluginLoader; // owned (parent=this)
 
     // Loaded-plugin state
     QMap<QString, IComponent*>   m_loadedUiModules;

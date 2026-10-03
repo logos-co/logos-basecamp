@@ -194,9 +194,6 @@ jobs:
       - name: QML tests
         run: nix build .#qml-tests -L
 
-      - name: Sandbox test
-        run: nix build .#sandbox-test -L
-
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
@@ -285,9 +282,6 @@ jobs:
 
       - name: QML tests
         run: nix build .#qml-tests -L
-
-      - name: Sandbox test
-        run: nix build .#sandbox-test -L
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L

@@ -183,7 +183,7 @@ endif()
 endif() # LOGOS_USE_MOCK_BACKEND
 
 # ── logos-view-module-runtime (provides ViewModuleHost.h + the ui-host lib) ───
-# Load-bearing: UIPluginManager/PluginLoader compile into the exe.
+# Load-bearing: UIPluginManager and the UI plugin loader it drives link from here.
 if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
     set(_candidate "${REAL_SOURCE_DIR}/../../logos-view-module-runtime")
     if(EXISTS "${_candidate}/include/ViewModuleHost.h")
@@ -199,6 +199,13 @@ find_library(LOGOS_VIEW_MODULE_RUNTIME_LIB
     PATHS ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/lib
     NO_DEFAULT_PATH
     REQUIRED)
+# The archive carries its own link dependencies, so CMake puts them after it:
+# GNU ld resolves an archive's references only against what follows, and on
+# Windows the Qt and qt-host libraries are import archives too.
+add_library(logos_view_module_runtime_archive STATIC IMPORTED)
+set_target_properties(logos_view_module_runtime_archive PROPERTIES
+    IMPORTED_LOCATION "${LOGOS_VIEW_MODULE_RUNTIME_LIB}"
+    INTERFACE_LINK_LIBRARIES "Qt6::Core;Qt6::Network;Qt6::RemoteObjects;Qt6::Qml;Qt6::Quick;Qt6::QuickWidgets;Qt6::Widgets;logos-qt-host::logos_qt_host_shared")
 
 # ── logos-design-system ──────────────────────────────────────────────────────
 # Logos.Theme / .Icons / .Controls come from logos-design-system as STATIC
@@ -284,11 +291,9 @@ set(PROJECT_SOURCES
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
     utils/DependencyBlocker.h
-    utils/DependencyEntry.h
     macos/trafficLightsTitleBar.h
     macos/trafficLightsTitleBar.cpp
     macos/macWindowStyle.h
-    interfaces/IComponent.h
     interfaces/IShellHost.h
     interfaces/IShellView.h
     interfaces/InstallEnums.h
@@ -316,7 +321,6 @@ set(PROJECT_SOURCES
     IntentBridgeAdapter.cpp
     UIPluginPresenter.cpp
     CoreModuleManager.cpp
-    CoreDependencyLoader.cpp
     RecentlyClosedStore.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
@@ -325,13 +329,6 @@ set(PROJECT_SOURCES
     InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
-    PluginLoader.cpp
-    restricted/DenyAllReply.cpp
-    restricted/DenyAllNetworkAccessManager.cpp
-    restricted/DenyAllNAMFactory.cpp
-    restricted/RestrictedUrlInterceptor.cpp
-    restricted/QmlSandbox.cpp
-    restricted/SandboxLogging.cpp
 )
 
 if(EXISTS ${GENERATED_LOGOS_SDK_CPP})
@@ -399,8 +396,8 @@ endif()
 # logos-protocol library transitively.
 #
 # Qt6::Network is named EXPLICITLY rather than left to arrive transitively
-# through Quick/QuickWidgets: restricted/DenyAllNetworkAccessManager.cpp
-# subclasses QNetworkAccessManager.
+# through Quick/QuickWidgets: the ui_qml sandbox in the view-module-runtime
+# archive subclasses QNetworkAccessManager.
 #
 # This executable owns no QML. Qt6::Quick / Qml / QuickWidgets / QuickControls2
 # are linked for the out-of-process UI plugins, and so the portable bundler
@@ -415,7 +412,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     Qt6::Network
-    # LOGOS_VIEW_MODULE_RUNTIME_LIB comes BEFORE logos_qt_host_shared for the
+    # The view-module-runtime archive comes BEFORE logos_qt_host_shared for the
     # same GNU ld reason spelled out for logos_core below, and it is load-bearing
     # on Windows for exactly the same mechanism. That archive references
     # LogosAPI::forIdentity, and liblogos_qt_host.dll.a is an IMPORT library, so
@@ -438,7 +435,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     # Linux and macOS cannot see any of this: there the host is a real shared
     # object, and shared libraries satisfy undefined references regardless of
     # position. A green Linux build proves nothing about this line.
-    ${LOGOS_VIEW_MODULE_RUNTIME_LIB}
+    logos_view_module_runtime_archive
     logos-qt-host::logos_qt_host_shared
     $<$<BOOL:${ENABLE_QML_INSPECTOR}>:qml-inspector>
     # logos_core is LAST, and that position is load-bearing on Windows: it is the
@@ -449,8 +446,8 @@ target_link_libraries(LogosBasecamp PRIVATE
     # real shared libraries. The ordering rule below still holds -- only that
     # justification is gone, so do not read its absence as licence to reorder.)
     # GNU ld takes only archive members satisfying references already
-    # undefined when it reaches them, so placing it ahead of
-    # LOGOS_VIEW_MODULE_RUNTIME_LIB fails the mingw link with four undefined
+    # undefined when it reaches them, so placing it ahead of the
+    # view-module-runtime archive fails the mingw link with four undefined
     # references — LogosAPIClient::whenObjectAvailable / ::eventSubscriptionState
     # / ::pendingEventSubscriptions and logos::qvariantToNlohmann — despite all
     # four being in liblogos_core.dll's export table and its .dll.a.

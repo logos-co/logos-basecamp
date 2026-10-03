@@ -1,7 +1,7 @@
 // srcdeps: AppsModel.cpp InstallEnums.cpp InstallRegistry.cpp
 //
 // Unit tests for AppsModel's per-row install-status compute. Built and
-// driven the same way the sandbox-test is — plain QtTest, standalone
+// driven as a plain QtTest, standalone
 // CMakeLists in this directory, run via `nix build .#unit-tests`. No
 // logos-test-framework dependency: AppsModel is a pure Qt model, not a
 // Logos module.
