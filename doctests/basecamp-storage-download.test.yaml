@@ -4,9 +4,9 @@ release: ""
 
 intro: |
   Basecamp can fetch packages over Logos Storage if the catalog's index
-  advertises a `logos:<cid>`. When the storage node is not running, it falls
-  back to the package's HTTPS URL. This tutorial proves both paths end to end
-  in the Basecamp UI.
+  advertises a `logos:<network>:<cid>` URL. When the storage node is not
+  running, it falls back to the package's HTTPS URL. This tutorial proves both
+  paths end to end in the Basecamp UI.
 
 what_you_build: "A release-like environment to install a package in Basecamp over Logos Storage and over HTTPS."
 
@@ -52,7 +52,8 @@ sections:
           - "package_downloader"
 
       - title: "Build the Storage node"
-        run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1#logos-storage-nim' -o storage-node"
+        text: "Pinned: later revisions pin a nim-libp2p commit that nix cannot fetch from its default branch."
+        run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1&rev=e0f4c062c76cb61d88b05dd8fbc999d4d342684c#logos-storage-nim' -o storage-node"
         check_file: "storage-node/bin/storage"
 
       - title: "Build caddy"
@@ -194,21 +195,15 @@ sections:
 
       - title: "Build index.json"
         text: |
-          `index.json` holds the package metadata, including the CID and the
-          HTTPS URL. It is built from a minimal sidecar that carries the CID.
+          `index.json` lists the package with two URLs: the storage one first,
+          the HTTPS one second. The storage URL names the network, `logos.dev`,
+          which must equal the node's, otherwise the downloader ignores the CID.
         run: |
           set -eu
 
-          cat > www/sidecar.json <<EOF
-          {
-            "sha256": "$(sha256sum storage_ui.lgx | cut -d' ' -f1)",
-            "cid": "$(cat cid.txt)"
-          }
-          EOF
+          echo "logos:logos.dev:$(cat cid.txt) https://127.0.0.1:8443/storage_ui.lgx $(pwd)/storage_ui.lgx" > urls.txt
 
-          echo "https://127.0.0.1:8443/storage_ui.lgx $(pwd)/storage_ui.lgx" > urls.txt
-
-          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/master/index.py
+          curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/main/index.py
 
           PATH="$(pwd)/lgx/bin:$PATH" \
           SSL_CERT_FILE="$(pwd)/localhost.crt" NIX_SSL_CERT_FILE="$(pwd)/localhost.crt" \
@@ -216,13 +211,13 @@ sections:
 
           jq . www/index.json
         expect_contains:
-          - "logos:"
+          - "logos:logos.dev:"
 
       - title: "Check that the index advertises both the CID and the HTTPS URL"
         text: |
           The HTTPS URL is the fallback, used when the CID is not available.
         run: |
-          jq -er --arg cid "logos:$(cat cid.txt)" '
+          jq -er --arg cid "logos:logos.dev:$(cat cid.txt)" '
             .packages[0].versions[0].urls
             | (index($cid) != null) and (index("https://127.0.0.1:8443/storage_ui.lgx") != null)
           ' www/index.json
@@ -232,9 +227,6 @@ sections:
       - title: "Write logos-repo.json"
         text: |
           `logos-repo.json` tells Basecamp where to fetch packages from.
-
-          `network` must equal the node's, otherwise the downloader ignores
-          the CID.
         run: |
           set -eu
 
@@ -245,7 +237,6 @@ sections:
             "displayName": "Doctest Catalog",
             "description": "Local catalog for this doc-test.",
             "indexUrl": "https://127.0.0.1:8443/index.json",
-            "network": "logos.dev",
             "trustedSigners": []
           }
           EOF
@@ -388,7 +379,7 @@ sections:
       - title: "Check that the package came from the Storage network"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=1 https=0"
 
@@ -396,8 +387,7 @@ sections:
     step: true
     text: |
       The Storage UI can stop the node. With the node stopped, the package
-      comes from HTTPS, and the download leaves the node alone. The Storage
-      UI starts it again afterwards.
+      comes from HTTPS, and nothing but the Storage UI starts the node again.
     steps:
       - title: "Stop the node, reinstall, and start it again"
         ui_test:
@@ -435,10 +425,21 @@ sections:
               target: "Applications"
 
             - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
               timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
 
             - name: "Open the storage_ui details"
               action: call_method
@@ -447,6 +448,14 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Uninstall it"
               action: click_object
@@ -471,6 +480,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it with the node stopped"
               action: click_object
               find_by: "objectName"
@@ -485,28 +516,30 @@ sections:
               find_by: "objectName"
               find_value: "sidebar.app.storage_ui"
 
-            - name: "The node is still stopped"
-              action: wait_for
-              texts: ["Start", "Stopped"]
-              timeout: 30000
-              text: "The download did not restart the node."
-
-            - name: "Start it again"
-              action: click
-              target: "Start"
-
             - name: "The node is running again"
               action: wait_for
               texts: ["Stop"]
               timeout: 60000
-              text: "The node the downloader stopped talking to comes back from the Storage UI."
+              text: "The reinstalled Storage UI starts the node when it opens, as it does whenever its view is created."
+
+      - title: "Check that nothing else started the node"
+        text: |
+          Between the stop and the reinstalled Storage UI, the node stayed
+          stopped: the App Manager's first use and the download left it alone.
+        run: |
+          awk '/StorageModuleImpl::stop called/ { stopped = 1; next }
+               stopped && /Loading UI module: "storage_ui"/ { exit }
+               stopped && /StorageModuleImpl::start called/ { starts++ }
+               END { print "starts while stopped: " starts + 0 }' ui-test-app.log
+        expect_contains:
+          - "starts while stopped: 0"
 
       - title: "Check that the package came from HTTPS"
         text: |
           Each launch writes its own log, so the counts cover this run alone.
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
@@ -562,10 +595,21 @@ sections:
               target: "Applications"
 
             - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
               timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
 
             - name: "Open the storage_ui details"
               action: call_method
@@ -574,6 +618,14 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Uninstall it"
               action: click_object
@@ -598,6 +650,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it without storage_module"
               action: click_object
               find_by: "objectName"
@@ -610,7 +684,7 @@ sections:
       - title: "Check that the package came from HTTPS"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
@@ -677,10 +751,21 @@ sections:
               target: "Applications"
 
             - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
               timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
 
             - name: "Open the storage_ui details"
               action: call_method
@@ -689,6 +774,14 @@ sections:
               method: "openDetails"
               args: []
               text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Uninstall it"
               action: click_object
@@ -713,6 +806,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it with storage_module back"
               action: click_object
               find_by: "objectName"
@@ -725,7 +840,7 @@ sections:
       - title: "Check that the package came from the Storage network"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=1 https=0"
 
@@ -738,14 +853,15 @@ sections:
     steps:
       - title: "Move the node to logos.test"
         text: |
-          The catalog stays on `logos.dev`.
+          The catalog stays on `logos.dev`. The node has rewritten its
+          configuration by now, so we read the network back with `jq`.
         run: |
           set -eu
 
           sed -i 's/"logos.dev"/"logos.test"/' home/.logos_storage/config.json
-          grep network home/.logos_storage/config.json
+          echo "network=$(jq -r .network home/.logos_storage/config.json)"
         expect_contains:
-          - '"network": "logos.test"'
+          - "network=logos.test"
 
       - title: "Reinstall with the networks apart"
         ui_test:
@@ -774,10 +890,21 @@ sections:
               target: "Applications"
 
             - name: "Its catalog is in"
-              action: wait_for
-              texts: ["Storage"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.view"
+              property: "loading"
+              value: false
+              timeout: 60000
+              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager."
+
+            - name: "storage_ui is listed"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.app.storage_ui"
+              property: "objectName"
+              value: "appManager.app.storage_ui"
               timeout: 30000
-              text: "Basecamp fetches the catalog the first time something needs it, here the App Manager, so the storage_ui tile (shown by its display name) comes a moment after the view."
 
             - name: "Open the storage_ui details"
               action: call_method
@@ -785,6 +912,14 @@ sections:
               find_value: "appManager.app.storage_ui"
               method: "openDetails"
               args: []
+
+            - name: "Its details are open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.uninstallButton"
+              property: "visible"
+              value: true
+              timeout: 30000
 
             - name: "Uninstall it"
               action: click_object
@@ -809,6 +944,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            - name: "Let the dialog open"
+              action: sleep
+              ms: 2000
+              text: "A click in the first moments after the dialog opens can be lost."
+
+            - name: "The install dialog is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "visible"
+              value: true
+              timeout: 30000
+
+            - name: "Its dependencies are resolved"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+              text: "The button stays disabled while the dialog resolves what the install needs."
+
             - name: "Install it from another network"
               action: click_object
               find_by: "objectName"
@@ -821,7 +978,7 @@ sections:
       - title: "Check that the package came from HTTPS"
         run: |
           cid="$(cat cid.txt)"
-          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
+          echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
           - "logos=0 https=1"
 
