@@ -794,6 +794,23 @@ WRAPPER_EOF
     done
     echo "Installed $_copied shared librar(y|ies) from liblogos into $_libdest"
 
+    # The Qt host runtime this app links (TokenManager, LogosAPI), from its own
+    # inputs: liblogos' Qt-free core does not ship it. -f replaces a copy the
+    # loop above staged read-only.
+    _qtrt=0
+    for f in "${logosProtocolPkg}/lib/"liblogos_protocol.* "${logosProtocolPkg}/bin/"liblogos_protocol.dll \
+             "${logosQtHost}/lib/"liblogos_qt_host.* "${logosQtHost}/bin/"liblogos_qt_host.dll; do
+      case "$f" in *.a|*.la) continue ;; esac
+      if [ -f "$f" ]; then
+        cp -Lf "$f" "$_libdest/"
+        _qtrt=$((_qtrt + 1))
+      fi
+    done
+    if [ "$_qtrt" -lt 2 ]; then
+      echo "ERROR: staged $_qtrt of liblogos_protocol / liblogos_qt_host into $_libdest" >&2
+      exit 1
+    fi
+
     # yaml-cpp, which app/utils/LoggingConfig.cpp links DIRECTLY.
     #
     # LOAD-BEARING ON LINUX ONLY, and measured: an ELF records a bare soname and

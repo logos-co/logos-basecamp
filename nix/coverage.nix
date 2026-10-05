@@ -12,7 +12,7 @@
 #
 # Scope caveat: gcovr only sees files that were compiled into the test
 # binaries. Sources no unit test links at all (PackageCoordinator,
-# UIPluginManager, PluginLoader, MainUIBackend app-side; MainContainer and
+# UIPluginManager, MainUIBackend app-side; MainContainer and
 # MainShellView shell-side) produce no
 # .gcno and therefore do NOT appear in the report as 0% — the percentage here
 # is "coverage of the code under unit test", not of all of app/. Adding a
