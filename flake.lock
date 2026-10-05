@@ -15653,11 +15653,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791070620,
-        "narHash": "sha256-zxzy37H4UjtzauoijxLwB3e8SOcud6ianPxdHAB+roc=",
+        "lastModified": 1791219308,
+        "narHash": "sha256-vDaAtHeGNYuhRGh9TIp80YuIv1Z0RHABQ/nY9Sen8js=",
         "owner": "logos-co",
         "repo": "logos-package-downloader-module",
-        "rev": "b37d66d9aa3a12ab1a57edd753a1ba4be04932ba",
+        "rev": "6e8883b6918e086183f797d522c32032a55d2354",
         "type": "github"
       },
       "original": {
@@ -23023,17 +23023,17 @@
         "nixpkgs-windows": "nixpkgs-windows_296"
       },
       "locked": {
-        "lastModified": 1790788682,
-        "narHash": "sha256-Ul9sMxaU0BsOK+TtnBuok3/r/AdN2iOxh+lThNPvfD0=",
-        "ref": "refs/tags/v0.5.0",
-        "rev": "a827d9e26a7549197238de673279f58678151b07",
-        "revCount": 989,
+        "lastModified": 1791033757,
+        "narHash": "sha256-Vj89qnnSFvPaROHJ44VBSg9vF+amjPfaNLg82yuisMw=",
+        "ref": "refs/tags/v0.5.3",
+        "rev": "56854f4ebce0cfe68e3557d1be21b758ac62ae0c",
+        "revCount": 996,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/logos-storage/logos-storage-nim"
       },
       "original": {
-        "ref": "refs/tags/v0.5.0",
+        "ref": "refs/tags/v0.5.3",
         "submodules": true,
         "type": "git",
         "url": "https://github.com/logos-storage/logos-storage-nim"
@@ -23045,16 +23045,16 @@
         "logos-storage": "logos-storage"
       },
       "locked": {
-        "lastModified": 1790795920,
-        "narHash": "sha256-cg4UzJdouky+2zVcfBeP4bmF9AFZEwynrK6DDE8/YQQ=",
+        "lastModified": 1791039176,
+        "narHash": "sha256-NSJrn8aR9fYKcNJjujXhIPTQNkJx+K4QGfZOfIH8qNs=",
         "owner": "logos-co",
         "repo": "logos-storage-module",
-        "rev": "a9c14b8c977da51310361b03fe4d9efd763ae926",
+        "rev": "7548f41ae189917d58c37f0fb6d3a2700b99f59b",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "v3.0.0",
+        "ref": "v3.0.2",
         "repo": "logos-storage-module",
         "type": "github"
       }
