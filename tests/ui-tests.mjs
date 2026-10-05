@@ -1630,6 +1630,113 @@ test("apps inspector: search filters the table", async (app) => {
   }, { timeout: 5000, interval: 250, description: "cleared search to restore every row" });
 });
 
+// --- Settings (A18) — Apps Inspector unload/reload of a non-visible UI plugin ---
+//
+// "Non-visible" means loaded but not on screen: for a UI plugin, loaded and
+// docked are one state (UIPluginManager::onPluginLoaded always opens the
+// dock), so the test parks the shell on Settings and drives fixture A's row
+// from there. The reload toggle is not silent either — it reopens the dock
+// and switches the shell back to the workspace section — so every read goes
+// through appsInspector.table and backend.uiModulesModel, which stay
+// instantiated whatever section is current, never through the view being
+// visible. Badge strings come from ModuleInstanceModel::Row::statusText.
+
+// ModuleInstanceRoles::IsLoadedRole — the row flag the gates pin directly.
+const MODULE_IS_LOADED_ROLE = "Qt.UserRole + 9";
+
+test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+
+  // Setup: make fixture A loaded. The suite's resting state is "Not loaded"
+  // with no dock (A4/A5 close it), but A7 leaves the dock open — load only
+  // when it is not already.
+  if ((await evalOn(app, workspace.id, "dockCount")) !== 1) {
+    if (!(await openFixtureA(app, "A18", welcome.id, workspace.id))) return;
+  }
+
+  await openAppsInspector(app);
+  const table = await requireObject(app, "appsInspector.table");
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
+
+  // statusText through the table's proxy — the string the badge renders.
+  const rowStatus = async () => evalOn(app, table.id, `(() => {
+    for (let i = 0; i < model.rowCount(); i += 1) {
+      const idx = model.index(i, 0);
+      if (model.data(idx, ${MODULE_SEARCH_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
+        return String(model.data(idx, ${MODULE_SEARCH_ROLES.statusText}) || "");
+      }
+    }
+    return null;
+  })()`);
+
+  // isLoaded straight from the source model, anchored on the welcome page —
+  // the evaluate anchor with `backend` in scope that survives dock churn.
+  const rowIsLoaded = async () => evalOn(app, welcome.id, `(() => {
+    const m = backend.uiModulesModel;
+    for (let i = 0; i < m.rowCount(); i += 1) {
+      const idx = m.index(i, 0);
+      if (m.data(idx, ${MODULE_SEARCH_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
+        return m.data(idx, ${MODULE_IS_LOADED_ROLE}) === true;
+      }
+    }
+    return null;
+  })()`);
+
+  // The toggle delegate is torn down on every model reset, so each read and
+  // click re-finds it by objectName instead of caching the id.
+  const TOGGLE = `moduleRow.loadToggle.${FIXTURE_A.name}`;
+  const toggleState = async () => {
+    const t = await findByObjectName(app.inspector, TOGGLE);
+    if (!t) throw new Error(`${TOGGLE} not in the QML tree`);
+    return JSON.parse(await evalOn(app, t.id, "JSON.stringify({ text: text, on: enabled })"));
+  };
+  const clickToggle = async (what) =>
+    invoke(app, (await requireObject(app, TOGGLE)).id, "clicked", what);
+
+  // One gate per phase: badge text, toggle text, model isLoaded, sidebar tile
+  // still present. The enabled check keeps the next click off a busy
+  // (refresh-disabled) toggle, since a signal-level click bypasses `enabled`.
+  const expectRow = async (status, toggleText, loaded, phase) => {
+    assertEq(await rowStatus(), status, `fixture A statusText ${phase}`);
+    const t = await toggleState();
+    assertEq(t.text, toggleText, `toggle text ${phase}`);
+    assertEq(t.on, true, `toggle enabled ${phase}`);
+    assertEq(await rowIsLoaded(), loaded, `uiModulesModel isLoaded ${phase}`);
+    await findFixtureATile(app);
+  };
+
+  // Proves the setup, so the unload below is not vacuous.
+  await app.waitFor(() => expectRow("Loaded", "Unload", true, "before unload"),
+    { timeout: 10000, interval: 500,
+      description: 'fixture A row to read "Loaded" with an "Unload" toggle' });
+
+  // The unload is queued behind the click (UIPluginManager::unloadUiModule
+  // defers via QueuedConnection), hence the wait.
+  await clickToggle(`clicking ${TOGGLE} (Unload)`);
+  await app.waitFor(() => expectRow("Not loaded", "Load", false, "after unload"),
+    { timeout: 10000, interval: 500,
+      description: 'fixture A row to read "Not loaded" with a "Load" toggle' });
+
+  await clickToggle(`clicking ${TOGGLE} (Load)`);
+  await app.waitFor(() => expectRow("Loaded", "Unload", true, "after reload"),
+    { timeout: 10000, interval: 500,
+      description: 'fixture A row to return to "Loaded" with an "Unload" toggle' });
+
+  // The toggle load reopened the dock; wait for it so the restore below has
+  // a dock to close.
+  await waitForDockCount(app, workspace.id, 1, "fixture A dock to reopen after the toggle load");
+
+  // Restore the resting state later tests expect: dock closed (which unloads
+  // again), row "Not loaded", shared Settings search empty.
+  await closeFixtureADock(app, workspace.id, "restore: workspace dockCount to reach 0");
+  await app.waitFor(async () => {
+    assertEq(await rowStatus(), "Not loaded", "fixture A statusText after restore");
+  }, { timeout: 10000, interval: 500, description: 'restored row to read "Not loaded"' });
+  await search.normalize();
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
