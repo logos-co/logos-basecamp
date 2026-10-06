@@ -498,7 +498,11 @@ private:
                                   const QString& repositoryUrl,
                                   const QVariantMap& versionPins,
                                   const QVariantMap& optionalSelection = {},
-                                  const QVariantMap& optionalVersionPins = {});
+                                  const QVariantMap& optionalVersionPins = {},
+                                  bool requestOpen = true);
+    // The catalog moved under an open Add Application dialog: resolve its last
+    // request again, keeping the user's choices, without reopening it.
+    void refreshActiveAddDialog();
     void resolveOptionalPreview(const QString& name, const QString& repositoryUrl,
                                 const QVariantMap& versionPins, const QVariantMap& selection,
                                 const QVariantMap& optionalPins, const QString& installedJson,
@@ -514,7 +518,8 @@ private:
                             const QString& targetVersion,
                             const QVariantMap& catalogRow,
                             const QVariantList& changes,
-                            bool requestOpen);
+                            bool requestOpen,
+                            bool resolutionPending);
     // Recompute resolver overlay from cached raw resolve + current disk state.
     // Keeps dep badges correct after the install registry is cleared.
     void refreshOverlayAfterInstall(const QString& topLevelName);
@@ -621,6 +626,14 @@ private:
                                                      // DifferentHash detection.
     QHash<QString, int> m_dialogResolveEpoch;
     QString m_activeAddDialogName;
+    // What the open dialog last asked to resolve, replayed on a catalog refresh.
+    struct AddDialogRequest {
+        QString repositoryUrl;
+        QVariantMap versionPins;
+        QVariantMap optionalSelection;
+        QVariantMap optionalVersionPins;
+    };
+    AddDialogRequest m_activeAddDialogRequest;
 
     // Last resolver output per top-level: raw IPC rows and derived changes.
     QHash<QString, QVariantList> m_lastResolvedRawByName;

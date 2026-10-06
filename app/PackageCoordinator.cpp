@@ -1307,6 +1307,8 @@ void PackageCoordinator::populateAppsModel(
         m_appsLoading = false;
         emit appsLoadingChanged();
     }
+
+    refreshActiveAddDialog();
 }
 
 // ── Package repository management ──────────────────────────────────────────
@@ -2098,7 +2100,8 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                                                   const QString& repositoryUrl,
                                                   const QVariantMap& versionPins,
                                                   const QVariantMap& optionalSelection,
-                                                  const QVariantMap& optionalVersionPins)
+                                                  const QVariantMap& optionalVersionPins,
+                                                  bool requestOpen)
 {
     QVariantMap catalogRow =
         m_appsModel ? m_appsModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
@@ -2107,18 +2110,21 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
 
     const int epoch = ++m_dialogResolveEpoch[name];
     m_activeAddDialogName = name;
+    m_activeAddDialogRequest = {repositoryUrl, versionPins, optionalSelection, optionalVersionPins};
     m_addPreviewPending = true;
 
     qDebug() << "PackageCoordinator::runResolverAndOpenDialog" << name
              << "repo=" << repositoryUrl << "targetVersion=" << targetVersion
-             << "pins=" << versionPins.size() << "epoch=" << epoch;
+             << "pins=" << versionPins.size() << "epoch=" << epoch
+             << "requestOpen=" << requestOpen;
 
+    // A refresh keeps the rows on screen until the new resolve replaces them.
     QVariantList initialChanges;
-    if (m_installRegistry->isInFlight(name))
+    if (!requestOpen || m_installRegistry->isInFlight(name))
         initialChanges = m_lastResolvedChangesByName.value(name);
     // Sync stack frame only — QML may open the modal from this signal.
     emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
-                       /*requestOpen=*/true);
+                       requestOpen, /*resolutionPending=*/true);
 
     // For an installed app, optionals it does not have yet start unchecked, so
     // opening it does not turn Launch into Install.
@@ -2134,8 +2140,20 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                 self->computeDepChanges(resolved, self->m_installedVersionByName);
             self->m_lastResolvedRawByName.insert(name, resolved);
             self->m_lastResolvedChangesByName.insert(name, changes);
-            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes, false);
+            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes,
+                                     /*requestOpen=*/false, /*resolutionPending=*/false);
         }, selectNew);
+}
+
+void PackageCoordinator::refreshActiveAddDialog()
+{
+    const QString name = m_activeAddDialogName;
+    // An install owns the dialog until it settles; refreshOverlayAfterInstall follows it.
+    if (name.isEmpty() || m_installRegistry->has(name)) return;
+    const AddDialogRequest request = m_activeAddDialogRequest;
+    runResolverAndOpenDialog(name, request.repositoryUrl, request.versionPins,
+                             request.optionalSelection, request.optionalVersionPins,
+                             /*requestOpen=*/false);
 }
 
 void PackageCoordinator::emitDialogMetadata(const QString& name,
@@ -2143,7 +2161,8 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
                                             const QString& targetVersion,
                                             const QVariantMap& catalogRow,
                                             const QVariantList& changes,
-                                            bool requestOpen)
+                                            bool requestOpen,
+                                            bool resolutionPending)
 {
     if (name != m_activeAddDialogName)
         return;
@@ -2182,7 +2201,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         : versionsList.first().toMap().value("manifest").toMap().value("version").toString();
 
     metadata["installStage"] = m_installRegistry->stage(name);
-    metadata["resolutionPending"] = requestOpen;
+    metadata["resolutionPending"] = resolutionPending;
     // An installed app whose optional selection changes something installs instead of launching.
     bool optionalChangesPending = false;
     for (const QVariant& v : changes) {
@@ -2230,9 +2249,10 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         m_appsModel->setResolverOverlay(overlay);
     }
 
-    // Catalog placeholders are only for the pending first paint. The chosen
-    // graph is authoritative once resolution completes.
-    for (const QVariant& v : requestOpen ? collectCatalogRequired(name, repositoryUrl) : QVariantList{}) {
+    // Catalog placeholders are only for a pending paint with no graph yet. The
+    // chosen graph is authoritative once resolution completes.
+    const bool placeholders = resolutionPending && (requestOpen || changes.isEmpty());
+    for (const QVariant& v : placeholders ? collectCatalogRequired(name, repositoryUrl) : QVariantList{}) {
         const QString depName = v.toMap().value("name").toString();
         if (depName.isEmpty() || seen.contains(depName)) continue;
         seen.insert(depName);
@@ -2266,7 +2286,7 @@ void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
     const QVariantMap catalogRow =
         m_appsModel->rowDataByName(topLevelName, repositoryUrl);
     emitDialogMetadata(topLevelName, repositoryUrl, QString(), catalogRow, changes,
-                       /*requestOpen=*/false);
+                       /*requestOpen=*/false, /*resolutionPending=*/false);
 }
 
 void PackageCoordinator::confirmCatalogInstall(const QString& name,
