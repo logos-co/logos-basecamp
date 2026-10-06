@@ -1,0 +1,5 @@
+class StandaloneBackendFixture
+{
+    SLOT(int add(int a, int b))
+    PROP(QString status="Ready" READONLY)
+}

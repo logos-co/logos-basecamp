@@ -130,6 +130,15 @@ Two invariants, both tested: a link submits under **its own** requester name, ne
 
 Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `Shell/OverlayDialogs.qml`, fixtures in `tests/fixtures/intents/`. Full design and known limitations: `docs/app-to-app-intents.md`.
 
+### Host profile and standalone mode (`app/utils/HostProfile.h`, `app/utils/StandaloneMode.h`)
+`main.cpp` builds one `HostProfile` and passes it down `Window` → `MainUIBackend` → `UIPluginManager` / `PackageCoordinator`. Components read capabilities, never "is this standalone". `StandaloneMode` only builds the dev-host profile from `--module` (install roots only — a single module dir is refused, it would expose its siblings) `--modules-dir` and `--qml-source` (into `qmlSources`).
+- `main.cpp`: scan roots, user modules dir, `package_downloader`, URL scheme, single instance, default user dir and application name — all from the profile.
+- `PackageCoordinator`: profile roots via `addEmbedded*Directory`; user dirs only if `useUserModules`. The downloader subscription depends only on whether the downloader is loaded.
+- `UIPluginManager`: `openStartupApps()` opens `appsToOpen` once dependency data is ready; `launcherApps()` filters when `launcherLimitedToOpenedApps`; an app in `qmlSources` gets its `qmlViewPath` from the source tree and a `hotReloadDir`.
+- `PluginLoader` / `QmlHotReloadView` (`app/QmlHotReload.h`): with `hotReloadDir`, the app's tab is a `QmlHotReloadView` that owns the `QQuickWidget` and replaces it on save. The old view and engine are deleted before the new one is built — a surviving engine keeps `.pragma library` JS and `.mjs` stale. The bridge moves to the new engine; `WorkspaceArea` finds the view as the container's direct `QQuickWidget` child.
+- The shell reads `backend.availableSections` (Sidebar, `MainContainer`'s redirect), `repositoryManagement` (Settings), `packageCatalog` (WelcomePage) and `devHost` (sidebar label). A backend without them (shell-preview) gets the full shell.
+- `flake.nix`: `app-standalone` (dev) and `app-standalone-portable` (portable, inspector on) bundle only what `--module` loads; `lib.<system>.mkPluginTest`; checks `standalone-test`, `standalone-backend-test`, `standalone-rejects-module-dir`.
+
 ### Construction & Destruction Order
 CoreModuleManager is constructed first, UIPluginManager second (receives CoreModuleManager), PackageCoordinator third (receives both). UIPluginManager's `setPackageCoordinator` is called after all three exist, closing the cycle and wiring the `uiPluginsFetched`/`uiModulesChanged`/`launcherAppsChanged`/`coreModulesChanged` signal flow. Qt's reverse-order child destruction tears PackageCoordinator down first (stops emitting), then UIPluginManager (tears down widgets while the C API handle is still valid), then CoreModuleManager.
 

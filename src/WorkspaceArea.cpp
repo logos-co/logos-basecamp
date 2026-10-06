@@ -34,6 +34,14 @@
 #include <QWheelEvent>
 
 namespace {
+// An app's view: the widget itself, or the one a host wraps it in (the app
+// side's hot-reload container replaces its QQuickWidget on every save).
+QQuickWidget* appQuickWidget(QWidget* w)
+{
+    if (auto* qw = qobject_cast<QQuickWidget*>(w)) return qw;
+    return w ? w->findChild<QQuickWidget*>(QString(), Qt::FindDirectChildrenOnly) : nullptr;
+}
+
 class ZeroTitleWidget : public QWidget {
 public:
     explicit ZeroTitleWidget(QWidget* parent = nullptr) : QWidget(parent) {
@@ -805,7 +813,7 @@ QQuickWidget* WorkspaceArea::activeDockWidget() const
         QWidget* dockChild = dock->widget();
         if (auto* card = dynamic_cast<DockCard*>(dockChild))
             dockChild = card->pluginWidget();
-        if (auto* qw = qobject_cast<QQuickWidget*>(dockChild))
+        if (auto* qw = appQuickWidget(dockChild))
             return qw;
     }
     return nullptr;
@@ -820,7 +828,7 @@ void WorkspaceArea::updateQmlPluginActiveStates()
         // Plugin widgets are wrapped in DockCard; unwrap before casting.
         if (auto* card = dynamic_cast<DockCard*>(dockChild))
             dockChild = card->pluginWidget();
-        auto* qmlWidget = qobject_cast<QQuickWidget*>(dockChild);
+        auto* qmlWidget = appQuickWidget(dockChild);
         if (!qmlWidget) continue;
         const bool isActive = workspaceVisible
                               && !dock->visibleRegion().isEmpty();

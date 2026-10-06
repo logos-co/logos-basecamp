@@ -2,6 +2,7 @@
 #define WINDOW_H
 
 #include "ICoreRuntime.h"
+#include "utils/HostProfile.h"
 
 #include <QMainWindow>
 #include <QSystemTrayIcon>
@@ -32,6 +33,7 @@ class Window : public QMainWindow
 public:
     explicit Window(LogosAPI* logosAPI,
                     ICoreRuntime* core,
+                    const LogosBasecamp::HostProfile& hostProfile,
                     QWidget *parent = nullptr);
     ~Window();
 
@@ -47,6 +49,11 @@ public:
     // lives in here.
     void restoreWindow();
 
+    // The size to open at and grow back to, before show(); a dimension <= 0
+    // keeps the current one. A plain resize() before show() is undone by the
+    // first fit, which restores m_desiredSize.
+    void setLaunchSize(int width, int height);
+
 protected:
     void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
@@ -59,7 +66,7 @@ private slots:
     void quitApplication();
 
 private:
-    void setupUi();
+    void setupUi(const LogosBasecamp::HostProfile& hostProfile);
     // Resize the window so its FRAME fits the available geometry of the screen
     // it is on -- shrinking when it does not fit, and growing back toward
     // m_desiredSize when room returns. Runs at first show (frame margins are

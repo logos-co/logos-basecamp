@@ -33,8 +33,10 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
                                CoreModuleManager* coreModuleManager,
                                UIPluginManager* uiPluginManager,
                                AppsModel* appsModel,
+                               const LogosBasecamp::HostProfile& hostProfile,
                                QObject* parent)
     : QObject(parent)
+    , m_hostProfile(hostProfile)
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
@@ -94,6 +96,13 @@ bool moduleIsLoaded(CoreModuleManager* core, const QString& name)
 
 } // namespace
 
+LogosAPIClient* PackageCoordinator::downloaderClient() const
+{
+    if (!m_logosAPI || !moduleIsLoaded(m_coreModuleManager, "package_downloader"))
+        return nullptr;
+    return m_logosAPI->getClient("package_downloader");
+}
+
 void PackageCoordinator::subscribeToPackageInstallationEvents()
 {
     if (!m_logosAPI) {
@@ -119,9 +128,16 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     // Configure the package_manager module's directories so it knows where
     // to install.
     logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
-    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
     logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
-    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    // The profile's roots go after the embedded dirs, so they win a name clash.
+    for (const QString& dir : m_hostProfile.coreModuleRoots)
+        logos.package_manager.addEmbeddedModulesDirectory(dir);
+    for (const QString& dir : m_hostProfile.uiPluginRoots)
+        logos.package_manager.addEmbeddedUiPluginsDirectory(dir);
+    if (m_hostProfile.useUserModules) {
+        logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
+        logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    }
 
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
@@ -175,7 +191,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         return;
     }
     if (!moduleIsLoaded(m_coreModuleManager, "package_downloader")) {
-        if (!m_warnedPackageDownloaderMissing) {
+        // Only worth a warning where the catalogue is expected.
+        if (m_hostProfile.packageCatalog && !m_warnedPackageDownloaderMissing) {
             m_warnedPackageDownloaderMissing = true;
             qWarning() << "PackageCoordinator: package_downloader is not loaded -- skipping its "
                           "event subscriptions; this will be retried automatically.";
@@ -715,9 +732,7 @@ void PackageCoordinator::remoteRefresh()
         emit appsLoadingChanged();
     }
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         // Downloader unreachable — fall back to a local re-sync
         refresh();
@@ -1212,9 +1227,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
 {
     m_catalogFetchInFlight = true;
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
 
     if (dlClient && dlClient->isConnected()) {
         withDownloaderStarted([this, dlClient, installedByName]() {
@@ -1409,9 +1422,7 @@ void PackageCoordinator::refreshRepositories()
     // Whoever asked shows them, so every refresh after this one follows.
     m_repositoriesWanted = true;
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
     const bool wasLoading = m_repositoriesLoadingCount > 0;
@@ -1457,9 +1468,7 @@ void invokeRepositoryMutation(PackageCoordinator* self,
 
 void PackageCoordinator::addRepository(const QString& url)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("add"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1473,9 +1482,7 @@ void PackageCoordinator::addRepository(const QString& url)
 
 void PackageCoordinator::removeRepository(const QString& url)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("remove"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1489,9 +1496,7 @@ void PackageCoordinator::removeRepository(const QString& url)
 
 void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("setEnabled"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1506,9 +1511,7 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 
 void PackageCoordinator::refreshDownloadSource()
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
     withDownloaderStarted([this, dlClient]() {
@@ -1529,9 +1532,7 @@ void PackageCoordinator::refreshDownloadSource()
 // The catalog refresh follows from the catalogChanged the downloader emits.
 void PackageCoordinator::setDownloadSource(const QString& source)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("setDownloadSource"), source, false,
             QStringLiteral("package_downloader not connected"));
