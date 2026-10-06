@@ -2069,6 +2069,106 @@ test("module inspector: leaving and returning preserves loaded state", async (ap
   );
 });
 
+// --- Settings (A20) — Module Inspector search filters the table ---
+//
+// A17's sibling on the core-modules view: the same page-level
+// settings.searchField drives moduleInspector.table's ModulesFilterProxy,
+// which matches name / label / statusText / description / version — so a row
+// can match "package" through its description, and the expected count is
+// derived from a snapshot of those five roles, never hard-coded. It must be
+// ≥ 2: package_manager and package_downloader are always present (they are
+// among ModuleInspectorView's protectedModules). LogosTable's emptyText
+// rendering is external to this repo and its text item may exist while
+// hidden, so the "zzz" bullet checks *visible* text, with an empty-search
+// control first proving the walk can tell shown from hidden.
+
+test("module inspector: search filters the table", async (app) => {
+  await openModuleInspector(app);
+
+  // ModuleInspectorView is instantiated eagerly; only `visible` proves it is selected.
+  const view = await requireObject(app, "moduleInspectorView");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
+  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+
+  const table = await requireObject(app, "moduleInspector.table");
+  const visibleCount = () => evalOn(app, table.id, "model.visibleCount");
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
+
+  let initialCount = 0;
+  await app.waitFor(async () => {
+    const total = await evalOn(app, table.id, "model.totalCount");
+    if (typeof total !== "number" || total < 1) {
+      throw new Error(`model.totalCount=${JSON.stringify(total)} (expected ≥ 1)`);
+    }
+    assertEq(await visibleCount(), total, "model.visibleCount with an empty search");
+    initialCount = total;
+  }, { timeout: 10000, interval: 500, description: "modules table to populate" });
+
+  // Core-module rows expose the same ModuleInstanceRoles as the Apps table.
+  const rows = [];
+  for (let i = 0; i < initialCount; i += 1) {
+    const row = {};
+    for (const [key, roleExpr] of Object.entries(MODULE_SEARCH_ROLES)) {
+      row[key] = await evalOn(
+        app, table.id, `String(model.data(model.index(${i}, 0), ${roleExpr}) || "")`);
+    }
+    rows.push(row);
+  }
+  const expectedMatches = rows.filter((row) =>
+    Object.values(row).some((v) => v.toLowerCase().includes("package"))).length;
+  if (expectedMatches < 2) {
+    throw new Error(
+      `only ${expectedMatches} snapshot rows match "package" although ` +
+      "package_manager and package_downloader are always present " +
+      `(rows=${JSON.stringify(rows)})`);
+  }
+
+  // Whether any *visible* descendant of the table renders the filtered-empty
+  // text. QQuickItem.visible already folds in ancestor visibility.
+  const emptyText = "No modules match the current filter.";
+  const emptyTextShown = async () => JSON.parse(await evalOn(app, table.id, `(() => {
+    let shown = false;
+    const walk = (node) => {
+      if (!node || shown) return;
+      if (typeof node.text === "string" && node.text.includes(${JSON.stringify(emptyText)})
+          && node.visible === true) { shown = true; return; }
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify(shown);
+  })()`));
+
+  // Control: with rows present the empty text must not be shown, so the
+  // "zzz" assertion below cannot hold vacuously.
+  assertEq(await emptyTextShown(), false, "filtered-empty text shown with an empty search");
+
+  await search.set("package");
+  await app.waitFor(async () => {
+    await search.expectText("package");
+    assertEq(await visibleCount(), expectedMatches,
+             `model.visibleCount for "package" (of ${initialCount} rows)`);
+  }, { timeout: 5000, interval: 250,
+       description: '"package" search to keep exactly the matching rows' });
+
+  await search.set("zzz");
+  await app.waitFor(async () => {
+    await search.expectText("zzz");
+    assertEq(await visibleCount(), 0, 'model.visibleCount for "zzz"');
+    assertEq(await emptyTextShown(), true, 'filtered-empty text shown for "zzz"');
+  }, { timeout: 5000, interval: 250,
+       description: '"zzz" search to empty the table and show its empty text' });
+
+  await search.set("");
+  await app.waitFor(async () => {
+    await search.expectText("");
+    assertEq(await visibleCount(), initialCount, "model.visibleCount after clearing the search");
+  }, { timeout: 5000, interval: 250, description: "cleared search to restore every row" });
+});
+
 // --- Sidebar: sequential section opening ---
 //
 // Regression guard: opening multiple sidebar sections one after another
