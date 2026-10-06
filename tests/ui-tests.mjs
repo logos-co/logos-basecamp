@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { readFileSync, statSync, writeSync } from "node:fs";
 import {
-  assertResponsive, findByObjectName, makeTest, sleep,
+  assertResponsive, findByObjectName, makeTest, pollProperty, sleep,
 } from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
@@ -2173,6 +2173,217 @@ let noMatchSearch = "zzz";
     await search.expectText("");
     assertEq(await visibleCount(), initialCount, "model.visibleCount after clearing the search");
   }, { timeout: 5000, interval: 250, description: "cleared search to restore every row" });
+});
+
+// --- Settings (A21) — Module Inspector unload/reload of a leaf core module ---
+//
+// A18's sibling on the core-modules view, against the seeded fixture module
+// depsvc (tests/fixtures/depsvc/, "Dep Service") — installed but NOT loaded
+// at boot (nix/integration-test.nix), and the one kind of Module Inspector
+// row whose toggle is not locked: the three bundled modules in
+// ModuleInspectorView's protectedModules render theirs disabled, which is why
+// this test cannot target them and instead asserts the lock at every
+// checkpoint. depsvc declares no dependencies, so its unload takes
+// UIPluginManager::unloadCoreModule's fast path: the cascade confirmation
+// must never OPEN — its closed instance keeps its objectName in the tree
+// (see OverlayDialogs.qml / installViaPmu), so the gate watches `visible`
+// for the full 3 s rather than probing for absence. The test loads depsvc
+// first as setup so the unload is not vacuous, and unloads it again at the
+// end so the shared instance keeps the boot state: depsvc on disk, not
+// loaded.
+
+const DEPSVC_NAME = "depsvc";
+const DEPSVC_TOGGLE = `moduleRow.loadToggle.${DEPSVC_NAME}`;
+const DEPSVC_STATUS = `moduleInspector.status.${DEPSVC_NAME}`;
+const PROTECTED_MODULE_TOGGLES =
+  ["package_manager", "package_downloader", "capability_module"]
+    .map((name) => `moduleRow.loadToggle.${name}`);
+
+test("module inspector: unloading a leaf module and reloading it", async (app) => {
+  // Welcome page is the evaluate anchor with `backend` in scope (as in A18).
+  const welcome = await requireWelcomePage(app);
+  await openModuleInspector(app);
+
+  // Shared search cleared so depsvc's row is in the proxy whatever an
+  // earlier test typed.
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
+  await requireObject(app, "moduleInspector.table");
+
+  // depsvc is pre-seeded by nix/integration-test.nix, so in --ci its absence
+  // is a failure; against a local app it is a skip (requireFixtureA's policy).
+  try {
+    await app.waitFor(async () => {
+      if (!(await findByObjectName(app.inspector, DEPSVC_TOGGLE))) {
+        throw new Error(`${DEPSVC_TOGGLE} not in the QML tree`);
+      }
+    }, { timeout: 10000, interval: 500, description: "depsvc row to appear" });
+  } catch (e) {
+    if (!CI_MODE) {
+      console.log(`    SKIP: A21 — depsvc fixture precondition not met: ${e.message}`);
+      return;
+    }
+    throw new Error(
+      `A21 precondition failed (depsvc is pre-seeded in --ci): ${e.message}`);
+  }
+
+  // depsvc's row in the source model, read on the welcome anchor — A18's
+  // pattern, on coreModulesModel.
+  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
+    const m = backend.coreModulesModel;
+    for (let i = 0; i < m.rowCount(); i += 1) {
+      const idx = m.index(i, 0);
+      if (m.data(idx, ${MODULE_SEARCH_ROLES.name}) === ${JSON.stringify(DEPSVC_NAME)}) {
+        return JSON.stringify({ isLoaded: m.data(idx, ${A18_ROLES.isLoaded}) });
+      }
+    }
+    return "null";
+  })()`));
+
+  // A load flip rebuilds the row's delegate, so toggle and badge are
+  // re-found on every read rather than cached (as in A18/A19).
+  const toggleState = async () => {
+    const t = await findByObjectName(app.inspector, DEPSVC_TOGGLE);
+    if (!t) throw new Error(`${DEPSVC_TOGGLE} not in the QML tree`);
+    return {
+      id: t.id,
+      text: await evalOn(app, t.id, "text"),
+      enabled: await evalOn(app, t.id, "enabled"),
+    };
+  };
+
+  const statusText = async () => {
+    const b = await findByObjectName(app.inspector, DEPSVC_STATUS);
+    if (!b) throw new Error(`${DEPSVC_STATUS} not in the QML tree`);
+    return evalOn(app, b.id, "text");
+  };
+
+  const expectProtectedLocked = async (when) => {
+    for (const name of PROTECTED_MODULE_TOGGLES) {
+      const t = await findByObjectName(app.inspector, name);
+      if (!t) throw new Error(`${name} not in the QML tree ${when}`);
+      assertEq(await evalOn(app, t.id, "enabled"), false, `${name} enabled ${when}`);
+    }
+  };
+
+  // The CPU / memory cells carry no objectNames (ModuleInspectorView's
+  // cpuCellComponent / memoryCellComponent), so they are read by climbing
+  // from depsvc's status badge to the first ancestor whose subtree renders
+  // the raw name "depsvc" (the module cell's second line — shown because the
+  // label "Dep Service" differs) — that ancestor is the row container
+  // spanning all five cells — then collecting every text under it. Scoping
+  // to depsvc's OWN row matters: the suite's stats test above matches the
+  // whole tree and is satisfied by any loaded module's numbers.
+  const rowCellTexts = async () => {
+    const b = await findByObjectName(app.inspector, DEPSVC_STATUS);
+    if (!b) throw new Error(`${DEPSVC_STATUS} not in the QML tree`);
+    return JSON.parse(await evalOn(app, b.id, `(() => {
+      const hasName = (node) => {
+        if (!node) return false;
+        if (node.text === ${JSON.stringify(DEPSVC_NAME)}) return true;
+        const kids = node.children;
+        if (!kids || typeof kids.length !== "number") return false;
+        for (let i = 0; i < kids.length; i += 1) {
+          if (hasName(kids[i])) return true;
+        }
+        return false;
+      };
+      let row = this;
+      for (let up = 0; up < 15 && row && !hasName(row); up += 1) row = row.parent;
+      if (!row || !hasName(row)) return "null";
+      const texts = [];
+      const collect = (node) => {
+        if (!node) return;
+        if (typeof node.text === "string") texts.push(node.text);
+        const kids = node.children;
+        if (!kids || typeof kids.length !== "number") return;
+        for (let i = 0; i < kids.length; i += 1) collect(kids[i]);
+      };
+      collect(row);
+      return JSON.stringify(texts);
+    })()`));
+  };
+
+  const expectRowCells = (what, timeout, pred) => app.waitFor(async () => {
+    const texts = await rowCellTexts();
+    if (texts === null) {
+      throw new Error("depsvc's row not reachable from its status badge");
+    }
+    if (!pred(texts)) {
+      throw new Error(`${what}: row cell texts=${JSON.stringify(texts)}`);
+    }
+  }, { timeout, interval: 500, description: what });
+
+  const cpuTextRe = /^\d+\.\d%$/;
+  const memTextRe = /^\d+\.\d MB$/;
+
+  // One gate bundle per state: badge text, source-model isLoaded, toggle
+  // text — then the protected rows' lock, which must hold throughout.
+  const expectState = async (loaded, when, timeout = 10000) => {
+    await app.waitFor(async () => {
+      assertEq(await statusText(), loaded ? "Loaded" : "Not loaded",
+               `depsvc status badge ${when}`);
+      const row = await modelRow();
+      if (row === null) throw new Error(`${DEPSVC_NAME} not in backend.coreModulesModel`);
+      assertEq(row.isLoaded, loaded, `coreModulesModel isLoaded ${when}`);
+      assertEq((await toggleState()).text, loaded ? "Unload" : "Load", `toggle text ${when}`);
+    }, { timeout, interval: 500,
+         description: `depsvc row to read ${loaded ? '"Loaded"' : '"Not loaded"'} ${when}` });
+    await expectProtectedLocked(when);
+  };
+
+  // Signal-level click; callMethod ignores `enabled`, so the enabled check
+  // is part of the click (as in A18/A19) — and here it is also the proof
+  // that depsvc's toggle is NOT locked, unlike the protected rows'.
+  const clickToggle = (expectedText, what) => app.waitFor(async () => {
+    const t = await toggleState();
+    assertEq(t.text, expectedText, `${DEPSVC_TOGGLE} text`);
+    assertEq(t.enabled, true, `${DEPSVC_TOGGLE} enabled`);
+    await invoke(app, t.id, "clicked", what);
+  }, { timeout: 10000, interval: 500, description: what });
+
+  // Setup: depsvc is seeded installed-but-not-loaded, so load it first —
+  // the unload below must not pass vacuously against a never-loaded row.
+  // Tolerates a local run that already left it loaded.
+  const before = await modelRow();
+  if (before === null || before.isLoaded !== true) {
+    await clickToggle("Load", "clicking the toggle to load depsvc (setup)");
+  }
+  await expectState(true, "after setup load", 20000);
+
+  // Unload. Queued behind the click (UIPluginManager::unloadCoreModule);
+  // nothing depends on depsvc, so no cascade dialog may OPEN — watched on
+  // `visible` for the full 3 s, because the closed instance stays in the
+  // tree under the same objectName.
+  const cascade = await requireObject(app, "confirmationDialog.unloadCascade");
+  await clickToggle("Unload", "clicking the toggle to unload depsvc");
+  const cascadeSamples = await pollProperty(app, cascade.id, "visible", 3000,
+    { until: (v) => v === true });
+  if (cascadeSamples.some((s) => s.value === true)) {
+    throw new Error(
+      "unloadCascade dialog became visible for a leaf unload " +
+      `(samples=${JSON.stringify(cascadeSamples)})`);
+  }
+  await expectState(false, "after unload");
+  // Stats only mean something for a running module: both cells em-dash, and
+  // no numeric cell may remain anywhere in the row.
+  await expectRowCells("unloaded row to render em-dash CPU and memory cells", 10000,
+    (texts) => texts.filter((t) => t === "—").length >= 2
+            && !texts.some((t) => cpuTextRe.test(t))
+            && !texts.some((t) => memTextRe.test(t)));
+
+  // Reload.
+  await clickToggle("Load", "clicking the toggle to reload depsvc");
+  await expectState(true, "after reload", 20000);
+  // Stats resumed: depsvc's own cells numeric within 15 s (stats poll ~2 s).
+  await expectRowCells("reloaded row to render numeric CPU and memory cells", 15000,
+    (texts) => texts.some((t) => cpuTextRe.test(t))
+            && texts.some((t) => memTextRe.test(t)));
+
+  // Restore: unload again so the shared instance keeps the boot state
+  // (depsvc installed, not loaded) for whatever runs next.
+  await clickToggle("Unload", "clicking the toggle to unload depsvc (restore)");
+  await expectState(false, "after restore");
 });
 
 // --- Sidebar: sequential section opening ---
