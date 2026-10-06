@@ -1808,6 +1808,129 @@ test("host-services: package_manager_ui completes a capability-gated call chain"
   await assertHostServicesGrantReached(app, { timeout: 90000, log: console.log });
 });
 
+// --- Package Manager (A19) — unload/reload restores the Package Manager view ---
+//
+// Regression guard for the M1 fix (da5da84). PMUI renders in a fixed stack
+// page, not a dock (the dock-close case is A32), so unload/reload exercises
+// MainContainer's two intercepts: onPluginWindowRemoveRequested swaps the
+// stale page for a fresh placeholder and nulls m_pmuiWidget, and a reload's
+// onPluginWindowRequested re-intercepts package_manager_ui while
+// !m_pmuiWidget — folded back into the stack, never a dock (dockCount stays
+// 0 throughout; `workspace.dock.<name>` objectNames do not exist). PMUI live
+// is proven only by its own two strings (see the section-click test above:
+// "Reload" is the shell's own chrome); absence after the unload is asserted
+// as the exact negation of that same presence witness.
+
+const PMUI_NAME = "package_manager_ui";
+const PMUI_TOGGLE = `moduleRow.loadToggle.${PMUI_NAME}`;
+const PMUI_TEXTS = ["Manage your plugins and packages.", "Types"];
+const PMUI_PLACEHOLDER = "Loading Package Manager…";
+
+test("apps inspector: unload/reload of package_manager_ui restores the Package Manager view", async (app) => {
+  const workspace = await requireWorkspace(app);
+  const expectNoDock = async (when) =>
+    assertEq(await evalOn(app, workspace.id, "dockCount"), 0,
+             `WorkspaceArea.dockCount ${when}`);
+  const placeholderCount = async () =>
+    ((await app.findByProperty("text", PMUI_PLACEHOLDER)).matches || []).length;
+
+  // Section click: lazy-loads PMUI on a cold start, re-shows it when the
+  // section-click test above already loaded it. 45s — a cold load spawns a
+  // ui-host process and waits on its ready handshake.
+  await openPlugin(app, "Package Manager", PMUI_TEXTS,
+                   { ...sidebarSection, timeout: 45000 });
+  await expectNoDock("after the Package Manager section click");
+
+  // Settings → Apps Inspector with the shared search empty, so PMUI's row is
+  // in the proxy whatever an earlier test typed.
+  await openAppsInspector(app);
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
+  const table = await requireObject(app, "appsInspector.table");
+
+  // PMUI's badge text (StatusTextRole), read with A17's row pattern.
+  const pmuiStatus = async () => JSON.parse(await evalOn(app, table.id, `(() => {
+    for (let i = 0; i < model.visibleCount; i += 1) {
+      const idx = model.index(i, 0);
+      if (String(model.data(idx, ${MODULE_SEARCH_ROLES.name})) === ${JSON.stringify(PMUI_NAME)}) {
+        return JSON.stringify(String(model.data(idx, ${MODULE_SEARCH_ROLES.statusText})));
+      }
+    }
+    return "null";
+  })()`));
+
+  // A load flip rebuilds the row's delegate, so the toggle is re-found on
+  // every read rather than cached (as in A18).
+  const toggleState = async () => {
+    const t = await findByObjectName(app.inspector, PMUI_TOGGLE);
+    if (!t) throw new Error(`${PMUI_TOGGLE} not in the QML tree`);
+    return {
+      id: t.id,
+      text: await evalOn(app, t.id, "text"),
+      enabled: await evalOn(app, t.id, "enabled"),
+    };
+  };
+
+  // Signal-level click; callMethod ignores `enabled`, so the not-busy check
+  // is part of the click (as in A18).
+  const clickToggle = (expectedText, what) => app.waitFor(async () => {
+    const t = await toggleState();
+    assertEq(t.text, expectedText, `${PMUI_TOGGLE} text`);
+    assertEq(t.enabled, true, `${PMUI_TOGGLE} enabled`);
+    await invoke(app, t.id, "clicked", what);
+  }, { timeout: 10000, interval: 500, description: what });
+
+  // Absence as the negation of the presence witness: the expectTexts call
+  // that proved a string live must now fail for it. (A dead app would also
+  // read as "absent", but G-ALIVE catches that in the epilogue.)
+  const textPresent = async (text) => {
+    try { await app.expectTexts([text]); return true; } catch { return false; }
+  };
+
+  // Before the unload: proves the setup, so the unload is not vacuous.
+  await app.waitFor(async () => {
+    assertEq(await pmuiStatus(), "Loaded", "PMUI status badge before unload");
+    assertEq((await toggleState()).text, "Unload", `${PMUI_TOGGLE} text before unload`);
+  }, { timeout: 10000, interval: 500,
+       description: 'PMUI row to read "Loaded" before unload' });
+
+  // Unload. Queued behind the click (UIPluginManager::unloadUiModule); stops
+  // PMUI's ui-host and emits pluginWindowRemoveRequested — the Package
+  // Manager page must fall back to the placeholder, never keep the stale
+  // previously-shown view.
+  await clickToggle("Unload", "clicking the toggle to unload package_manager_ui");
+  await app.waitFor(async () => {
+    assertEq(await pmuiStatus(), "Not loaded", "PMUI status badge after unload");
+    assertEq((await toggleState()).text, "Load", `${PMUI_TOGGLE} text after unload`);
+    assertEq(await placeholderCount(), 1, "placeholder labels after unload");
+    for (const text of PMUI_TEXTS) {
+      if (await textPresent(text)) {
+        throw new Error(`PMUI string ${JSON.stringify(text)} still rendered after unload`);
+      }
+    }
+  }, { timeout: 10000, interval: 500,
+       description: "unload to restore the placeholder and drop PMUI's QML" });
+  await expectNoDock("after the unload");
+
+  // Reload. onPluginLoaded emits pluginWindowRequested; the intercept folds
+  // the widget back into the stack and suppresses the navigate-to-workspace
+  // that normally follows a load. 45s — fresh ui-host process again.
+  await clickToggle("Load", "clicking the toggle to reload package_manager_ui");
+  await app.waitFor(async () => {
+    assertEq(await pmuiStatus(), "Loaded", "PMUI status badge after reload");
+  }, { timeout: 45000, interval: 500,
+       description: 'PMUI row to read "Loaded" after reload' });
+  await expectNoDock("after the reload");
+
+  // Second section click shows the restored page: PMUI's own strings render
+  // and the placeholder is gone. Ends with PMUI loaded and the Package
+  // Manager section current — the state the section-click test establishes.
+  await openPlugin(app, "Package Manager", PMUI_TEXTS,
+                   { ...sidebarSection, timeout: 45000 });
+  assertEq(await placeholderCount(), 0, "placeholder labels after reload + click");
+  await expectNoDock("after the reload + section click");
+});
+
 test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {
   await app.click("Settings");
   await app.waitFor(
