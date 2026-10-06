@@ -2154,13 +2154,19 @@ test("module inspector: search filters the table", async (app) => {
   }, { timeout: 5000, interval: 250,
        description: '"package" search to keep exactly the matching rows' });
 
-  await search.set("zzz");
+let noMatchSearch = "zzz";
+  while (rows.some((row) => Object.values(row).some(
+    (v) => v.toLowerCase().includes(noMatchSearch)))) {
+    noMatchSearch += "z";
+  }
+  await search.set(noMatchSearch);
   await app.waitFor(async () => {
-    await search.expectText("zzz");
-    assertEq(await visibleCount(), 0, 'model.visibleCount for "zzz"');
-    assertEq(await emptyTextShown(), true, 'filtered-empty text shown for "zzz"');
+    await search.expectText(noMatchSearch);
+    assertEq(await visibleCount(), 0, `model.visibleCount for ${JSON.stringify(noMatchSearch)}`);
+    assertEq(await emptyTextShown(), true,
+             `filtered-empty text shown for ${JSON.stringify(noMatchSearch)}`);
   }, { timeout: 5000, interval: 250,
-       description: '"zzz" search to empty the table and show its empty text' });
+       description: "no-match search to empty the table and show its empty text" });
 
   await search.set("");
   await app.waitFor(async () => {
