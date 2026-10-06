@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QHash>
+#include <QPair>
 #include <QPointer>
 #include <QString>
 #include <QTimer>
@@ -46,6 +48,10 @@ signals:
     void viewReplaced(QQuickWidget* view);
 
 private:
+    using Snapshot = QHash<QString, QPair<qint64, qint64>>;   // path -> (mtime, size)
+
+    void onSourcesTouched();
+    Snapshot snapshot() const;
     void reload();
     void rewatch();
 
@@ -57,4 +63,5 @@ private:
     QQuickWidget* m_view = nullptr;
     QFileSystemWatcher* m_watcher = nullptr;
     QTimer m_debounce;
+    Snapshot m_snapshot;
 };
