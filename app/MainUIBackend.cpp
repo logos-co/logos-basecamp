@@ -30,8 +30,10 @@
 // the test harness. Unqualified below to keep the use sites unchanged.
 using namespace ShellIntents;
 
-MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* parent)
+MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
+                             const LogosBasecamp::HostProfile& hostProfile, QObject* parent)
     : QObject(parent)
+    , m_hostProfile(hostProfile)
     , m_currentActiveSectionIndex(0)
     , m_logosAPI(logosAPI)
     , m_core(core)
@@ -68,8 +70,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     m_intentAdapter  = new IntentBridgeAdapter(m_intentBroker, this);
 
     m_coreModuleManager = new CoreModuleManager(m_logosAPI, m_core, this);
-    m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
-    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
+    m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
+    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
 
     // Setter-injection closes the cycle — UIPluginManager queries
@@ -940,6 +942,16 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
+bool         MainUIBackend::packageCatalog() const { return m_hostProfile.packageCatalog; }
+bool         MainUIBackend::repositoryManagement() const { return m_hostProfile.repositoryManagement; }
+bool         MainUIBackend::devHost() const { return m_hostProfile.devHost; }
+
+QVariantList MainUIBackend::availableSections() const
+{
+    QVariantList sections;
+    for (int s : m_hostProfile.availableSections()) sections << s;
+    return sections;
+}
 
 // Read the environment rather than a compile-time flag.
 bool         MainUIBackend::isMockBackend() const

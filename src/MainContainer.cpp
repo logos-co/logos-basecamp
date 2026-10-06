@@ -408,6 +408,14 @@ bool MainContainer::eventFilter(QObject* watched, QEvent* event)
 
 void MainContainer::onSectionIndexChanged(int index)
 {
+    if (QObject* backend = m_host->backendObject()) {
+        const QVariant available = backend->property("availableSections");
+        if (available.isValid() && !available.toList().contains(QVariant(index))) {
+            m_host->setCurrentSectionIndex(ShellSection::Workspace);
+            return;
+        }
+    }
+
     const int sectionIndex = index;
 
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;

@@ -1,0 +1,14 @@
+{
+  "author": "",
+  "category": "testing",
+  "dependencies": ["modules_state", "package_manager"],
+  "description": "Standalone-mode test fixture (test artifact, not a real app)",
+  "display_name": "Standalone Fixture",
+  "icon": "",
+  "main": {},
+  "manifestVersion": "0.3.0",
+  "name": "standalone_fixture",
+  "type": "ui_qml",
+  "version": "1.0.0",
+  "view": "Main.qml"
+}

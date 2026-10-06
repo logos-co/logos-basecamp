@@ -1,4 +1,5 @@
 #include "PluginLoader.h"
+#include "QmlHotReload.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -444,9 +445,10 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     timeout->start(30000);
 }
 
-void PluginLoader::loadQmlView(const PluginLoadRequest& request,
-                               LogosQmlBridge* bridge,
-                               ViewModuleHost* viewHost)
+namespace {
+
+// An empty QQuickWidget, sandboxed for this app.
+QQuickWidget* createSandboxedView(const PluginLoadRequest& request)
 {
     auto* qmlWidget = new QQuickWidget;
     qmlWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
@@ -457,6 +459,21 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
                               appLibDir, request.name);
         engine->setBaseUrl(QUrl::fromLocalFile(request.installDir + "/"));
     }
+    return qmlWidget;
+}
+
+} // namespace
+
+void PluginLoader::loadQmlView(const PluginLoadRequest& request,
+                               LogosQmlBridge* bridge,
+                               ViewModuleHost* viewHost)
+{
+    if (!request.hotReloadDir.isEmpty()) {
+        loadHotReloadView(request, bridge, viewHost);
+        return;
+    }
+
+    auto* qmlWidget = createSandboxedView(request);
 
     // Async pre-compile: the engine caches compiled types so setSource() is fast.
     QUrl sourceUrl = QUrl::fromLocalFile(request.qmlViewPath);
@@ -530,4 +547,28 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
 
     setLoading(request.name, false);
     emit pluginLoaded(request.name, qmlWidget, nullptr, UIPluginType::UiQml, viewHost);
+}
+
+// No async pre-compile and no failure path: a view that does not compile still
+// becomes the app's tab, so the next save that compiles brings it up.
+void PluginLoader::loadHotReloadView(const PluginLoadRequest& request,
+                                     LogosQmlBridge* bridge,
+                                     ViewModuleHost* viewHost)
+{
+    if (m_intentAdapter)
+        m_intentAdapter->attach(request.name, bridge);
+
+    auto* view = new QmlHotReloadView(
+        request.name, request.hotReloadDir, QUrl::fromLocalFile(request.qmlViewPath), bridge,
+        [request, bridge]() {
+            QQuickWidget* qmlWidget = createSandboxedView(request);
+            qmlWidget->rootContext()->setContextProperty("logos", bridge);
+            return qmlWidget;
+        });
+    if (!request.iconPath.isEmpty())
+        view->setWindowIcon(QIcon(request.iconPath));
+    view->load();
+
+    setLoading(request.name, false);
+    emit pluginLoaded(request.name, view, nullptr, UIPluginType::UiQml, viewHost);
 }

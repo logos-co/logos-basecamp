@@ -10,6 +10,8 @@
 #include <QPointer>
 #include <QSet>
 #include <memory>
+
+#include "utils/HostProfile.h"
 #include "RecentlyClosedStore.h"
 #include "logos_api.h"
 #include "logos_api_client.h"
@@ -65,6 +67,7 @@ public:
     // of m_packageCoordinator guarded against null.
     explicit UIPluginManager(LogosAPI* logosAPI,
                              CoreModuleManager* coreModuleManager,
+                             const LogosBasecamp::HostProfile& hostProfile = {},
                              QObject* parent = nullptr);
     ~UIPluginManager() override;
 
@@ -255,6 +258,8 @@ private:
     void reloadLoadedPluginIcon(const QString& name, QWidget* widget) const;
     void loadLegacyUiModule(const QString& moduleName);
     QString resolveQmlViewPath(const QVariantMap& meta) const;
+    // Open the profile's appsToOpen once, after the first scan.
+    void openStartupApps();
     QString getPluginPath(const QString& name) const;
     QString getPluginType(const QString& name) const;
     bool isQmlPlugin(const QString& name) const;
@@ -295,6 +300,7 @@ private:
         QMetaObject::Connection finished;
         QElapsedTimer           elapsed;
     };
+    const LogosBasecamp::HostProfile m_hostProfile;
     QHash<QString, DeferredTeardown> m_deferredTeardowns;
 
     // Arm the unloadFinished()/deadline race for a plugin that answered
@@ -325,6 +331,8 @@ private:
     // PackageCoordinator::uninstallApp's deferral — last click wins.
     QString                 m_pendingGatedLoadName;
     QMetaObject::Connection m_pendingGatedLoadConn;
+    bool                    m_startupAppsOpened = false;
+    QMetaObject::Connection m_startupOpenConn;
     PluginLoader*      m_pluginLoader;      // owned (parent=this)
 
     // Loaded-plugin state
