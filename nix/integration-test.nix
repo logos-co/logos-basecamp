@@ -5,7 +5,14 @@
 # Requires Node.js for the test runner and the Qt offscreen platform plugin.
 { pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
 # Combined PR-gate budget; elapsed goes to $out/elapsed-seconds, combined check in shutdown-test.nix.
-, budgetSec ? 600 }:
+, budgetSec ? 600
+# Installed core-module trees (modules/<name>/ layout — the same shape
+# nix/app.nix consumes for the app's own pre-installed modules) to copy into
+# <user-dir>/modules/ before the app boots. Seeded installed-but-NOT-loaded:
+# nothing here asks the runtime to load them, so they sit in the Module
+# Inspector as "Not loaded" rows — the one kind of row whose Load/Unload
+# toggle is not locked by protectedModules.
+, seedModules ? [ ] }:
 
 pkgs.runCommand "logos-basecamp-integration-test" {
   MCP_TEST_BUDGET_SECONDS = toString budgetSec;
@@ -54,6 +61,34 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   # Without this the intent cases in ui-tests.mjs find no requester and skip
   # themselves, which reads as a pass.
   ${pkgs.bash}/bin/bash ${src}/tests/fixtures/intents/stage.sh "$LOGOS_USER_DIR"
+
+  # Pre-seed loadable core-module fixtures (depsvc) into <user-dir>/modules/.
+  # Plain copy of installed trees, the same staging
+  # doctests/basecamp-module-unload.test.yaml does for its module chain; the
+  # copy is made writable because store paths are read-only and the app owns
+  # this directory. Each seeded module is verified HERE — manifest.json plus a
+  # real plugin binary — so a seeding mistake fails the build as one instead
+  # of surfacing as an unrelated test failure later.
+  ${pkgs.lib.concatMapStrings (seed: ''
+    mkdir -p "$LOGOS_USER_DIR/modules"
+    cp -RL "${seed}/modules/." "$LOGOS_USER_DIR/modules/"
+    chmod -R u+w "$LOGOS_USER_DIR/modules"
+    for _mdir in "${seed}/modules/"*/; do
+      _mname="$(basename "$_mdir")"
+      _mdest="$LOGOS_USER_DIR/modules/$_mname"
+      if [ ! -f "$_mdest/manifest.json" ]; then
+        echo "ERROR: seeded core module '$_mname' has no manifest.json in $_mdest" >&2
+        ls -laR "$_mdest" >&2 || true
+        exit 1
+      fi
+      if ! find "$_mdest" -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) | grep -q .; then
+        echo "ERROR: seeded core module '$_mname' has no plugin binary in $_mdest" >&2
+        ls -laR "$_mdest" >&2 || true
+        exit 1
+      fi
+      echo "Seeded core module fixture: $_mname (not loaded at boot)"
+    done
+  '') seedModules}
 
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
