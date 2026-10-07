@@ -2473,12 +2473,18 @@ test("module inspector: interface view lists methods/events and calls a method",
   // events list fails here, not silently.
   await app.waitFor(async () => {
     const events = await listOn("events");
+    const eventName = events.map(nameOf).find((name) => name.length > 0);
+    if (!eventName) {
+      throw new Error(`no event with a non-empty name (events=${JSON.stringify(events)})`);
+    }
     assertEq(await headerShown("Methods"), true,
              `"Methods" header visible (${methods.length} methods)`);
     assertEq(await headerShown("Events"), true,
              `"Events" header visible (events=${JSON.stringify(events)})`);
+    assertEq(await headerShown(eventName), true,
+             `event ${JSON.stringify(eventName)} visibly rendered`);
   }, { timeout: 10000, interval: 500,
-       description: '"Methods" and "Events" headers to be visible' });
+       description: 'method/event lists to render' });
 
   // Zero-arg by signature, never by trial: only entries whose signature shows
   // an empty parameter list qualify (bare strings carry no arity and are
