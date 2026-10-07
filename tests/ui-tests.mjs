@@ -2386,6 +2386,174 @@ test("module inspector: unloading a leaf module and reloading it", async (app) =
   await expectState(false, "after restore");
 });
 
+// --- Settings (A22) — Module Inspector interface view lists and calls ---
+//
+// Against package_manager, bootstrap-loaded and holding a capability token —
+// NOT the runtime-loaded depsvc, whose interface queries are the plan's open
+// defect M3 (possible UI-thread stalls). The per-row "Interface" label
+// repeats, so the page is opened via moduleInspectorView.openInterface, the
+// hook the view exposes for automation; it takes a QString, which callMethod
+// cannot marshal, hence evalOn. PluginInterfaceView carries no objectName of
+// its own and is reached by type. Its "Methods"/"Events" headers exist in the
+// tree even when hidden (`visible` binds on the list lengths), so the gate
+// asserts visible text, not presence. The method to Call is picked from the
+// view's own `methods` list by signature — zero-arg only, preferring the
+// first query-style name (get/list/is/has prefix, e.g. package_manager's
+// getInstalledPackages) over the first zero-arg, never by trial — because
+// clicking runs backend.callCoreModuleMethod(name, method, "[]")
+// synchronously against the real module in the shared instance. The chosen
+// name is logged and carried in every failure message. The call and Back each
+// end with an explicit 2 s inspector round-trip (makeTest's epilogue allows
+// 5 s; this gate guards a UI-thread stall harder).
+
+test("module inspector: interface view lists methods/events and calls a method", async (app) => {
+  const INTERFACE_MODULE = "package_manager";
+
+  await openModuleInspector(app);
+
+  // ModuleInspectorView is instantiated eagerly; only `visible` proves it is selected.
+  const view = await requireObject(app, "moduleInspectorView");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
+  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+
+  // Open the interface page: sets selectedPlugin + showingInterface, and the
+  // StackLayout flips to the PluginInterfaceView.
+  await evalOn(app, view.id, `openInterface(${JSON.stringify(INTERFACE_MODULE)})`);
+
+  let iface = null;
+  await app.waitFor(async () => {
+    iface = (await findByType(app, "PluginInterfaceView"))[0] || null;
+    if (!iface) throw new Error("no PluginInterfaceView in the QML tree");
+    assertEq(await evalOn(app, iface.id, "pluginName"), INTERFACE_MODULE,
+             "PluginInterfaceView.pluginName");
+  }, { timeout: 10000, interval: 500,
+       description: `interface view to open for ${INTERFACE_MODULE}` });
+
+  await app.waitFor(
+    async () => { await app.expectTexts([`Interface: ${INTERFACE_MODULE}`]); },
+    { timeout: 10000, interval: 500, description: "interface title to render" }
+  );
+
+  // Methods/events come back from the module over IPC as parsed JSON; an
+  // entry is { name, signature?, description? } or a bare string.
+  const nameOf = (m) => (typeof m === "string" ? m : String(m?.name ?? ""));
+  const listOn = async (prop) =>
+    JSON.parse(await evalOn(app, iface.id, `JSON.stringify(${prop})`));
+
+  let methods = [];
+  await app.waitFor(async () => {
+    methods = await listOn("methods");
+    if (!methods.some((m) => nameOf(m).length > 0)) {
+      throw new Error(
+        `no method with a non-empty name (methods=${JSON.stringify(methods)})`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: `${INTERFACE_MODULE} methods to populate` });
+
+  // Whether any *visible* descendant of the interface view renders `text`
+  // exactly. QQuickItem.visible already folds in ancestor visibility.
+  const headerShown = async (text) => JSON.parse(await evalOn(app, iface.id, `(() => {
+    let shown = false;
+    const walk = (node) => {
+      if (!node || shown) return;
+      if (node.text === ${JSON.stringify(text)} && node.visible === true) {
+        shown = true;
+        return;
+      }
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify(shown);
+  })()`));
+
+  // The headers are visible iff their lists are non-empty, so an empty
+  // events list fails here, not silently.
+  await app.waitFor(async () => {
+    const events = await listOn("events");
+    const eventName = events.map(nameOf).find((name) => name.length > 0);
+    if (!eventName) {
+      throw new Error(`no event with a non-empty name (events=${JSON.stringify(events)})`);
+    }
+    assertEq(await headerShown("Methods"), true,
+             `"Methods" header visible (${methods.length} methods)`);
+    assertEq(await headerShown("Events"), true,
+             `"Events" header visible (events=${JSON.stringify(events)})`);
+    assertEq(await headerShown(eventName), true,
+             `event ${JSON.stringify(eventName)} visibly rendered`);
+  }, { timeout: 10000, interval: 500,
+       description: 'method/event lists to render' });
+
+  // Zero-arg by signature, never by trial: only entries whose signature shows
+  // an empty parameter list qualify (bare strings carry no arity and are
+  // excluded). Prefer the first query-style name.
+  const zeroArg = methods.filter((m) =>
+    typeof m !== "string" && typeof m.signature === "string"
+    && /\(\s*\)/.test(m.signature) && nameOf(m).length > 0);
+  const chosen = zeroArg.find((m) => /^(get|list|is|has)/i.test(nameOf(m))) || zeroArg[0];
+  if (!chosen) {
+    throw new Error(
+      `no zero-arg method on ${INTERFACE_MODULE} to call ` +
+      `(methods=${JSON.stringify(methods)})`);
+  }
+  const methodName = nameOf(chosen);
+  console.log(`    A22: calling ${INTERFACE_MODULE}.${methodName}${chosen.signature}`);
+
+  const call = await requireObject(app, `pluginInterface.call.${methodName}`);
+  await evalOn(app, iface.id, 'resultText = ""');
+  await invoke(app, call.id, "clicked", `clicking Call on ${methodName}`);
+
+  // The result TextArea exists before the call (its enclosing box hides on
+  // empty text), so the gate is its text, not its presence.
+  const result = await requireObject(app, "pluginInterface.result");
+  let resultText = "";
+  await app.waitFor(async () => {
+    resultText = await evalOn(app, result.id, "text");
+    if (typeof resultText !== "string" || resultText.length === 0) {
+      throw new Error(
+        `pluginInterface.result=${JSON.stringify(resultText)} ` +
+        `(expected non-empty after calling ${methodName})`);
+    }
+  }, { timeout: 10000, interval: 500,
+       description: `result of ${methodName} to render` });
+  if (/^error/i.test(resultText)) {
+    throw new Error(
+      `${methodName} result reads as an error: ${JSON.stringify(resultText.slice(0, 200))}`);
+  }
+  // The gate's prefix check alone cannot see the product's real failure
+  // shape: CoreModuleManager::callMethod wraps success as {"result": ...}
+  // and failure as {"error": "..."} (CoreModuleManager.cpp:160-196), so a
+  // dead IPC path would render non-empty text starting with "{". Reject a
+  // top-level "error" key too — "result" is the only key a success carries.
+  try {
+    const parsed = JSON.parse(resultText);
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      throw new Error(
+        `${methodName} call failed: ${JSON.stringify(resultText.slice(0, 200))}`);
+    }
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) throw e;
+    // Non-JSON text is fine — the gate only forbids error results.
+  }
+  await assertResponsive(app, { timeoutMs: 2000 });
+
+  // Back, and the module table is on screen again — left as found.
+  const back = await requireObject(app, "pluginInterface.back");
+  await invoke(app, back.id, "clicked", 'clicking "← Back"');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "showingInterface"), false,
+             "moduleInspectorView.showingInterface after Back");
+    const table = await findByObjectName(app.inspector, "moduleInspector.table");
+    if (!table) throw new Error("moduleInspector.table not in the QML tree");
+    assertEq(await evalOn(app, table.id, "visible"), true,
+             "moduleInspector.table visible after Back");
+  }, { timeout: 10000, interval: 500,
+       description: "Module Inspector table to be visible after Back" });
+  await assertResponsive(app, { timeoutMs: 2000 });
+});
+
 // --- Sidebar: sequential section opening ---
 //
 // Regression guard: opening multiple sidebar sections one after another
