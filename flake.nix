@@ -33,6 +33,9 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
+    # One lgpm for the runtime, the bundled module and the installer: otherwise
+    # each brings its own package-manager build into the closure.
+    logos-package-manager-module.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.2";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
@@ -56,6 +59,7 @@
     logos-view-module-runtime.inputs.logos-plugin-qt.follows = "logos-plugin-qt";
     logos-view-module-runtime.inputs.logos-cpp-sdk.follows = "logos-cpp-sdk";
     nix-bundle-logos-module-install.url = "github:logos-co/nix-bundle-logos-module-install";
+    nix-bundle-logos-module-install.inputs.logos-package-manager.follows = "logos-package-manager";
     nix-bundle-dir.url = "github:logos-co/nix-bundle-dir";
     logos-qt-mcp.url = "github:logos-co/logos-qt-mcp";
     nix-bundle-appimage.url = "github:logos-co/nix-bundle-appimage";
