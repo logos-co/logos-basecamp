@@ -366,11 +366,11 @@
           # Self-contained directory bundle: appDistributed modules expect host Qt
           # via @rpath; qtApp copies Qt frameworks into lib/ and rewrites the binary.
           # (appDistributed alone is an intermediate used by AppImage / .app wrappers.)
-          withMainProgram = drv: drv.overrideAttrs (old: {
-            meta = (old.meta or {}) // {
-              mainProgram = "LogosBasecamp";
-            };
-          });
+          # Attribute-level only: overrideAttrs (and lib.addMetaAttrs) exports
+          # NIX_MAIN_PROGRAM into the builder env, forking a second bundle drv.
+          withMainProgram = drv: drv // {
+            meta = (drv.meta or {}) // { mainProgram = "LogosBasecamp"; };
+          };
           # dirBundler on EVERY platform, Windows included.
           #
           # The `winBundler = drv: drv` / `bundleFor` bypass that used to sit
