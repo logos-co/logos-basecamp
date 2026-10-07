@@ -1,0 +1,31 @@
+{
+  "name": "standalone_backend_fixture",
+  "display_name": "Standalone Backend Fixture",
+  "version": "1.0.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "testing",
+  "description": "Standalone-mode test fixture with a C++ backend (test artifact, not a real app)",
+  "main": "standalone_backend_fixture_plugin",
+  "view": "qml/Main.qml",
+  "dependencies": [],
+  "provides": [],
+  "uses": [],
+  "codegen": {
+    "rep": "src/standalone_backend_fixture.rep"
+  },
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": []
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  },
+  "icon": "src/icons/icon.png"
+}

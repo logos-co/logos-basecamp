@@ -434,6 +434,7 @@ Dialog {
                     font.weight: Theme.typography.weightMedium
                 }
                 LogosText {
+                    objectName: "addApplicationDialog.releasedText"
                     Layout.alignment: Qt.AlignVCenter
                     text: d.releasedText
                     color: Theme.palette.textTertiary

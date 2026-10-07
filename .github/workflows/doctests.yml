@@ -325,9 +325,15 @@ jobs:
         run: |
           set -euo pipefail
           # filter=latest: a re-run of one failed spec counts with its new result.
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq ".jobs[] | select(.name | endswith(\"($OS)\")) | select(.name != \"basecamp doc-tests ($OS)\") | \"\(.conclusion) \(.name)\"" \
-            > jobs.txt
+          # The API can still show a just-finished job as unfinished (null): re-query for up to ~60 s.
+          for try in $(seq 12); do
+            [ "$try" -eq 1 ] || sleep 5
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+              --jq ".jobs[] | select(.name | endswith(\"($OS)\")) | select(.name != \"basecamp doc-tests ($OS)\") | \"\(if .status == \"completed\" then .conclusion else null end) \(.name)\"" \
+              > jobs.txt
+            grep -q '^null ' jobs.txt || break
+            echo "Query $try: $(grep -c '^null ' jobs.txt) job(s) not final yet"
+          done
           cat jobs.txt
           total=$(wc -l < jobs.txt)
           failed=$(grep -cv '^success ' jobs.txt || true)

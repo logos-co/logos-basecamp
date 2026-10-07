@@ -8,6 +8,7 @@
 
 #include <QAbstractItemModel>
 #include "ICoreRuntime.h"
+#include "utils/HostProfile.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -105,6 +106,10 @@ class MainUIBackend : public QObject {
     //   * buildCommits: list of { name, commit } for basecamp + each flake input.
     Q_PROPERTY(QString buildVersion READ buildVersion CONSTANT)
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
+    Q_PROPERTY(QVariantList availableSections READ availableSections CONSTANT)
+    Q_PROPERTY(bool packageCatalog READ packageCatalog CONSTANT)
+    Q_PROPERTY(bool repositoryManagement READ repositoryManagement CONSTANT)
+    Q_PROPERTY(bool devHost READ devHost CONSTANT)
 
     //   * isMockBackend: this Basecamp is serving FIXTURE DATA. No module is
     //     running, nothing is installed or downloaded, and every list on screen
@@ -140,6 +145,7 @@ class MainUIBackend : public QObject {
 public:
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
                            ICoreRuntime* core = nullptr,
+                           const LogosBasecamp::HostProfile& hostProfile = {},
                            QObject* parent = nullptr);
 
     // Tears down the UI-plugin layer while the shell that hosts those widgets
@@ -160,6 +166,10 @@ public:
     // Build info accessors (see Q_PROPERTY declarations above).
     QString buildVersion() const;
     bool isPortableBuild() const;
+    QVariantList availableSections() const;
+    bool packageCatalog() const;
+    bool repositoryManagement() const;
+    bool devHost() const;
     bool isMockBackend() const;
     QVariantList buildCommits() const;
 
@@ -484,7 +494,9 @@ private:
     QVariantList buildUiModulesSnapshot() const;
     QVariantList buildCoreModulesSnapshot() const;
 
-    // Navigation state — the only state this facade class holds.
+    const LogosBasecamp::HostProfile m_hostProfile;
+
+    // Navigation state.
     int m_currentActiveSectionIndex;
     bool m_overlayActive = false;
 

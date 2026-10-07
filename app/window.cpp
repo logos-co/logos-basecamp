@@ -31,7 +31,8 @@
     #include "macWindowStyle.h"
 #endif
 
-Window::Window(LogosAPI* logosAPI, ICoreRuntime* core, QWidget *parent)
+Window::Window(LogosAPI* logosAPI, ICoreRuntime* core,
+               const LogosBasecamp::HostProfile& hostProfile, QWidget *parent)
     : QMainWindow(parent)
     , m_logosAPI(logosAPI)
     , m_core(core)
@@ -41,7 +42,7 @@ Window::Window(LogosAPI* logosAPI, ICoreRuntime* core, QWidget *parent)
     , m_quitAction(nullptr)
 {
     setObjectName(QStringLiteral("logosMainWindow"));
-    setupUi();
+    setupUi(hostProfile);
     createTrayIcon();
 #ifdef Q_OS_MAC
     createMenuBar();
@@ -92,7 +93,7 @@ Window::~Window()
     }
 }
 
-void Window::setupUi()
+void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
 {
     // The UI shell is a Qt plugin — plugins/main_ui/main_ui.{so,dylib,dll} —
     // reached through IShellView / IShellHost. It gets a QWidget* out and eight
@@ -102,7 +103,7 @@ void Window::setupUi()
     // Ownership stays HERE: the backend and its adapter belong to the Window and
     // the shell only borrows them. Deliberately not parented to `this`; ~Window
     // destroys them explicitly and in order.
-    m_backend     = new MainUIBackend(m_logosAPI, m_core, nullptr);
+    m_backend     = new MainUIBackend(m_logosAPI, m_core, hostProfile, nullptr);
     m_hostAdapter = new ShellHostAdapter(m_backend, nullptr);
 
     QString pluginExtension;
@@ -184,12 +185,7 @@ void Window::setupUi()
         // /dynamic-resolution -- is handled by rebindScreenWatch() +
         // scheduleFitToScreen() from showEvent: here the window has not landed
         // on a screen yet and its frame margins are not knowable.
-        QSize target(1600, 900);
-        m_desiredSize = target;  // what to grow back to when room returns
-        const QScreen* windowScreen = screen();
-        if (windowScreen && QGuiApplication::platformName() != QLatin1String("offscreen"))
-            target = target.boundedTo(windowScreen->availableGeometry().size());
-        resize(target);
+        setLaunchSize(1600, 900);
     }
 
     setAutoFillBackground(true);
@@ -259,6 +255,17 @@ void Window::resizeEvent(QResizeEvent* event)
     if (m_trafficLightsTitleBar && m_trafficLightsTitleBar->isVisible())
         m_trafficLightsTitleBar->setGeometry(0, 0, width(), TrafficLightsTitleBar::kTitleBarHeight);
 #endif
+}
+
+void Window::setLaunchSize(int width, int height)
+{
+    QSize target(width > 0 ? width : m_desiredSize.width(),
+                 height > 0 ? height : m_desiredSize.height());
+    m_desiredSize = target;  // what to grow back to when room returns
+    const QScreen* windowScreen = screen();
+    if (windowScreen && QGuiApplication::platformName() != QLatin1String("offscreen"))
+        target = target.boundedTo(windowScreen->availableGeometry().size());
+    resize(target);
 }
 
 void Window::showEvent(QShowEvent* event)
