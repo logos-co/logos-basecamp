@@ -531,13 +531,18 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
 
     if (qmlWidget->status() == QQuickWidget::Error) {
         qWarning() << "Failed to load ui_qml view" << request.name;
+        QString details;
         const auto errors = qmlWidget->errors();
-        for (const QQmlError& error : errors) qWarning() << error.toString();
+        for (const QQmlError& error : errors) {
+            qWarning() << error.toString();
+            details += error.toString() + QStringLiteral("\n");
+        }
         qmlWidget->deleteLater();
         if (viewHost) { viewHost->stop(); delete viewHost; }
         setLoading(request.name, false);
         emit pluginLoadFailed(request.name,
-            QStringLiteral("Failed to load QML view for ") + request.name);
+            QStringLiteral("Failed to load QML view for ") + request.name
+            + (details.isEmpty() ? QString() : QStringLiteral(":\n") + details));
         return;
     }
 

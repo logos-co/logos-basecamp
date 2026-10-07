@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { readFileSync, statSync, writeSync } from "node:fs";
 import {
-  assertResponsive, findByObjectName, makeTest, sleep,
+  assertNoNewQmlErrors, assertResponsive, findByObjectName, makeTest,
+  markQmlErrorBaseline, sleep,
 } from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
@@ -2754,6 +2755,81 @@ test("intents: the word ambiguous never reaches a requester", async (app) => {
   const r = await lastResult(app, anchor);
   if (typeof r === "string" && r.includes("ambiguous")) {
     throw new Error("internal resolution state leaked into an envelope");
+  }
+});
+
+// --- ui_qml load failure ---
+//
+// Regression guard: clicking a ui_qml app whose view fails to compile used
+// to show the sidebar spinner and then nothing. PluginLoader emitted
+// pluginLoadFailed and UIPluginManager re-emitted pluginLoadFailedNotice, but
+// the only consumer was the IntentBroker; the error text never reached the
+// user. Now the overlay's loadFailed dialog names the app and shows the error.
+//
+// nix/integration-test.nix seeds tests/fixtures/plugins/broken_view_fixture,
+// whose view uses an unknown type. Outside --ci the test skips when the
+// fixture is absent.
+const BROKEN_FIXTURE = "broken_view_fixture";
+const BROKEN_FIXTURE_LABEL = "Broken View Fixture";
+const LOAD_FAILED_DIALOG = "confirmationDialog.loadFailed";
+
+test("ui load failure: shows the loadFailed dialog with app name and error text", async (app) => {
+  const tileName = `sidebar.app.${BROKEN_FIXTURE}`;
+  const tile = await findByObjectName(app.inspector, tileName);
+  if (!tile) {
+    if (!CI_MODE) {
+      console.log(`    SKIP: ${tileName} not installed`);
+      return;
+    }
+    throw new Error(`${tileName} missing (the fixture is pre-seeded in --ci)`);
+  }
+
+  // The failure deliberately prints a QML compile error ("… is not a type").
+  // Scope the G-ERR gate around it: every new QML error since the epilogue's
+  // baseline must come from the fixture, then re-baseline so the epilogue
+  // only judges what happens after.
+  const logPath = process.env.BASECAMP_APP_LOG || null;
+  let logOffset = 0;
+  if (logPath) {
+    try { logOffset = statSync(logPath).size; } catch { logOffset = 0; }
+  }
+
+  await invoke(app, tile.id, "clicked", `clicking ${tileName}`);
+
+  await app.waitFor(async () => {
+    assertEq(await visibilityOf(app, LOAD_FAILED_DIALOG), true, `${LOAD_FAILED_DIALOG}.visible`);
+  }, { timeout: 15000, interval: 500, description: "loadFailed dialog to open" });
+
+  await app.expectTexts([
+    "Couldn't Load App",
+    `'${BROKEN_FIXTURE_LABEL}' failed to load. Details:`,
+  ]);
+
+  const details = await requireObject(app, `${LOAD_FAILED_DIALOG}.error`);
+  const detailsText = assertType(await evalOn(app, details.id, "text"), "string",
+                                 "loadFailed error text");
+  if (!detailsText.includes("NonExistentFixtureType")) {
+    throw new Error(`error details lack the QML compile error: ${detailsText.slice(0, 300)}`);
+  }
+
+  // The spinner must be gone — PluginLoader clears loading on every failure path.
+  const tileAfter = await findByObjectName(app.inspector, tileName);
+  if (!tileAfter) throw new Error(`${tileName} vanished after the failed load`);
+  assertEq(await evalOn(app, tileAfter.id, "loading"), false, `${tileName}.loading`);
+
+  const ok = await requireObject(app, `${LOAD_FAILED_DIALOG}.confirm`);
+  await invoke(app, ok.id, "clicked", "clicking the loadFailed OK button");
+  await app.waitFor(async () => {
+    assertEq(await visibilityOf(app, LOAD_FAILED_DIALOG), false, `${LOAD_FAILED_DIALOG}.visible`);
+  }, { timeout: 5000, interval: 250, description: "loadFailed dialog to close" });
+
+  if (logPath) {
+    let slice = "";
+    try { slice = readFileSync(logPath, "utf-8").slice(logOffset); } catch { slice = ""; }
+    assertNoNewQmlErrors(slice.split("\n")
+      .filter((line) => !line.includes(`/${BROKEN_FIXTURE}/`))
+      .join("\n"));
+    markQmlErrorBaseline();
   }
 });
 

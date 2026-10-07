@@ -38,6 +38,7 @@ Item {
                                   || upgradeCascadeDialog.visible
                                   || installGateDialog.visible
                                   || installErrorDialog.visible
+                                  || loadFailedDialog.visible
                                   || addApplicationDialog.visible
                                   || intentChooserDialog.visible
                                   || intentInstallDialog.visible
@@ -163,6 +164,16 @@ Item {
         id: installErrorDialog
         objectName: "confirmationDialog.installError"
         mode: "installError"
+        displayNameLookup: _dialogDeps.displayNameLookup
+    }
+
+    // A UI app failed to load (QML compile error, missing view, ui-host
+    // spawn/ready failure, ...). Informational only — PluginLoader has
+    // already cleaned up and cleared the sidebar loading state.
+    ConfirmationDialog {
+        id: loadFailedDialog
+        objectName: "confirmationDialog.loadFailed"
+        mode: "loadFailed"
         displayNameLookup: _dialogDeps.displayNameLookup
     }
 
@@ -301,6 +312,10 @@ Item {
 
         function onInstallFailureNoticeRequested(name, errorMessage) {
             installErrorDialog.openWithInstallError(name, errorMessage);
+        }
+
+        function onLoadFailureNoticeRequested(name, errorMessage) {
+            loadFailedDialog.openWithLoadError(name, errorMessage);
         }
 
         function onLaunchAppRequested(name) {
