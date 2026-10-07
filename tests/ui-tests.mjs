@@ -2502,6 +2502,7 @@ test("module inspector: interface view lists methods/events and calls a method",
   console.log(`    A22: calling ${INTERFACE_MODULE}.${methodName}${chosen.signature}`);
 
   const call = await requireObject(app, `pluginInterface.call.${methodName}`);
+  await evalOn(app, iface.id, 'resultText = ""');
   await invoke(app, call.id, "clicked", `clicking Call on ${methodName}`);
 
   // The result TextArea exists before the call (its enclosing box hides on
