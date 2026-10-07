@@ -91,6 +91,44 @@ nix run .#shell-preview
 
 Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and loads no plugins — its nix closure contains no Logos library at all, so a core rework cannot reach it. For mobile, see [`MOBILE-HANDOFF.md`](MOBILE-HANDOFF.md).
 
+#### Hot reloading Basecamp's own QML (`DEV_QML_PATH`)
+
+From the repo root:
+
+```bash
+nix run .#ui-dev-portable           # the portable build: the catalogue's apps install
+nix run .#ui-dev                    # the dev build
+# arguments pass through: nix run .#ui-dev-portable -- --user-dir /tmp/bc
+```
+
+Both run Basecamp with `DEV_QML_PATH=$PWD/src` and refuse to start outside a
+checkout. Pick by what you need from the package manager: the published
+catalogue ships only portable variants (`darwin-arm64`, `linux-amd64`, …), so a
+dev build lists it but can install nothing from it.
+
+| | Build | Installs | Data dir |
+|---|---|---|---|
+| `ui-dev-portable` | `.#bin-bundle-dir-inspector` | portable variants (the catalogue, `#install-portable`) | the real one (`…/Logos/LogosBasecamp`) |
+| `ui-dev` | `.#app` | `-dev` variants (`#install`) | `…/Logos/LogosBasecampDev` |
+
+`ui-dev-portable` works on your real Basecamp data; pass `--user-dir` to keep it
+apart. Setting `DEV_QML_PATH` by hand works on any build,
+`.#bin-bundle-dir` included. It is never on by default: the shell's QML runs
+outside the sandbox, so a default would run whatever `src/` the app was started
+from.
+
+Every shell QML file under `src/Basecamp/` then loads from your checkout, and
+saving one reloads the shell in place: no rebuild, no restart. Loaded apps and
+backends keep running; the shell's QML state (scroll positions, open dialogs)
+resets. A save that does not compile is logged and the next good one recovers.
+
+Still needs a restart: the singletons `BasecampIcons`, `AppColors` and
+`DownloadFormat`. Still needs a build: a new QML file (add it to
+`src/CMakeLists.txt`), C++ changes, and the design system (`Logos.Theme`,
+`Logos.Controls`), which is compiled in. `LOGOS_QML_HOT_RELOAD=0` loads from
+`src/` without watching. For an app's QML rather than the shell's, see
+`--qml-source` below.
+
 #### Standalone Mode (`--module`) — developing an app
 
 `--module` turns Basecamp into a host for exactly the apps you pass, one tab

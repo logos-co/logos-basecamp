@@ -483,6 +483,18 @@
           binBundleDirMock = withMainProgram (dirBundler appMockPortable);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
           appStandalonePortableBundle = withMainProgram (dirBundler appStandalonePortable);
+          mkUiDev = name: basecamp: pkgs.writeShellApplication {
+            inherit name;
+            text = ''
+              src="$PWD/src"
+              if [ ! -d "$src/Basecamp" ]; then
+                echo "${name}: no src/Basecamp under $PWD — run it from the logos-basecamp checkout" >&2
+                exit 1
+              fi
+              echo "${name}: shell QML from $src (saves are hot reloaded)"
+              DEV_QML_PATH="$src" exec ${basecamp} "$@"
+            '';
+          };
 
           # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
           integrationTest = import ./nix/integration-test.nix { inherit pkgs src logosQtMcp; appPkg = app; };
@@ -711,6 +723,17 @@
 
           # Default package
           default = app;
+        } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+          # Basecamp with the shell's QML hot reloaded from the checkout
+          # (DEV_QML_PATH, README "Hot reloading Basecamp's own QML"). Run from
+          # the repo root: `nix run .#ui-dev`; arguments pass through. Never a
+          # default of the app itself: shell QML runs unsandboxed.
+          #   ui-dev           the dev build (.#app): -dev module variants
+          #   ui-dev-portable  the portable build with the inspector: the
+          #                    variants the published catalogue ships
+          ui-dev = mkUiDev "logos-basecamp-ui-dev" "${app}/bin/LogosBasecamp";
+          ui-dev-portable = mkUiDev "logos-basecamp-ui-dev-portable"
+            "${binBundleDirInspector}/bin/LogosBasecamp";
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isWindows {
           # nix build .#packages.x86_64-windows.bin-installer
           bin-installer = windowsInstaller;
@@ -754,6 +777,15 @@
         bin-bundle-dir = {
           type = "app";
           program = "${self.packages.${system}.bin-bundle-dir}/bin/LogosBasecamp";
+        };
+      } // nixpkgs.lib.optionalAttrs (self.packages.${system} ? ui-dev) {
+        ui-dev = {
+          type = "app";
+          program = "${self.packages.${system}.ui-dev}/bin/logos-basecamp-ui-dev";
+        };
+        ui-dev-portable = {
+          type = "app";
+          program = "${self.packages.${system}.ui-dev-portable}/bin/logos-basecamp-ui-dev-portable";
         };
       });
 

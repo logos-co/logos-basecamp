@@ -11,8 +11,9 @@ nix build
 # Build + run directly
 nix build && ./result/bin/LogosBasecamp
 
-# Iterate on QML without rebuilding — relaunch to pick up edits.
-DEV_QML_PATH=$PWD/src nix build && DEV_QML_PATH=$PWD/src ./result/bin/LogosBasecamp
+# Iterate on the shell's QML without rebuilding — saves are hot reloaded.
+nix run .#ui-dev-portable # = DEV_QML_PATH=$PWD/src on the portable build; run from the repo root
+nix run .#ui-dev          # the same on the dev build (.#app)
 ```
 
 QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
@@ -20,27 +21,31 @@ QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
 embedded in the main_ui plugin. No runtime QML disk cache, so the qrc-keyed cache
 staleness bug doesn't apply.
 
-### `DEV_QML_PATH` — iterate on view layouts without rebuilding
+### `DEV_QML_PATH` — hot reload the shell's QML
 
-Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
-(typically `<repo>/src`, which contains `Basecamp/Sidebar/`,
-`Basecamp/Shell/`, etc.). MainContainer's three view-entry `setSource` calls
-will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
-embedded qrc resource. Relaunch the app to pick up edits.
+`nix run .#ui-dev-portable` / `.#ui-dev` (flake.nix `mkUiDev`, around
+`bin-bundle-dir-inspector` / `.#app`) set `DEV_QML_PATH` to `$PWD/src`; set by
+hand it works with any build. The catalogue ships only portable variants, so on
+the dev build the package manager can install nothing from it. Never default it in the app:
+shell QML runs unsandboxed. `src/ShellDevQml.{h,cpp}`:
 
-Covered entries:
-- `Basecamp/Sidebar/SidebarPanel.qml` (MainContainer)
-- `Basecamp/Shell/ContentViews.qml` (MainContainer)
-- `Basecamp/Shell/OverlayDialogs.qml` (MainContainer)
-- `Basecamp/Shell/WelcomePage.qml` (WorkspaceArea — central widget when no docks are open)
-
-Sub-components imported by those entries (anything reached via
-`import Basecamp.<Feature>`) still load from the embedded qrc — qt_add_qml_module's
-auto-generated qmldirs live in the build dir, not the source tree, so the
-engine has no on-disk qmldir to prefer over the embedded one. Editing a
-delegate/widget inside e.g. `Basecamp.Settings` requires a `nix build`.
-Convention matches `logos-standalone-app`'s `DEV_QML_PATH` (see that repo's
-README) extended for our multi-entry layout.
+- A URL interceptor on each shell engine (sidebar, content, overlay, welcome)
+  serves every `Basecamp.*` QML file from the source tree — entry files, sibling
+  files and module components alike — instead of the copy compiled into
+  main_ui. The embedded qmldirs stay in use, so `Basecamp.Backend`'s C++ types
+  are unchanged.
+- On save, every shell view is emptied, every engine's cache cleared, and each
+  view reloaded, then its root signals re-wired (`MainContainer::wireSidebar`,
+  `WorkspaceArea::wireWelcomePage`, the overlay's `overlayActiveChanged`). Each
+  file is loaded as `<file>?reload=<n>`, so nothing cached survives a reload.
+  QML state resets; the backend and loaded apps keep running.
+- Reload only on a real change (mtime/size): the watcher also fires on reads.
+- A save that does not compile is logged; the next good save brings it back.
+- Singletons (`BasecampIcons`, `AppColors`, `DownloadFormat`) need a restart:
+  an engine keeps their instances, and `QQmlEngine::clearSingletons()` also
+  drops Qt's own `Qt` object, breaking the design system's theme.
+- A new QML file must still be listed in `src/CMakeLists.txt` and built once.
+- `LOGOS_QML_HOT_RELOAD=0` loads from the source tree without watching.
 
 ## Testing
 
