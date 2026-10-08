@@ -10,7 +10,15 @@ let
   # compatible with older nixpkgs where the unversioned attribute still exists.
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
 
-  buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
+  buildInfoJson = import ./build-info.nix { inherit pkgs buildInfo; };
+
+  # All the compile reads: app/ (cmake -S app), metadata.json for the generator,
+  # and mock/ for mock builds. Docs, tests, QML in src/ and nix/ stay out of it.
+  compileSrc = pkgs.lib.fileset.toSource {
+    root = src;
+    fileset = pkgs.lib.fileset.unions ([ (src + "/app") (src + "/metadata.json") ]
+      ++ pkgs.lib.optional useMockBackend (src + "/mock"));
+  };
   # qtwebview is dead weight that becomes a hard blocker under cross.
   #
   # It propagates qtwebengine -- a full Chromium -- and that does not
@@ -133,15 +141,10 @@ let
 
     # ── app/generated: the ONE generated-header directory ──────────────────
     #
-    # Keep it the only one: app/utils/BuildInfo.h resolves logos_build_info.h
-    # with __has_include, so a second staged directory on the same include path
-    # would leave -I ORDER deciding which header wins.
+    # Keep it the only one: its headers are included by bare name, so a second
+    # staged directory on the same include path would leave -I ORDER deciding
+    # which header wins.
     mkdir -p ./app/generated
-
-    # Auto-generated build info header (version + commit hashes): main.cpp logs
-    # it at startup and MainUIBackend exposes it to the Dashboard.
-    cp ${buildInfoHeader} ./app/generated/logos_build_info.h
-    chmod +w ./app/generated/logos_build_info.h
 
     # Module-generated API headers. PackageCoordinator includes "logos_sdk.h",
     # whose umbrella pulls these in by bare name.
@@ -169,7 +172,7 @@ let
     # --general-only: the per-module wrappers come from the module outputs
     # copied above.
     echo "Running logos-cpp-generator (general-only)..."
-    logos-cpp-generator --metadata ${src}/metadata.json --general-only --output-dir ./app/generated
+    logos-cpp-generator --metadata ${compileSrc}/metadata.json --general-only --output-dir ./app/generated
 
     echo "Files in app/generated:"
     ls -la ./app/generated/
@@ -247,7 +250,8 @@ let
   compiled = pkgs.stdenv.mkDerivation {
     pname = "logos-basecamp-compiled";
     version = common.version;
-    inherit src buildInputs nativeBuildInputs preConfigure configurePhase buildPhase;
+    src = compileSrc;
+    inherit buildInputs nativeBuildInputs preConfigure configurePhase buildPhase;
 
     # Fixup (no strip, rpath, win-dll-link) runs once, on the assembled output.
     dontFixup = true;
@@ -349,7 +353,7 @@ pkgs.stdenv.mkDerivation rec {
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
     inherit compiled;
-    extraDirs = [ "modules" "plugins" ];
+    extraDirs = [ "modules" "plugins" "buildinfo" ];
     extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
       ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ]
       # Windows ONLY, and NOT because Windows needs extra Qt features -- it
@@ -923,6 +927,10 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
+    # Version + commit hashes, read at startup by app/utils/BuildInfo.h.
+    mkdir -p $out/buildinfo
+    cp ${buildInfoJson} $out/buildinfo/build-info.json
+
     # Logos.Theme / .Icons / .Controls are STATIC-linked into the main_ui PLUGIN,
     # not into this binary, and register into the process-wide QML registry when
     # Window loads the plugin at startup — before any UI plugin can import them.
@@ -934,8 +942,9 @@ WRAPPER_EOF
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then
       mkdir -p $out/share/applications $out/share/icons/hicolor/256x256/apps
-      cp ${src}/assets/logos-basecamp.desktop $out/share/applications/
-      cp ${src}/app/icons/logos.png $out/share/icons/hicolor/256x256/apps/logos-basecamp.png
+      # Path values, so only these two files (not the repo) are inputs here.
+      cp ${src + "/assets/logos-basecamp.desktop"} $out/share/applications/logos-basecamp.desktop
+      cp ${src + "/app/icons/logos.png"} $out/share/icons/hicolor/256x256/apps/logos-basecamp.png
     fi
 
     # Create a README for reference

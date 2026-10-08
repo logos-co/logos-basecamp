@@ -464,7 +464,7 @@
           #    was missing a plugin which is no longer missing. Re-measure
           #    before quoting them.
           #
-          #    (The cross build needs an x86_64-linux builder: logos_build_info.h
+          #    (The cross build needs an x86_64-linux builder: build-info.json
           #    is an x86_64-linux derivation, so it cannot run on an
           #    aarch64-darwin host without one.)
           binBundleDir = withMainProgram (dirBundler appDistributed);
