@@ -41,6 +41,19 @@ jobs:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
+      # One evaluation for the whole job: every later `nix build` hits the eval
+      # cache instead of re-evaluating the flake (2-6 min each). Keep the list
+      # in step with this job's `nix build` lines.
+      - name: Prefetch inputs and evaluate
+        continue-on-error: true
+        run: |
+          nix flake prefetch-inputs . || true
+          nix path-info --derivation \
+            .#bin-appimage \
+            .#link-gate \
+            .#link-gate-negative \
+            >/dev/null
+
       - name: Build bin-appimage
         run: nix build .#bin-appimage
 
@@ -51,11 +64,6 @@ jobs:
         run: |
           nix build .#link-gate --no-link -L
           nix build .#link-gate-negative --no-link -L
-
-      - name: Smoke test
-        run: |
-          nix build .#smoke-test --out-link result-smoke -L
-          cat result-smoke/smoke-test.log
 
       - name: Rename AppImage with architecture
         run: |
@@ -97,6 +105,17 @@ jobs:
         with:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      # See build-appimage: one evaluation for the whole job.
+      - name: Prefetch inputs and evaluate
+        continue-on-error: true
+        run: |
+          nix flake prefetch-inputs . || true
+          nix path-info --derivation \
+            .#packages.x86_64-windows.symbol-gate \
+            .#packages.x86_64-windows.symbol-gate-negative \
+            .#packages.x86_64-windows.bin-installer \
+            >/dev/null
 
       # This is the platform the gate exists for. PE has no symbol
       # interposition, so a duplicate runtime that Linux and macOS silently
@@ -143,6 +162,18 @@ jobs:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
+      # See build-appimage: one evaluation for the whole job.
+      - name: Prefetch inputs and evaluate
+        continue-on-error: true
+        run: |
+          nix flake prefetch-inputs . || true
+          nix path-info --derivation \
+            .#bin-macos-app \
+            .#link-gate \
+            .#link-gate-negative \
+            .#smoke-test-bundle \
+            >/dev/null
+
       - name: Build bin-macos-app
         run: nix build .#bin-macos-app
 
@@ -188,6 +219,31 @@ jobs:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
 
+      # See build-appimage: one evaluation for the whole job.
+      - name: Prefetch inputs and evaluate
+        continue-on-error: true
+        run: |
+          nix flake prefetch-inputs . || true
+          nix path-info --derivation \
+            .#unit-tests \
+            .#qml-tests \
+            .#sandbox-test \
+            .#smoke-test \
+            .#app-standalone \
+            .#app-standalone-portable \
+            .#standalone-rejects-module-dir \
+            .#standalone-test \
+            .#standalone-backend-test \
+            .#standalone-hot-reload-test \
+            .#integration-test \
+            .#shutdown-test \
+            .#host-services-test \
+            .#symbol-gate \
+            .#symbol-gate-negative \
+            .#app \
+            .#coverage \
+            >/dev/null
+
       - name: Unit tests
         run: nix build .#unit-tests -L
 
@@ -196,6 +252,13 @@ jobs:
 
       - name: Sandbox test
         run: nix build .#sandbox-test -L
+
+      # The dev app's smoke test runs here, where the dev app is built anyway,
+      # not in build-appimage, which only needs the portable app.
+      - name: Smoke test
+        run: |
+          nix build .#smoke-test --out-link result-smoke -L
+          cat result-smoke/smoke-test.log
 
       # Built so the cache carries them: module repos' `nix run .#ui-dev` runs
       # these hosts.
@@ -295,6 +358,28 @@ jobs:
         with:
           attic-token-ci: ${{ secrets.ATTIC_TOKEN_CI }}
           attic-token-public: ${{ secrets.ATTIC_TOKEN_PUBLIC }}
+
+      # See build-appimage: one evaluation for the whole job.
+      - name: Prefetch inputs and evaluate
+        continue-on-error: true
+        run: |
+          nix flake prefetch-inputs . || true
+          nix path-info --derivation \
+            .#unit-tests \
+            .#qml-tests \
+            .#sandbox-test \
+            .#app-standalone \
+            .#app-standalone-portable \
+            .#standalone-rejects-module-dir \
+            .#standalone-test \
+            .#standalone-backend-test \
+            .#standalone-hot-reload-test \
+            .#integration-test-bundle \
+            .#shutdown-test \
+            .#host-services-test-bundle \
+            .#symbol-gate \
+            .#symbol-gate-negative \
+            >/dev/null
 
       - name: Unit tests
         run: nix build .#unit-tests -L
