@@ -91,6 +91,123 @@ nix run .#shell-preview
 
 Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and loads no plugins — its nix closure contains no Logos library at all, so a core rework cannot reach it. For mobile, see [`MOBILE-HANDOFF.md`](MOBILE-HANDOFF.md).
 
+#### Hot reloading Basecamp's own QML (`DEV_QML_PATH`)
+
+From the repo root:
+
+```bash
+nix run .#ui-dev-portable           # the portable build: the catalogue's apps install
+nix run .#ui-dev                    # the dev build
+# arguments pass through: nix run .#ui-dev-portable -- --user-dir /tmp/bc
+```
+
+Both run Basecamp with `DEV_QML_PATH=$PWD/src` and refuse to start outside a
+checkout. Pick by what you need from the package manager: the published
+catalogue ships only portable variants (`darwin-arm64`, `linux-amd64`, …), so a
+dev build lists it but can install nothing from it.
+
+| | Build | Installs | Data dir |
+|---|---|---|---|
+| `ui-dev-portable` | `.#bin-bundle-dir-inspector` | portable variants (the catalogue, `#install-portable`) | the real one (`…/Logos/LogosBasecamp`) |
+| `ui-dev` | `.#app` | `-dev` variants (`#install`) | `…/Logos/LogosBasecampDev` |
+
+`ui-dev-portable` works on your real Basecamp data; pass `--user-dir` to keep it
+apart. Setting `DEV_QML_PATH` by hand works on any build,
+`.#bin-bundle-dir` included. It is never on by default: the shell's QML runs
+outside the sandbox, so a default would run whatever `src/` the app was started
+from.
+
+Every shell QML file under `src/Basecamp/` then loads from your checkout, and
+saving one reloads the shell in place: no rebuild, no restart. Loaded apps and
+backends keep running; the shell's QML state (scroll positions, open dialogs)
+resets. A save that does not compile is logged and the next good one recovers.
+
+Still needs a restart: the singletons `BasecampIcons`, `AppColors` and
+`DownloadFormat`. Still needs a build: a new QML file (add it to
+`src/CMakeLists.txt`), C++ changes, and the design system (`Logos.Theme`,
+`Logos.Controls`), which is compiled in. `LOGOS_QML_HOT_RELOAD=0` loads from
+`src/` without watching. For an app's QML rather than the shell's, see
+`--qml-source` below.
+
+#### Standalone Mode (`--module`) — developing an app
+
+`--module` turns Basecamp into a host for exactly the apps you pass, one tab
+each, for developing and testing them in the real runtime (sandbox, ui-host,
+intents):
+
+```bash
+nix run .#app-standalone -- \
+  --module ../my-app/result-install \
+  --modules-dir ../my-dependency/result-install \
+  --qml-source my_app=../my-app/src/qml
+```
+
+- `--module <root>` (repeatable) — an install root: a dir with `modules/`
+  and/or `plugins/`, as `nix build .#install` produces, or an lgpm install with
+  `--modules-dir <root>/modules --ui-plugins-dir <root>/plugins`. Each UI app in
+  it opens as a tab and is listed in the sidebar. A single module dir is
+  refused: it could only be scanned through its parent, which would expose
+  every module next to it — and let one satisfy a dependency your app does not
+  ship.
+- `--modules-dir <dir>` (repeatable) — dependencies and other apps (e.g. intent
+  providers) that are available but not opened. A provider opens on demand,
+  as in normal Basecamp.
+- `--qml-source <app>=<dir>` — load the app's view from its source tree (the
+  dir holding the view entry file) and rebuild it on every save of a `.qml`,
+  `.js` or `.mjs` under it. The backend keeps running; QML state resets. A
+  view that does not compile is logged and comes back on the next good save,
+  including at launch. `LOGOS_QML_HOT_RELOAD=0` loads from the source tree
+  without watching.
+- `--width` / `--height` — initial window size.
+
+Only `package_manager` is loaded — no downloader, Package Manager, App Manager
+or catalogue — and the sidebar shows the standalone apps plus Settings.
+Modules installed in the user directory are ignored, so they cannot shadow the
+ones you pass, and a `--module`/`--modules-dir` module takes precedence over a
+copy bundled with Basecamp. Data goes to `./.logos-basecamp-dev` unless
+`--user-dir` is given, and `--new-instance` is implied. QML `Settings` are
+stored as `LogosBasecampStandalone`, apart from the real Basecamp's.
+
+`--module` builds a host profile (`app/utils/HostProfile.h`) — module roots,
+apps to open, and which capabilities this host offers. The rest of Basecamp
+reads those capabilities and never checks for "standalone".
+
+`--module` works on any build; the build only decides what is bundled. An
+app must match the build: a dev build loads its `#install` output (`-dev`
+variants), a portable one its `#install-portable` output.
+
+| Build | Kind | Bundles |
+|---|---|---|
+| `.#app` | dev | everything Basecamp ships |
+| `.#bin-bundle-dir` | portable | everything Basecamp ships |
+| `.#app-standalone` | dev | only what `--module` loads (package_manager, capability_module, modules_state) |
+| `.#app-standalone-portable` | portable, QML inspector on | the same three |
+
+The two standalone builds exist for a faster cold build: they skip the Package
+Manager UI and storage. On a binary-cache hit there is no difference, and what
+`--module` shows is the same on all four.
+
+logos-module-builder's `nix run .` / `.#ui-dev` for UI modules run this mode,
+and `lib.<system>.mkPluginTest` (`nix/mkPluginTest.nix`) runs a module's
+`tests/*.mjs` against it headless, each file with a fresh user dir. Basecamp's
+own checks use it: `standalone-test` (a QML-only app calling a core dependency
+through the bridge), `standalone-backend-test` (the module builder's
+`ui-qml-backend` template, backend in ui-host) and
+`standalone-rejects-module-dir`.
+
+##### Moving from `logos-standalone-app`
+
+| `logos-standalone` | Basecamp |
+|---|---|
+| `<plugin-path>`, `-p/--plugin` (a plugin dir, `result/lib`, or a `.so`/`.dylib`) | `--module <install root>` — build it with `nix build .#install`. Raw library paths are dropped: Basecamp loads modules by manifest, which is what resolves dependencies and variants. |
+| `-m/--modules-dir` (replaces `../modules`) | `--modules-dir` (adds to Basecamp's bundled modules) |
+| `-l/--load <module>` | Dropped. List the module in `metadata.json` `dependencies`; Basecamp loads dependencies before the app. |
+| `-t/--title` | Dropped. The window is Basecamp's; each app's tab shows its `display_name`. |
+| `--width` / `--height` | Same. |
+| `-u/--user-dir` | Same; defaults to `./.logos-basecamp-dev` instead of the platform data dir. |
+| `DEV_QML_PATH` (hot reload) | `--qml-source <app>=<dir>`; `LOGOS_QML_HOT_RELOAD=0` still turns watching off. |
+| QML `Settings` under `LogosStandalone` | Under `LogosBasecampStandalone`. |
+
 #### Parallel Instances (`--user-dir`, `--new-instance`)
 
 **One Basecamp per data directory.** Start a second one against a directory

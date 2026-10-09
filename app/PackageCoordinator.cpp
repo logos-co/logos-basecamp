@@ -33,8 +33,10 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
                                CoreModuleManager* coreModuleManager,
                                UIPluginManager* uiPluginManager,
                                AppsModel* appsModel,
+                               const LogosBasecamp::HostProfile& hostProfile,
                                QObject* parent)
     : QObject(parent)
+    , m_hostProfile(hostProfile)
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
@@ -94,6 +96,13 @@ bool moduleIsLoaded(CoreModuleManager* core, const QString& name)
 
 } // namespace
 
+LogosAPIClient* PackageCoordinator::downloaderClient() const
+{
+    if (!m_logosAPI || !moduleIsLoaded(m_coreModuleManager, "package_downloader"))
+        return nullptr;
+    return m_logosAPI->getClient("package_downloader");
+}
+
 void PackageCoordinator::subscribeToPackageInstallationEvents()
 {
     if (!m_logosAPI) {
@@ -119,9 +128,16 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     // Configure the package_manager module's directories so it knows where
     // to install.
     logos.package_manager.setEmbeddedModulesDirectory(LogosBasecampPaths::embeddedModulesDirectory());
-    logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
     logos.package_manager.setEmbeddedUiPluginsDirectory(LogosBasecampPaths::embeddedPluginsDirectory());
-    logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    // The profile's roots go after the embedded dirs, so they win a name clash.
+    for (const QString& dir : m_hostProfile.coreModuleRoots)
+        logos.package_manager.addEmbeddedModulesDirectory(dir);
+    for (const QString& dir : m_hostProfile.uiPluginRoots)
+        logos.package_manager.addEmbeddedUiPluginsDirectory(dir);
+    if (m_hostProfile.useUserModules) {
+        logos.package_manager.setUserModulesDirectory(LogosBasecampPaths::modulesDirectory());
+        logos.package_manager.setUserUiPluginsDirectory(LogosBasecampPaths::pluginsDirectory());
+    }
 
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
@@ -175,7 +191,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         return;
     }
     if (!moduleIsLoaded(m_coreModuleManager, "package_downloader")) {
-        if (!m_warnedPackageDownloaderMissing) {
+        // Only worth a warning where the catalogue is expected.
+        if (m_hostProfile.packageCatalog && !m_warnedPackageDownloaderMissing) {
             m_warnedPackageDownloaderMissing = true;
             qWarning() << "PackageCoordinator: package_downloader is not loaded -- skipping its "
                           "event subscriptions; this will be retried automatically.";
@@ -715,9 +732,7 @@ void PackageCoordinator::remoteRefresh()
         emit appsLoadingChanged();
     }
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         // Downloader unreachable — fall back to a local re-sync
         refresh();
@@ -1212,9 +1227,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
 {
     m_catalogFetchInFlight = true;
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
 
     if (dlClient && dlClient->isConnected()) {
         withDownloaderStarted([this, dlClient, installedByName]() {
@@ -1307,6 +1320,8 @@ void PackageCoordinator::populateAppsModel(
         m_appsLoading = false;
         emit appsLoadingChanged();
     }
+
+    refreshActiveAddDialog();
 }
 
 // ── Package repository management ──────────────────────────────────────────
@@ -1407,9 +1422,7 @@ void PackageCoordinator::refreshRepositories()
     // Whoever asked shows them, so every refresh after this one follows.
     m_repositoriesWanted = true;
 
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
     const bool wasLoading = m_repositoriesLoadingCount > 0;
@@ -1455,9 +1468,7 @@ void invokeRepositoryMutation(PackageCoordinator* self,
 
 void PackageCoordinator::addRepository(const QString& url)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("add"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1471,9 +1482,7 @@ void PackageCoordinator::addRepository(const QString& url)
 
 void PackageCoordinator::removeRepository(const QString& url)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("remove"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1487,9 +1496,7 @@ void PackageCoordinator::removeRepository(const QString& url)
 
 void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("setEnabled"), url, false,
             QStringLiteral("package_downloader not connected"));
@@ -1504,9 +1511,7 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
 
 void PackageCoordinator::refreshDownloadSource()
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
     withDownloaderStarted([this, dlClient]() {
@@ -1527,9 +1532,7 @@ void PackageCoordinator::refreshDownloadSource()
 // The catalog refresh follows from the catalogChanged the downloader emits.
 void PackageCoordinator::setDownloadSource(const QString& source)
 {
-    LogosAPIClient* dlClient = m_logosAPI
-        ? m_logosAPI->getClient("package_downloader")
-        : nullptr;
+    LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) {
         emit repositoryOperationCompleted(QStringLiteral("setDownloadSource"), source, false,
             QStringLiteral("package_downloader not connected"));
@@ -2098,7 +2101,8 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                                                   const QString& repositoryUrl,
                                                   const QVariantMap& versionPins,
                                                   const QVariantMap& optionalSelection,
-                                                  const QVariantMap& optionalVersionPins)
+                                                  const QVariantMap& optionalVersionPins,
+                                                  bool requestOpen)
 {
     QVariantMap catalogRow =
         m_appsModel ? m_appsModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
@@ -2107,18 +2111,21 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
 
     const int epoch = ++m_dialogResolveEpoch[name];
     m_activeAddDialogName = name;
+    m_activeAddDialogRequest = {repositoryUrl, versionPins, optionalSelection, optionalVersionPins};
     m_addPreviewPending = true;
 
     qDebug() << "PackageCoordinator::runResolverAndOpenDialog" << name
              << "repo=" << repositoryUrl << "targetVersion=" << targetVersion
-             << "pins=" << versionPins.size() << "epoch=" << epoch;
+             << "pins=" << versionPins.size() << "epoch=" << epoch
+             << "requestOpen=" << requestOpen;
 
+    // A refresh keeps the rows on screen until the new resolve replaces them.
     QVariantList initialChanges;
-    if (m_installRegistry->isInFlight(name))
+    if (!requestOpen || m_installRegistry->isInFlight(name))
         initialChanges = m_lastResolvedChangesByName.value(name);
     // Sync stack frame only — QML may open the modal from this signal.
     emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
-                       /*requestOpen=*/true);
+                       requestOpen, /*resolutionPending=*/true);
 
     // For an installed app, optionals it does not have yet start unchecked, so
     // opening it does not turn Launch into Install.
@@ -2134,8 +2141,20 @@ void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
                 self->computeDepChanges(resolved, self->m_installedVersionByName);
             self->m_lastResolvedRawByName.insert(name, resolved);
             self->m_lastResolvedChangesByName.insert(name, changes);
-            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes, false);
+            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes,
+                                     /*requestOpen=*/false, /*resolutionPending=*/false);
         }, selectNew);
+}
+
+void PackageCoordinator::refreshActiveAddDialog()
+{
+    const QString name = m_activeAddDialogName;
+    // An install owns the dialog until it settles; refreshOverlayAfterInstall follows it.
+    if (name.isEmpty() || m_installRegistry->has(name)) return;
+    const AddDialogRequest request = m_activeAddDialogRequest;
+    runResolverAndOpenDialog(name, request.repositoryUrl, request.versionPins,
+                             request.optionalSelection, request.optionalVersionPins,
+                             /*requestOpen=*/false);
 }
 
 void PackageCoordinator::emitDialogMetadata(const QString& name,
@@ -2143,7 +2162,8 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
                                             const QString& targetVersion,
                                             const QVariantMap& catalogRow,
                                             const QVariantList& changes,
-                                            bool requestOpen)
+                                            bool requestOpen,
+                                            bool resolutionPending)
 {
     if (name != m_activeAddDialogName)
         return;
@@ -2182,7 +2202,7 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         : versionsList.first().toMap().value("manifest").toMap().value("version").toString();
 
     metadata["installStage"] = m_installRegistry->stage(name);
-    metadata["resolutionPending"] = requestOpen;
+    metadata["resolutionPending"] = resolutionPending;
     // An installed app whose optional selection changes something installs instead of launching.
     bool optionalChangesPending = false;
     for (const QVariant& v : changes) {
@@ -2230,9 +2250,10 @@ void PackageCoordinator::emitDialogMetadata(const QString& name,
         m_appsModel->setResolverOverlay(overlay);
     }
 
-    // Catalog placeholders are only for the pending first paint. The chosen
-    // graph is authoritative once resolution completes.
-    for (const QVariant& v : requestOpen ? collectCatalogRequired(name, repositoryUrl) : QVariantList{}) {
+    // Catalog placeholders are only for a pending paint with no graph yet. The
+    // chosen graph is authoritative once resolution completes.
+    const bool placeholders = resolutionPending && (requestOpen || changes.isEmpty());
+    for (const QVariant& v : placeholders ? collectCatalogRequired(name, repositoryUrl) : QVariantList{}) {
         const QString depName = v.toMap().value("name").toString();
         if (depName.isEmpty() || seen.contains(depName)) continue;
         seen.insert(depName);
@@ -2266,7 +2287,7 @@ void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
     const QVariantMap catalogRow =
         m_appsModel->rowDataByName(topLevelName, repositoryUrl);
     emitDialogMetadata(topLevelName, repositoryUrl, QString(), catalogRow, changes,
-                       /*requestOpen=*/false);
+                       /*requestOpen=*/false, /*resolutionPending=*/false);
 }
 
 void PackageCoordinator::confirmCatalogInstall(const QString& name,
