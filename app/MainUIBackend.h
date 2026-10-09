@@ -378,6 +378,10 @@ signals:
     void installFailureNoticeRequested(const QString& packageName,
                                        const QString& errorMessage);
 
+    // A UI app failed to load. Re-emit of UIPluginManager::pluginLoadFailedNotice
+    // for the QML overlay (wireIntents() still forwards it to the IntentBroker).
+    void loadFailureNoticeRequested(const QString& name, const QString& errorMessage);
+
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.

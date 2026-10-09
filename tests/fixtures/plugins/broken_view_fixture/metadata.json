@@ -1,0 +1,10 @@
+{
+  "name": "broken_view_fixture",
+  "display_name": "Broken View Fixture",
+  "version": "0.0.1",
+  "type": "ui_qml",
+  "category": "testing",
+  "description": "UI test fixture: a QML-only ui_qml app whose view fails to compile (test artifact, not a real app)",
+  "view": "qml/BrokenView.qml",
+  "dependencies": []
+}
