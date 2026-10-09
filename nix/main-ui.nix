@@ -10,7 +10,12 @@ pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-main-ui-plugin";
   version = common.version;
 
-  inherit src;
+  # The shell compiles src/ against app/interfaces/ only (see above), so the
+  # rest of the repo stays out of its inputs.
+  src = pkgs.lib.fileset.toSource {
+    root = src;
+    fileset = pkgs.lib.fileset.unions [ (src + "/src") (src + "/app/interfaces") ];
+  };
   inherit (common) meta;
 
   nativeBuildInputs = common.nativeBuildInputs;

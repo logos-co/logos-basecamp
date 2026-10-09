@@ -10,7 +10,15 @@ let
   # compatible with older nixpkgs where the unversioned attribute still exists.
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
 
-  buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
+  buildInfoJson = import ./build-info.nix { inherit pkgs buildInfo; };
+
+  # All the compile reads: app/ (cmake -S app), metadata.json for the generator,
+  # and mock/ for mock builds. Docs, tests, QML in src/ and nix/ stay out of it.
+  compileSrc = pkgs.lib.fileset.toSource {
+    root = src;
+    fileset = pkgs.lib.fileset.unions ([ (src + "/app") (src + "/metadata.json") ]
+      ++ pkgs.lib.optional useMockBackend (src + "/mock"));
+  };
   # qtwebview is dead weight that becomes a hard blocker under cross.
   #
   # It propagates qtwebengine -- a full Chromium -- and that does not
@@ -77,12 +85,7 @@ let
       pkgs.yaml-cpp
     ] ++ installedModules;
   };
-in
-pkgs.stdenv.mkDerivation rec {
-  pname = "logos-basecamp";
-  version = common.version;
 
-  inherit src;
   # Platform-specific build inputs for system webviews
   buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
@@ -105,10 +108,187 @@ pkgs.stdenv.mkDerivation rec {
     else
       []
   );
-  inherit (common) meta;
 
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
   nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdkBuild pkgs.patchelf pkgs.removeReferencesTo ];
+
+  preConfigure = ''
+    runHook prePreConfigure
+
+    # Set macOS deployment target to match Qt frameworks
+    export MACOSX_DEPLOYMENT_TARGET=12.0
+
+    # Copy logos-cpp-sdk headers to expected location
+    echo "Copying logos-cpp-sdk headers for app..."
+    mkdir -p ./logos-cpp-sdk/include/cpp
+    cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
+
+    # core/interface.h ships with logos-qt-host (it moved to logos-qt-sdk in
+    # the qt split, and on to the host runtime in the host split); the app
+    # finds it via LOGOS_QT_HOST_ROOT, so nothing to stage here anymore.
+
+    # Copy SDK library files to lib directory (no-op since the qt split — the
+    # base SDK is header-only; kept for older layouts)
+    echo "Copying SDK library files..."
+    mkdir -p ./logos-cpp-sdk/lib
+    if [ -f "${logosSdk}/lib/liblogos_sdk.dylib" ]; then
+      cp "${logosSdk}/lib/liblogos_sdk.dylib" ./logos-cpp-sdk/lib/
+    elif [ -f "${logosSdk}/lib/liblogos_sdk.so" ]; then
+      cp "${logosSdk}/lib/liblogos_sdk.so" ./logos-cpp-sdk/lib/
+    elif [ -f "${logosSdk}/lib/liblogos_sdk.a" ]; then
+      cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
+    fi
+
+    # ── app/generated: the ONE generated-header directory ──────────────────
+    #
+    # Keep it the only one: its headers are included by bare name, so a second
+    # staged directory on the same include path would leave -I ORDER deciding
+    # which header wins.
+    mkdir -p ./app/generated
+
+    # Module-generated API headers. PackageCoordinator includes "logos_sdk.h",
+    # whose umbrella pulls these in by bare name.
+    echo "Copying include files from logos-package-manager-module..."
+    if [ -d "${logosPackageManagerModule}/include" ]; then
+      cp -r "${logosPackageManagerModule}/include"/* ./app/generated/
+    else
+      echo "Warning: No include directory found in logos-package-manager-module"
+    fi
+
+    echo "Copying include files from logos-package-downloader-module..."
+    if [ -d "${logosPackageDownloaderModule}/include" ]; then
+      cp -r "${logosPackageDownloaderModule}/include"/* ./app/generated/
+    else
+      echo "Warning: No include directory found in logos-package-downloader-module"
+    fi
+
+    # Shared semver headers (logos/semver.hpp + its <semver/semver.hpp>) so
+    # AppsModel can use logos::semver::compare. Headers only — nothing here
+    # links liblgx.
+    cp -r "${logosPackageHeaders}/include/logos"  ./app/generated/
+    cp -r "${logosPackageHeaders}/include/semver" ./app/generated/
+
+    # logos-cpp-generator's general wrappers (logos_sdk.h / logos_sdk.cpp).
+    # --general-only: the per-module wrappers come from the module outputs
+    # copied above.
+    echo "Running logos-cpp-generator (general-only)..."
+    logos-cpp-generator --metadata ${compileSrc}/metadata.json --general-only --output-dir ./app/generated
+
+    echo "Files in app/generated:"
+    ls -la ./app/generated/
+
+    runHook postPreConfigure
+  '';
+
+  configurePhase = ''
+    runHook preConfigure
+
+    echo "Configuring logos-basecamp..."
+    echo "liblogos: ${logosLiblogos}"
+    echo "logos-module: ${logosModule}"
+    echo "cpp-sdk: ${logosSdk}"
+    echo "logos-design-system: ${logosDesignSystem}"
+
+    # Verify that the built components exist
+    test -d "${logosLiblogos}" || (echo "liblogos not found" && exit 1)
+    test -d "${logosModule}" || (echo "logos-module not found" && exit 1)
+    test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
+    test -d "${logosDesignSystem}" || (echo "logos-design-system not found" && exit 1)
+
+    ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) ''
+      echo "Copying logos-qt-mcp source for inspector..."
+      mkdir -p ./logos-qt-mcp
+      cp -r ${logosQtMcp}/* ./logos-qt-mcp/
+    ''}
+
+    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
+    # setup hook, so without it the cross-compilation flags nixpkgs computes are
+    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
+    # nowhere near the cause: CMake's FindThreads then probes for pthreads
+    # instead of Win32 threads, fails, and Qt6Config reports
+    # "Qt6 could not be found because dependency Threads could not be found".
+    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
+    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
+    cmake -S app -B build \
+      $cmakeFlags \
+      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
+      -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+      -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=FALSE \
+      -DCMAKE_INSTALL_RPATH="" \
+      -DCMAKE_SKIP_BUILD_RPATH=TRUE \
+      -DLOGOS_MODULE_ROOT=${logosModule} \
+      -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
+      -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
+      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
+      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
+      -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
+      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
+      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
+      -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
+      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
+      -DLOGOS_USE_MOCK_BACKEND=${if useMockBackend then "ON" else "OFF"} \
+      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
+      ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
+
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+
+    cmake --build build
+    echo "logos-basecamp built successfully!"
+
+    runHook postBuild
+  '';
+
+  # The C++ compile alone: only the binary leaves it. Modules, plugins and
+  # runtime libraries are staged by the assembly below, so bumping them no
+  # longer recompiles LogosBasecamp.
+  compiled = pkgs.stdenv.mkDerivation {
+    pname = "logos-basecamp-compiled";
+    version = common.version;
+    src = compileSrc;
+    inherit buildInputs nativeBuildInputs preConfigure configurePhase buildPhase;
+
+    # Fixup (no strip, rpath, win-dll-link) runs once, on the assembled output.
+    dontFixup = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      # Probe both names and FAIL if neither exists. The previous
+      # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
+      # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
+      # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+      _bc=""
+      for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+        if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
+      done
+      if [ -z "$_bc" ]; then
+        echo "Error: LogosBasecamp was not produced by the build" >&2
+        ls -la build 2>&1 >&2 | head -40 || true
+        exit 1
+      fi
+      mkdir -p $out/bin
+      cp "$_bc" $out/bin/
+
+      runHook postInstall
+    '';
+  };
+in
+pkgs.stdenv.mkDerivation rec {
+  pname = "logos-basecamp";
+  version = common.version;
+
+  # Assembly only. The same inputs as the compile keep the fixup hooks as before.
+  inherit buildInputs nativeBuildInputs;
+  dontUnpack = true;
+  dontConfigure = true;
+  dontBuild = true;
+  inherit (common) meta;
 
   # Provide Qt/GL runtime paths so the wrapper can inject them
   qtLibPath = pkgs.lib.makeLibraryPath (
@@ -167,85 +347,13 @@ pkgs.stdenv.mkDerivation rec {
     "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
   ]);
 
-  preConfigure = ''
-    runHook prePreConfigure
-
-    # Set macOS deployment target to match Qt frameworks
-    export MACOSX_DEPLOYMENT_TARGET=12.0
-
-    # Copy logos-cpp-sdk headers to expected location
-    echo "Copying logos-cpp-sdk headers for app..."
-    mkdir -p ./logos-cpp-sdk/include/cpp
-    cp -r ${logosSdk}/include/cpp/* ./logos-cpp-sdk/include/cpp/
-
-    # core/interface.h ships with logos-qt-host (it moved to logos-qt-sdk in
-    # the qt split, and on to the host runtime in the host split); the app
-    # finds it via LOGOS_QT_HOST_ROOT, so nothing to stage here anymore.
-
-    # Copy SDK library files to lib directory (no-op since the qt split — the
-    # base SDK is header-only; kept for older layouts)
-    echo "Copying SDK library files..."
-    mkdir -p ./logos-cpp-sdk/lib
-    if [ -f "${logosSdk}/lib/liblogos_sdk.dylib" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.dylib" ./logos-cpp-sdk/lib/
-    elif [ -f "${logosSdk}/lib/liblogos_sdk.so" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.so" ./logos-cpp-sdk/lib/
-    elif [ -f "${logosSdk}/lib/liblogos_sdk.a" ]; then
-      cp "${logosSdk}/lib/liblogos_sdk.a" ./logos-cpp-sdk/lib/
-    fi
-
-    # ── app/generated: the ONE generated-header directory ──────────────────
-    #
-    # Keep it the only one: app/utils/BuildInfo.h resolves logos_build_info.h
-    # with __has_include, so a second staged directory on the same include path
-    # would leave -I ORDER deciding which header wins.
-    mkdir -p ./app/generated
-
-    # Auto-generated build info header (version + commit hashes): main.cpp logs
-    # it at startup and MainUIBackend exposes it to the Dashboard.
-    cp ${buildInfoHeader} ./app/generated/logos_build_info.h
-    chmod +w ./app/generated/logos_build_info.h
-
-    # Module-generated API headers. PackageCoordinator includes "logos_sdk.h",
-    # whose umbrella pulls these in by bare name.
-    echo "Copying include files from logos-package-manager-module..."
-    if [ -d "${logosPackageManagerModule}/include" ]; then
-      cp -r "${logosPackageManagerModule}/include"/* ./app/generated/
-    else
-      echo "Warning: No include directory found in logos-package-manager-module"
-    fi
-
-    echo "Copying include files from logos-package-downloader-module..."
-    if [ -d "${logosPackageDownloaderModule}/include" ]; then
-      cp -r "${logosPackageDownloaderModule}/include"/* ./app/generated/
-    else
-      echo "Warning: No include directory found in logos-package-downloader-module"
-    fi
-
-    # Shared semver headers (logos/semver.hpp + its <semver/semver.hpp>) so
-    # AppsModel can use logos::semver::compare. Headers only — nothing here
-    # links liblgx.
-    cp -r "${logosPackageHeaders}/include/logos"  ./app/generated/
-    cp -r "${logosPackageHeaders}/include/semver" ./app/generated/
-
-    # logos-cpp-generator's general wrappers (logos_sdk.h / logos_sdk.cpp).
-    # --general-only: the per-module wrappers come from the module outputs
-    # copied above.
-    echo "Running logos-cpp-generator (general-only)..."
-    logos-cpp-generator --metadata ${src}/metadata.json --general-only --output-dir ./app/generated
-
-    echo "Files in app/generated:"
-    ls -la ./app/generated/
-
-    runHook postPreConfigure
-  '';
-
   # modules/ and plugins/ are carried into portable bundles by nix-bundle-dir.
   # extraClosurePaths lists Qt modules whose plugins/frameworks must be in
   # the bundle even though the app binary doesn't link against them directly
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
-    extraDirs = [ "modules" "plugins" ];
+    inherit compiled;
+    extraDirs = [ "modules" "plugins" "buildinfo" ];
     extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
       ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ]
       # Windows ONLY, and NOT because Windows needs extra Qt features -- it
@@ -590,102 +698,37 @@ pkgs.stdenv.mkDerivation rec {
     echo "PE import closure verified: $(_pe_roots | wc -l) root(s), $_imports_read import(s) read, 0 unresolved."
   '';
 
-  configurePhase = ''
-    runHook preConfigure
-
-    echo "Configuring logos-basecamp..."
-    echo "liblogos: ${logosLiblogos}"
-    echo "logos-module: ${logosModule}"
-    echo "cpp-sdk: ${logosSdk}"
-    echo "logos-design-system: ${logosDesignSystem}"
-
-    # Verify that the built components exist
-    test -d "${logosLiblogos}" || (echo "liblogos not found" && exit 1)
-    test -d "${logosModule}" || (echo "logos-module not found" && exit 1)
-    test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
-    test -d "${logosDesignSystem}" || (echo "logos-design-system not found" && exit 1)
-
-    ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) ''
-      echo "Copying logos-qt-mcp source for inspector..."
-      mkdir -p ./logos-qt-mcp
-      cp -r ${logosQtMcp}/* ./logos-qt-mcp/
-    ''}
-
-    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
-    # setup hook, so without it the cross-compilation flags nixpkgs computes are
-    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
-    # nowhere near the cause: CMake's FindThreads then probes for pthreads
-    # instead of Win32 threads, fails, and Qt6Config reports
-    # "Qt6 could not be found because dependency Threads could not be found".
-    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
-    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
-    cmake -S app -B build \
-      $cmakeFlags \
-      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
-      -GNinja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-      -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=FALSE \
-      -DCMAKE_INSTALL_RPATH="" \
-      -DCMAKE_SKIP_BUILD_RPATH=TRUE \
-      -DLOGOS_MODULE_ROOT=${logosModule} \
-      -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
-      -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
-      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
-      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
-      -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
-      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
-      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
-      -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
-      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
-      -DLOGOS_USE_MOCK_BACKEND=${if useMockBackend then "ON" else "OFF"} \
-      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
-      ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
-
-    runHook postConfigure
-  '';
-
-  buildPhase = ''
-    runHook preBuild
-
-    cmake --build build
-    echo "logos-basecamp built successfully!"
-
-    runHook postBuild
-  '';
-
   installPhase = ''
     runHook preInstall
 
     # Create output directories
     mkdir -p $out/bin $out/lib $out/modules $out/plugins
 
-    # Install app binary.
-    #
-    # Probe both names and FAIL if neither exists. The previous
-    # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
-    # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
-    # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+    # Install app binary, from the compile.
     _bc=""
-    for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+    for _cand in ${compiled}/bin/LogosBasecamp ${compiled}/bin/LogosBasecamp.exe; do
       if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
     done
     if [ -z "$_bc" ]; then
-      echo "Error: LogosBasecamp was not produced by the build" >&2
-      ls -la build 2>&1 >&2 | head -40 || true
+      echo "Error: no LogosBasecamp in ${compiled}/bin" >&2
       exit 1
     fi
+    # Each copy gets u+w: store files are read-only, and preFixup's patchelf
+    # (errors silenced) must still rewrite the binary.
     if true; then
       ${if portable then ''
         # Portable: install binary directly (nix-bundle-dir handles Qt paths)
         cp "$_bc" "$out/bin/$(basename "$_bc")"
+        chmod u+w "$out/bin/$(basename "$_bc")"
       '' else if pkgs.stdenv.hostPlatform.isWindows then ''
         # Windows: no shell wrapper -- a POSIX /bin/sh launcher cannot run
         # there, and Qt path setup belongs in a qt.conf beside the exe.
         cp "$_bc" "$out/bin/$(basename "$_bc")"
+        chmod u+w "$out/bin/$(basename "$_bc")"
       '' else ''
         # Dev: hide real binary, create wrapper that sets Qt env vars
         cp "$_bc" "$out/bin/.LogosBasecamp"
+        chmod u+w "$out/bin/.LogosBasecamp"
 
         cat > $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 #!/bin/sh
@@ -884,6 +927,10 @@ WRAPPER_EOF
     done
     echo "Pre-installed modules and plugins from install bundles"
 
+    # Version + commit hashes, read at startup by app/utils/BuildInfo.h.
+    mkdir -p $out/buildinfo
+    cp ${buildInfoJson} $out/buildinfo/build-info.json
+
     # Logos.Theme / .Icons / .Controls are STATIC-linked into the main_ui PLUGIN,
     # not into this binary, and register into the process-wide QML registry when
     # Window loads the plugin at startup — before any UI plugin can import them.
@@ -895,8 +942,9 @@ WRAPPER_EOF
     # Install desktop file and icon for FreeDesktop / Wayland icon lookup (Linux only)
     if [ "$(uname)" = "Linux" ]; then
       mkdir -p $out/share/applications $out/share/icons/hicolor/256x256/apps
-      cp ${src}/assets/logos-basecamp.desktop $out/share/applications/
-      cp ${src}/app/icons/logos.png $out/share/icons/hicolor/256x256/apps/logos-basecamp.png
+      # Path values, so only these two files (not the repo) are inputs here.
+      cp ${src + "/assets/logos-basecamp.desktop"} $out/share/applications/logos-basecamp.desktop
+      cp ${src + "/app/icons/logos.png"} $out/share/icons/hicolor/256x256/apps/logos-basecamp.png
     fi
 
     # Create a README for reference

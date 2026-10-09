@@ -938,7 +938,7 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 // --- Build info -----------------------------------------------------------
 //
 // Thin QML-facing wrappers over the shared LogosBasecampBuildInfo helper
-// (app/utils/BuildInfo.h), which reads the nix-generated logos_build_info.h.
+// (app/utils/BuildInfo.h), which reads the build-info.json nix/app.nix stages.
 
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
