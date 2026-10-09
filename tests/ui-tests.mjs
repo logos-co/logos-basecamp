@@ -1630,6 +1630,129 @@ test("apps inspector: search filters the table", async (app) => {
   }, { timeout: 5000, interval: 250, description: "cleared search to restore every row" });
 });
 
+// --- Settings (A18) — Apps Inspector unload/reload of a non-visible UI plugin ---
+//
+// "Non-visible" means loaded but not on screen: for a UI plugin, loaded and
+// docked are one state (UIPluginManager::onPluginLoaded always opens the
+// dock), so the test keeps the Settings section current while fixture A's
+// dock sits behind it. The reload is not silent either — loading reopens the
+// dock and flips the shell to the workspace section
+// (MainContainer::onPluginWindowRequested / onNavigateToApps) — so every
+// read goes through backend.uiModulesModel and the row's toggle, which stay
+// instantiated whatever section is current, never through what is on screen.
+
+// ModuleInstanceRoles (app/interfaces/BasecampModelRoles.h) A18 reads.
+const A18_ROLES = {
+  name: "Qt.UserRole + 1",      // NameRole
+  isLoaded: "Qt.UserRole + 9",  // IsLoadedRole
+  statusText: "Qt.UserRole + 12", // StatusTextRole — the badge's text
+};
+
+const FIXTURE_A_TOGGLE = `moduleRow.loadToggle.${FIXTURE_A.name}`;
+
+test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  if (await requireFixtureA(app, "A18", () => findFixtureATile(app),
+                            "fixture A sidebar tile to appear") === null) {
+    return;
+  }
+
+  // Fixture A's row in the source model, read on the welcome anchor
+  // (`backend` in scope there).
+  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
+    const m = backend.uiModulesModel;
+    for (let i = 0; i < m.rowCount(); i += 1) {
+      const idx = m.index(i, 0);
+      if (m.data(idx, ${A18_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
+        return JSON.stringify({
+          isLoaded: m.data(idx, ${A18_ROLES.isLoaded}),
+          statusText: m.data(idx, ${A18_ROLES.statusText}),
+        });
+      }
+    }
+    return "null";
+  })()`));
+
+  // A load flip rebuilds the row's delegate, so the toggle is re-found on
+  // every read rather than cached.
+  const toggleState = async () => {
+    const t = await findByObjectName(app.inspector, FIXTURE_A_TOGGLE);
+    if (!t) throw new Error(`${FIXTURE_A_TOGGLE} not in the QML tree`);
+    return {
+      id: t.id,
+      text: await evalOn(app, t.id, "text"),
+      enabled: await evalOn(app, t.id, "enabled"),
+    };
+  };
+
+  // The tile moves between the loaded/unloaded Repeaters on every flip (same
+  // objectName, new object), so presence is a retried re-find.
+  const requireTile = (when) => app.waitFor(() => findFixtureATile(app),
+    { timeout: 10000, interval: 250, description: `fixture A tile to be present ${when}` });
+
+  // One gate bundle per state: badge text (StatusTextRole, what the row's
+  // ModuleStatusBadge renders), source-model isLoaded, toggle text, tile.
+  const expectState = async (loaded, when) => {
+    await app.waitFor(async () => {
+      const row = await modelRow();
+      if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
+      assertEq(row.statusText, loaded ? "Loaded" : "Not loaded", `status badge text ${when}`);
+      assertEq(row.isLoaded, loaded, `uiModulesModel isLoaded ${when}`);
+      assertEq((await toggleState()).text, loaded ? "Unload" : "Load", `toggle text ${when}`);
+    }, { timeout: 10000, interval: 500,
+         description: `row to read ${loaded ? '"Loaded"' : '"Not loaded"'} ${when}` });
+    await requireTile(when);
+  };
+
+  // Setup: make fixture A loaded — A4 closes the dock and A7 leaves it open,
+  // so it can be in either state here.
+  const before = await modelRow();
+  if (before === null || before.isLoaded !== true) {
+    if (!(await openFixtureA(app, "A18", welcome.id, workspace.id))) return;
+  }
+
+  // Settings → Apps Inspector with the shared search empty, so the row is in
+  // the proxy whatever an earlier test typed.
+  await openAppsInspector(app);
+  const search = await searchFieldOn(app, "settings.searchField");
+  await search.normalize();
+  await requireObject(app, "appsInspector.table");
+
+  // Signal-level click (see "Shared helpers"). callMethod ignores `enabled`,
+  // so the not-busy check is part of the click, not just politeness.
+  const clickToggle = (expectedText, what) => app.waitFor(async () => {
+    const t = await toggleState();
+    assertEq(t.text, expectedText, `${FIXTURE_A_TOGGLE} text`);
+    assertEq(t.enabled, true, `${FIXTURE_A_TOGGLE} enabled`);
+    await invoke(app, t.id, "clicked", what);
+  }, { timeout: 10000, interval: 500, description: what });
+
+  // Before the unload: proves the setup, so the unload is not vacuous.
+  await expectState(true, "before unload");
+
+  // The unload is queued behind the click (UIPluginManager::unloadUiModule).
+  await clickToggle("Unload", "clicking the toggle to unload");
+  await expectState(false, "after unload");
+
+  await clickToggle("Load", "clicking the toggle to reload");
+  await expectState(true, "after reload");
+
+  // Restore: the reload reopened the dock; closing it unloads again, ending
+  // with dock count 0, the row "Not loaded" and the search empty — the
+  // defined state the tests that follow start from.
+  await waitForDockCount(app, workspace.id, 1, "reload to reopen fixture A's dock");
+  await closeFixtureADock(app, workspace.id, "restore: fixture A dock to close");
+  await app.waitFor(async () => {
+    const row = await modelRow();
+    if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
+    assertEq(row.isLoaded, false, "uiModulesModel isLoaded after restore");
+    assertEq(row.statusText, "Not loaded", "status badge text after restore");
+  }, { timeout: 10000, interval: 500,
+       description: 'row to read "Not loaded" after restore' });
+  await search.expectText("");
+});
+
 // --- Package Manager ---
 //
 // PMUI is no longer launched from the sidebar app launcher (filtered out
