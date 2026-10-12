@@ -55,6 +55,13 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   # themselves, which reads as a pass.
   ${pkgs.bash}/bin/bash ${src}/tests/fixtures/intents/stage.sh "$LOGOS_USER_DIR"
 
+  # A deliberately broken QML-only ui_qml app, so ui-tests.mjs can assert that
+  # a view-load failure is surfaced to the user (loadFailed dialog) instead of
+  # a spinner that silently disappears.
+  mkdir -p "$LOGOS_USER_DIR/plugins"
+  cp -r ${src}/tests/fixtures/plugins/broken_view_fixture "$LOGOS_USER_DIR/plugins/"
+  chmod -R u+w "$LOGOS_USER_DIR/plugins/broken_view_fixture"
+
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 

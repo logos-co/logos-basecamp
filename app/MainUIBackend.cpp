@@ -125,6 +125,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,              &MainUIBackend::navigateToApps);
     connect(m_uiPluginManager, &UIPluginManager::packageInstallFailedNotice,
             this,              &MainUIBackend::installFailureNoticeRequested);
+    connect(m_uiPluginManager, &UIPluginManager::pluginLoadFailedNotice,
+            this,              &MainUIBackend::loadFailureNoticeRequested);
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
             this,              &MainUIBackend::missingDepsPopupRequested);
     connect(m_uiPluginManager, &UIPluginManager::unloadCascadeConfirmationRequested,
