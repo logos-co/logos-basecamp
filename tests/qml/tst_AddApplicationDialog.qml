@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+import Basecamp.Backend 1.0
 
 // A real module here, not the directory import the Shell tests use: this
 // dialog reaches the AppColors and DownloadFormat singletons, which are
@@ -320,6 +321,88 @@ TestCase {
         verify(!box.enabled, "nothing to opt out of");
         var combo = find(host, "packageRow.version.modules_state");
         verify(!combo.visible, "no version picker");
+        cleanupHost(host);
+    }
+
+    SignalSpy { id: openedSpy; signalName: "opened" }
+    SignalSpy { id: requestSpy; signalName: "versionChangeRequested" }
+
+    // PackageCoordinator::emitDialogMetadata for an installed target_app 1.2.0
+    // with one installed optional and one it does not have yet.
+    function installedAppMetadata(releasedAt, installStatus, pending) {
+        return { name: "target_app", displayName: "Target App", repositoryUrl: "https://repo/",
+                 selectedVersion: "1.2.0", installedVersion: "1.2.0", latestVersion: "1.2.0",
+                 installStatus: installStatus,
+                 isInstalled: installStatus === InstallStatus.Installed,
+                 resolutionPending: pending, optionalChangesPending: false,
+                 versions: [{ manifest: { version: "1.2.0" }, releasedAt: releasedAt }],
+                 optionalPackages: [
+                     { name: "extra_module", displayName: "Extra", version: "1.0.0",
+                       installedVersion: "1.0.0", action: "installed", selected: true,
+                       versions: [{ manifest: { version: "1.0.0" } }] },
+                     { name: "other_module", displayName: "Other", version: "2.0.0",
+                       action: "install", selected: false,
+                       versions: [{ manifest: { version: "2.0.0" } },
+                                  { manifest: { version: "1.9.0" } }] }] };
+    }
+
+    // OverlayDialogs.onAddApplicationDataUpdated.
+    function deliver(host, metadata) {
+        host.dialog.metadata = metadata;
+        host.dialog.installStage = metadata.installStage || InstallStage.None;
+        waitForRendering(testCase);
+    }
+
+    // The catalog moves under an open dialog (PackageCoordinator::refreshActiveAddDialog):
+    // the app was republished under the same version, so the backend sends the
+    // same app again, pending then resolved, with no requestOpen. The header and
+    // button follow it; the user's optional choices stay, and nothing reopens.
+    function test_a_catalog_change_while_open_turns_launch_into_reinstall() {
+        var host = hostComp.createObject(testCase, { height: testCase.roomyWindow });
+        host.dialog.requiredPackagesModel = modelWith(1);
+        openedSpy.target = host.dialog;
+        openedSpy.clear();
+        requestSpy.target = host.dialog;
+        requestSpy.clear();
+
+        var before = "2026-09-01T12:00:00Z";
+        var after = "2026-10-05T12:00:00Z";
+        host.dialog.openWith(installedAppMetadata(before, InstallStatus.Installed, true));
+        deliver(host, installedAppMetadata(before, InstallStatus.Installed, false));
+        tryCompare(openedSpy, "count", 1);
+        var primary = find(host, "addApplicationDialog.primaryButton");
+        compare(primary.text, "Launch");
+
+        // The user opts out of one optional and pins another's version.
+        mouseClick(find(host, "addApplicationDialog.optional.extra_module"));
+        compare(requestSpy.count, 1, "the opt-out re-resolves");
+        compare(requestSpy.signalArguments[0][3], { extra_module: false });
+        find(host, "packageRow.version.other_module").activated(1);
+        compare(requestSpy.count, 2, "the version pick re-resolves");
+        compare(requestSpy.signalArguments[1][3], { extra_module: false });
+        compare(requestSpy.signalArguments[1][4], { other_module: "1.9.0" });
+        deliver(host, installedAppMetadata(before, InstallStatus.Installed, false));
+        compare(primary.text, "Launch", "neither choice changes anything installed");
+
+        deliver(host, installedAppMetadata(after, InstallStatus.DifferentHash, true));
+        compare(primary.text, "Checking packages\u2026");
+        verify(!primary.enabled, "no install from a plan that is still resolving");
+        compare(find(host, "addApplicationDialog.releasedText").text,
+                new Date(after).toLocaleDateString(Qt.locale(), Locale.ShortFormat),
+                "the header follows the new catalog row at once");
+
+        deliver(host, installedAppMetadata(after, InstallStatus.DifferentHash, false));
+        compare(primary.text, "Reinstall");
+        verify(primary.enabled);
+
+        verify(host.dialog.visible, "still open");
+        compare(openedSpy.count, 1, "and never reopened");
+        compare(requestSpy.count, 2, "the refresh asks the backend for nothing");
+        verify(!find(host, "addApplicationDialog.optional.extra_module").checked,
+               "the opt-out survives");
+        compare(find(host, "packageRow.version.other_module").displayText, "v.1.9.0",
+                "and so does the pin");
+
         cleanupHost(host);
     }
 }

@@ -5,6 +5,7 @@ import Logos.Theme
 import Logos.Controls
 
 import Basecamp.AppManager
+import Basecamp.Common
 import Basecamp.Backend 1.0
 
 import Basecamp.Icons
@@ -96,10 +97,23 @@ Item {
 
     implicitWidth: 1000
 
+    // Without the catalogue there is nothing to search or discover; this tab
+    // then only shows when every app tab is closed.
+    readonly property bool catalogAvailable:
+        typeof backend === "undefined" || backend === null || backend.packageCatalog !== false
+
+    EmptyView {
+        anchors.fill: parent
+        visible: !root.catalogAvailable
+        title: qsTr("No app open")
+        subtitle: qsTr("Open one from the sidebar.")
+    }
+
     LogosScrollView {
         id: scroller
 
         anchors.fill: parent
+        visible: root.catalogAvailable
 
         Item {
             width: scroller.availableWidth

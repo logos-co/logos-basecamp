@@ -11,8 +11,9 @@ nix build
 # Build + run directly
 nix build && ./result/bin/LogosBasecamp
 
-# Iterate on QML without rebuilding — relaunch to pick up edits.
-DEV_QML_PATH=$PWD/src nix build && DEV_QML_PATH=$PWD/src ./result/bin/LogosBasecamp
+# Iterate on the shell's QML without rebuilding — saves are hot reloaded.
+nix run .#ui-dev-portable # = DEV_QML_PATH=$PWD/src on the portable build; run from the repo root
+nix run .#ui-dev          # the same on the dev build (.#app)
 ```
 
 QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
@@ -20,27 +21,31 @@ QML lives in feature-axis qt_add_qml_module modules (Basecamp.Sidebar,
 embedded in the main_ui plugin. No runtime QML disk cache, so the qrc-keyed cache
 staleness bug doesn't apply.
 
-### `DEV_QML_PATH` — iterate on view layouts without rebuilding
+### `DEV_QML_PATH` — hot reload the shell's QML
 
-Point `DEV_QML_PATH` at a directory whose layout mirrors the QML URI hierarchy
-(typically `<repo>/src`, which contains `Basecamp/Sidebar/`,
-`Basecamp/Shell/`, etc.). MainContainer's three view-entry `setSource` calls
-will read from `$DEV_QML_PATH/Basecamp/<Feature>/<Entry>.qml` instead of the
-embedded qrc resource. Relaunch the app to pick up edits.
+`nix run .#ui-dev-portable` / `.#ui-dev` (flake.nix `mkUiDev`, around
+`bin-bundle-dir-inspector` / `.#app`) set `DEV_QML_PATH` to `$PWD/src`; set by
+hand it works with any build. The catalogue ships only portable variants, so on
+the dev build the package manager can install nothing from it. Never default it in the app:
+shell QML runs unsandboxed. `src/ShellDevQml.{h,cpp}`:
 
-Covered entries:
-- `Basecamp/Sidebar/SidebarPanel.qml` (MainContainer)
-- `Basecamp/Shell/ContentViews.qml` (MainContainer)
-- `Basecamp/Shell/OverlayDialogs.qml` (MainContainer)
-- `Basecamp/Shell/WelcomePage.qml` (WorkspaceArea — central widget when no docks are open)
-
-Sub-components imported by those entries (anything reached via
-`import Basecamp.<Feature>`) still load from the embedded qrc — qt_add_qml_module's
-auto-generated qmldirs live in the build dir, not the source tree, so the
-engine has no on-disk qmldir to prefer over the embedded one. Editing a
-delegate/widget inside e.g. `Basecamp.Settings` requires a `nix build`.
-Convention matches `logos-standalone-app`'s `DEV_QML_PATH` (see that repo's
-README) extended for our multi-entry layout.
+- A URL interceptor on each shell engine (sidebar, content, overlay, welcome)
+  serves every `Basecamp.*` QML file from the source tree — entry files, sibling
+  files and module components alike — instead of the copy compiled into
+  main_ui. The embedded qmldirs stay in use, so `Basecamp.Backend`'s C++ types
+  are unchanged.
+- On save, every shell view is emptied, every engine's cache cleared, and each
+  view reloaded, then its root signals re-wired (`MainContainer::wireSidebar`,
+  `WorkspaceArea::wireWelcomePage`, the overlay's `overlayActiveChanged`). Each
+  file is loaded as `<file>?reload=<n>`, so nothing cached survives a reload.
+  QML state resets; the backend and loaded apps keep running.
+- Reload only on a real change (mtime/size): the watcher also fires on reads.
+- A save that does not compile is logged; the next good save brings it back.
+- Singletons (`BasecampIcons`, `AppColors`, `DownloadFormat`) need a restart:
+  an engine keeps their instances, and `QQmlEngine::clearSingletons()` also
+  drops Qt's own `Qt` object, breaking the design system's theme.
+- A new QML file must still be listed in `src/CMakeLists.txt` and built once.
+- `LOGOS_QML_HOT_RELOAD=0` loads from the source tree without watching.
 
 ## Testing
 
@@ -129,6 +134,15 @@ A `basecamp://` URL from a browser becomes an intent. `SingleInstanceGuard` (soc
 Two invariants, both tested: a link submits under **its own** requester name, never `main_ui`, or the broker would skip the chooser and every web link would dispatch with no consent; and an app's capability is unreachable from a URL until its author sets `"web": true` on the `provides` entry.
 
 Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `Shell/OverlayDialogs.qml`, fixtures in `tests/fixtures/intents/`. Full design and known limitations: `docs/app-to-app-intents.md`.
+
+### Host profile and standalone mode (`app/utils/HostProfile.h`, `app/utils/StandaloneMode.h`)
+`main.cpp` builds one `HostProfile` and passes it down `Window` → `MainUIBackend` → `UIPluginManager` / `PackageCoordinator`. Components read capabilities, never "is this standalone". `StandaloneMode` only builds the dev-host profile from `--module` (install roots only — a single module dir is refused, it would expose its siblings) `--modules-dir` and `--qml-source` (into `qmlSources`).
+- `main.cpp`: scan roots, user modules dir, `package_downloader`, URL scheme, single instance, default user dir and application name — all from the profile.
+- `PackageCoordinator`: profile roots via `addEmbedded*Directory`; user dirs only if `useUserModules`. The downloader subscription depends only on whether the downloader is loaded.
+- `UIPluginManager`: `openStartupApps()` opens `appsToOpen` once dependency data is ready; `launcherApps()` filters when `launcherLimitedToOpenedApps`; an app in `qmlSources` gets its `qmlViewPath` from the source tree and a `hotReloadDir`.
+- `PluginLoader` / `QmlHotReloadView` (`app/QmlHotReload.h`): with `hotReloadDir`, the app's tab is a `QmlHotReloadView` that owns the `QQuickWidget` and replaces it on save. The old view and engine are deleted before the new one is built — a surviving engine keeps `.pragma library` JS and `.mjs` stale. The bridge moves to the new engine; `WorkspaceArea` finds the view as the container's direct `QQuickWidget` child.
+- The shell reads `backend.availableSections` (Sidebar, `MainContainer`'s redirect), `repositoryManagement` (Settings), `packageCatalog` (WelcomePage) and `devHost` (sidebar label). A backend without them (shell-preview) gets the full shell.
+- `flake.nix`: `app-standalone` (dev) and `app-standalone-portable` (portable, inspector on) bundle only what `--module` loads; `lib.<system>.mkPluginTest`; checks `standalone-test`, `standalone-backend-test`, `standalone-rejects-module-dir`.
 
 ### Construction & Destruction Order
 CoreModuleManager is constructed first, UIPluginManager second (receives CoreModuleManager), PackageCoordinator third (receives both). UIPluginManager's `setPackageCoordinator` is called after all three exist, closing the cycle and wiring the `uiPluginsFetched`/`uiModulesChanged`/`launcherAppsChanged`/`coreModulesChanged` signal flow. Qt's reverse-order child destruction tears PackageCoordinator down first (stops emitting), then UIPluginManager (tears down widgets while the C API handle is still valid), then CoreModuleManager.

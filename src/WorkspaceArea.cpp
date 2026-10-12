@@ -1,4 +1,5 @@
 #include "WorkspaceArea.h"
+#include "ShellDevQml.h"
 
 #include <QApplication>
 #include <QBoxLayout>
@@ -34,6 +35,14 @@
 #include <QWheelEvent>
 
 namespace {
+// An app's view: the widget itself, or the one a host wraps it in (the app
+// side's hot-reload container replaces its QQuickWidget on every save).
+QQuickWidget* appQuickWidget(QWidget* w)
+{
+    if (auto* qw = qobject_cast<QQuickWidget*>(w)) return qw;
+    return w ? w->findChild<QQuickWidget*>(QString(), Qt::FindDirectChildrenOnly) : nullptr;
+}
+
 class ZeroTitleWidget : public QWidget {
 public:
     explicit ZeroTitleWidget(QWidget* parent = nullptr) : QWidget(parent) {
@@ -143,27 +152,6 @@ private:
     CornerCutOverlay* m_cornerOverlay = nullptr;
 };
 
-// DEV_QML_PATH helpers — mirror the ones in MainContainer.cpp so
-// WelcomePage.qml participates in the same live-edit flow. If we grow
-// more shell-level QQuickWidget hosts, extract to a shared header.
-QString devQmlRoot() {
-    const QString dev = QString::fromUtf8(qgetenv("DEV_QML_PATH")).trimmed();
-    if (dev.isEmpty()) return QString();
-    if (!QFileInfo(dev).isDir()) return QString();
-    return dev;
-}
-QUrl resolveQmlView(const QString& relPath, const QString& qrcFallback) {
-    const QString root = devQmlRoot();
-    if (root.isEmpty()) return QUrl(qrcFallback);
-    const QString fullPath = QDir(root).absoluteFilePath(relPath);
-    if (!QFile::exists(fullPath)) return QUrl(qrcFallback);
-    return QUrl::fromLocalFile(fullPath);
-}
-void applyDevQmlImportPath(QQmlEngine* engine) {
-    const QString root = devQmlRoot();
-    if (!root.isEmpty()) engine->addImportPath(root);
-}
-
 constexpr int kTabBarInsetPx = 24;
 const QString kTabBarSpacerName = QStringLiteral("__tabbar_spacer__");
 
@@ -244,11 +232,10 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
         m_welcomeWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
         m_welcomeWidget->setClearColor(QColor("#171717"));
         m_welcomeWidget->setMinimumSize(300, 200);
-        applyDevQmlImportPath(m_welcomeWidget->engine());
         m_welcomeWidget->rootContext()->setContextProperty("backend", backend);
-        m_welcomeWidget->setSource(resolveQmlView(
-            QStringLiteral("Basecamp/Shell/WelcomePage.qml"),
-            QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/WelcomePage.qml")));
+        ShellDevQml::load(m_welcomeWidget,
+            QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/WelcomePage.qml")),
+            [this](QObject* root) { wireWelcomePage(root); });
 
         if (m_welcomeWidget->status() == QQuickWidget::Error) {
             qWarning() << "WorkspaceArea: WelcomePage.qml failed to load:"
@@ -283,23 +270,7 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
 
         m_welcomeWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
-        // Forward the QML navigation signals up to consumers.
-        if (QObject* rootObj = m_welcomeWidget->rootObject()) {
-            connect(rootObj, SIGNAL(discoverApplicationsClicked()),
-                    this,    SIGNAL(discoverApplicationsClicked()));
-            connect(rootObj, SIGNAL(managePackagesClicked()),
-                    this,    SIGNAL(managePackagesClicked()));
-            connect(rootObj, SIGNAL(reopenAppRequested(QString)),
-                    this,    SIGNAL(reopenAppRequested(QString)));
-            connect(rootObj, SIGNAL(appActivated(QString,QString)),
-                    this,    SIGNAL(appActivated(QString,QString)));
-            connect(rootObj, SIGNAL(packageActivated(QString)),
-                    this,    SIGNAL(packageActivated(QString)));
-            connect(rootObj, SIGNAL(packageInstallRequested(QString)),
-                    this,    SIGNAL(packageInstallRequested(QString)));
-            connect(rootObj, SIGNAL(showAllResultsRequested(QString,QString)),
-                    this,    SIGNAL(showAllResultsRequested(QString,QString)));
-        } else {
+        if (!m_welcomeWidget->rootObject()) {
             qWarning() << "WorkspaceArea: WelcomePage.qml loaded but "
                           "rootObject is null — navigation not wired.";
         }
@@ -797,6 +768,24 @@ void WorkspaceArea::syncWelcomeVisibility()
     if (!welcomeIsCurrent) clearWelcomeSearch();
 }
 
+void WorkspaceArea::wireWelcomePage(QObject* root)
+{
+    connect(root, SIGNAL(discoverApplicationsClicked()),
+            this,    SIGNAL(discoverApplicationsClicked()));
+    connect(root, SIGNAL(managePackagesClicked()),
+            this,    SIGNAL(managePackagesClicked()));
+    connect(root, SIGNAL(reopenAppRequested(QString)),
+            this,    SIGNAL(reopenAppRequested(QString)));
+    connect(root, SIGNAL(appActivated(QString,QString)),
+            this,    SIGNAL(appActivated(QString,QString)));
+    connect(root, SIGNAL(packageActivated(QString)),
+            this,    SIGNAL(packageActivated(QString)));
+    connect(root, SIGNAL(packageInstallRequested(QString)),
+            this,    SIGNAL(packageInstallRequested(QString)));
+    connect(root, SIGNAL(showAllResultsRequested(QString,QString)),
+            this,    SIGNAL(showAllResultsRequested(QString,QString)));
+}
+
 QQuickWidget* WorkspaceArea::activeDockWidget() const
 {
     for (auto it = m_docks.cbegin(); it != m_docks.cend(); ++it) {
@@ -805,7 +794,7 @@ QQuickWidget* WorkspaceArea::activeDockWidget() const
         QWidget* dockChild = dock->widget();
         if (auto* card = dynamic_cast<DockCard*>(dockChild))
             dockChild = card->pluginWidget();
-        if (auto* qw = qobject_cast<QQuickWidget*>(dockChild))
+        if (auto* qw = appQuickWidget(dockChild))
             return qw;
     }
     return nullptr;
@@ -820,7 +809,7 @@ void WorkspaceArea::updateQmlPluginActiveStates()
         // Plugin widgets are wrapped in DockCard; unwrap before casting.
         if (auto* card = dynamic_cast<DockCard*>(dockChild))
             dockChild = card->pluginWidget();
-        auto* qmlWidget = qobject_cast<QQuickWidget*>(dockChild);
+        auto* qmlWidget = appQuickWidget(dockChild);
         if (!qmlWidget) continue;
         const bool isActive = workspaceVisible
                               && !dock->visibleRegion().isEmpty();

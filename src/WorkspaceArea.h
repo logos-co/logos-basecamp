@@ -71,6 +71,7 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
+    void wireWelcomePage(QObject* root);
     void customizeTabBarStyle(QTabBar* tabBar);
     void installTabBarCloseButtons(QTabBar* tabBar);
     void insetTabBarGeometry(QTabBar* tabBar, int insetPx);

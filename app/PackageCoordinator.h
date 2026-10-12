@@ -4,6 +4,7 @@
 namespace logos { class OptionalDependencyPreview; }
 
 #include "InstallEnums.h"
+#include "utils/HostProfile.h"
 #include "UninstallPlan.h"
 
 #include <QObject>
@@ -59,6 +60,7 @@ public:
                             CoreModuleManager* coreModuleManager,
                             UIPluginManager* uiPluginManager,
                             AppsModel* appsModel,
+                            const LogosBasecamp::HostProfile& hostProfile = {},
                             QObject* parent = nullptr);
     ~PackageCoordinator() override;
 
@@ -293,6 +295,8 @@ private:
     // has no cascade and so no PendingAction to hang the id off; uninstall and
     // upgrade carry theirs in PendingAction::intentRequestId instead.
     //
+    const LogosBasecamp::HostProfile m_hostProfile;
+
     // The id is ALWAYS paired with its subject and answered only via
     // finishIntent(id, …). Answering "whatever is pending" would let a click on
     // one dialog approve a different request — the shell's own uninstall dialog
@@ -393,6 +397,11 @@ private:
     // arrive before the answer wait for it. `then` runs only while this object is
     // alive.
     void withDownloaderStarted(std::function<void()> then);
+
+    // package_downloader's client, or null when it is not loaded in this
+    // process (a host without the catalogue never loads it). isConnected() alone cannot
+    // tell: it is true for a module that was never loaded.
+    LogosAPIClient* downloaderClient() const;
 
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
     // seeds the installType cache for the UI-plugin subset; the full-scan pass
@@ -498,7 +507,11 @@ private:
                                   const QString& repositoryUrl,
                                   const QVariantMap& versionPins,
                                   const QVariantMap& optionalSelection = {},
-                                  const QVariantMap& optionalVersionPins = {});
+                                  const QVariantMap& optionalVersionPins = {},
+                                  bool requestOpen = true);
+    // The catalog moved under an open Add Application dialog: resolve its last
+    // request again, keeping the user's choices, without reopening it.
+    void refreshActiveAddDialog();
     void resolveOptionalPreview(const QString& name, const QString& repositoryUrl,
                                 const QVariantMap& versionPins, const QVariantMap& selection,
                                 const QVariantMap& optionalPins, const QString& installedJson,
@@ -514,7 +527,8 @@ private:
                             const QString& targetVersion,
                             const QVariantMap& catalogRow,
                             const QVariantList& changes,
-                            bool requestOpen);
+                            bool requestOpen,
+                            bool resolutionPending);
     // Recompute resolver overlay from cached raw resolve + current disk state.
     // Keeps dep badges correct after the install registry is cleared.
     void refreshOverlayAfterInstall(const QString& topLevelName);
@@ -621,6 +635,14 @@ private:
                                                      // DifferentHash detection.
     QHash<QString, int> m_dialogResolveEpoch;
     QString m_activeAddDialogName;
+    // What the open dialog last asked to resolve, replayed on a catalog refresh.
+    struct AddDialogRequest {
+        QString repositoryUrl;
+        QVariantMap versionPins;
+        QVariantMap optionalSelection;
+        QVariantMap optionalVersionPins;
+    };
+    AddDialogRequest m_activeAddDialogRequest;
 
     // Last resolver output per top-level: raw IPC rows and derived changes.
     QHash<QString, QVariantList> m_lastResolvedRawByName;
