@@ -167,6 +167,18 @@ void spin(int ms)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
 }
 
+bool spinUntil(const std::function<bool()>& done, int timeoutMs = 5000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!done()) {
+        if (timer.elapsed() > timeoutMs)
+            return false;
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    return true;
+}
+
 // The shell confirms every dispatch, the single-provider case included, so a
 // test about what happens AFTER dispatch has to answer the chooser to get there.
 void submitAndConfirm(IntentBroker& broker, FakeChooser& chooser,
@@ -1626,6 +1638,27 @@ struct ReturnWorld {
                  ? QString()
                  : walletEndpoint.requests.last().dispatchId;
     }
+
+    // A wallet.send round trip at machine speed. Each step waits for its own
+    // outcome rather than a fixed spin, so a slow runner cannot stretch a burst
+    // past the breaker's wall-clock window. False if a step never happened.
+    bool roundTrip(const QString& requestId)
+    {
+        presenter.frontmost = QStringLiteral("chat_ui");
+        const int choosers = chooser.presented.size();
+        const int requests = walletEndpoint.requests.size();
+        broker->submit(&chatEndpoint, requestId, QStringLiteral("wallet.send"), {});
+        if (!spinUntil([&] { return chooser.presented.size() > choosers; }))
+            return false;
+        broker->resolveChooser(chooser.presented.last(), QStringLiteral("wallet_ui"));
+        if (!spinUntil([&] { return walletEndpoint.requests.size() > requests; }))
+            return false;
+        broker->submitResponse(&walletEndpoint, walletEndpoint.requests.last().dispatchId,
+                               true, QVariantMap{}, QString());
+        return true;
+    }
+
+    int returns() const { return presenter.presented.count(QStringLiteral("chat_ui")); }
 };
 
 } // namespace
@@ -1803,20 +1836,12 @@ void TestIntentBroker::testReturnBreakerStopsRunawayNavigation()
     // one, so a runaway is reachable. This drives one with no delay at all
     // between round trips — the shape a loop has and a human cannot produce.
     ReturnWorld w;
+    w.broker->setReturnDwellFloorMs(0);
 
-    for (int i = 0; i < 12; ++i) {
-        w.presenter.frontmost = QStringLiteral("chat_ui");
-        submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
-                         QStringLiteral("req-%1").arg(i),
-                         QStringLiteral("wallet.send"), QStringLiteral("wallet_ui"));
-        const auto& requests = w.walletEndpoint.requests;
-        if (requests.isEmpty()) continue;
-        w.broker->submitResponse(&w.walletEndpoint, requests.last().dispatchId,
-                                 true, QVariantMap{}, QString());
-        spin(80);
-    }
+    for (int i = 0; i < 12; ++i)
+        QVERIFY(w.roundTrip(QStringLiteral("req-%1").arg(i)));
 
-    const int returns = w.presenter.presented.count(QStringLiteral("chat_ui"));
+    const int returns = w.returns();
     QVERIFY2(returns >= 1, "the first few returns should still have happened");
     QVERIFY2(returns < 12,
              qPrintable(QStringLiteral("breaker never tripped — %1 auto-returns")
@@ -1854,35 +1879,24 @@ void TestIntentBroker::testBreakerRecoversAfterQuiet()
     // A one-way door means one burst costs the user the feature until they
     // restart. Whatever the loop was, it is over by the time things go quiet.
     ReturnWorld w;
-    w.broker->setReturnBreakerCooldownMs(300);
+    w.broker->setReturnDwellFloorMs(0);
+    w.broker->setReturnBreakerCooldownMs(1000);
 
-    for (int i = 0; i < 12; ++i) {
-        w.presenter.frontmost = QStringLiteral("chat_ui");
-        submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
-                         QStringLiteral("burst-%1").arg(i),
-                         QStringLiteral("wallet.send"), QStringLiteral("wallet_ui"));
-        const auto& requests = w.walletEndpoint.requests;
-        if (requests.isEmpty()) continue;
-        w.broker->submitResponse(&w.walletEndpoint, requests.last().dispatchId,
-                                 true, QVariantMap{}, QString());
-        spin(20);
+    // Stop at the first suppressed return. Bursting on would outlast the
+    // cooldown and re-arm the breaker mid-burst, which is the recovery itself.
+    bool tripped = false;
+    for (int i = 0; i < 12 && !tripped; ++i) {
+        const int before = w.returns();
+        QVERIFY(w.roundTrip(QStringLiteral("burst-%1").arg(i)));
+        tripped = w.returns() == before;
     }
-    const int duringBurst = w.presenter.presented.count(QStringLiteral("chat_ui"));
-    QVERIFY2(duringBurst < 12, "breaker never tripped, so recovery is untested");
+    QVERIFY2(tripped, "breaker never tripped, so recovery is untested");
+    const int duringBurst = w.returns();
 
-    spin(500);   // past the cooldown
+    spin(1200);   // past the cooldown
 
-    w.presenter.frontmost = QStringLiteral("chat_ui");
-    submitAndConfirm(*w.broker, w.chooser, &w.chatEndpoint,
-                     QStringLiteral("after"), QStringLiteral("wallet.send"),
-                     QStringLiteral("wallet_ui"));
-    w.broker->submitResponse(&w.walletEndpoint,
-                             w.walletEndpoint.requests.last().dispatchId,
-                             true, QVariantMap{}, QString());
-    spin(200);
-
-    QVERIFY2(w.presenter.presented.count(QStringLiteral("chat_ui")) > duringBurst,
-             "auto-return never came back after the cooldown");
+    QVERIFY(w.roundTrip(QStringLiteral("after")));
+    QVERIFY2(w.returns() > duringBurst, "auto-return never came back after the cooldown");
 }
 
 // ── The dwell floor's deferred path ─────────────────────────────────────────
