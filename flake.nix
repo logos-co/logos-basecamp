@@ -448,22 +448,20 @@
           binBundleDirMock = withMainProgram (dirBundler appMockPortable);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
 
-          # The UI suite's loadable core-module fixture: depsvc, from the same
-          # sources and builder as depsvc-lgx below, but as an INSTALLED tree
-          # (modules/depsvc/...) via the same bundlers the app's own
-          # pre-installed modules go through. Both variants exist because the
-          # dev app loads -dev module variants while the bundle loads plain
-          # ones — integration-test and integration-test-bundle each seed the
-          # one matching the app they run.
-          depsvcModulePkg =
+          # tests/fixtures/depsvc, the one compiled core-module fixture, built
+          # ONCE. Two consumers draw on it: `depsvc-lgx` below (the .lgx the
+          # dependency-gate doc-test installs) and the installed trees the UI
+          # suite seeds into its user dir. PMU's builder: already locked, and
+          # its mingw Qt is the bundle's.
+          depsvcModule =
             let builder = logos-package-manager-ui.inputs.logos-module-builder; in
             (builder.lib.mkLogosModule {
               src = ./tests/fixtures/depsvc;
               configFile = ./tests/fixtures/depsvc/metadata.json;
               flakeInputs = { logos-module-builder = builder; };
-            }).packages.${system}.default;
-          depsvcInstalledDev = installDev depsvcModulePkg;
-          depsvcInstalledPortable = installPortable depsvcModulePkg;
+            }).packages.${system};
+          depsvcInstalledDev = installDev depsvcModule.default;
+          depsvcInstalledPortable = installPortable depsvcModule.default;
 
           # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
           integrationTest = import ./nix/integration-test.nix {
@@ -534,15 +532,9 @@
           intents-fixtures = buildPkgs.runCommandLocal "basecamp-intents-fixtures" { } ''
             cp -r ${./tests/fixtures/intents} $out
           '';
-          # basecamp-dependency-gate: the module that spec writes out, as an .lgx.
-          # PMU's builder: already locked, and its mingw Qt is the bundle's.
-          depsvc-lgx =
-            let builder = logos-package-manager-ui.inputs.logos-module-builder; in
-            (builder.lib.mkLogosModule {
-              src = ./tests/fixtures/depsvc;
-              configFile = ./tests/fixtures/depsvc/metadata.json;
-              flakeInputs = { logos-module-builder = builder; };
-            }).packages.${system}.lgx-portable;
+          # basecamp-dependency-gate: the module that spec writes out, as an .lgx
+          # (same build as the UI suite's seeded depsvc, see depsvcModule).
+          depsvc-lgx = depsvcModule.lgx-portable;
 
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
