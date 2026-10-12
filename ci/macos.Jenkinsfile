@@ -1,6 +1,6 @@
 #!/usr/bin/env groovy
 
-library 'status-jenkins-lib@v1.9.48'
+library 'status-jenkins-lib@v1.10.1'
 
 def isPRBuild = utils.isPRBuild()
 
