@@ -5,7 +5,7 @@ library 'status-jenkins-lib@v1.10.1'
 def isPRBuild = utils.isPRBuild()
 
 pipeline {
-  agent { label "macos && ${getArch()} && nix-2.24" }
+  agent { label "macos && ${getArch()} && nix" }
 
   parameters {
     booleanParam(
