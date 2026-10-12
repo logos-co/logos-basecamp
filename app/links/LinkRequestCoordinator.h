@@ -55,6 +55,8 @@ public:
     // Test seam: the park deadline is minutes, and no test should pay it.
     void setParkDeadlineMs(int ms);
 
+    void setCatalogGate(std::function<void(std::function<void()>)> whenCatalogLoaded);
+
 signals:
     // For the shell to show. `reason` is developer-facing text, never anything
     // an outside party supplied.
@@ -83,6 +85,7 @@ private:
     std::unique_ptr<ShellIntentEndpoint> m_endpoint;
 
     std::function<void()> m_raise;
+    std::function<void(std::function<void()>)> m_whenCatalogLoaded;
 
     bool m_ready = false;
     bool m_inFlight = false;

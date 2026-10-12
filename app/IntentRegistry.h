@@ -143,12 +143,22 @@ public:
     // one of these, and merging the two would make dispatching to a package that
     // is not on disk an easy mistake to make. It answers only "could the user
     // install something for this?" — a question the SHELL asks, never an app.
-    void setInstallableProviders(const QMap<QString, QStringList>& byModuleName);
+    //
+    // `webByModuleName` is the subset each package publishes to links
+    // (`"web": true` in its catalog manifest). Those intents join the link
+    // requester's derived `uses`, so a link to an app that is not installed
+    // reaches the install offer instead of failing `not_declared`.
+    void setInstallableProviders(const QMap<QString, QStringList>& byModuleName,
+                                 const QMap<QString, QStringList>& webByModuleName = {});
 
     // Packages the catalog says provide `intent` and that are not installed.
     // Sorted by module name, for the same reason resolve() sorts: a
     // non-deterministic prompt is a flaky prompt.
     QStringList installableProvidersFor(const QString& intent) const;
+
+    // installableProvidersFor(), narrowed like resolveFor(): for the link
+    // requester, only the packages that publish `intent` to the web.
+    QStringList installableFor(const QString& requesterName, const QString& intent) const;
 
     // True for the host's own module name. The registry is the single source of
     // this fact — it already holds the name to refuse disk records claiming to
@@ -168,6 +178,7 @@ signals:
 
 private:
     void reset();
+    void deriveLinkUses();
     void ingestRecord(const QString& moduleName,
                       const QVariantMap& metadata,
                       const LabelFn& labelFor,
@@ -196,4 +207,5 @@ private:
     QString     m_linkModuleName;
     QStringList m_shellWebIntents;   // code-declared, survives rebuild()
     QSet<QString> m_webReachable;    // from disk records, rebuilt each time
+    QSet<QString> m_installableWeb;  // "moduleName/intent" from the catalog
 };

@@ -114,6 +114,7 @@ private:
         QString latestVersion;       // computed from versions[0].version
         QVariantList dependencies;
         QStringList provides;
+        QStringList webProvides;   // provides entries with "web": true
         bool hasInstallableVersion = true;
         int  notAvailableReason = Available;   // NotAvailableReason
 

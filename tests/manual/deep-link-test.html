@@ -221,6 +221,28 @@ declared params, and <code>?amount=12.5</code> would arrive as the string “12.
   </tr>
 </table>
 
+<h2>5 &middot; An app that is not installed</h2>
+<p class="sub">Needs a catalog with a package whose manifest publishes the intent with
+<code>"web": true</code>. The doc-test <code>doctests/basecamp-deep-links-install.test.yaml</code>
+builds one: two fixture apps served at <code>https://127.0.0.1:8453/logos-repo.json</code>.
+Add that repository in Settings, start Basecamp with
+<code>SSL_CERT_FILE</code> pointing at the doc-test's <code>localhost.crt</code>, and
+make sure neither fixture is installed.</p>
+<table>
+  <tr><th>Click</th><th>Expected</th></tr>
+  <tr>
+    <td class="u"><a class="try" href="basecamp://intent/weboffer.open">basecamp://intent/weboffer.open</a></td>
+    <td><strong>Install an app for this?</strong> naming Web Offer Demo. Try it warm and cold:
+      cold, the link waits for the catalog first.
+      Log: <code>suggesting an install for weboffer.open — web_offer_demo</code></td>
+  </tr>
+  <tr class="bad">
+    <td class="u"><a class="try" href="basecamp://intent/weboffer.withheld">basecamp://intent/weboffer.withheld</a></td>
+    <td><strong>No offer.</strong> Web Withheld Demo provides it but did not set
+      <code>"web": true</code>. Log: <code>failed — not_declared</code></td>
+  </tr>
+</table>
+
 <h2>What “it works” looks like</h2>
 <pre>LinkRequestCoordinator: dispatching link request link-1 for intent basecamp.settings.open</pre>
 <p class="sub">That line is the only proof the running instance acted. On a warm click the

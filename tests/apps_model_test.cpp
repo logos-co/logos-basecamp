@@ -1682,6 +1682,33 @@ private slots:
     // decides whether ANY version of a package is one this machine could
     // install; the App Manager filters on it.
 
+    // ── Intents from the catalog ────────────────────────────────────────
+    // `web` decides whether a basecamp:// link may reach a package that is not
+    // installed. Only a real boolean true counts, as for an installed record.
+    void provides_keepsWhichIntentsArePublishedToTheWeb()
+    {
+        QVariantMap row = variantRow("repo1", "forum_ui", {"linux-x86_64"});
+        QVariantList versions = row.value("versions").toList();
+        QVariantMap entry = versions.first().toMap();
+        QVariantMap manifest = entry.value("manifest").toMap();
+        manifest.insert("provides", QVariantList{
+            QVariantMap{{"intent", "forum.open"}, {"web", true}},
+            QVariantMap{{"intent", "forum.post"}},
+            QVariantMap{{"intent", "forum.admin"}, {"web", "true"}},   // a string: not an opt-in
+            QStringLiteral("forum.legacy"),                           // bare name: never web
+        });
+        entry.insert("manifest", manifest);
+        versions[0] = entry;
+        row.insert("versions", versions);
+
+        AppsModel model;
+        model.replaceCatalog({row});
+        QCOMPARE(availabilityRole(model, "forum_ui", "provides").toStringList(),
+                 (QStringList{"forum.open", "forum.post", "forum.admin", "forum.legacy"}));
+        QCOMPARE(availabilityRole(model, "forum_ui", "webProvides").toStringList(),
+                 QStringList{"forum.open"});
+    }
+
     void availability_permissiveUntilTheVariantListArrives()
     {
         // getValidVariants is a separate round trip from the catalog. Starting

@@ -508,6 +508,11 @@ void MainUIBackend::wireIntents()
     m_linkRequests = new LinkRequestCoordinator(m_intentBroker, m_intentRegistry, this);
     connect(m_linkRequests, &LinkRequestCoordinator::linkFailed,
             this, &MainUIBackend::linkFailed);
+    if (m_hostProfile.packageCatalog && m_packageCoordinator) {
+        m_linkRequests->setCatalogGate([this](std::function<void()> then) {
+            m_packageCoordinator->whenCatalogLoaded(std::move(then));
+        });
+    }
 
     rebuildIntentRegistry();
     m_intentRegistryBootstrapped = true;
@@ -553,6 +558,7 @@ void MainUIBackend::rebuildInstallableProviders()
     if (!m_intentRegistry || !m_appsModel) return;
 
     QMap<QString, QStringList> byModule;
+    QMap<QString, QStringList> webByModule;
     for (int row = 0; row < m_appsModel->rowCount(); ++row) {
         const QModelIndex idx = m_appsModel->index(row, 0);
 
@@ -566,9 +572,12 @@ void MainUIBackend::rebuildInstallableProviders()
         if (provides.isEmpty())
             continue;
 
-        byModule.insert(idx.data(AppsModelRoles::NameRole).toString(), provides);
+        const QString name = idx.data(AppsModelRoles::NameRole).toString();
+        byModule.insert(name, provides);
+        const QStringList web = idx.data(AppsModelRoles::WebProvidesRole).toStringList();
+        if (!web.isEmpty()) webByModule.insert(name, web);
     }
-    m_intentRegistry->setInstallableProviders(byModule);
+    m_intentRegistry->setInstallableProviders(byModule, webByModule);
 
     // One line per rebuild, and only when something is actually offerable —
     // silence here is what an empty catalog looks like, which is exactly the
