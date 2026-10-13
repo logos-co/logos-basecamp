@@ -283,6 +283,10 @@ set(PROJECT_SOURCES
     utils/LoggingConfig.cpp
     utils/AccessPolicyOption.h
     utils/AccessPolicyOption.cpp
+    utils/HostProfile.h
+    utils/HostProfile.cpp
+    utils/StandaloneMode.h
+    utils/StandaloneMode.cpp
     utils/DependencyBlocker.h
     utils/DependencyEntry.h
     macos/trafficLightsTitleBar.h
@@ -326,6 +330,7 @@ set(PROJECT_SOURCES
     AppsModel.cpp
     ModuleInstanceModel.cpp
     PluginLoader.cpp
+    QmlHotReload.cpp
     restricted/DenyAllReply.cpp
     restricted/DenyAllNetworkAccessManager.cpp
     restricted/DenyAllNAMFactory.cpp

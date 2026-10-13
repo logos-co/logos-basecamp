@@ -169,18 +169,29 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
     for (auto it = plugins.cbegin(); it != plugins.cend(); ++it)
         ingestRecord(it.key(), it.value(), labelFor, iconFor);
 
-    // The link requester's `uses` is DERIVED, never stored: the union of the
-    // shell's own web-reachable intents and every disk record that opted in
-    // with `"web": true`. Recomputed here, after the ingest loop, so it cannot
-    // go stale against what is actually installed — and so there is no second
-    // place to update when an app is added or removed.
-    //
-    // This is what makes the broker's existing `declaresUse` gate do the work:
-    // a link naming an intent nobody published fails `not_declared` at the
-    // first gate, with no bypass anywhere in the broker.
-    if (!m_linkModuleName.isEmpty()) {
-        QStringList reachable = m_shellWebIntents;
-        for (const QString& key : m_webReachable) {
+    deriveLinkUses();
+
+    emit changed();
+}
+
+// The link requester's `uses` is DERIVED, never stored: the union of the
+// shell's own web-reachable intents, every disk record that opted in with
+// `"web": true`, and every not-installed catalog package that did. Recomputed
+// after each rebuild() and each catalog update, so it cannot go stale against
+// what is installed or offerable — and there is no second place to update.
+//
+// This is what makes the broker's existing `declaresUse` gate do the work: a
+// link naming an intent nobody published fails `not_declared` at the first
+// gate, with no bypass anywhere in the broker. A catalog opt-in only gets the
+// link as far as the install offer: resolveFor() still dispatches to installed
+// providers alone, and installableFor() offers only the packages that opted in.
+void IntentRegistry::deriveLinkUses()
+{
+    if (m_linkModuleName.isEmpty()) return;
+
+    QStringList reachable = m_shellWebIntents;
+    const auto addIntentsOf = [&reachable](const QSet<QString>& keys) {
+        for (const QString& key : keys) {
             // Keys are "<module>/<intent>"; `uses` is a set of intent NAMES.
             const int slash = key.indexOf(QLatin1Char('/'));
             if (slash < 0) continue;
@@ -188,12 +199,13 @@ void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
             if (!reachable.contains(intent))
                 reachable.append(intent);
         }
-        std::sort(reachable.begin(), reachable.end());
-        if (!reachable.isEmpty())
-            m_uses.insert(m_linkModuleName, reachable);
-    }
+    };
+    addIntentsOf(m_webReachable);
+    addIntentsOf(m_installableWeb);
+    std::sort(reachable.begin(), reachable.end());
 
-    emit changed();
+    if (reachable.isEmpty()) m_uses.remove(m_linkModuleName);
+    else m_uses.insert(m_linkModuleName, reachable);
 }
 
 void IntentRegistry::ingestRecord(const QString& moduleName,
@@ -348,11 +360,13 @@ void IntentRegistry::ingestRecord(const QString& moduleName,
 }
 
 void IntentRegistry::setInstallableProviders(
-    const QMap<QString, QStringList>& byModuleName)
+    const QMap<QString, QStringList>& byModuleName,
+    const QMap<QString, QStringList>& webByModuleName)
 {
     // Clear-and-refill, like rebuild(). A half-updated index is worse than a
     // slightly late one.
     m_installable.clear();
+    m_installableWeb.clear();
 
     for (auto it = byModuleName.cbegin(); it != byModuleName.cend(); ++it) {
         const QString& moduleName = it.key();
@@ -380,18 +394,36 @@ void IntentRegistry::setInstallableProviders(
             QStringList& names = m_installable[intent];
             if (!names.contains(moduleName))
                 names.append(moduleName);
+            if (webByModuleName.value(moduleName).contains(intent))
+                m_installableWeb.insert(moduleName + QLatin1Char('/') + intent);
         }
     }
 
     for (auto it = m_installable.begin(); it != m_installable.end(); ++it)
         it.value().sort();
 
+    deriveLinkUses();
     emit changed();
 }
 
 QStringList IntentRegistry::installableProvidersFor(const QString& intent) const
 {
     return m_installable.value(intent);
+}
+
+QStringList IntentRegistry::installableFor(const QString& requesterName,
+                                           const QString& intent) const
+{
+    QStringList names = m_installable.value(intent);
+    if (!isLinkRequester(requesterName))
+        return names;
+    names.erase(std::remove_if(names.begin(), names.end(),
+                               [this, &intent](const QString& name) {
+                                   return !m_installableWeb.contains(
+                                       name + QLatin1Char('/') + intent);
+                               }),
+                names.end());
+    return names;
 }
 
 QVariantList IntentRegistry::paramsSpecFor(const QString& moduleName,
@@ -572,6 +604,7 @@ void IntentRegistry::registerLinkRequester(const QString& linkModuleName,
     }
     m_shellWebIntents = accepted;
 
+    deriveLinkUses();
     emit changed();
 }
 

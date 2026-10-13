@@ -30,8 +30,10 @@
 // the test harness. Unqualified below to keep the use sites unchanged.
 using namespace ShellIntents;
 
-MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* parent)
+MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
+                             const LogosBasecamp::HostProfile& hostProfile, QObject* parent)
     : QObject(parent)
+    , m_hostProfile(hostProfile)
     , m_currentActiveSectionIndex(0)
     , m_logosAPI(logosAPI)
     , m_core(core)
@@ -68,8 +70,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core, QObject* pa
     m_intentAdapter  = new IntentBridgeAdapter(m_intentBroker, this);
 
     m_coreModuleManager = new CoreModuleManager(m_logosAPI, m_core, this);
-    m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, this);
-    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, this);
+    m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
+    m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
 
     // Setter-injection closes the cycle — UIPluginManager queries
@@ -506,6 +508,11 @@ void MainUIBackend::wireIntents()
     m_linkRequests = new LinkRequestCoordinator(m_intentBroker, m_intentRegistry, this);
     connect(m_linkRequests, &LinkRequestCoordinator::linkFailed,
             this, &MainUIBackend::linkFailed);
+    if (m_hostProfile.packageCatalog && m_packageCoordinator) {
+        m_linkRequests->setCatalogGate([this](std::function<void()> then) {
+            m_packageCoordinator->whenCatalogLoaded(std::move(then));
+        });
+    }
 
     rebuildIntentRegistry();
     m_intentRegistryBootstrapped = true;
@@ -551,6 +558,7 @@ void MainUIBackend::rebuildInstallableProviders()
     if (!m_intentRegistry || !m_appsModel) return;
 
     QMap<QString, QStringList> byModule;
+    QMap<QString, QStringList> webByModule;
     for (int row = 0; row < m_appsModel->rowCount(); ++row) {
         const QModelIndex idx = m_appsModel->index(row, 0);
 
@@ -564,9 +572,12 @@ void MainUIBackend::rebuildInstallableProviders()
         if (provides.isEmpty())
             continue;
 
-        byModule.insert(idx.data(AppsModelRoles::NameRole).toString(), provides);
+        const QString name = idx.data(AppsModelRoles::NameRole).toString();
+        byModule.insert(name, provides);
+        const QStringList web = idx.data(AppsModelRoles::WebProvidesRole).toStringList();
+        if (!web.isEmpty()) webByModule.insert(name, web);
     }
-    m_intentRegistry->setInstallableProviders(byModule);
+    m_intentRegistry->setInstallableProviders(byModule, webByModule);
 
     // One line per rebuild, and only when something is actually offerable —
     // silence here is what an empty catalog looks like, which is exactly the
@@ -940,6 +951,16 @@ QString MainUIBackend::callCoreModuleMethod(const QString& n,
 
 QString      MainUIBackend::buildVersion() const    { return LogosBasecampBuildInfo::version(); }
 bool         MainUIBackend::isPortableBuild() const { return LogosBasecampBuildInfo::isPortableBuild(); }
+bool         MainUIBackend::packageCatalog() const { return m_hostProfile.packageCatalog; }
+bool         MainUIBackend::repositoryManagement() const { return m_hostProfile.repositoryManagement; }
+bool         MainUIBackend::devHost() const { return m_hostProfile.devHost; }
+
+QVariantList MainUIBackend::availableSections() const
+{
+    QVariantList sections;
+    for (int s : m_hostProfile.availableSections()) sections << s;
+    return sections;
+}
 
 // Read the environment rather than a compile-time flag.
 bool         MainUIBackend::isMockBackend() const

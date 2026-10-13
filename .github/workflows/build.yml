@@ -197,6 +197,22 @@ jobs:
       - name: Sandbox test
         run: nix build .#sandbox-test -L
 
+      # Built so the cache carries them: module repos' `nix run .#ui-dev` runs
+      # these hosts.
+      - name: Standalone hosts
+        run: |
+          nix build .#app-standalone --no-link -L
+          nix build .#app-standalone-portable --no-link -L
+
+      # Standalone mode end to end. Named here because no `nix flake check`
+      # runs in this repo: listing them under `checks` alone runs nothing.
+      - name: Standalone tests
+        run: |
+          nix build .#standalone-rejects-module-dir --no-link -L
+          nix build .#standalone-test --no-link -L
+          nix build .#standalone-backend-test --no-link -L
+          nix build .#standalone-hot-reload-test --no-link -L
+
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
@@ -288,6 +304,22 @@ jobs:
 
       - name: Sandbox test
         run: nix build .#sandbox-test -L
+
+      # Built so the cache carries them: module repos' `nix run .#ui-dev` runs
+      # these hosts.
+      - name: Standalone hosts
+        run: |
+          nix build .#app-standalone --no-link -L
+          nix build .#app-standalone-portable --no-link -L
+
+      # Standalone mode end to end. Named here because no `nix flake check`
+      # runs in this repo: listing them under `checks` alone runs nothing.
+      - name: Standalone tests
+        run: |
+          nix build .#standalone-rejects-module-dir --no-link -L
+          nix build .#standalone-test --no-link -L
+          nix build .#standalone-backend-test --no-link -L
+          nix build .#standalone-hot-reload-test --no-link -L
 
       - name: Integration test (UI tests)
         run: nix build .#integration-test-bundle -L

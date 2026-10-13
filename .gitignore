@@ -21,3 +21,6 @@ doctests/result*
 
 # user-dirs staged by doctest run: blocks when executed from the repo root
 testdata/
+
+# standalone mode (--module) data dir, created in the working directory
+.logos-basecamp-dev/

@@ -91,6 +91,182 @@ nix run .#shell-preview
 
 Unlike the mock build it ships no `liblogos_protocol`, spawns no `ui-host` and loads no plugins — its nix closure contains no Logos library at all, so a core rework cannot reach it. For mobile, see [`MOBILE-HANDOFF.md`](MOBILE-HANDOFF.md).
 
+#### Hot reloading Basecamp's own QML (`DEV_QML_PATH`)
+
+From the repo root:
+
+```bash
+nix run .#ui-dev-portable           # the portable build: the catalogue's apps install
+nix run .#ui-dev                    # the dev build
+# arguments pass through: nix run .#ui-dev-portable -- --user-dir /tmp/bc
+```
+
+Both run Basecamp with `DEV_QML_PATH=$PWD/src` and refuse to start outside a
+checkout. Pick by what you need from the package manager: the published
+catalogue ships only portable variants (`darwin-arm64`, `linux-amd64`, …), so a
+dev build lists it but can install nothing from it.
+
+| | Build | Installs | Data dir |
+|---|---|---|---|
+| `ui-dev-portable` | `.#bin-bundle-dir-inspector` | portable variants (the catalogue, `#install-portable`) | the real one (`…/Logos/LogosBasecamp`) |
+| `ui-dev` | `.#app` | `-dev` variants (`#install`) | `…/Logos/LogosBasecampDev` |
+
+`ui-dev-portable` works on your real Basecamp data; pass `--user-dir` to keep it
+apart. Setting `DEV_QML_PATH` by hand works on any build,
+`.#bin-bundle-dir` included. It is never on by default: the shell's QML runs
+outside the sandbox, so a default would run whatever `src/` the app was started
+from.
+
+Every shell QML file under `src/Basecamp/` then loads from your checkout, and
+saving one reloads the shell in place: no rebuild, no restart. Loaded apps and
+backends keep running; the shell's QML state (scroll positions, open dialogs)
+resets. A save that does not compile is logged and the next good one recovers.
+
+Still needs a restart: the singletons `BasecampIcons`, `AppColors` and
+`DownloadFormat`. Still needs a build: a new QML file (add it to
+`src/CMakeLists.txt`), C++ changes, and the design system (`Logos.Theme`,
+`Logos.Controls`), which is compiled in. `LOGOS_QML_HOT_RELOAD=0` loads from
+`src/` without watching. For an app's QML rather than the shell's, see
+`--qml-source` below.
+
+#### Standalone Mode (`--module`) — developing an app
+
+`--module` turns Basecamp into a host for exactly the apps you pass, one tab
+each, for developing and testing them in the real runtime (sandbox, ui-host,
+intents):
+
+```bash
+nix run .#app-standalone -- \
+  --module ../my-app/result-install \
+  --modules-dir ../my-dependency/result-install \
+  --qml-source my_app=../my-app/src/qml
+```
+
+- `--module <root>` (repeatable) — an install root: a dir with `modules/`
+  and/or `plugins/`, as `nix build .#install` produces, or an lgpm install with
+  `--modules-dir <root>/modules --ui-plugins-dir <root>/plugins`. Each UI app in
+  it opens as a tab and is listed in the sidebar. A single module dir is
+  refused: it could only be scanned through its parent, which would expose
+  every module next to it — and let one satisfy a dependency your app does not
+  ship.
+- `--modules-dir <dir>` (repeatable) — dependencies and other apps (e.g. intent
+  providers) that are available but not opened. A provider opens on demand,
+  as in normal Basecamp.
+- `--qml-source <app>=<dir>` — load the app's view from its source tree (the
+  dir holding the view entry file) and rebuild it on every save of a `.qml`,
+  `.js` or `.mjs` under it. The backend keeps running; QML state resets. A
+  view that does not compile is logged and comes back on the next good save,
+  including at launch. `LOGOS_QML_HOT_RELOAD=0` loads from the source tree
+  without watching.
+- `--width` / `--height` — initial window size.
+
+Only `package_manager` is loaded — no downloader, Package Manager, App Manager
+or catalogue — and the sidebar shows the standalone apps plus Settings.
+Modules installed in the user directory are ignored, so they cannot shadow the
+ones you pass, and a `--module`/`--modules-dir` module takes precedence over a
+copy bundled with Basecamp. Data goes to `./.logos-basecamp-dev` unless
+`--user-dir` is given, and `--new-instance` is implied. QML `Settings` are
+stored as `LogosBasecampStandalone`, apart from the real Basecamp's.
+
+`LogosBasecamp --module` installs nothing itself: every dependency in the
+app's `metadata.json` must come in through `--modules-dir`. The `dev` command
+(below) does that for you, and is what a module's `nix run .` / `.#ui-dev`
+launch. Launched by hand, pass each one yourself, e.g. its
+`nix build .#install`.
+
+A missing dependency still blocks the app. One outside its declared version
+range does not: it is logged (`… requires >=0.3.0, found 0.0.999 — loading
+anyway`) and loaded, since a dependency built from source reports a placeholder
+version. The real Basecamp still refuses it.
+
+`--module` builds a host profile (`app/utils/HostProfile.h`) — module roots,
+apps to open, and which capabilities this host offers. The rest of Basecamp
+reads those capabilities and never checks for "standalone".
+
+`--module` works on any build; the build only decides what is bundled. An
+app must match the build: a dev build loads its `#install` output (`-dev`
+variants), a portable one its `#install-portable` output.
+
+| Build | Kind | Bundles |
+|---|---|---|
+| `.#app` | dev | everything Basecamp ships |
+| `.#bin-bundle-dir` | portable | everything Basecamp ships |
+| `.#app-standalone` | dev | only what `--module` loads (package_manager, capability_module, modules_state) |
+| `.#app-standalone-portable` | portable, QML inspector on | the same three |
+
+The two standalone builds exist for a faster cold build: they skip the Package
+Manager UI and storage. On a binary-cache hit there is no difference, and what
+`--module` shows is the same on all four.
+
+##### `dev`: dependencies resolved for you (`nix/dev.nix`)
+
+```bash
+nix run .#dev -- --module <install root> [--dep-package <name>=<dir>] [--dep <name>=<flake ref>] [--app <name>=<flake ref>] [LogosBasecamp flags]
+```
+
+- `--dep-package <name>=<dir>` (repeatable) — a dependency ready-built as an
+  `.lgx` package, installed as it is. A module's launcher passes every
+  dependency this way, built by the module's own flake, so its `follows` and
+  `--override-input` (nested ones included) hold — a rebuild here from the
+  dependency's own lock would drop them.
+- `--dep <name>=<flake ref>` (repeatable) — a dependency's source. An `--app`
+  is built against it. Without a `--dep-package` of the same name it is also
+  built from it, and its own dependencies resolved through its flake inputs —
+  for running `dev` by hand.
+- `--app <name>=<flake ref>` (repeatable) — another app to open next to it,
+  e.g. `blockchain_ui=path:../logos-blockchain-ui`, or a `github:` ref (no
+  revision = latest master). It is built against the `--dep` revisions it
+  shares, and its other dependencies are added. A bare `--app <name>` (latest
+  release from the catalogue) is not supported yet.
+- `--test <file.mjs>` (repeatable) — run a logos-qt-mcp test file instead of
+  opening a window: headless, a fresh user dir per file, as `mkPluginTest`
+  does, exiting non-zero on a failure (`LOGOS_TEST_TIMEOUT` seconds per file,
+  default 120). A module's `nix run .#ui-tests` passes its `tests/*.mjs`.
+
+One copy of each module: the first reached wins — the app's own dependencies,
+then each `--app`'s. Basecamp loads the newest of two copies, so a second one
+would silently replace the version under test. Dependencies are installed by
+`nix/devDeps.nix`: `--dep-package`s with lgpm, the rest from each one's
+`packages.<system>.install`.
+
+##### From a module's repo
+
+logos-module-builder's `nix run .` and `.#ui-dev` launch `dev` with the module,
+every dependency as the package its flake builds (`--dep-package`), each
+direct one's source (`--dep`, for `--app`), and for ui-dev the QML source dir. Basecamp is not an input of the
+module: the launcher runs `nix run github:logos-co/logos-basecamp#dev`, or the
+flake named by `LOGOS_BASECAMP`; `LOGOS_BASECAMP_DEV` names a prebuilt one.
+
+```bash
+nix run .                                              # published Basecamp
+LOGOS_BASECAMP=path:../logos-basecamp nix run .        # a local checkout
+nix build .#ui-dev && ./result/bin/run-logos-standalone-ui   # + QML hot reload
+nix run . -- --app blockchain_ui=path:../logos-blockchain-ui   # + another app
+nix run .#ui-tests                                     # tests/*.mjs, headless
+```
+
+`lib.<system>.mkPluginTest` (`nix/mkPluginTest.nix`) runs a module's
+`tests/*.mjs` against it headless, each file with a fresh user dir, with
+dependencies from `deps` (as for `dev`) or `modulesDir` — as a hermetic check,
+for a flake that has Basecamp as an input. Modules use `nix run .#ui-tests`
+instead. Basecamp's own checks use it: `standalone-test` (a QML-only app
+calling a core dependency through the bridge), `standalone-backend-test` (the
+module builder's `ui-qml-backend` template, backend in ui-host),
+and `standalone-rejects-module-dir`.
+
+##### Moving from `logos-standalone-app`
+
+| `logos-standalone` | Basecamp |
+|---|---|
+| `<plugin-path>`, `-p/--plugin` (a plugin dir, `result/lib`, or a `.so`/`.dylib`) | `--module <install root>` — build it with `nix build .#install`. Raw library paths are dropped: Basecamp loads modules by manifest, which is what resolves dependencies and variants. |
+| `-m/--modules-dir` (replaces `../modules`) | `--modules-dir` (adds to Basecamp's bundled modules) |
+| `-l/--load <module>` | Dropped. List the module in `metadata.json` `dependencies`; Basecamp loads dependencies before the app. |
+| `-t/--title` | Dropped. The window is Basecamp's; each app's tab shows its `display_name`. |
+| `--width` / `--height` | Same. |
+| `-u/--user-dir` | Same; defaults to `./.logos-basecamp-dev` instead of the platform data dir. |
+| `DEV_QML_PATH` (hot reload) | `--qml-source <app>=<dir>`; `LOGOS_QML_HOT_RELOAD=0` still turns watching off. |
+| QML `Settings` under `LogosStandalone` | Under `LogosBasecampStandalone`. |
+
 #### Parallel Instances (`--user-dir`, `--new-instance`)
 
 **One Basecamp per data directory.** Start a second one against a directory

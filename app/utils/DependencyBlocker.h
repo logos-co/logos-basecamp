@@ -250,9 +250,11 @@ struct DependencyRowSplit {
     QStringList  blocking;
     // The same set with the reason attached.
     QVariantList blockers;
+    QVariantList ignoredMismatches;
 };
 
-inline DependencyRowSplit splitDependencyRows(const QVariantList& rows)
+inline DependencyRowSplit splitDependencyRows(const QVariantList& rows,
+                                              bool enforceVersions = true)
 {
     DependencyRowSplit out;
     for (const QVariant& row : rows) {
@@ -263,6 +265,10 @@ inline DependencyRowSplit splitDependencyRows(const QVariantList& rows)
         if (dependencyIsPresent(b)) out.present << b.name;
 
         if (dependencyBlocksLoad(b)) {
+            if (!enforceVersions && b.kind == DependencyBlockKind::VersionMismatch) {
+                out.ignoredMismatches << dependencyBlockerToMap(b);
+                continue;
+            }
             out.blocking << b.name;
             out.blockers << dependencyBlockerToMap(b);
         }

@@ -57,6 +57,7 @@ private slots:
     void onAddApplicationDialogRequested(const QVariantMap& metadata);
 
 private:
+    void wireSidebar(QObject* sidebarRoot);
     void applyAppManagerSearch(const QString& query);
     void invokeOpenApp(const QString& name, const QString& repositoryUrl);
     void setupUi();

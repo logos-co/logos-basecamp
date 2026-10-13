@@ -1,0 +1,483 @@
+name: "Deep links to an app that is not installed: the install offer"
+output: basecamp-deep-links-install.md
+release: ""
+
+intro: |
+  A link names a capability, and the app that services it may not be installed
+  yet. If a catalog package publishes that capability to the web, Basecamp
+  answers the link with an offer to install it.
+
+  ```html
+  <a href="basecamp://intent/weboffer.open">Open in Basecamp</a>
+  ```
+
+  This doc-test builds the whole path a real package takes: the app is bundled
+  by `nix-bundle-lgx`, listed in a catalog by the release tool's `index.py`, and
+  served over HTTPS. Basecamp then gets the link on a cold start, and again
+  while it is running.
+
+what_you_build: |
+  Two QML-only fixture apps packaged with nix-bundle-lgx: one publishes its
+  intent to the web, one does not. A local HTTPS catalog serving them, a
+  Basecamp user directory with that catalog added, and three link clicks.
+
+what_you_learn:
+  - How `"web": true` travels from an app's `metadata.json` to the catalog
+  - Why a cold-start link waits for the catalog before it is answered
+  - Why a link offers only the packages that opted in
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+  - "**Linux or macOS.** The app runs headless via `QT_QPA_PLATFORM=offscreen`."
+  - "**`jq`**, **`openssl`**, **`curl`** and **`python3`** on your `PATH`."
+  - "**Port 8453 free.** The catalog is served from `https://127.0.0.1:8453`."
+
+sections:
+  - title: "Build the tools"
+    step: true
+    platform: [linux, macos]
+    steps:
+      - title: "Build logos-qt-mcp"
+        run: |
+          if [ -n "${BASECAMP_QT_MCP:-}" ]; then ln -sfn "$BASECAMP_QT_MCP" logos-qt-mcp
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#logos-qt-mcp" -o logos-qt-mcp; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
+        check_file: "logos-qt-mcp/test-framework/framework.mjs"
+
+      - title: "Build the Basecamp bundle"
+        run: |
+          if [ -n "${BASECAMP_BUNDLE:-}" ]; then ln -sfn "$BASECAMP_BUNDLE" bin-bundle-dir-inspector
+          else nix build "${BASECAMP_FLAKE:-github:logos-co/logos-basecamp{release}}#bin-bundle-dir-inspector" -o bin-bundle-dir-inspector; fi
+        code_block: "nix build 'github:logos-co/logos-basecamp{release}#bin-bundle-dir-inspector' -o bin-bundle-dir-inspector"
+        check_file: "bin-bundle-dir-inspector/bin/LogosBasecamp"
+
+      - title: "Build caddy and the lgx tool"
+        text: "caddy serves the catalog. `index.py` uses `lgx` to read each package's manifest."
+        run: |
+          set -eu
+          nix build nixpkgs#caddy -o caddy
+          nix build "${LOGOS_PACKAGE_FLAKE:-github:logos-co/logos-package}#lgx" -o lgx
+        check_file: "lgx/bin/lgx"
+
+  - title: "Package two apps with nix-bundle-lgx"
+    step: true
+    platform: [linux, macos]
+    text: |
+      Both apps provide one intent. Only `web_offer_demo` sets `"web": true`,
+      which is the author's opt-in to links. `web_withheld_demo` is the control.
+
+      The packages are built the way a module repo builds its `.lgx`:
+      `nix bundle` with the nix-bundle-lgx bundler, which reads
+      `metadata.json` from the derivation's source.
+    steps:
+      - title: "Write the packaging script"
+        file:
+          path: build/weboffer/package.sh
+          language: bash
+          content: |
+            #!/usr/bin/env bash
+            # package.sh <name> <display name> <intent> <web: true|false>
+            set -eu
+            NAME="$1"; DISPLAY="$2"; INTENT="$3"; WEB="$4"
+            BUNDLER="${NIX_BUNDLE_LGX_FLAKE:-github:logos-co/nix-bundle-lgx}"
+            SYSTEM="$(nix eval --impure --raw --expr builtins.currentSystem)"
+            SRC="$PWD/build/weboffer/$NAME"
+            rm -rf "$SRC"; mkdir -p "$SRC"
+
+            if [ "$WEB" = true ]; then ENTRY="{\"intent\": \"$INTENT\", \"web\": true}"
+            else ENTRY="{\"intent\": \"$INTENT\"}"; fi
+
+            cat > "$SRC/metadata.json" <<EOF
+            {
+              "name": "$NAME",
+              "display_name": "$DISPLAY",
+              "version": "1.0.0",
+              "description": "Deep-link install-offer fixture (test artifact, not a real app)",
+              "type": "ui_qml",
+              "view": "Main.qml",
+              "icon": "icon.png",
+              "category": "misc",
+              "dependencies": [],
+              "provides": [ $ENTRY ]
+            }
+            EOF
+
+            printf 'import QtQuick\nText { text: "%s READY" }\n' "$DISPLAY" > "$SRC/Main.qml"
+
+            # nix-bundle-lgx refuses a ui_qml package without a 256x256 PNG icon.
+            python3 - "$SRC/icon.png" <<'PY'
+            import struct, sys, zlib
+            def chunk(t, d):
+                return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+            raw = b"".join(b"\x00" + b"\x40\x80\xc0" * 256 for _ in range(256))
+            with open(sys.argv[1], "wb") as f:
+                f.write(b"\x89PNG\r\n\x1a\n"
+                        + chunk(b"IHDR", struct.pack(">IIBBBBB", 256, 256, 8, 2, 0, 0, 0))
+                        + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+            PY
+
+            cat > "$SRC/flake.nix" <<EOF
+            {
+              inputs.bundler.url = "$BUNDLER";
+              inputs.nixpkgs.follows = "bundler/nixpkgs";
+              outputs = { self, nixpkgs, ... }:
+                let pkgs = nixpkgs.legacyPackages."$SYSTEM"; in {
+                  packages."$SYSTEM".default = pkgs.stdenvNoCC.mkDerivation {
+                    pname = "$NAME";
+                    version = "1.0.0";
+                    src = ./.;
+                    installPhase = "mkdir -p \\\$out/lib && cp Main.qml \\\$out/lib/";
+                  };
+                };
+            }
+            EOF
+
+            nix bundle --bundler "$BUNDLER#portable" "path:$SRC#default" -o "build/weboffer/out-$NAME"
+            mkdir -p www
+            cp "build/weboffer/out-$NAME/$NAME.lgx" "www/$NAME.lgx"
+            chmod u+w "www/$NAME.lgx"
+            echo "PACKAGED $NAME"
+
+      - title: "Package both"
+        run: |
+          set -eu
+          rm -rf www
+          bash build/weboffer/package.sh web_offer_demo "Web Offer Demo" weboffer.open true
+          bash build/weboffer/package.sh web_withheld_demo "Web Withheld Demo" weboffer.withheld false
+        expect_contains:
+          - "PACKAGED web_offer_demo"
+          - "PACKAGED web_withheld_demo"
+
+      - title: "The opt-in is in the packaged manifest"
+        text: |
+          The catalog copies each package's manifest, so this is the only place
+          the flag can come from. `web_offer_demo` must keep `"web": true`;
+          `web_withheld_demo` must not gain it.
+        run: |
+          for n in web_offer_demo web_withheld_demo; do
+            echo "$n: $(./lgx/bin/lgx manifest "www/$n.lgx" --json | jq -c .provides)"
+          done
+          ./lgx/bin/lgx manifest www/web_offer_demo.lgx --json \
+            | jq -e '.provides | any(.intent == "weboffer.open" and .web == true)' >/dev/null \
+            && echo "WEB_FLAG_PACKAGED" || echo "WEB_FLAG_DROPPED"
+          ./lgx/bin/lgx manifest www/web_withheld_demo.lgx --json \
+            | jq -e '.provides | any(has("web"))' >/dev/null \
+            && echo "CONTROL_GAINED_A_WEB_FLAG" || echo "CONTROL_HAS_NO_WEB_FLAG"
+        expect_contains:
+          - "WEB_FLAG_PACKAGED"
+          - "CONTROL_HAS_NO_WEB_FLAG"
+
+  - title: "Serve a catalog over local HTTPS"
+    step: true
+    platform: [linux, macos]
+    text: |
+      Basecamp accepts `https://` repository URLs only.
+    steps:
+      - title: "Generate a certificate"
+        run: |
+          set -eu
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout localhost.key -out localhost.crt \
+            -subj "/CN=localhost" -addext "subjectAltName=IP:127.0.0.1"
+        check_file: "localhost.crt"
+
+      - title: "Trust it alongside the public certificates"
+        text: |
+          `SSL_CERT_FILE` replaces the trusted set rather than adding to it.
+          Pointed at `localhost.crt` alone, Basecamp could no longer verify
+          GitHub, so the built-in catalog and the repository list would never
+          load. Basecamp gets the public bundle plus this certificate.
+        run: |
+          set -eu
+          nix build nixpkgs#cacert -o cacert
+          cat cacert/etc/ssl/certs/ca-bundle.crt localhost.crt > trust.pem
+          grep -c "BEGIN CERTIFICATE" trust.pem
+        check_file: "trust.pem"
+
+      - title: "Start the HTTPS server"
+        run: |
+          set -eu
+          if [ -f caddy.pid ]; then kill "$(cat caddy.pid)" 2>/dev/null || true; fi
+
+          cat > Caddyfile <<'EOF'
+          {
+              auto_https off
+              admin off
+          }
+
+          :8453 {
+              bind 127.0.0.1
+              tls localhost.crt localhost.key
+              root * www
+              file_server
+          }
+          EOF
+
+          ./caddy/bin/caddy run --config Caddyfile --adapter caddyfile > caddy.log 2>&1 &
+          echo $! > caddy.pid
+
+          for _ in $(seq 60); do
+            if curl -sk -o /dev/null https://127.0.0.1:8453/; then
+              echo "server up"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat caddy.log
+          exit 1
+        expect_contains:
+          - "server up"
+
+      - title: "Build index.json"
+        run: |
+          set -eu
+          {
+            echo "https://127.0.0.1:8453/web_offer_demo.lgx $(pwd)/www/web_offer_demo.lgx"
+            echo "https://127.0.0.1:8453/web_withheld_demo.lgx $(pwd)/www/web_withheld_demo.lgx"
+          } > urls.txt
+
+          if [ -n "${INDEX_PY:-}" ]; then cp "$INDEX_PY" index.py
+          else curl -sSLO https://raw.githubusercontent.com/logos-co/logos-modules-release-tool/main/index.py; fi
+
+          PATH="$(pwd)/lgx/bin:$PATH" \
+          SSL_CERT_FILE="$(pwd)/localhost.crt" NIX_SSL_CERT_FILE="$(pwd)/localhost.crt" \
+            python3 index.py build urls.txt --no-icons -o www/index.json 2> index.log
+
+          jq -c '.packages[] | {name, provides: .versions[0].manifest.provides}' www/index.json
+        expect_contains:
+          - "web_offer_demo"
+          - "web_withheld_demo"
+
+      - title: "The catalog publishes weboffer.open to the web"
+        text: |
+          This is what Basecamp reads to decide whether a link may reach the
+          install offer for a package that is not installed.
+        run: |
+          jq -e '.packages[] | select(.name == "web_offer_demo")
+                 | .versions[0].manifest.provides | any(.web == true)' www/index.json >/dev/null \
+            && echo "CATALOG_PUBLISHES_WEB" || echo "CATALOG_HAS_NO_WEB_FLAG"
+        expect_contains:
+          - "CATALOG_PUBLISHES_WEB"
+
+      - title: "Write logos-repo.json"
+        run: |
+          set -eu
+          cat > www/logos-repo.json <<EOF
+          {
+            "schemaVersion": 1,
+            "name": "weboffer-catalog",
+            "displayName": "Web Offer Catalog",
+            "description": "Local catalog for the deep-link install-offer doc-test.",
+            "indexUrl": "https://127.0.0.1:8453/index.json",
+            "trustedSigners": []
+          }
+          EOF
+        check_file: "www/logos-repo.json"
+
+  - title: "Add the catalog to a fresh user directory"
+    step: true
+    platform: [linux, macos]
+    text: |
+      Nothing is installed. The catalog is added from Settings and the built-in
+      one is turned off, so the only packages Basecamp knows are the two above.
+      The repository list is saved in the user directory, so the next launches
+      start with it.
+    steps:
+      - title: "Add the catalog"
+        ui_test:
+          setup:
+            - 'chmod -R u+w "$PWD/testdata/weboffer-user" 2>/dev/null || true'
+            - 'rm -rf "$PWD/testdata/weboffer-user"'
+            - 'mkdir -p "$PWD/testdata/weboffer-user"'
+          launch: 'env SSL_CERT_FILE="$PWD/trust.pem" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp --user-dir "$PWD/testdata/weboffer-user"'
+          qt_mcp: "logos-qt-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+
+            - name: "Open Settings"
+              action: click
+              target: "Settings"
+
+            - name: "Open Package Repositories"
+              action: click
+              target: "Package Repositories"
+
+            - name: "The built-in catalog is listed"
+              action: wait_for
+              texts: ["Logos Official"]
+              timeout: 90000
+              text: "The list comes from package_downloader, so this also waits until it is connected."
+
+            - name: "Type the catalog URL"
+              action: set_property
+              find_by: "objectName"
+              find_value: "repositories.urlField"
+              property: "text"
+              value: "https://127.0.0.1:8453/logos-repo.json"
+
+            - name: "Add it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "repositories.addButton"
+
+            - name: "The catalog is listed"
+              action: wait_for
+              texts: ["Web Offer Catalog"]
+              timeout: 30000
+              screenshot: "deeplink-install-catalog-added.png"
+
+            - name: "Disable the built-in catalog"
+              action: click_object
+              find_by: "objectName"
+              find_value: "repositories.enableSwitch.https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json"
+
+            - name: "Let the setting save"
+              action: sleep
+              ms: 3000
+
+      - title: "The catalog is saved in the profile"
+        text: "The next launches read it from here. Without it, every link below fails `not_declared`."
+        run: |
+          grep -rl "127.0.0.1:8453" testdata/weboffer-user/module_data 2>/dev/null \
+            && echo "CATALOG_SAVED" || echo "CATALOG_NOT_SAVED"
+        expect_contains:
+          - "CATALOG_SAVED"
+
+  - title: "Cold start: the link reaches the install offer"
+    step: true
+    platform: [linux, macos]
+    text: |
+      Basecamp is closed and the link is clicked. Nothing installed provides
+      `weboffer.open`, and Basecamp fetches the catalog only when something
+      needs it, which on a cold start is after the link arrives. The link waits
+      for the catalog, finds that `web_offer_demo` published the intent, and
+      the shell offers to install it.
+    steps:
+      - title: "Launch with basecamp://intent/weboffer.open"
+        ui_test:
+          # Its own copy of the profile: the previous launch may still be
+          # shutting down, and on the same user-dir this launch would hand its
+          # URL to it and exit instead of starting.
+          setup:
+            - 'chmod -R u+w "$PWD/testdata/weboffer-user-cold" 2>/dev/null || true'
+            - 'rm -rf "$PWD/testdata/weboffer-user-cold"'
+            - 'cp -a "$PWD/testdata/weboffer-user" "$PWD/testdata/weboffer-user-cold"'
+          launch: 'env SSL_CERT_FILE="$PWD/trust.pem" LOGOS_NO_SCHEME_REGISTER=1 ./bin-bundle-dir-inspector/bin/LogosBasecamp --user-dir "$PWD/testdata/weboffer-user-cold" --uri=basecamp://intent/weboffer.open'
+          qt_mcp: "logos-qt-mcp"
+          launch_timeout: 300
+          tests:
+            - name: "App window opens"
+              action: wait_for
+              texts: ["Applications", "Settings"]
+              timeout: 60000
+
+            - name: "The install offer appears on its own"
+              action: wait_for
+              texts: ["Install an app for this?", "web_offer_demo can handle this, but it is not installed yet."]
+              timeout: 90000
+              text: "Nobody clicked anything in Basecamp. The link's intent is published only by a catalog package, so the shell offers that package."
+              screenshot: "deeplink-install-offer.png"
+
+      - title: "The log shows the wait and the offer"
+        run: |
+          grep -E "waits for the catalog|dispatching link request|suggesting an install|failed —" ui-test-app.log || true
+          grep -q "suggesting an install for weboffer.open — web_offer_demo" ui-test-app.log \
+            && echo "OFFERED_WEB_OFFER_DEMO" || echo "NO_OFFER"
+        expect_contains:
+          - "OFFERED_WEB_OFFER_DEMO"
+
+  - title: "Warm: the same link, and the control, while Basecamp runs"
+    step: true
+    platform: [linux, macos]
+    text: |
+      Basecamp is running and a link is clicked: the OS starts a second process,
+      which hands the URL to the first and exits. The first link names the
+      published intent and must reach the offer. The second names
+      `weboffer.withheld`, which a catalog package provides but did not
+      publish, and must be refused without an offer.
+    steps:
+      - title: "Click both links at a running Basecamp"
+        run: |
+          set -u
+          export LOGOS_NO_SCHEME_REGISTER=1 QT_QPA_PLATFORM=offscreen
+          export SSL_CERT_FILE="$PWD/trust.pem"
+          BIN=./bin-bundle-dir-inspector/bin/LogosBasecamp
+
+          # Its own copy: a leftover instance on the shared user-dir would hold
+          # the single-instance socket.
+          USER_DIR="$PWD/testdata/weboffer-user-warm"
+          chmod -R u+w "$USER_DIR" 2>/dev/null || true
+          rm -rf "$USER_DIR"
+          cp -a "$PWD/testdata/weboffer-user" "$USER_DIR"
+
+          "$BIN" --user-dir "$USER_DIR" >/tmp/weboffer-first.log 2>&1 &
+          FIRST=$!
+
+          WAITED=0
+          while [ "$WAITED" -lt 120 ]; do
+            grep -q "Logos Core started successfully" /tmp/weboffer-first.log && break
+            kill -0 "$FIRST" 2>/dev/null || break
+            sleep 1; WAITED=$((WAITED + 1))
+          done
+          if ! kill -0 "$FIRST" 2>/dev/null; then
+            echo "FIRST_INSTANCE_DIED"; tail -40 /tmp/weboffer-first.log; exit 1
+          fi
+
+          # wait_for <extended regex>: poll the first instance's log.
+          wait_for() {
+            local n=0
+            while [ "$n" -lt 90 ]; do
+              grep -qE "$1" /tmp/weboffer-first.log && return 0
+              sleep 1; n=$((n + 1))
+            done
+            return 1
+          }
+
+          "$BIN" --user-dir "$USER_DIR" --uri=basecamp://intent/weboffer.open >/dev/null 2>&1
+          if wait_for "suggesting an install for weboffer.open — web_offer_demo"; then
+            echo "WARM_OFFERED_WEB_OFFER_DEMO"
+          else
+            echo "WARM_NO_OFFER"
+          fi
+          # The offer answers the link `unavailable`, which ends it. One link
+          # is handled at a time, so wait for that before the next.
+          wait_for "link-1 failed" || true
+
+          "$BIN" --user-dir "$USER_DIR" --uri=basecamp://intent/weboffer.withheld >/dev/null 2>&1
+          if wait_for "link-2 failed"; then echo "WITHHELD_LINK_REFUSED"; fi
+          if grep -q "suggesting an install for weboffer.withheld" /tmp/weboffer-first.log; then
+            echo "WITHHELD_WAS_OFFERED"
+          else
+            echo "WITHHELD_NOT_OFFERED"
+          fi
+
+          echo "--- link lines from the running instance ---"
+          grep -E "LinkRequestCoordinator|suggesting an install|installable providers" /tmp/weboffer-first.log || true
+
+          kill "$FIRST" 2>/dev/null || true
+          wait "$FIRST" 2>/dev/null || true
+        expect_contains:
+          - "WARM_OFFERED_WEB_OFFER_DEMO"
+          - "WITHHELD_LINK_REFUSED"
+          - "WITHHELD_NOT_OFFERED"
+
+  - title: "Stop the server"
+    step: true
+    platform: [linux, macos]
+    steps:
+      - title: "Stop caddy"
+        run: |
+          if [ -f caddy.pid ]; then kill "$(cat caddy.pid)" 2>/dev/null || true; rm -f caddy.pid; fi
+          echo "stopped"
+        expect_contains:
+          - "stopped"
