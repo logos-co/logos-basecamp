@@ -161,7 +161,10 @@ nix run .#app-standalone -- \
 - `--width` / `--height` — initial window size.
 
 Only `package_manager` is loaded — no downloader, Package Manager, App Manager
-or catalogue — and the sidebar shows the standalone apps plus Settings.
+or catalogue — and the sidebar shows the standalone apps plus Settings. The
+exception is `package_manager_ui` itself: passed with `--module`, it gets the
+Package Manager section back and is hosted there, where it lives in Basecamp —
+the build you passed, not a bundled one.
 Modules installed in the user directory are ignored, so they cannot shadow the
 ones you pass, and a `--module`/`--modules-dir` module takes precedence over a
 copy bundled with Basecamp. Data goes to `./.logos-basecamp-dev` unless

@@ -712,9 +712,11 @@ void UIPluginManager::refreshUiModules()
 
 // Shell-internal apps: never launchable, so never in a launcher or a
 // recently-closed list.
-bool UIPluginManager::isShellInternalApp(const QString& name)
+bool UIPluginManager::isShellInternalApp(const QString& name) const
 {
-    return name == "main_ui" || name == "package_manager_ui";
+    if (name == "main_ui") return true;
+    if (name == "package_manager_ui") return m_hostProfile.packageManagerUiIsSection();
+    return false;
 }
 
 // One row shape, built once. launcherApps() and recentlyClosedApps() both use

@@ -58,6 +58,7 @@ private slots:
 
 private:
     void wireSidebar(QObject* sidebarRoot);
+    bool offersSection(int section) const;
     void applyAppManagerSearch(const QString& query);
     void invokeOpenApp(const QString& name, const QString& repositoryUrl);
     void setupUi();

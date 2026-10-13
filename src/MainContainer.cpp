@@ -355,14 +355,22 @@ bool MainContainer::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-void MainContainer::onSectionIndexChanged(int index)
+// A backend without availableSections (shell-preview) offers every section.
+bool MainContainer::offersSection(int section) const
 {
     if (QObject* backend = m_host->backendObject()) {
         const QVariant available = backend->property("availableSections");
-        if (available.isValid() && !available.toList().contains(QVariant(index))) {
-            m_host->setCurrentSectionIndex(ShellSection::Workspace);
-            return;
-        }
+        if (available.isValid())
+            return available.toList().contains(QVariant(section));
+    }
+    return true;
+}
+
+void MainContainer::onSectionIndexChanged(int index)
+{
+    if (!offersSection(index)) {
+        m_host->setCurrentSectionIndex(ShellSection::Workspace);
+        return;
     }
 
     const int sectionIndex = index;
@@ -411,7 +419,10 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 {
     // package_manager_ui is not a dock: it becomes the Package Manager page of
     // the content stack, replacing the placeholder that sits there at startup.
-    if (title == QStringLiteral("package_manager_ui") && !m_pmuiWidget) {
+    // Only where that section exists — a host without it (standalone mode)
+    // docks it like any other app.
+    if (title == QStringLiteral("package_manager_ui") && !m_pmuiWidget
+        && offersSection(ShellSection::PackageManager)) {
         m_pmuiWidget = widget;
         QWidget* placeholder = m_contentStack->widget(kModulesStackIndex);
         widget->setParent(m_contentStack);
@@ -425,6 +436,10 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
         // instantiate.
         if (m_shortcutBridge) m_shortcutBridge->rebindDeferred();
         m_suppressNextNavToApps = true;
+        // Standalone mode opening it as the app under development: show it.
+        if (QObject* backend = m_host->backendObject();
+            backend && backend->property("currentVisibleApp").toString() == title)
+            m_host->setCurrentSectionIndex(ShellSection::PackageManager);
         return;
     }
 
