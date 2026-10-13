@@ -46,6 +46,18 @@ public:
     void dismiss(const QString&) override {}
 };
 
+class FakeInstaller : public IntentInstaller {
+public:
+    QStringList offered;
+    QStringList lastCandidates;
+    void offerInstall(const QString& intent, const QStringList& candidates) override
+    {
+        offered.append(intent);
+        lastCandidates = candidates;
+    }
+    void nothingInstallable(const QString&) override {}
+};
+
 class FakePresenter : public IntentPresenter {
 public:
     QStringList presentedApps;
@@ -116,6 +128,18 @@ private slots:
     void testOnlyOneLinkRequestInFlight();
     void testBareUrlRaisesWithoutSubmitting();
     void testSurvivesTheBrokerBeingDestroyedFirst();
+    void testCatalogWebOptInReachesTheInstallOffer();
+    void testCatalogEntryWithoutWebIsNotOffered();
+    void testLinkOffersOnlyThePackagesThatOptedIn();
+    void testLinkWaitsForTheCatalogOnAColdStart();
+    void testCatalogOptInSurvivesADiskRebuild();
+    void testCatalogRefreshThatDropsThePackageWithdrawsTheLink();
+    void testInstalledOptInIsChosenNotOffered();
+    void testDeclaredIntentDoesNotWaitForTheCatalog();
+    void testCatalogWithoutTheIntentFailsAfterTheWait();
+    void testSecondLinkWhileWaitingForTheCatalogIsRefused();
+    void testSurvivesBeingDestroyedWhileWaitingForTheCatalog();
+    void testCatalogThatNeverArrivesIsReported();
 
 private:
     // Registry with the shell's real registration plus the link requester,
@@ -440,6 +464,338 @@ void TestLinkIntent::testSurvivesTheBrokerBeingDestroyedFirst()
     delete coordinator;   // must not touch the freed broker
 
     QVERIFY(true);        // reaching here at all is the assertion
+}
+
+// A link to an app that is not installed, published to the web by its catalog
+// entry. Before, the link requester's `uses` came from installed apps only, so
+// this failed `not_declared` before the install offer was ever considered.
+void TestLinkIntent::testCatalogWebOptInReachesTheInstallOffer()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } },
+                                      { { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+
+    QCOMPARE(installer.offered, QStringList{QStringLiteral("forum.open")});
+    QCOMPARE(installer.lastCandidates, QStringList{QStringLiteral("forum_ui")});
+    QVERIFY2(presenter.presentedApps.isEmpty(), "dispatched to a package that is not installed");
+}
+
+void TestLinkIntent::testCatalogEntryWithoutWebIsNotOffered()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    QSignalSpy failed(&coordinator, &LinkRequestCoordinator::linkFailed);
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+
+    QVERIFY2(installer.offered.isEmpty(), "a package that never opted in was offered to a link");
+    QCOMPARE(failed.count(), 1);
+}
+
+// Two packages provide the intent; one published it to the web. A link must
+// not use the opt-in of one to get the other offered.
+void TestLinkIntent::testLinkOffersOnlyThePackagesThatOptedIn()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+    registry->setInstallableProviders(
+        { { QStringLiteral("a_ui"), { QStringLiteral("forum.open") } },
+          { QStringLiteral("b_ui"), { QStringLiteral("forum.open") } } },
+        { { QStringLiteral("b_ui"), { QStringLiteral("forum.open") } } });
+
+    const QString link = LinkRequestCoordinator::requesterName();
+    QCOMPARE(registry->installableFor(link, QStringLiteral("forum.open")),
+             QStringList{QStringLiteral("b_ui")});
+    // An app asking is not narrowed: both are offerable to it.
+    QCOMPARE(registry->installableFor(QStringLiteral("some_app"), QStringLiteral("forum.open")),
+             (QStringList{QStringLiteral("a_ui"), QStringLiteral("b_ui")}));
+}
+
+// The catalog is fetched on first need, which on a cold start is after the
+// link arrives. The link waits for it rather than failing `not_declared`.
+void TestLinkIntent::testLinkWaitsForTheCatalogOnAColdStart()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    QSignalSpy failed(&coordinator, &LinkRequestCoordinator::linkFailed);
+    std::function<void()> whenLoaded;
+    coordinator.setCatalogGate([&whenLoaded](std::function<void()> then) {
+        whenLoaded = std::move(then);
+    });
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+
+    QVERIFY2(whenLoaded, "the link did not wait for the catalog");
+    QCOMPARE(failed.count(), 0);
+    QVERIFY(installer.offered.isEmpty());
+
+    // The catalog arrives, then the wait ends — PackageCoordinator's order.
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } },
+                                      { { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+    whenLoaded();
+    spin(200);
+
+    QCOMPARE(installer.offered, QStringList{QStringLiteral("forum.open")});
+}
+
+// rebuild() runs on every package scan, and the catalog is set once per fetch.
+// A scan after the fetch must not drop what the catalog published.
+void TestLinkIntent::testCatalogOptInSurvivesADiskRebuild()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } },
+                                      { { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+
+    QCOMPARE(installer.offered, QStringList{QStringLiteral("forum.open")});
+}
+
+void TestLinkIntent::testCatalogRefreshThatDropsThePackageWithdrawsTheLink()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } },
+                                      { { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+    const QString link = LinkRequestCoordinator::requesterName();
+    QVERIFY(registry->declaresUse(link, QStringLiteral("forum.open")));
+
+    registry->setInstallableProviders({});
+
+    QVERIFY2(!registry->declaresUse(link, QStringLiteral("forum.open")),
+             "a package gone from the catalog is still reachable from a link");
+    QVERIFY(registry->installableFor(link, QStringLiteral("forum.open")).isEmpty());
+    // The shell's own navigation is untouched.
+    QVERIFY(registry->declaresUse(link, QStringLiteral("basecamp.settings.open")));
+}
+
+// Once the package is installed, MainUIBackend drops it from the catalog set
+// and its own record answers: the link reaches the chooser, not an offer.
+void TestLinkIntent::testInstalledOptInIsChosenNotOffered()
+{
+    QObject owner;
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("forum"),
+        R"({"provides":[{"intent":"forum.open","web":true}]})");
+
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({ { QStringLiteral("forum_ui"), plugin(dir) } }, nullptr, nullptr);
+    registry->setInstallableProviders({});
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+
+    QVERIFY2(installer.offered.isEmpty(), "offered to install an app that is installed");
+    QCOMPARE(chooser.presented.size(), 1);
+}
+
+// The wait is for links nothing installed publishes. The warm path, and any
+// intent already declared, goes straight to the broker.
+void TestLinkIntent::testDeclaredIntentDoesNotWaitForTheCatalog()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    int gateCalls = 0;
+    coordinator.setCatalogGate([&gateCalls](std::function<void()> then) {
+        ++gateCalls;
+        then();
+    });
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/basecamp.settings.open"));
+    spin(200);
+
+    QCOMPARE(gateCalls, 0);
+}
+
+void TestLinkIntent::testCatalogWithoutTheIntentFailsAfterTheWait()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    QSignalSpy failed(&coordinator, &LinkRequestCoordinator::linkFailed);
+    std::function<void()> whenLoaded;
+    coordinator.setCatalogGate([&whenLoaded](std::function<void()> then) {
+        whenLoaded = std::move(then);
+    });
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(200);
+    QVERIFY(whenLoaded);
+
+    // The catalog has the package, but it never published the intent.
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+    whenLoaded();
+    spin(200);
+
+    QVERIFY(installer.offered.isEmpty());
+    QCOMPARE(failed.count(), 1);
+}
+
+// One link at a time holds while the first waits for the catalog.
+void TestLinkIntent::testSecondLinkWhileWaitingForTheCatalogIsRefused()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    FakeInstaller installer;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+    broker.setInstaller(&installer);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    QSignalSpy failed(&coordinator, &LinkRequestCoordinator::linkFailed);
+    std::function<void()> whenLoaded;
+    coordinator.setCatalogGate([&whenLoaded](std::function<void()> then) {
+        whenLoaded = std::move(then);
+    });
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(100);
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(100);
+
+    QCOMPARE(failed.count(), 1);
+
+    registry->setInstallableProviders({ { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } },
+                                      { { QStringLiteral("forum_ui"), { QStringLiteral("forum.open") } } });
+    whenLoaded();
+    spin(200);
+
+    QCOMPARE(installer.offered, QStringList{QStringLiteral("forum.open")});
+}
+
+void TestLinkIntent::testSurvivesBeingDestroyedWhileWaitingForTheCatalog()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+
+    std::function<void()> whenLoaded;
+    {
+        LinkRequestCoordinator coordinator(&broker, registry, &owner);
+        coordinator.setCatalogGate([&whenLoaded](std::function<void()> then) {
+            whenLoaded = std::move(then);
+        });
+        coordinator.onRegistryReady();
+        LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+        spin(100);
+    }
+    QVERIFY(whenLoaded);
+    whenLoaded();
+    spin(100);
+    QVERIFY(true);        // reaching here at all is the assertion
+}
+
+// PackageCoordinator answers a failed fetch too, but a getCatalog reply that
+// never comes leaves the link in flight, and every later link is refused as
+// "already being handled". The parked-URL path has a deadline; this wait does not.
+void TestLinkIntent::testCatalogThatNeverArrivesIsReported()
+{
+    QObject owner;
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({}, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    coordinator.setParkDeadlineMs(50);
+    QSignalSpy failed(&coordinator, &LinkRequestCoordinator::linkFailed);
+    coordinator.setCatalogGate([](std::function<void()>) {});   // never loads
+    coordinator.onRegistryReady();
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/forum.open"));
+    spin(300);
+
+    QEXPECT_FAIL("", "the catalog wait has no deadline yet", Continue);
+    QCOMPARE(failed.count(), 1);
 }
 
 QTEST_MAIN(TestLinkIntent)

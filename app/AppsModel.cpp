@@ -167,6 +167,7 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case VersionsRole:         return r.versions;
     case DependenciesRole:     return r.dependencies;
     case ProvidesRole:         return r.provides;
+    case WebProvidesRole:      return r.webProvides;
     case InstalledVersionRole: return r.installedVersion;
     case LatestVersionRole:    return r.latestVersion;
     case HasUpdateRole:
@@ -238,6 +239,7 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {VersionsRole,         "versions"},
         {DependenciesRole,     "dependencies"},
         {ProvidesRole,         "provides"},
+        {WebProvidesRole,      "webProvides"},
         {InstalledVersionRole, "installedVersion"},
         {LatestVersionRole,    "latestVersion"},
         {HasUpdateRole,        "hasUpdate"},
@@ -397,14 +399,22 @@ void AppsModel::recomputeVersionDerivedFields(Row& r)
         }
     }
 
-    // Intents the package advertises (names only)
+    // Intents the package advertises, and which of them it publishes to links.
+    // `web` must be a real boolean, as on disk (IntentRegistry::ingestRecord):
+    // "false" read as true would publish a capability its author withheld.
     r.provides.clear();
+    r.webProvides.clear();
     for (const QVariant& v : firstManifest.value("provides").toList()) {
+        const QVariantMap entry = v.toMap();
         const QString intent = v.typeId() == QMetaType::QString
             ? v.toString()
-            : v.toMap().value(QStringLiteral("intent")).toString();
-        if (!intent.isEmpty() && !r.provides.contains(intent))
+            : entry.value(QStringLiteral("intent")).toString();
+        if (intent.isEmpty()) continue;
+        if (!r.provides.contains(intent))
             r.provides.append(intent);
+        const QVariant web = entry.value(QStringLiteral("web"));
+        if (web.typeId() == QMetaType::Bool && web.toBool() && !r.webProvides.contains(intent))
+            r.webProvides.append(intent);
     }
 
     // Availability on this host. An empty valid-variant list means

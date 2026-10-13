@@ -8,6 +8,7 @@
 #include "LogosIntent.h"
 
 #include <QDebug>
+#include <QPointer>
 
 LinkRequestCoordinator::LinkRequestCoordinator(IntentBroker* broker,
                                                IntentRegistry* registry,
@@ -171,10 +172,29 @@ void LinkRequestCoordinator::handleUrl(const QString& rawUrl)
     // The INTENT NAME, never the raw URL: the name has passed isValidName and
     // is therefore a constrained character set, while the URL is arbitrary
     // attacker-supplied text and the failure path already logs it deliberately.
-    qInfo().noquote() << "LinkRequestCoordinator: dispatching link request"
-                      << requestId << "for intent" << request.intent;
+    const auto submit = [this, requestId, intent = request.intent, params = request.params]() {
+        if (!m_broker) return;
+        qInfo().noquote() << "LinkRequestCoordinator: dispatching link request"
+                          << requestId << "for intent" << intent;
+        m_broker->submit(m_endpoint.get(), requestId, intent, params);
+    };
 
-    m_broker->submit(m_endpoint.get(), requestId, request.intent, request.params);
+    // Not published by anything installed: the catalog may publish it, so
+    // wait for the catalog before the broker's `uses` gate decides.
+    if (m_whenCatalogLoaded && !m_registry->declaresUse(requesterName(), request.intent)) {
+        qInfo().noquote() << "LinkRequestCoordinator:" << requestId
+                          << "waits for the catalog for intent" << request.intent;
+        QPointer<LinkRequestCoordinator> self(this);
+        m_whenCatalogLoaded([self, submit]() { if (self) submit(); });
+        return;
+    }
+    submit();
+}
+
+void LinkRequestCoordinator::setCatalogGate(
+    std::function<void(std::function<void()>)> whenCatalogLoaded)
+{
+    m_whenCatalogLoaded = std::move(whenCatalogLoaded);
 }
 
 void LinkRequestCoordinator::onResult(const QString& requestId,

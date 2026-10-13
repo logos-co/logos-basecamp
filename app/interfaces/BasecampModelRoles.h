@@ -65,6 +65,8 @@ struct AppsModelRoles {
                                    //   valid-variant list is still unknown.
         NotAvailableReasonRole,  // AppsModel::NotAvailableReason (int) — why not,
                                  //   when the row is shown anyway.
+        WebProvidesRole,         // QStringList — the provides entries that set
+                                 //   "web": true (reachable from a basecamp:// link)
     };
 };
 

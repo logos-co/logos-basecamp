@@ -224,7 +224,7 @@ void IntentBroker::startRequest(const QString& dispatchId)
         // way: an app that could tell "we offered an install" from "no match
         // existed" could enumerate what is not installed.
         const QStringList installable =
-            m_registry->installableProvidersFor(intent);
+            m_registry->installableFor(requesterName, intent);
 
         if (installable.isEmpty()) {
             qWarning().noquote()
