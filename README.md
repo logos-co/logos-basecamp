@@ -9,6 +9,42 @@ Prebuilt binaries for Linux (AppImage) and macOS (DMG):
 
 Release candidates are marked as pre-release, so `/releases/latest` skips them. If the stable release is significantly older than the RCs on the releases page, you probably want an RC.
 
+### Stable download names
+
+The **Stable release downloads** workflow adds byte-identical copies of the
+versioned release binaries under these names:
+
+| Platform | Asset name |
+| --- | --- |
+| Linux x86_64 | `LogosBasecamp-Desktop-x86_64.AppImage` |
+| Linux ARM64 | `LogosBasecamp-Desktop-aarch64.AppImage` |
+| macOS Apple Silicon | `LogosBasecamp-Desktop-aarch64.dmg` |
+| Windows x86_64 | `LogosBasecamp-Desktop-x86_64-windows-setup.exe` |
+
+Websites can link to `https://github.com/logos-co/logos-basecamp/releases/latest/download/<asset-name>`
+without knowing the release version or commit. The original versioned assets
+remain available.
+
+For new releases, upload the versioned binaries to a draft full release, run
+the workflow manually with that tag, and publish only after all four aliases
+are present. This keeps `latest/download` links working when the latest release
+changes and also supports immutable releases. The release publishing pipeline
+can run the helper with the same tag before publication.
+
+The workflow also runs for published full releases and waits up to ten minutes
+for all four binaries to finish uploading. For an existing release, run it
+manually with the release tag, for example `0.3.1`. Backfill the latest release
+before switching a website to these URLs. If the release publisher uses
+`GITHUB_TOKEN`, it must explicitly dispatch the workflow because that token's
+release events do not trigger another workflow. Already-published immutable
+releases cannot be backfilled.
+
+To inspect the asset mapping without uploading anything:
+
+```bash
+python3 scripts/release-download-aliases.py --repo logos-co/logos-basecamp --tag 0.3.1 --dry-run
+```
+
 ## How to Build
 
 ### Using Nix (Recommended)
