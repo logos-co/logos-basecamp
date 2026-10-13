@@ -511,23 +511,6 @@
           depsvcInstalledDev = installDev depsvcModule.default;
           depsvcInstalledPortable = installPortable depsvcModule.default;
 
-          # The UI suite's loadable core-module fixture: depsvc, from the same
-          # sources and builder as depsvc-lgx below, but as an INSTALLED tree
-          # (modules/depsvc/...) via the same bundlers the app's own
-          # pre-installed modules go through. Both variants exist because the
-          # dev app loads -dev module variants while the bundle loads plain
-          # ones — integration-test and integration-test-bundle each seed the
-          # one matching the app they run.
-          depsvcModulePkg =
-            let builder = logos-package-manager-ui.inputs.logos-module-builder; in
-            (builder.lib.mkLogosModule {
-              src = ./tests/fixtures/depsvc;
-              configFile = ./tests/fixtures/depsvc/metadata.json;
-              flakeInputs = { logos-module-builder = builder; };
-            }).packages.${system}.default;
-          depsvcInstalledDev = installDev depsvcModulePkg;
-          depsvcInstalledPortable = installPortable depsvcModulePkg;
-
           # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
           integrationTest = import ./nix/integration-test.nix {
             inherit pkgs src logosQtMcp; appPkg = app;
