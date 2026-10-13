@@ -37,6 +37,12 @@ struct HostProfile {
     bool enforceDependencyVersions = true;
 
     QList<int> availableSections() const;  // ShellSection values
+
+    // package_manager_ui is the Package Manager section — shell furniture, not
+    // an app — wherever that section is offered: always in the desktop app,
+    // and in standalone mode when it is one of the apps opened (`--module`).
+    // Elsewhere (loaded only as a dependency) it is docked like any app.
+    bool packageManagerUiIsSection() const;
 };
 
 } // namespace LogosBasecamp

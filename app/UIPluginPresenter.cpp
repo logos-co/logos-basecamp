@@ -55,8 +55,10 @@ bool UIPluginPresenter::isAppFrontmost(const QString& appName) const
     const int section = m_sectionProvider();
 
     // package_manager_ui is hoisted into the content stack as its own section
-    // rather than docked, so "frontmost" means that section is selected.
-    if (appName == QLatin1String("package_manager_ui"))
+    // rather than docked, so "frontmost" means that section is selected —
+    // where the host has that section (see HostProfile).
+    if (appName == QLatin1String("package_manager_ui")
+        && m_uiPluginManager && m_uiPluginManager->isShellInternalApp(appName))
         return section == ShellSection::PackageManager;
 
     return section == ShellSection::Workspace;
