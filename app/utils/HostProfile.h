@@ -32,6 +32,10 @@ struct HostProfile {
 
     bool devHost = false;     // labelled as a developer's host
 
+    // false: a dependency outside its declared version range loads with a
+    // warning instead of being refused. A missing dependency still refuses.
+    bool enforceDependencyVersions = true;
+
     QList<int> availableSections() const;  // ShellSection values
 };
 

@@ -146,6 +146,7 @@ private slots:
                              ShellSection::PackageManager, ShellSection::Settings}));
         QVERIFY(p.useUserModules && p.packageCatalog && p.registerUrlScheme && p.singleInstance);
         QVERIFY(!p.devHost);
+        QVERIFY(p.enforceDependencyVersions);
     }
 
     void standaloneProfileDropsCatalogueAndUserState()
@@ -163,6 +164,7 @@ private slots:
         QVERIFY(p.defaultUserDir.endsWith(QStringLiteral(".logos-basecamp-dev")));
         QCOMPARE(p.applicationName, QStringLiteral("LogosBasecampStandalone"));
         QVERIFY(p.devHost);
+        QVERIFY(!p.enforceDependencyVersions);
     }
 
     void qmlSourceNeedsNameAndExistingDir()

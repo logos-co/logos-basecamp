@@ -534,6 +534,15 @@
           # (README, "Standalone Mode").
           app-standalone = appStandalone;
 
+          # Standalone mode with dependencies resolved: what
+          # logos-module-builder's `nix run .` / `.#ui-dev` launch.
+          #   nix run .#dev -- --module <install root> --dep <name>=<flake ref> ...
+          dev = import ./nix/dev.nix {
+            inherit pkgs system logosQtMcp;
+            standaloneApp = appStandalone;
+            lgpm = logos-package-manager.packages.${system}.cli;
+          };
+
           # Basecamp against the fixture-backed mock — no Logos runtime at all.
           # Run: nix run .#app-mock        (see mock/README.md)
           app-mock = appMock;
@@ -787,6 +796,10 @@
         default = {
           type = "app";
           program = "${self.packages.${system}.app}/bin/LogosBasecamp";
+        };
+        dev = {
+          type = "app";
+          program = "${self.packages.${system}.dev}/bin/logos-basecamp-dev";
         };
         bin-bundle-dir = {
           type = "app";

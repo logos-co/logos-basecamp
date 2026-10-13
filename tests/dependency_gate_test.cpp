@@ -239,6 +239,40 @@ private slots:
                  QStringLiteral("requires ^2.0.0, found 1.0.0"));
     }
 
+    // Versions not enforced (standalone mode): a mismatch is let through and
+    // reported, everything else is unchanged.
+    void without_version_enforcement_a_mismatch_does_not_block()
+    {
+        const auto split = logos::splitDependencyRows({mismatchRow()}, false);
+        QCOMPARE(split.present, QStringList{QStringLiteral("depsvc")});
+        QVERIFY(split.blocking.isEmpty());
+        QVERIFY(split.blockers.isEmpty());
+        QCOMPARE(split.ignoredMismatches.size(), 1);
+        QCOMPARE(split.ignoredMismatches.first().toMap().value("detail").toString(),
+                 QStringLiteral("requires ^2.0.0, found 1.0.0"));
+    }
+
+    void without_version_enforcement_an_absent_dependency_still_blocks()
+    {
+        const auto split = logos::splitDependencyRows({absentRow()}, false);
+        QCOMPARE(split.blocking, QStringList{QStringLiteral("depsvc")});
+        QVERIFY(split.ignoredMismatches.isEmpty());
+    }
+
+    void without_version_enforcement_a_signer_mismatch_still_blocks()
+    {
+        const auto split = logos::splitDependencyRows({signerMismatchRow()}, false);
+        QCOMPARE(split.blocking, QStringList{QStringLiteral("depsvc")});
+        QVERIFY(split.ignoredMismatches.isEmpty());
+    }
+
+    void the_split_enforces_versions_by_default()
+    {
+        const auto split = logos::splitDependencyRows({mismatchRow()});
+        QVERIFY(split.ignoredMismatches.isEmpty());
+        QCOMPARE(split.blocking, QStringList{QStringLiteral("depsvc")});
+    }
+
     void the_split_keeps_an_absent_dependency_out_of_the_graph()
     {
         const auto split = logos::splitDependencyRows({absentRow()});
