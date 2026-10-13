@@ -1678,14 +1678,21 @@ void PackageCoordinator::refreshDependencyInfo()
             // walks. Why the dependency cleanup needs no extra IPC.
             inner.package_manager.resolveFlatDependenciesAsync(
                 name, true,
-                [missingMap, blockingMap, dependenciesMap, name,
-                 maybeFinish](QVariantList deps) {
+                [missingMap, blockingMap, dependenciesMap, name, maybeFinish,
+                 enforceVersions = self->m_hostProfile.enforceDependencyVersions](QVariantList deps) {
                     // Two questions, not one: which rows are on disk (the
                     // graph) and which refuse the load (the gate). The split
                     // lives in utils/DependencyBlocker.h so it is under test —
                     // this lambda is not reachable from one.
                     const logos::DependencyRowSplit split =
-                        logos::splitDependencyRows(deps);
+                        logos::splitDependencyRows(deps, enforceVersions);
+                    for (const QVariant& m : split.ignoredMismatches) {
+                        const QVariantMap row = m.toMap();
+                        qWarning().noquote()
+                            << name << ": dependency" << row.value("name").toString()
+                            << row.value("detail").toString()
+                            << "— loading anyway (dependency versions not enforced)";
+                    }
                     missingMap->insert(name, split.blocking);
                     blockingMap->insert(name, split.blockers);
                     dependenciesMap->insert(name, split.present);

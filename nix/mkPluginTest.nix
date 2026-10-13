@@ -10,22 +10,31 @@
 #   logos-basecamp.lib.${system}.mkPluginTest {
 #     inherit pkgs;
 #     installPkg = myModule.packages.${system}.install;   # modules/ + plugins/
-#     modulesDir = depsDir;                               # optional
+#     deps = [ { name = "calc_module"; flake = inputs.calc_module; } ];
 #     testFiles = [ ./tests/ui-tests.mjs ];
 #   };
+#
+# `deps` are resolved and installed as for `nix run .#dev` (devDeps.nix);
+# `modulesDir` passes an install root instead.
 { standaloneApp, logosQtMcp }:
 
-{ pkgs, installPkg, modulesDir ? null, testFiles, timeoutSec ? 120
+{ pkgs, installPkg, deps ? [], modulesDir ? null, testFiles, timeoutSec ? 120
 , name ? "plugin-integration-test"
 , extraArgs ? ""   # appended to the launch command; shell-expanded at run time
 , setup ? ""       # shell run before the tests (e.g. to stage a --qml-source dir)
 }:
 
 let
+  depsRoot =
+    if modulesDir != null then modulesDir
+    else if deps != [] then
+      import ./devDeps.nix { inherit pkgs; system = pkgs.stdenv.hostPlatform.system; } { inherit deps; }
+    else null;
+
   launchScript = pkgs.writeShellScript "run-basecamp-standalone" ''
     exec ${standaloneApp}/bin/LogosBasecamp \
       --module ${installPkg} \
-      ${pkgs.lib.optionalString (modulesDir != null) "--modules-dir ${modulesDir}"} \
+      ${pkgs.lib.optionalString (depsRoot != null) "--modules-dir ${depsRoot}"} \
       --user-dir "$BASECAMP_TEST_USER_DIR" ${extraArgs} "$@"
   '';
 

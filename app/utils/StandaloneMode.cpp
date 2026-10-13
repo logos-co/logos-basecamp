@@ -127,6 +127,7 @@ void applyStandaloneCapabilities(HostProfile& profile)
     profile.defaultUserDir = QDir::current().absoluteFilePath(QStringLiteral(".logos-basecamp-dev"));
     profile.applicationName = QStringLiteral("LogosBasecampStandalone");
     profile.devHost = true;
+    profile.enforceDependencyVersions = false;
 }
 
 StandaloneResolution addStandaloneQmlSource(HostProfile& profile, const QString& arg)

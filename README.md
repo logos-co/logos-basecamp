@@ -168,6 +168,17 @@ copy bundled with Basecamp. Data goes to `./.logos-basecamp-dev` unless
 `--user-dir` is given, and `--new-instance` is implied. QML `Settings` are
 stored as `LogosBasecampStandalone`, apart from the real Basecamp's.
 
+`LogosBasecamp --module` installs nothing itself: every dependency in the
+app's `metadata.json` must come in through `--modules-dir`. The `dev` command
+(below) does that for you, and is what a module's `nix run .` / `.#ui-dev`
+launch. Launched by hand, pass each one yourself, e.g. its
+`nix build .#install`.
+
+A missing dependency still blocks the app. One outside its declared version
+range does not: it is logged (`… requires >=0.3.0, found 0.0.999 — loading
+anyway`) and loaded, since a dependency built from source reports a placeholder
+version. The real Basecamp still refuses it.
+
 `--module` builds a host profile (`app/utils/HostProfile.h`) — module roots,
 apps to open, and which capabilities this host offers. The rest of Basecamp
 reads those capabilities and never checks for "standalone".
@@ -187,13 +198,61 @@ The two standalone builds exist for a faster cold build: they skip the Package
 Manager UI and storage. On a binary-cache hit there is no difference, and what
 `--module` shows is the same on all four.
 
-logos-module-builder's `nix run .` / `.#ui-dev` for UI modules run this mode,
-and `lib.<system>.mkPluginTest` (`nix/mkPluginTest.nix`) runs a module's
-`tests/*.mjs` against it headless, each file with a fresh user dir. Basecamp's
-own checks use it: `standalone-test` (a QML-only app calling a core dependency
-through the bridge), `standalone-backend-test` (the module builder's
-`ui-qml-backend` template, backend in ui-host) and
-`standalone-rejects-module-dir`.
+##### `dev`: dependencies resolved for you (`nix/dev.nix`)
+
+```bash
+nix run .#dev -- --module <install root> [--dep-package <name>=<dir>] [--dep <name>=<flake ref>] [--app <name>=<flake ref>] [LogosBasecamp flags]
+```
+
+- `--dep-package <name>=<dir>` (repeatable) — a dependency ready-built as an
+  `.lgx` package, installed as it is. A module's launcher passes every
+  dependency this way, built by the module's own flake, so its `follows` and
+  `--override-input` (nested ones included) hold — a rebuild here from the
+  dependency's own lock would drop them.
+- `--dep <name>=<flake ref>` (repeatable) — a dependency's source. An `--app`
+  is built against it. Without a `--dep-package` of the same name it is also
+  built from it, and its own dependencies resolved through its flake inputs —
+  for running `dev` by hand.
+- `--app <name>=<flake ref>` (repeatable) — another app to open next to it,
+  e.g. `blockchain_ui=path:../logos-blockchain-ui`, or a `github:` ref (no
+  revision = latest master). It is built against the `--dep` revisions it
+  shares, and its other dependencies are added. A bare `--app <name>` (latest
+  release from the catalogue) is not supported yet.
+- `--test <file.mjs>` (repeatable) — run a logos-qt-mcp test file instead of
+  opening a window: headless, a fresh user dir per file, as `mkPluginTest`
+  does, exiting non-zero on a failure (`LOGOS_TEST_TIMEOUT` seconds per file,
+  default 120). A module's `nix run .#ui-tests` passes its `tests/*.mjs`.
+
+One copy of each module: the first reached wins — the app's own dependencies,
+then each `--app`'s. Basecamp loads the newest of two copies, so a second one
+would silently replace the version under test. Dependencies are installed by
+`nix/devDeps.nix`: `--dep-package`s with lgpm, the rest from each one's
+`packages.<system>.install`.
+
+##### From a module's repo
+
+logos-module-builder's `nix run .` and `.#ui-dev` launch `dev` with the module,
+every dependency as the package its flake builds (`--dep-package`), each
+direct one's source (`--dep`, for `--app`), and for ui-dev the QML source dir. Basecamp is not an input of the
+module: the launcher runs `nix run github:logos-co/logos-basecamp#dev`, or the
+flake named by `LOGOS_BASECAMP`; `LOGOS_BASECAMP_DEV` names a prebuilt one.
+
+```bash
+nix run .                                              # published Basecamp
+LOGOS_BASECAMP=path:../logos-basecamp nix run .        # a local checkout
+nix build .#ui-dev && ./result/bin/run-logos-standalone-ui   # + QML hot reload
+nix run . -- --app blockchain_ui=path:../logos-blockchain-ui   # + another app
+nix run .#ui-tests                                     # tests/*.mjs, headless
+```
+
+`lib.<system>.mkPluginTest` (`nix/mkPluginTest.nix`) runs a module's
+`tests/*.mjs` against it headless, each file with a fresh user dir, with
+dependencies from `deps` (as for `dev`) or `modulesDir` — as a hermetic check,
+for a flake that has Basecamp as an input. Modules use `nix run .#ui-tests`
+instead. Basecamp's own checks use it: `standalone-test` (a QML-only app
+calling a core dependency through the bridge), `standalone-backend-test` (the
+module builder's `ui-qml-backend` template, backend in ui-host),
+and `standalone-rejects-module-dir`.
 
 ##### Moving from `logos-standalone-app`
 
