@@ -137,6 +137,7 @@ Item {
             uiModulesModel:      backend.uiModulesModel
             coreModulesModel:    backend.coreModulesModel
             modulesLoading:      backend.modulesLoading
+            repositoriesAvailable: backend.repositoryManagement !== false
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)

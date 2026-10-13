@@ -5,6 +5,7 @@
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
+#include "StandaloneMode.h"
 #include "links/LinkUrl.h"
 #include "links/LinkUrlInbox.h"
 #include "links/SchemeRegistrar.h"
@@ -149,6 +150,13 @@ int main(int argc, char *argv[])
     // Read out of the parser block below; see the guard for what it gives up.
     bool forceNewInstance = false;
 
+    // What this process hosts and offers; the desktop app unless --module.
+    LogosBasecamp::HostProfile hostProfile;
+
+    // Window size (--width/--height); 0 = Basecamp's default.
+    int windowWidth = 0;
+    int windowHeight = 0;
+
     // Parse --user-dir / -u and set LOGOS_USER_DIR before anything else resolves
     // a path. This lets multiple Basecamp instances run side-by-side against
     // isolated data trees (plugins, modules, module_data, logs). LOGOS_USER_DIR
@@ -188,6 +196,34 @@ int main(int argc, char *argv[])
                            "plugins/ and module_data/ — use --user-dir instead "
                            "if they must not interfere."));
         parser.addOption(newInstanceOption);
+        // Standalone mode: host exactly these apps, one tab each, for
+        // developing them. See utils/StandaloneMode.h.
+        QCommandLineOption moduleOption(QStringLiteral("module"),
+            QStringLiteral("Run standalone with the apps in this install root "
+                           "(modules/ and/or plugins/, e.g. `nix build .#install`). "
+                           "Repeatable; each app opens as a tab. Implies "
+                           "--new-instance and, unless --user-dir is given, "
+                           "./.logos-basecamp-dev."),
+            QStringLiteral("path"));
+        parser.addOption(moduleOption);
+        QCommandLineOption modulesDirOption(QStringLiteral("modules-dir"),
+            QStringLiteral("Standalone mode: extra modules (dependencies, intent "
+                           "providers) that are available but not opened. "
+                           "Repeatable."),
+            QStringLiteral("dir"));
+        parser.addOption(modulesDirOption);
+        QCommandLineOption qmlSourceOption(QStringLiteral("qml-source"),
+            QStringLiteral("Standalone mode: load <app>'s view from <dir> (the dir "
+                           "holding its view entry file) and rebuild it on save. "
+                           "Repeatable."),
+            QStringLiteral("app=dir"));
+        parser.addOption(qmlSourceOption);
+        QCommandLineOption widthOption(QStringLiteral("width"),
+            QStringLiteral("Initial window width."), QStringLiteral("px"));
+        parser.addOption(widthOption);
+        QCommandLineOption heightOption(QStringLiteral("height"),
+            QStringLiteral("Initial window height."), QStringLiteral("px"));
+        parser.addOption(heightOption);
         // Acted on below rather than by process(): parse() is what keeps an
         // unrecognised flag from aborting startup, and it does not handle
         // --help itself.
@@ -236,6 +272,47 @@ int main(int argc, char *argv[])
 
         launchUri = parser.value(uriOption);
         forceNewInstance = parser.isSet(newInstanceOption);
+        windowWidth = parser.value(widthOption).toInt();
+        windowHeight = parser.value(heightOption).toInt();
+
+        const auto failStandalone = [](const LogosBasecamp::StandaloneResolution& r) {
+            if (r.ok) return false;
+            std::cerr << r.error.toStdString() << std::endl;
+            return true;
+        };
+        if (!parser.isSet(moduleOption)
+            && (parser.isSet(modulesDirOption) || parser.isSet(qmlSourceOption))) {
+            std::cerr << "--modules-dir and --qml-source need --module." << std::endl;
+            return 1;
+        }
+        // --module last: a later scan dir wins a name clash, and the apps being
+        // developed must win over a stale copy in a dependency dir.
+        for (const QString& path : parser.values(modulesDirOption))
+            if (failStandalone(LogosBasecamp::addStandaloneModulesDir(hostProfile, path))) return 1;
+        for (const QString& path : parser.values(moduleOption))
+            if (failStandalone(LogosBasecamp::addStandaloneModule(hostProfile, path))) return 1;
+        for (const QString& arg : parser.values(qmlSourceOption))
+            if (failStandalone(LogosBasecamp::addStandaloneQmlSource(hostProfile, arg))) return 1;
+
+        if (parser.isSet(moduleOption)) {
+            LogosBasecamp::applyStandaloneCapabilities(hostProfile);
+            qInfo().noquote() << "Standalone mode — apps:" << hostProfile.appsToOpen.join(", ");
+        }
+
+        // A dev host keeps its data and QSettings (QML Settings included) out
+        // of the real install, and never takes over its socket or links.
+        if (!hostProfile.singleInstance)
+            forceNewInstance = true;
+        if (!hostProfile.applicationName.isEmpty())
+            app.setApplicationName(hostProfile.applicationName);
+        if (!hostProfile.defaultUserDir.isEmpty() && !parser.isSet(userDirOption)
+            && qEnvironmentVariableIsEmpty("LOGOS_USER_DIR")) {
+            if (!QDir().mkpath(hostProfile.defaultUserDir)) {
+                qCritical() << "Failed to create data directory:" << hostProfile.defaultUserDir;
+                return 1;
+            }
+            qputenv("LOGOS_USER_DIR", hostProfile.defaultUserDir.toUtf8());
+        }
     }
 
     // The resolved session directory. Read once, here, because two separate
@@ -352,9 +429,12 @@ int main(int argc, char *argv[])
     QString embeddedModulesDir = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../modules");
     coreConfig.modulesDirs.push_back(embeddedModulesDir.toStdString());
 
-    // 2. User-writable modules directory (for runtime installs via the package store)
-    QString userModulesDir = LogosBasecampPaths::modulesDirectory();
-    coreConfig.modulesDirs.push_back(userModulesDir.toStdString());
+    // 2. User-writable modules directory (for runtime installs via the package store).
+    if (hostProfile.useUserModules)
+        coreConfig.modulesDirs.push_back(LogosBasecampPaths::modulesDirectory().toStdString());
+    // 3. The profile's own roots, last so they win a name clash.
+    for (const QString& dir : hostProfile.coreModuleRoots)
+        coreConfig.modulesDirs.push_back(dir.toStdString());
 
     // Set persistence base path for core modules
     coreConfig.persistenceBasePath =
@@ -424,12 +504,14 @@ int main(int argc, char *argv[])
         qWarning() << "Failed to load package_manager module by default.";
     }
 
-    bool downloaderLoaded = core->loadModule(QStringLiteral("package_downloader"),
-                                             LoadPolicy::RequiredAndOptional);
-    if (downloaderLoaded) {
-        qInfo() << "package_downloader module loaded by default.";
-    } else {
-        qWarning() << "Failed to load package_downloader module by default.";
+    if (hostProfile.packageCatalog) {
+        bool downloaderLoaded = core->loadModule(QStringLiteral("package_downloader"),
+                                                 LoadPolicy::RequiredAndOptional);
+        if (downloaderLoaded) {
+            qInfo() << "package_downloader module loaded by default.";
+        } else {
+            qWarning() << "Failed to load package_downloader module by default.";
+        }
     }
 
     // Log the initial loaded-module list.
@@ -464,7 +546,9 @@ int main(int argc, char *argv[])
 
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
-    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get());
+    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get(), hostProfile);
+    if (windowWidth > 0 || windowHeight > 0)
+        mainWindow->setLaunchSize(windowWidth, windowHeight);
     mainWindow->show();
 
     // Tell the OS that `basecamp://` means this executable. This is what makes
@@ -474,7 +558,7 @@ int main(int argc, char *argv[])
     //
     // After show() so a first run does not pay for it before anything is on
     // screen, and because a failure here must not stop the app starting.
-    if (!SchemeRegistrar::registerScheme()) {
+    if (hostProfile.registerUrlScheme && !SchemeRegistrar::registerScheme()) {
         qWarning() << "Failed to register the" << LinkUrl::scheme()
                    << "URL scheme; links will not open this app.";
     }
