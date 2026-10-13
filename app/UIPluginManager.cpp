@@ -5,6 +5,7 @@
 #include "CoreModuleManager.h"
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
+#include "QmlHotReload.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/LogosBasecampPaths.h"
 
@@ -46,8 +47,10 @@ constexpr int kUnloadGraceMs = 3000;
 
 UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
                                  CoreModuleManager* coreModuleManager,
+                                 const LogosBasecamp::HostProfile& hostProfile,
                                  QObject* parent)
     : QObject(parent)
+    , m_hostProfile(hostProfile)
     , m_logosAPI(logosAPI)
     , m_coreModuleManager(coreModuleManager)
     , m_packageCoordinator(nullptr)
@@ -169,6 +172,39 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
     emit uiModulesChanged();
     emit launcherAppsChanged();
     emit uiPluginMetadataChanged();
+
+    openStartupApps();
+}
+
+void UIPluginManager::openStartupApps()
+{
+    const QStringList& apps = m_hostProfile.appsToOpen;
+    if (apps.isEmpty() || m_startupAppsOpened) return;
+
+    // loadUiModule parks only ONE load while dependency data is pending (last
+    // click wins), so wait for it rather than lose all but the last app.
+    if (m_packageCoordinator && !m_packageCoordinator->dependencyDataReady()) {
+        if (!m_startupOpenConn) {
+            m_startupOpenConn = connect(
+                m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
+                this, &UIPluginManager::openStartupApps);
+        }
+        return;
+    }
+    QObject::disconnect(m_startupOpenConn);
+    m_startupAppsOpened = true;
+
+    for (const QString& name : apps) {
+        if (!m_uiPluginMetadata.contains(name)) {
+            qWarning().noquote() << "App" << name << "was not found by the "
+                                    "package manager (wrong variant for this build? "
+                                    "a dev Basecamp needs `#install`, a portable one "
+                                    "`#install-portable`)";
+            continue;
+        }
+        loadUiModule(name);
+    }
+    setCurrentVisibleApp(apps.first());
 }
 
 void UIPluginManager::reloadLoadedPluginIcon(const QString& name, QWidget* widget) const
@@ -290,6 +326,22 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         request.type = UIPluginType::UiQml;
         request.installDir = meta.value("installDir").toString();
         request.qmlViewPath = resolveQmlViewPath(meta);
+        // Standalone --qml-source: the view comes from the source tree and is
+        // rebuilt on save. The sandbox treats the entry file's dir like the
+        // install dir.
+        const QString qmlSource = m_hostProfile.qmlSources.value(moduleName);
+        if (!qmlSource.isEmpty()) {
+            const QString entry = QDir(qmlSource).filePath(
+                QFileInfo(request.qmlViewPath).fileName());
+            if (QFileInfo(entry).isFile()) {
+                request.qmlViewPath = entry;
+                if (qgetenv("LOGOS_QML_HOT_RELOAD") != "0")
+                    request.hotReloadDir = qmlSource;
+            } else {
+                qWarning().noquote() << "--qml-source for" << moduleName << ":" << entry
+                                     << "is not a file — using the installed view";
+            }
+        }
         request.iconPath = pluginIconUrl(moduleName, true);
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
@@ -309,8 +361,15 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
 {
     if (component)
         m_loadedUiModules[name] = component;
-    if (type != UIPluginType::Legacy)
-        m_qmlPluginWidgets[name] = qobject_cast<QQuickWidget*>(widget);
+    if (type != UIPluginType::Legacy) {
+        if (auto* reloading = qobject_cast<QmlHotReloadView*>(widget)) {
+            m_qmlPluginWidgets[name] = reloading->quickWidget();
+            connect(reloading, &QmlHotReloadView::viewReplaced, this,
+                    [this, name](QQuickWidget* view) { m_qmlPluginWidgets[name] = view; });
+        } else {
+            m_qmlPluginWidgets[name] = qobject_cast<QQuickWidget*>(widget);
+        }
+    }
     if (viewHost)
         m_viewModuleHosts[name] = viewHost;
     m_uiModuleWidgets[name] = widget;
@@ -687,7 +746,18 @@ QVariantMap UIPluginManager::buildAppRow(const QString& pluginName) const
 QVariantList UIPluginManager::launcherApps() const
 {
     QVariantList apps;
-    const QStringList availablePlugins = findAvailableUiPlugins();
+    QStringList availablePlugins = findAvailableUiPlugins();
+
+    // The opened apps in order, plus whatever else got loaded (an intent
+    // provider opened on demand).
+    if (m_hostProfile.launcherLimitedToOpenedApps) {
+        QStringList shown;
+        for (const QString& name : m_hostProfile.appsToOpen)
+            if (availablePlugins.contains(name)) shown << name;
+        for (const QString& name : availablePlugins)
+            if (!shown.contains(name) && m_loadedApps.contains(name)) shown << name;
+        availablePlugins = shown;
+    }
 
     for (const QString& pluginName : availablePlugins) {
         if (isShellInternalApp(pluginName)) {

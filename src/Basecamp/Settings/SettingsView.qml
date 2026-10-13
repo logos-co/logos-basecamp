@@ -16,6 +16,8 @@ Rectangle {
     property var    uiModulesModel:      null
     property var    coreModulesModel:    null
     property bool   modulesLoading:      false
+    // False where the host manages no package repositories.
+    property bool   repositoriesAvailable: true
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -38,7 +40,7 @@ Rectangle {
         repositoriesView.reportOperationResult(operation, url, success, error)
     }
 
-    function showRepositories() { d.selectedIndex = d.sectionRepositories }
+    function showRepositories() { if (root.repositoriesAvailable) d.selectedIndex = d.sectionRepositories }
 
     QtObject {
         id: d
@@ -54,7 +56,7 @@ Rectangle {
             { label: qsTr("Apps Inspector") },
             { label: qsTr("Module Inspector") },
             { label: qsTr("Package Repositories") }
-        ]
+        ].slice(0, root.repositoriesAvailable ? 4 : 3)   // Repositories must stay last
 
         property int selectedIndex: 0
 

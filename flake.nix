@@ -142,9 +142,11 @@
         logosModule = logos-module.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManagerLibrary = logos-package-manager.packages.${system}.lib;
-        logosPackageManagerModule = logos-package-manager-module.packages.${system}.default;
+        # Headers only: app.nix copies their generated API headers and nothing
+        # else, and `.default` would compile the module just to provide them.
+        logosPackageManagerModule = logos-package-manager-module.packages.${system}.headers-qt;
         logosPackageManagerModuleLib = logos-package-manager-module.packages.${system}.lib;
-        logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.default;
+        logosPackageDownloaderModule = logos-package-downloader-module.packages.${system}.headers-qt;
         logosPackageDownloaderModuleLib = logos-package-downloader-module.packages.${system}.lib;
         logosStorageModuleLib = logos-storage-module.packages.${system}.lib;
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
@@ -246,6 +248,23 @@
             installedModules = installedDev;
           };
 
+          # The same app bundling only what standalone mode (--module) loads,
+          # so a module developer without the binary cache does not build the
+          # downloader, storage or the package-manager UI.
+          appStandalone = import ./nix/app.nix {
+            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit logosQtMcp mainUIPlugin;
+            installedModules = map installDev [
+              logosPackageManagerModuleLib
+              logosCapabilityModule
+              logosModulesStateModule
+            ];
+          };
+          mkPluginTest = import ./nix/mkPluginTest.nix {
+            standaloneApp = appStandalone;
+            inherit logosQtMcp;
+          };
+
           mockTests = import ./nix/mock-tests.nix { inherit pkgs src; };
 
           # The UI shell alone, against a fixture, with no Logos code linked.
@@ -295,6 +314,22 @@
             inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
+            portable = true;
+            enableInspector = true;
+          };
+
+          # appStandalone's portable twin: the three modules standalone mode
+          # loads, portable variants, inspector on (developers and UI tests
+          # drive it). Bundled below as app-standalone-portable.
+          appStandalonePortable = import ./nix/app.nix {
+            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit logosQtMcp mainUIPlugin;
+            logosLiblogos = logosLiblogosPortable;
+            installedModules = map installPortable [
+              logosPackageManagerModuleLibPortable
+              logosCapabilityModule
+              logosModulesStateModule
+            ];
             portable = true;
             enableInspector = true;
           };
@@ -447,6 +482,34 @@
           };
           binBundleDirMock = withMainProgram (dirBundler appMockPortable);
           binBundleDirInspector = withMainProgram (dirBundler appDistributedWithInspector);
+          appStandalonePortableBundle = withMainProgram (dirBundler appStandalonePortable);
+          mkUiDev = name: basecamp: pkgs.writeShellApplication {
+            inherit name;
+            text = ''
+              src="$PWD/src"
+              if [ ! -d "$src/Basecamp" ]; then
+                echo "${name}: no src/Basecamp under $PWD — run it from the logos-basecamp checkout" >&2
+                exit 1
+              fi
+              echo "${name}: shell QML from $src (saves are hot reloaded)"
+              DEV_QML_PATH="$src" exec ${basecamp} "$@"
+            '';
+          };
+
+          # tests/fixtures/depsvc, the one compiled core-module fixture, built
+          # ONCE. Two consumers draw on it: `depsvc-lgx` below (the .lgx the
+          # dependency-gate doc-test installs) and the installed trees the UI
+          # suite seeds into its user dir. PMU's builder: already locked, and
+          # its mingw Qt is the bundle's.
+          depsvcModule =
+            let builder = logos-package-manager-ui.inputs.logos-module-builder; in
+            (builder.lib.mkLogosModule {
+              src = ./tests/fixtures/depsvc;
+              configFile = ./tests/fixtures/depsvc/metadata.json;
+              flakeInputs = { logos-module-builder = builder; };
+            }).packages.${system};
+          depsvcInstalledDev = installDev depsvcModule.default;
+          depsvcInstalledPortable = installPortable depsvcModule.default;
 
           # The UI suite's loadable core-module fixture: depsvc, from the same
           # sources and builder as depsvc-lgx below, but as an INSTALLED tree
@@ -483,6 +546,10 @@
           main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
           app = app;
+
+          # Dev host for one app: nix run .#app-standalone -- --module <path>
+          # (README, "Standalone Mode").
+          app-standalone = appStandalone;
 
           # Basecamp against the fixture-backed mock — no Logos runtime at all.
           # Run: nix run .#app-mock        (see mock/README.md)
@@ -521,6 +588,10 @@
           # Build: nix build .#bin-bundle-dir-inspector
           bin-bundle-dir-inspector = binBundleDirInspector;
 
+          # Portable dev host for one app: loads `#install-portable` output.
+          #   ./result/bin/LogosBasecamp --module <app>/result-install-portable
+          app-standalone-portable = appStandalonePortableBundle;
+
           # QML Inspector MCP server: nix build .#mcp-server -o result-mcp
           mcp-server = logos-qt-mcp.packages.${system}.mcp-server;
 
@@ -534,15 +605,60 @@
           intents-fixtures = buildPkgs.runCommandLocal "basecamp-intents-fixtures" { } ''
             cp -r ${./tests/fixtures/intents} $out
           '';
-          # basecamp-dependency-gate: the module that spec writes out, as an .lgx.
-          # PMU's builder: already locked, and its mingw Qt is the bundle's.
-          depsvc-lgx =
+          # basecamp-dependency-gate: the module that spec writes out, as an .lgx
+          # (same build as the UI suite's seeded depsvc, see depsvcModule).
+          depsvc-lgx = depsvcModule.lgx-portable;
+
+          # Standalone mode end to end (`--module`), through mkPluginTest: a
+          # QML-only app that calls a core dependency through the bridge, and
+          # the builder's ui-qml-backend template, whose backend runs in ui-host.
+          standalone-fixture = buildPkgs.runCommandLocal "standalone-fixture" { } ''
+            mkdir -p $out/plugins
+            cp -r ${./tests/fixtures/standalone/standalone_fixture} $out/plugins/standalone_fixture
+          '';
+          standalone-backend-fixture =
             let builder = logos-package-manager-ui.inputs.logos-module-builder; in
-            (builder.lib.mkLogosModule {
-              src = ./tests/fixtures/depsvc;
-              configFile = ./tests/fixtures/depsvc/metadata.json;
+            (builder.lib.mkLogosQmlModule {
+              src = ./tests/fixtures/standalone-backend;
+              configFile = ./tests/fixtures/standalone-backend/metadata.json;
               flakeInputs = { logos-module-builder = builder; };
-            }).packages.${system}.lgx-portable;
+            }).packages.${system}.install;
+          standalone-test = mkPluginTest {
+            inherit pkgs;
+            name = "standalone-test";
+            installPkg = self.packages.${system}.standalone-fixture;
+            testFiles = [ ./tests/standalone-tests.mjs ];
+          };
+          standalone-hot-reload-test = mkPluginTest {
+            inherit pkgs;
+            name = "standalone-hot-reload-test";
+            installPkg = self.packages.${system}.standalone-fixture;
+            setup = ''
+              export HOT_RELOAD_SRC="$TMPDIR/hot-reload-src"
+              cp -r ${./tests/fixtures/standalone/standalone_fixture} "$HOT_RELOAD_SRC"
+              chmod -R u+w "$HOT_RELOAD_SRC"
+            '';
+            extraArgs = "--qml-source standalone_fixture=$HOT_RELOAD_SRC";
+            testFiles = [ ./tests/standalone-hot-reload-tests.mjs ];
+          };
+          standalone-backend-test = mkPluginTest {
+            inherit pkgs;
+            name = "standalone-backend-test";
+            installPkg = self.packages.${system}.standalone-backend-fixture;
+            testFiles = [ ./tests/standalone-backend-tests.mjs ];
+          };
+          # A single module dir is refused, so its siblings never reach the
+          # scanners or dependency resolution.
+          standalone-rejects-module-dir = pkgs.runCommand "standalone-rejects-module-dir" { } ''
+            export QT_QPA_PLATFORM=offscreen HOME="$TMPDIR"
+            if ${appStandalone}/bin/LogosBasecamp \
+                 --module ${self.packages.${system}.standalone-fixture}/plugins/standalone_fixture \
+                 --user-dir "$TMPDIR/u" > log 2>&1; then
+              cat log; echo "a single module dir was accepted"; exit 1
+            fi
+            grep -q "is a single module" log || { cat log; exit 1; }
+            touch $out
+          '';
 
           # Smoke test (also exposed as a package so it can be built standalone)
           smoke-test = import ./nix/smoke-test.nix { inherit pkgs; appPkg = app; };
@@ -637,6 +753,17 @@
 
           # Default package
           default = app;
+        } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+          # Basecamp with the shell's QML hot reloaded from the checkout
+          # (DEV_QML_PATH, README "Hot reloading Basecamp's own QML"). Run from
+          # the repo root: `nix run .#ui-dev`; arguments pass through. Never a
+          # default of the app itself: shell QML runs unsandboxed.
+          #   ui-dev           the dev build (.#app): -dev module variants
+          #   ui-dev-portable  the portable build with the inspector: the
+          #                    variants the published catalogue ships
+          ui-dev = mkUiDev "logos-basecamp-ui-dev" "${app}/bin/LogosBasecamp";
+          ui-dev-portable = mkUiDev "logos-basecamp-ui-dev-portable"
+            "${binBundleDirInspector}/bin/LogosBasecamp";
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isWindows {
           # nix build .#packages.x86_64-windows.bin-installer
           bin-installer = windowsInstaller;
@@ -682,6 +809,25 @@
           type = "app";
           program = "${self.packages.${system}.bin-bundle-dir}/bin/LogosBasecamp";
         };
+      } // nixpkgs.lib.optionalAttrs (self.packages.${system} ? ui-dev) {
+        ui-dev = {
+          type = "app";
+          program = "${self.packages.${system}.ui-dev}/bin/logos-basecamp-ui-dev";
+        };
+        ui-dev-portable = {
+          type = "app";
+          program = "${self.packages.${system}.ui-dev-portable}/bin/logos-basecamp-ui-dev-portable";
+        };
+      });
+
+      # For other flakes. mkPluginTest runs a UI app's integration tests
+      # against app-standalone; logos-module-builder wires it up for ui_qml
+      # modules that pass `logosBasecamp` (nix/mkPluginTest.nix).
+      lib = forAllSystems ({ system, ... }: {
+        mkPluginTest = import ./nix/mkPluginTest.nix {
+          standaloneApp = self.packages.${system}.app-standalone;
+          logosQtMcp = self.packages.${system}.logos-qt-mcp;
+        };
       });
 
       checks = forAllSystems ({ pkgs, system, ... }: {
@@ -696,6 +842,10 @@
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
         mock-tests = self.packages.${system}.mock-tests;
       } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+        standalone-test = self.packages.${system}.standalone-test;
+        standalone-backend-test = self.packages.${system}.standalone-backend-test;
+        standalone-hot-reload-test = self.packages.${system}.standalone-hot-reload-test;
+        standalone-rejects-module-dir = self.packages.${system}.standalone-rejects-module-dir;
         link-gate = self.packages.${system}.link-gate;
         link-gate-negative = self.packages.${system}.link-gate-negative;
       });

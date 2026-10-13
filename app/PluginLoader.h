@@ -41,6 +41,7 @@ struct PluginLoadRequest {
     QString installDir;      // Module install directory (import paths root)
     QString qmlViewPath;     // Resolved QML view entry point
     QString mainFilePath;    // Backend plugin .so/.dylib path (empty if QML-only)
+    QString hotReloadDir;    // Standalone --qml-source: rebuild the view on save
 };
 
 class PluginLoader : public QObject {
@@ -94,6 +95,9 @@ private:
                          const PluginLoadRequest& request,
                          LogosQmlBridge* bridge,
                          ViewModuleHost* viewHost);
+    void loadHotReloadView(const PluginLoadRequest& request,
+                           LogosQmlBridge* bridge,
+                           ViewModuleHost* viewHost);
 
     void setLoading(const QString& name, bool loading);
 

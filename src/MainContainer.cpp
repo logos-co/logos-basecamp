@@ -1,5 +1,6 @@
 #include "MainContainer.h"
 #include "ShellSections.h"
+#include "ShellDevQml.h"
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "ShortcutBridge.h"
@@ -44,37 +45,6 @@ QWidget* makePmuiPlaceholder(QWidget* parent)
     return ph;
 }
 
-// DEV_QML_PATH: when set, load QML view entry files from the filesystem source
-// tree instead of the embedded qrc resource
-QString devQmlRoot() {
-    const QString dev = QString::fromUtf8(qgetenv("DEV_QML_PATH")).trimmed();
-    if (dev.isEmpty()) return QString();
-    if (!QFileInfo(dev).isDir()) {
-        qWarning().noquote() << "DEV_QML_PATH is not a directory:" << dev
-                             << "- using embedded QML";
-        return QString();
-    }
-    return dev;
-}
-
-QUrl resolveQmlView(const QString& relPath, const QString& qrcFallback) {
-    const QString root = devQmlRoot();
-    if (root.isEmpty()) return QUrl(qrcFallback);
-    const QString fullPath = QDir(root).absoluteFilePath(relPath);
-    if (!QFile::exists(fullPath)) {
-        qWarning().noquote() << "DEV_QML_PATH set but" << relPath
-                             << "not found at" << fullPath
-                             << "- using embedded QML";
-        return QUrl(qrcFallback);
-    }
-    qInfo().noquote() << "DEV_QML_PATH override active:" << fullPath;
-    return QUrl::fromLocalFile(fullPath);
-}
-
-void applyDevQmlImportPath(QQmlEngine* engine) {
-    const QString root = devQmlRoot();
-    if (!root.isEmpty()) engine->addImportPath(root);
-}
 } // namespace
 
 MainContainer::MainContainer(IShellHost* host, QWidget* parent)
@@ -173,32 +143,19 @@ MainContainer::MainContainer(IShellHost* host, QWidget* parent)
             applyAppManagerSearch(query);
     });
 
-    // Connect to QML signals from SidebarPanel.
-    //
-    // launchUIModule uses QueuedConnection — the signal is emitted from a
-    // SidebarAppDelegate.onClicked handler inside a Repeater delegate.
-    // onAppLauncherClicked calls setCurrentVisibleApp which synchronously
-    // emits launcherAppsChanged, causing both sidebar Repeaters to reset
-    // their models. If the connection were direct the Repeater would call
-    // setParentItem(nullptr) on the clicked delegate while its click handler
-    // is still on the call stack, leading to a null deref in
-    // QQuickItemPrivate::derefWindow. Queuing the call lets the click handler
-    // return before any Repeater model update fires.
-    QObject* sidebarRoot = m_sidebarWidget->rootObject();
-    if (sidebarRoot) {
-        // String-based on purpose: these resolve through the backend's
-        // metaobject, so the shell never names its C++ type. The
-        // QueuedConnection above is load-bearing and must stay.
-        connect(sidebarRoot, SIGNAL(launchUIModule(QString)),
-                m_host->backendObject(), SLOT(onAppLauncherClicked(QString)),
-                Qt::QueuedConnection);
-        connect(sidebarRoot, SIGNAL(updateLauncherIndex(int)),
-                m_host->backendObject(), SLOT(setCurrentActiveSectionIndex(int)));
-        connect(sidebarRoot, SIGNAL(tooltipRequested(QString, qreal)),
-                this, SLOT(onSidebarTooltipRequested(QString, qreal)));
-    }
-
     qDebug() << "MainContainer created";
+}
+
+// Connects to SidebarPanel's signals; runs again after each shell hot reload.
+void MainContainer::wireSidebar(QObject* sidebarRoot)
+{
+    connect(sidebarRoot, SIGNAL(launchUIModule(QString)),
+            m_host->backendObject(), SLOT(onAppLauncherClicked(QString)),
+            Qt::QueuedConnection);
+    connect(sidebarRoot, SIGNAL(updateLauncherIndex(int)),
+            m_host->backendObject(), SLOT(setCurrentActiveSectionIndex(int)));
+    connect(sidebarRoot, SIGNAL(tooltipRequested(QString, qreal)),
+            this, SLOT(onSidebarTooltipRequested(QString, qreal)));
 }
 
 void MainContainer::onAddApplicationDialogRequested(const QVariantMap& metadata)
@@ -268,11 +225,10 @@ void MainContainer::setupUi()
     // === SIDEBAR (QML) ===
     m_sidebarWidget = new QQuickWidget(this);
     m_sidebarWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    applyDevQmlImportPath(m_sidebarWidget->engine());
     m_sidebarWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
-    m_sidebarWidget->setSource(resolveQmlView(
-        QStringLiteral("Basecamp/Sidebar/SidebarPanel.qml"),
-        QStringLiteral("qrc:/qt/qml/Basecamp/Sidebar/Basecamp/Sidebar/SidebarPanel.qml")));
+    ShellDevQml::load(m_sidebarWidget,
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Sidebar/Basecamp/Sidebar/SidebarPanel.qml")),
+        [this](QObject* root) { wireSidebar(root); });
     m_sidebarWidget->setMinimumWidth(80);
     m_sidebarWidget->setMaximumWidth(80);
     // set clear color to sidebar so that rounded corners don't show white
@@ -295,11 +251,9 @@ void MainContainer::setupUi()
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     m_contentWidget->setClearColor(bgColor);
-    applyDevQmlImportPath(m_contentWidget->engine());
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
-    m_contentWidget->setSource(resolveQmlView(
-        QStringLiteral("Basecamp/Shell/ContentViews.qml"),
-        QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
+    ShellDevQml::load(m_contentWidget,
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
     m_contentStack->addWidget(m_contentWidget);
 
     // Index 2: placeholder for package_manager_ui — shows a centered
@@ -330,18 +284,13 @@ void MainContainer::setupUi()
     // normal UI; flipped off in onOverlayActiveChanged while a dialog
     // is visible so the dialog itself can receive clicks.
     m_overlayWidget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    applyDevQmlImportPath(m_overlayWidget->engine());
     m_overlayWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
-    m_overlayWidget->setSource(resolveQmlView(
-        QStringLiteral("Basecamp/Shell/OverlayDialogs.qml"),
-        QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OverlayDialogs.qml")));
-
-    // Hook up the QML signal that tracks "any dialog visible" so we can
-    // toggle mouse-passthrough on the overlay QQuickWidget.
-    if (QObject* overlayRoot = m_overlayWidget->rootObject()) {
-        connect(overlayRoot, SIGNAL(overlayActiveChanged(bool)),
-                this, SLOT(onOverlayActiveChanged(bool)));
-    }
+    ShellDevQml::load(m_overlayWidget,
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OverlayDialogs.qml")),
+        [this](QObject* root) {
+            connect(root, SIGNAL(overlayActiveChanged(bool)),
+                    this, SLOT(onOverlayActiveChanged(bool)));
+        });
     m_overlayWidget->setVisible(false);
 
     // Watch for the mouse leaving the sidebar so we can hide the tooltip
@@ -408,6 +357,14 @@ bool MainContainer::eventFilter(QObject* watched, QEvent* event)
 
 void MainContainer::onSectionIndexChanged(int index)
 {
+    if (QObject* backend = m_host->backendObject()) {
+        const QVariant available = backend->property("availableSections");
+        if (available.isValid() && !available.toList().contains(QVariant(index))) {
+            m_host->setCurrentSectionIndex(ShellSection::Workspace);
+            return;
+        }
+    }
+
     const int sectionIndex = index;
 
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;

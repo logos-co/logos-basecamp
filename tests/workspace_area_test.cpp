@@ -1,4 +1,4 @@
-// srcdeps: WorkspaceArea.cpp
+// srcdeps: WorkspaceArea.cpp ShellDevQml.cpp
 //
 // Unit tests for WorkspaceArea.
 // Verifies dock lifecycle, widget ownership, tab bar state, and
