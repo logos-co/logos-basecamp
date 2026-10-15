@@ -33,13 +33,13 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
-    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
+    logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module?ref=132aae3e62d6b82ed44b0ad49849f82c6546a19d";
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.2";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
-    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
+    logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui?ref=aa201e3e311dce55a7e8040a650b753808a6629e";
     # The UI otherwise brings its own package_manager and package_downloader,
     # so the closure carries two of each and the UI that drives installs sits
     # on the older one — the one with no VersionMismatch, and without the
