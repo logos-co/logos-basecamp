@@ -518,14 +518,16 @@ Item {
                 Layout.preferredHeight: card.chipSize
                 Layout.alignment: Qt.AlignVCenter
                 radius: width / 2
-                color: Theme.palette.surface
+                // Hover matches the sidebar's circle buttons: accent fill, dark glyph.
+                color: card.isActive ? Theme.palette.accentOrange : Theme.palette.surface
 
                 LogosIcon {
                     anchors.centerIn: parent
                     width: card.iconSize
                     height: card.iconSize
                     source: card.iconSource
-                    color: Theme.palette.textTertiary
+                    color: card.isActive ? Theme.palette.backgroundBlack
+                                         : Theme.palette.textTertiary
                 }
             }
 
