@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { readFileSync, statSync, writeSync } from "node:fs";
 import {
-  assertResponsive, findByObjectName, makeTest, pollProperty, sleep,
+  assertResponsive, expectAbsent, findByObjectName, makeTest, pollProperty, sleep,
 } from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
@@ -2913,6 +2913,116 @@ test("repositories: invalid URL shows a dismissible error banner", async (app) =
 
   // A failed add keeps the field's text; clear it so the view is back at
   // rest for the tests that follow.
+  await evalOn(app, field.id, 'text = ""');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), false,
+             "repositories.addButton enabled after clearing the field");
+  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+});
+
+// --- Repositories (A25) — unreachable URL is refused with a fetch error ---
+//
+// Deviation from the plan's A25: the downloader refuses an unreachable URL at
+// add time (RepositoryRegistry::addRepository resolves metadata before
+// accepting), so the "Unreachable" badge is a refresh-time state and cannot be
+// reached by adding — the gate here is the refusal banner instead. The URL's
+// port 9 is refused immediately on loopback, so this runs everywhere including
+// offscreen CI with no external network. The expected banner shape is
+// "fetch failed: https://127.0.0.1:9/logos-repo.json — <curl text>
+// (curl error 7)"; only the prefix up to the URL is asserted, since the curl
+// text differs by platform. A banner that is not a fetch failure (e.g. "no
+// config file (pass --config <path>)" or "package_downloader not connected")
+// means the add never reached the fetch and fails the test.
+test("repositories: unreachable URL is refused with a fetch error", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+  const badUrl = "https://127.0.0.1:9/logos-repo.json";
+  const expectedPrefix = `fetch failed: ${badUrl}`;
+
+  const initialCount = assertType(
+    await evalOn(app, anchorId, "backend.repositories.length"),
+    "number", "backend.repositories.length");
+
+  const defaultUrl = await evalOn(app, anchorId, `(function() {
+    var rs = backend.repositories;
+    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
+    return null;
+  })()`);
+  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
+    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
+  }
+
+  const field = await requireObject(app, "repositories.urlField");
+  const addButton = await requireObject(app, "repositories.addButton");
+  const banner = await requireObject(app, "repositories.errorBanner");
+
+  await evalOn(app, field.id, `text = ${JSON.stringify(badUrl)}`);
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), true,
+             "repositories.addButton enabled with the unreachable URL set");
+  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
+
+  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+
+  // The connect to 127.0.0.1:9 is refused immediately, but the fetch runs
+  // asynchronously inside the downloader module, so allow 30 s anyway.
+  let accepted = false;
+  await app.waitFor(async () => {
+    const row = await findByObjectName(app.inspector, `repositories.row.${badUrl}`);
+    if (row) { accepted = true; return; }
+    if (await evalOn(app, banner.id, "visible") !== true) {
+      throw new Error("repositories.errorBanner not visible and URL not accepted");
+    }
+  }, { timeout: 30000, interval: 250,
+       description: "fetch-failed banner (or an accepted row) after the add" });
+
+  if (accepted) {
+    await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(badUrl)})`);
+    await evalOn(app, field.id, 'text = ""');
+    throw new Error(`A25 outcome changed: the downloader accepted unreachable `
+      + `${JSON.stringify(badUrl)} — removed it again; revisit the plan`);
+  }
+
+  // The banner's message is its LogosText descendant, as in A24.
+  const bannerText = await evalOn(app, banner.id, `(() => {
+    const firstText = (node) => {
+      if (!node) return "";
+      if (typeof node.text === "string" && node.text.length > 0) return node.text;
+      if (!node.children || typeof node.children.length !== "number") return "";
+      for (let i = 0; i < node.children.length; i += 1) {
+        const t = firstText(node.children[i]);
+        if (t.length > 0) return t;
+      }
+      return "";
+    };
+    return firstText(this);
+  })()`);
+  if (typeof bannerText !== "string" || !bannerText.startsWith(expectedPrefix)) {
+    throw new Error(`banner is not the fetch failure — the add never reached `
+      + `the downloader's fetch (expected text starting `
+      + `${JSON.stringify(expectedPrefix)}); got ${JSON.stringify(bannerText)}`);
+  }
+  console.log(`    A25: banner text ${JSON.stringify(bannerText)}`);
+
+  await expectAbsent(app, `repositories.row.${badUrl}`, 3000);
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+           initialCount, "backend.repositories.length after the refused add");
+
+  const defaultSwitch = await requireObject(app, `repositories.enableSwitch.${defaultUrl}`);
+  assertEq(await evalOn(app, defaultSwitch.id, "checked"), true,
+           "default repository's enable switch checked after the refused add");
+
+  // A failed add keeps the field's text (reportOperationResult clears it only
+  // on success).
+  assertEq(await evalOn(app, field.id, "text"), badUrl,
+           "repositories.urlField text after the refused add");
+
+  const dismiss = await requireObject(app, "repositories.errorDismiss");
+  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, banner.id, "visible"), false,
+             "repositories.errorBanner visible after dismiss");
+  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
+
   await evalOn(app, field.id, 'text = ""');
   await app.waitFor(async () => {
     assertEq(await evalOn(app, addButton.id, "enabled"), false,
