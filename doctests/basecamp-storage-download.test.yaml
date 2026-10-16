@@ -350,6 +350,24 @@ sections:
               texts: ["Doctest Catalog"]
               timeout: 30000
 
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "storage_ui can come from Storage and GitHub"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.sourceIcons.storage_ui"
+              property: "count"
+              value: 2
+              timeout: 60000
+              text: "The node and the catalog are both on `logos.dev`. The Package Manager shows two source icons for storage_ui: Storage and GitHub."
+              screenshot: "storage-sources.png"
+
+            - name: "Back to the App Manager"
+              action: click
+              target: "Applications"
+
             - name: "Open storage_ui"
               action: click_object
               find_by: "objectName"
@@ -474,6 +492,33 @@ sections:
             - name: "Let the uninstall finish"
               action: sleep
               ms: 5000
+
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "The Package Manager sees the uninstall"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.sourceCell.storage_ui"
+              property: "downloaded"
+              value: 0
+              timeout: 30000
+              text: "`downloaded` is 0 (`NoSource`) once the Package Manager sees that storage_ui is not installed. Until then, the cell shows one icon: the source of the installed copy."
+
+            - name: "storage_ui can come from GitHub only"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.sourceIcons.storage_ui"
+              property: "count"
+              value: 1
+              timeout: 30000
+              text: "The node is stopped. The Package Manager shows only the GitHub icon."
+              screenshot: "storage-sources-node-stopped.png"
+
+            - name: "Back to the App Manager"
+              action: click
+              target: "Applications"
 
             - name: "Open storage_ui again"
               action: click_object
@@ -938,6 +983,33 @@ sections:
             - name: "Let the uninstall finish"
               action: sleep
               ms: 5000
+
+            - name: "Open the Package Manager"
+              action: click
+              target: "Package Manager"
+
+            - name: "The Package Manager sees the uninstall"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.sourceCell.storage_ui"
+              property: "downloaded"
+              value: 0
+              timeout: 30000
+              text: "`downloaded` is 0 (`NoSource`) once the Package Manager sees that storage_ui is not installed. Until then, the cell shows one icon: the source of the installed copy."
+
+            - name: "storage_ui can come from GitHub only"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "pmui.sourceIcons.storage_ui"
+              property: "count"
+              value: 1
+              timeout: 30000
+              text: "The node runs on `logos.test`. The storage URL in the catalog names `logos.dev`. The Package Manager shows only the GitHub icon."
+              screenshot: "storage-sources-other-network.png"
+
+            - name: "Back to the App Manager"
+              action: click
+              target: "Applications"
 
             - name: "Open storage_ui again"
               action: click_object
