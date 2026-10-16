@@ -220,7 +220,8 @@ void MainContainer::setupUi()
     // Create main horizontal layout
     m_mainLayout = new QHBoxLayout(this);
     m_mainLayout->setSpacing(0);
-    m_mainLayout->setContentsMargins(4, 0, 4, 2);
+    // Even margin around the sidebar so it doesn't touch the title bar.
+    m_mainLayout->setContentsMargins(8, 8, 4, 8);
 
     // === SIDEBAR (QML) ===
     m_sidebarWidget = new QQuickWidget(this);
@@ -238,7 +239,8 @@ void MainContainer::setupUi()
     QWidget* contentArea = new QWidget(this);
     QVBoxLayout* contentLayout = new QVBoxLayout(contentArea);
     contentLayout->setSpacing(0);
-    contentLayout->setContentsMargins(4, 9, 4, 4);
+    // Top 1 + the main layout's 8 keeps the content where it was (9).
+    contentLayout->setContentsMargins(4, 1, 4, 0);
     // Create content stack
     m_contentStack = new QStackedWidget(contentArea);
     m_contentStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
