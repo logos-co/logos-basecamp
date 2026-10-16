@@ -33,6 +33,8 @@ set(EVIL_PLUGIN_PATH "${CMAKE_CURRENT_BINARY_DIR}/evil/libevil_plugin.so")
 add_executable(tst_qml_sandbox
     tst_qml_sandbox.cpp
     ${BASECAMP_SRC}/restricted/QmlSandbox.cpp
+    ${BASECAMP_SRC}/restricted/SandboxImages.cpp
+    ${BASECAMP_SRC}/restricted/SandboxImages.h
     ${BASECAMP_SRC}/restricted/RestrictedUrlInterceptor.cpp
     ${BASECAMP_SRC}/restricted/DenyAllNAMFactory.cpp
     ${BASECAMP_SRC}/restricted/DenyAllNetworkAccessManager.cpp
@@ -64,6 +66,7 @@ foreach(slot
     sandboxAllowsFileUnderInstallDir
     sandboxPassesThroughNonExistentProbe
     sandboxAllowsQrcScheme
+    sandboxSupportsScopedInMemoryImages
     evilApp_allProbesBlocked
     evilApp_qmldirPluginImportRejected)
   add_test(NAME qml_sandbox.${slot} COMMAND tst_qml_sandbox ${slot})

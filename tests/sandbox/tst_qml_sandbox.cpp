@@ -36,22 +36,28 @@
 
 #include <QtTest/QtTest>
 
+#include <QBuffer>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QQmlAbstractUrlInterceptor>
 #include <QQmlComponent>
+#include <QQmlContext>
 #include <QQmlEngine>
+#include <QQuickImageProvider>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
 
 #include "restricted/QmlSandbox.h"
+#include "restricted/SandboxImages.h"
 
 namespace {
 
@@ -467,6 +473,51 @@ private slots:
 
     // qrc: resources are engine builtins (the app's own bundled QML), never the
     // untrusted module's, and must always pass the interceptor untouched.
+    void sandboxSupportsScopedInMemoryImages()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        QObject* imagesObject = engine.rootContext()->contextProperty("SandboxImages").value<QObject*>();
+        auto* images = qobject_cast<SandboxImages*>(imagesObject);
+        QVERIFY(images);
+
+        QImage input(2, 2, QImage::Format_RGB32);
+        input.fill(Qt::red);
+        QByteArray png;
+        QBuffer buffer(&png);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(input.save(&buffer, "PNG"));
+        const QString dataUrl = QStringLiteral("data:image/png;base64,")
+                              + QString::fromLatin1(png.toBase64());
+        const QString url = images->sourceFor(dataUrl);
+        QVERIFY(url.startsWith(QStringLiteral("image://sandbox-media/")));
+        QCOMPARE(images->sourceFor(dataUrl), url);
+        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::UrlString), QUrl(url));
+        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::QmlFile), QUrl());
+        QCOMPARE(engine.interceptUrl(QUrl(QStringLiteral("image://other/123")),
+                                     QQmlAbstractUrlInterceptor::UrlString), QUrl());
+        QCOMPARE(engine.interceptUrl(QUrl(dataUrl), QQmlAbstractUrlInterceptor::UrlString), QUrl());
+        QVERIFY(images->sourceFor(QStringLiteral("data:text/html;base64,PHNjcmlwdD4=")).isEmpty());
+        QVERIFY(images->sourceFor(QStringLiteral("file:///etc/hosts")).isEmpty());
+
+        auto* provider = static_cast<QQuickImageProvider*>(engine.imageProvider("sandbox-media"));
+        QVERIFY(provider);
+        QSize actual;
+        QImage resolved = provider->requestImage(QUrl(url).path().mid(1), &actual, QSize());
+        QVERIFY(!resolved.isNull());
+        QCOMPARE(actual, QSize(2, 2));
+        QCOMPARE(resolved.pixelColor(0, 0), QColor(Qt::red));
+
+        // Another QML engine must not have access to this engine's images.
+        QQmlEngine second;
+        QmlSandbox::configure(&second, dir.path(), dir.path() + "/view.qml", QString());
+        auto* other = static_cast<QQuickImageProvider*>(second.imageProvider("sandbox-media"));
+        QVERIFY(other);
+        QVERIFY(other->requestImage(QUrl(url).path().mid(1), nullptr, QSize()).isNull());
+    }
+
     void sandboxAllowsQrcScheme()
     {
         QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
