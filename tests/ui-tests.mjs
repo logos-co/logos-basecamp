@@ -2554,6 +2554,154 @@ test("module inspector: interface view lists methods/events and calls a method",
   await assertResponsive(app, { timeoutMs: 2000 });
 });
 
+// --- Settings (A23) — Module Inspector interface view, method-less module ---
+//
+// A22's empty complement: a module whose getCoreModuleMethods returns []
+// must render the "No methods available for this plugin." empty state, no
+// "Methods" header and no Call buttons. The plan keeps method-less fixtures
+// out of the PR gate (skip-if-absent), so the module is found among what the
+// shared instance already runs: ONLY the three boot-loaded core modules
+// (ModuleInspectorView's protectedModules) are probed, in order. Nothing
+// else is safe to touch — the backend call is unguarded, and against an
+// unloaded module QtRO still reports connected and the remote call blocks
+// the GUI thread ~20 s per attempt (PackageCoordinator.cpp documents this);
+// runtime-loaded modules are the plan's open defect M3. If every candidate
+// reports methods, the skip line carries each count so the plan can grow a
+// fixture. The empty-state LogosText and the "Methods" header both exist in
+// the tree regardless (`visible` binds on methods.length), so the gate walks
+// the view's descendants and asserts found/shown, never bare text presence.
+
+test("module inspector: interface view for a method-less module", async (app) => {
+  // Boot-loaded core modules, in probe order (ModuleInspectorView.qml's
+  // protectedModules).
+  const CANDIDATES = ["package_manager", "package_downloader", "capability_module"];
+
+  await openModuleInspector(app);
+
+  const view = await requireObject(app, "moduleInspectorView");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
+  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+
+  // The same call PluginInterfaceView makes from QML: a JSON array string,
+  // "[]" when the module reports no methods. Evaluated in the view's scope,
+  // where `backend` is available.
+  let chosen = null;
+  const counts = [];
+  for (const name of CANDIDATES) {
+    const raw = await evalOn(
+      app, view.id, `backend.getCoreModuleMethods(${JSON.stringify(name)})`);
+    let methods = null;
+    try { methods = JSON.parse(raw); } catch { /* non-JSON caught below */ }
+    if (!Array.isArray(methods)) {
+      throw new Error(
+        `getCoreModuleMethods(${name}) did not return a JSON array: `
+        + JSON.stringify(String(raw).slice(0, 200)));
+    }
+    counts.push({ name, count: methods.length });
+    if (!chosen && methods.length === 0) chosen = name;
+  }
+  if (chosen === null) {
+    const summary = counts
+      .map(({ name, count }, i) => `${name}: ${count}${i === 0 ? " methods" : ""}`)
+      .join(", ");
+    console.log(
+      `    SKIP: A23 — no method-less module in the shared instance (${summary})`);
+    return;
+  }
+  console.log(`    A23: method-less module ${chosen}`);
+
+  // Open the interface page the same way A22 does: openInterface takes a
+  // QString, which callMethod cannot marshal, hence evalOn.
+  await evalOn(app, view.id, `openInterface(${JSON.stringify(chosen)})`);
+
+  let iface = null;
+  await app.waitFor(async () => {
+    iface = (await findByType(app, "PluginInterfaceView"))[0] || null;
+    if (!iface) throw new Error("no PluginInterfaceView in the QML tree");
+    assertEq(await evalOn(app, iface.id, "pluginName"), chosen,
+             "PluginInterfaceView.pluginName");
+  }, { timeout: 10000, interval: 500,
+       description: `interface view to open for ${chosen}` });
+  await assertResponsive(app, { timeoutMs: 2000 });
+
+  await app.waitFor(
+    async () => { await app.expectTexts([`Interface: ${chosen}`]); },
+    { timeout: 10000, interval: 500, description: "interface title to render" }
+  );
+
+  // Whether any descendant of the interface view carries `text` exactly, and
+  // whether one of those is shown. QQuickItem.visible already folds in
+  // ancestor visibility.
+  const textState = async (text) => JSON.parse(await evalOn(app, iface.id, `(() => {
+    let found = false;
+    let shown = false;
+    const walk = (node) => {
+      if (!node) return;
+      if (node.text === ${JSON.stringify(text)}) {
+        found = true;
+        if (node.visible === true) shown = true;
+      }
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify({ found: found, shown: shown });
+  })()`));
+
+  const EMPTY_TEXT = "No methods available for this plugin.";
+  await app.waitFor(async () => {
+    const methods = JSON.parse(await evalOn(app, iface.id, "JSON.stringify(methods)"));
+    assertEq(methods.length, 0, `${chosen} methods.length in the interface view`);
+
+    // Empty state shown; "Methods" header present in the tree but hidden
+    // (its complement: `visible` binds on methods.length > 0).
+    const empty = await textState(EMPTY_TEXT);
+    assertEq(empty.found, true, `empty-state text ${JSON.stringify(EMPTY_TEXT)} in the tree`);
+    assertEq(empty.shown, true, `empty-state text ${JSON.stringify(EMPTY_TEXT)} visible`);
+    const header = await textState("Methods");
+    assertEq(header.found, true, '"Methods" header in the tree');
+    assertEq(header.shown, false, '"Methods" header visible');
+  }, { timeout: 10000, interval: 500,
+       description: `empty state to render for ${chosen}` });
+
+  // No Call button anywhere under the view: each method row's Button is named
+  // pluginInterface.call.<method>, and findByObjectName matches exact names,
+  // so walk the descendants for the prefix instead.
+  const callButtons = JSON.parse(await evalOn(app, iface.id, `(() => {
+    const found = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (typeof node.objectName === "string"
+          && node.objectName.indexOf("pluginInterface.call.") === 0) {
+        found.push(node.objectName);
+      }
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
+    };
+    walk(this);
+    return JSON.stringify(found);
+  })()`));
+  assertEq(callButtons.length, 0,
+           `pluginInterface.call.* buttons in the view (${JSON.stringify(callButtons)})`);
+
+  // Back, and the module table is on screen again — left as found.
+  const back = await requireObject(app, "pluginInterface.back");
+  await invoke(app, back.id, "clicked", 'clicking "← Back"');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "showingInterface"), false,
+             "moduleInspectorView.showingInterface after Back");
+    const table = await findByObjectName(app.inspector, "moduleInspector.table");
+    if (!table) throw new Error("moduleInspector.table not in the QML tree");
+    assertEq(await evalOn(app, table.id, "visible"), true,
+             "moduleInspector.table visible after Back");
+  }, { timeout: 10000, interval: 500,
+       description: "Module Inspector table to be visible after Back" });
+  await assertResponsive(app, { timeoutMs: 2000 });
+});
+
 // --- Sidebar: sequential section opening ---
 //
 // Regression guard: opening multiple sidebar sections one after another
