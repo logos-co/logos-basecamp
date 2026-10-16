@@ -77,12 +77,7 @@ let
       pkgs.yaml-cpp
     ] ++ installedModules;
   };
-in
-pkgs.stdenv.mkDerivation rec {
-  pname = "logos-basecamp";
-  version = common.version;
 
-  inherit src;
   # Platform-specific build inputs for system webviews
   buildInputs = common.buildInputs ++ qtWebview ++ [
     pkgs.qt6.qtdeclarative
@@ -105,67 +100,9 @@ pkgs.stdenv.mkDerivation rec {
     else
       []
   );
-  inherit (common) meta;
 
   # Add logosSdk to nativeBuildInputs for logos-cpp-generator
   nativeBuildInputs = common.nativeBuildInputs ++ [ logosSdkBuild pkgs.patchelf pkgs.removeReferencesTo ];
-
-  # Provide Qt/GL runtime paths so the wrapper can inject them
-  qtLibPath = pkgs.lib.makeLibraryPath (
-    [
-      pkgs.qt6.qtbase
-      pkgs.qt6.qtremoteobjects
-      pkgs.qt6.qtdeclarative
-      pkgs.qt6.qtsvg
-      pkgs.zstd
-      pkgs.zlib
-      pkgs.glib
-      pkgs.stdenv.cc.cc
-      pkgs.freetype
-      pkgs.fontconfig
-      # Qt host split: the app links logos-qt-host → logos-protocol, whose shared
-      # runtime deps (Boost.System, OpenSSL) must be reachable now that the
-      # binary's RPATH is stripped for bundling.
-      pkgs.boost
-      pkgs.openssl
-      # The log sink's own dependencies, for the same reason: the dev build's
-      # RPATH is $out/lib, which holds neither. fmt is spdlog's.
-      pkgs.spdlog
-      pkgs.yaml-cpp
-      pkgs.fmt
-    ]
-    # See common.buildInputs: krb5 carries a host-platform bash and does not
-    # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.
-    ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5
-    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-      pkgs.libglvnd
-      pkgs.mesa.drivers
-      pkgs.xorg.libX11
-      pkgs.xorg.libXext
-      pkgs.xorg.libXrender
-      pkgs.xorg.libXrandr
-      pkgs.xorg.libXcursor
-      pkgs.xorg.libXi
-      pkgs.xorg.libXfixes
-      pkgs.xorg.libxcb
-      pkgs.qt6.qtwayland
-    ]
-  );
-  qtPluginPath = pkgs.lib.concatStringsSep ":" ([
-    "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
-    "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
-  ]
-  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
-    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
-  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-    "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
-  ]);
-  qmlImportPath = pkgs.lib.concatStringsSep ":" ([
-    "${placeholder "out"}/lib"
-    "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
-  ] ++ qtWebviewQml ++ [
-    "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
-  ]);
 
   preConfigure = ''
     runHook prePreConfigure
@@ -240,11 +177,178 @@ pkgs.stdenv.mkDerivation rec {
     runHook postPreConfigure
   '';
 
+  configurePhase = ''
+    runHook preConfigure
+
+    echo "Configuring logos-basecamp..."
+    echo "liblogos: ${logosLiblogos}"
+    echo "logos-module: ${logosModule}"
+    echo "cpp-sdk: ${logosSdk}"
+    echo "logos-design-system: ${logosDesignSystem}"
+
+    # Verify that the built components exist
+    test -d "${logosLiblogos}" || (echo "liblogos not found" && exit 1)
+    test -d "${logosModule}" || (echo "logos-module not found" && exit 1)
+    test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
+    test -d "${logosDesignSystem}" || (echo "logos-design-system not found" && exit 1)
+
+    ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) ''
+      echo "Copying logos-qt-mcp source for inspector..."
+      mkdir -p ./logos-qt-mcp
+      cp -r ${logosQtMcp}/* ./logos-qt-mcp/
+    ''}
+
+    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
+    # setup hook, so without it the cross-compilation flags nixpkgs computes are
+    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
+    # nowhere near the cause: CMake's FindThreads then probes for pthreads
+    # instead of Win32 threads, fails, and Qt6Config reports
+    # "Qt6 could not be found because dependency Threads could not be found".
+    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
+    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
+    cmake -S app -B build \
+      $cmakeFlags \
+      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
+      -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+      -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=FALSE \
+      -DCMAKE_INSTALL_RPATH="" \
+      -DCMAKE_SKIP_BUILD_RPATH=TRUE \
+      -DLOGOS_MODULE_ROOT=${logosModule} \
+      -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
+      -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
+      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
+      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
+      -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
+      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
+      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
+      -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
+      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
+      -DLOGOS_USE_MOCK_BACKEND=${if useMockBackend then "ON" else "OFF"} \
+      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
+      ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
+
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+
+    cmake --build build
+    echo "logos-basecamp built successfully!"
+
+    runHook postBuild
+  '';
+
+  # The C++ compile alone: only the binary leaves it. Modules, plugins and
+  # runtime libraries are staged by the assembly below, so bumping them no
+  # longer recompiles LogosBasecamp.
+  compiled = pkgs.stdenv.mkDerivation {
+    pname = "logos-basecamp-compiled";
+    version = common.version;
+    inherit src buildInputs nativeBuildInputs preConfigure configurePhase buildPhase;
+
+    # Fixup (no strip, rpath, win-dll-link) runs once, on the assembled output.
+    dontFixup = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      # Probe both names and FAIL if neither exists. The previous
+      # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
+      # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
+      # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+      _bc=""
+      for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+        if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
+      done
+      if [ -z "$_bc" ]; then
+        echo "Error: LogosBasecamp was not produced by the build" >&2
+        ls -la build 2>&1 >&2 | head -40 || true
+        exit 1
+      fi
+      mkdir -p $out/bin
+      cp "$_bc" $out/bin/
+
+      runHook postInstall
+    '';
+  };
+in
+pkgs.stdenv.mkDerivation rec {
+  pname = "logos-basecamp";
+  version = common.version;
+
+  # Assembly only. The same inputs as the compile keep the fixup hooks as before.
+  inherit buildInputs nativeBuildInputs;
+  dontUnpack = true;
+  dontConfigure = true;
+  dontBuild = true;
+  inherit (common) meta;
+
+  # Provide Qt/GL runtime paths so the wrapper can inject them
+  qtLibPath = pkgs.lib.makeLibraryPath (
+    [
+      pkgs.qt6.qtbase
+      pkgs.qt6.qtremoteobjects
+      pkgs.qt6.qtdeclarative
+      pkgs.qt6.qtsvg
+      pkgs.zstd
+      pkgs.zlib
+      pkgs.glib
+      pkgs.stdenv.cc.cc
+      pkgs.freetype
+      pkgs.fontconfig
+      # Qt host split: the app links logos-qt-host → logos-protocol, whose shared
+      # runtime deps (Boost.System, OpenSSL) must be reachable now that the
+      # binary's RPATH is stripped for bundling.
+      pkgs.boost
+      pkgs.openssl
+      # The log sink's own dependencies, for the same reason: the dev build's
+      # RPATH is $out/lib, which holds neither. fmt is spdlog's.
+      pkgs.spdlog
+      pkgs.yaml-cpp
+      pkgs.fmt
+    ]
+    # See common.buildInputs: krb5 carries a host-platform bash and does not
+    # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.
+    ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5
+    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+      pkgs.libglvnd
+      pkgs.mesa.drivers
+      pkgs.xorg.libX11
+      pkgs.xorg.libXext
+      pkgs.xorg.libXrender
+      pkgs.xorg.libXrandr
+      pkgs.xorg.libXcursor
+      pkgs.xorg.libXi
+      pkgs.xorg.libXfixes
+      pkgs.xorg.libxcb
+      pkgs.qt6.qtwayland
+    ]
+  );
+  qtPluginPath = pkgs.lib.concatStringsSep ":" ([
+    "${pkgs.qt6.qtbase}/lib/qt-6/plugins"
+    "${pkgs.qt6.qtsvg}/lib/qt-6/plugins"
+  ]
+  ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
+    "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
+  ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+    "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
+  ]);
+  qmlImportPath = pkgs.lib.concatStringsSep ":" ([
+    "${placeholder "out"}/lib"
+    "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+  ] ++ qtWebviewQml ++ [
+    "${pkgs.qt6.qtsvg}/lib/qt-6/qml"
+  ]);
+
   # modules/ and plugins/ are carried into portable bundles by nix-bundle-dir.
   # extraClosurePaths lists Qt modules whose plugins/frameworks must be in
   # the bundle even though the app binary doesn't link against them directly
   # (they're used by portable-bundled plugins whose nix-store refs are stripped).
   passthru = {
+    inherit compiled;
     extraDirs = [ "modules" "plugins" ];
     extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
       ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ]
@@ -590,102 +694,37 @@ pkgs.stdenv.mkDerivation rec {
     echo "PE import closure verified: $(_pe_roots | wc -l) root(s), $_imports_read import(s) read, 0 unresolved."
   '';
 
-  configurePhase = ''
-    runHook preConfigure
-
-    echo "Configuring logos-basecamp..."
-    echo "liblogos: ${logosLiblogos}"
-    echo "logos-module: ${logosModule}"
-    echo "cpp-sdk: ${logosSdk}"
-    echo "logos-design-system: ${logosDesignSystem}"
-
-    # Verify that the built components exist
-    test -d "${logosLiblogos}" || (echo "liblogos not found" && exit 1)
-    test -d "${logosModule}" || (echo "logos-module not found" && exit 1)
-    test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
-    test -d "${logosDesignSystem}" || (echo "logos-design-system not found" && exit 1)
-
-    ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) ''
-      echo "Copying logos-qt-mcp source for inspector..."
-      mkdir -p ./logos-qt-mcp
-      cp -r ${logosQtMcp}/* ./logos-qt-mcp/
-    ''}
-
-    # $cmakeFlags FIRST. This hand-rolled configurePhase bypasses the cmake
-    # setup hook, so without it the cross-compilation flags nixpkgs computes are
-    # silently dropped -- above all -DCMAKE_SYSTEM_NAME=Windows. The symptom is
-    # nowhere near the cause: CMake's FindThreads then probes for pthreads
-    # instead of Win32 threads, fails, and Qt6Config reports
-    # "Qt6 could not be found because dependency Threads could not be found".
-    # It also carries the Qt host-TOOL package paths (moc/rcc/qmltyperegistrar/
-    # qsb), which -DQT_HOST_PATH cannot supply. Empty on native builds.
-    cmake -S app -B build \
-      $cmakeFlags \
-      ${pkgs.lib.escapeShellArgs (pkgs.logosQtCrossCmakeFlags or [ ])} \
-      -GNinja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-      -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=FALSE \
-      -DCMAKE_INSTALL_RPATH="" \
-      -DCMAKE_SKIP_BUILD_RPATH=TRUE \
-      -DLOGOS_MODULE_ROOT=${logosModule} \
-      -DLOGOS_LIBLOGOS_ROOT=${logosLiblogos} \
-      -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
-      -DLOGOS_QT_HOST_ROOT=${logosQtHost} \
-      -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
-      -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
-      -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
-      -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
-      -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
-      -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
-      -DLOGOS_USE_MOCK_BACKEND=${if useMockBackend then "ON" else "OFF"} \
-      -DENABLE_QML_INSPECTOR=${if (enableInspector && logosQtMcp != null) then "ON" else "OFF"} \
-      ${pkgs.lib.optionalString (enableInspector && logosQtMcp != null) "-DLOGOS_QT_MCP_ROOT=$(pwd)/logos-qt-mcp"}
-
-    runHook postConfigure
-  '';
-
-  buildPhase = ''
-    runHook preBuild
-
-    cmake --build build
-    echo "logos-basecamp built successfully!"
-
-    runHook postBuild
-  '';
-
   installPhase = ''
     runHook preInstall
 
     # Create output directories
     mkdir -p $out/bin $out/lib $out/modules $out/plugins
 
-    # Install app binary.
-    #
-    # Probe both names and FAIL if neither exists. The previous
-    # `if [ -f build/LogosBasecamp ]` had no else-branch, so a mingw build --
-    # which links build/LogosBasecamp.exe -- installed NOTHING, exited 0, and
-    # produced an output whose bin/, lib/, modules/ and plugins/ were all empty.
+    # Install app binary, from the compile.
     _bc=""
-    for _cand in build/LogosBasecamp build/LogosBasecamp.exe; do
+    for _cand in ${compiled}/bin/LogosBasecamp ${compiled}/bin/LogosBasecamp.exe; do
       if [ -f "$_cand" ]; then _bc="$_cand"; break; fi
     done
     if [ -z "$_bc" ]; then
-      echo "Error: LogosBasecamp was not produced by the build" >&2
-      ls -la build 2>&1 >&2 | head -40 || true
+      echo "Error: no LogosBasecamp in ${compiled}/bin" >&2
       exit 1
     fi
+    # Each copy gets u+w: store files are read-only, and preFixup's patchelf
+    # (errors silenced) must still rewrite the binary.
     if true; then
       ${if portable then ''
         # Portable: install binary directly (nix-bundle-dir handles Qt paths)
         cp "$_bc" "$out/bin/$(basename "$_bc")"
+        chmod u+w "$out/bin/$(basename "$_bc")"
       '' else if pkgs.stdenv.hostPlatform.isWindows then ''
         # Windows: no shell wrapper -- a POSIX /bin/sh launcher cannot run
         # there, and Qt path setup belongs in a qt.conf beside the exe.
         cp "$_bc" "$out/bin/$(basename "$_bc")"
+        chmod u+w "$out/bin/$(basename "$_bc")"
       '' else ''
         # Dev: hide real binary, create wrapper that sets Qt env vars
         cp "$_bc" "$out/bin/.LogosBasecamp"
+        chmod u+w "$out/bin/.LogosBasecamp"
 
         cat > $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 #!/bin/sh
