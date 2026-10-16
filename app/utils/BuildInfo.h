@@ -1,14 +1,18 @@
 #pragma once
 
-// Pulls the nix-generated logos_build_info.h for its two consumers:
+// Build info for its two consumers:
 //   * app/main.cpp       — startup banner in the per-session log.
 //   * app/MainUIBackend  — Q_PROPERTYs for the Dashboard view.
 //
-// Non-nix builds see no logos_build_info.h; accessors return empty values
+// Read at runtime from ../buildinfo/build-info.json next to the executable,
+// which nix/app.nix stages (not compiled in, so input bumps do not recompile
+// the app). Without that file (non-nix builds) accessors return empty values
 // so callers can still render / log something sane.
 
-#include <QByteArray>
+#include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,23 +22,25 @@
 #include <QVariantList>
 #include <QVariantMap>
 
-#if __has_include("logos_build_info.h")
-#  include "logos_build_info.h"
-#  define LOGOS_BASECAMP_HAS_BUILD_INFO 1
-#else
-#  define LOGOS_BASECAMP_HAS_BUILD_INFO 0
-#endif
-
 namespace LogosBasecampBuildInfo {
 
-// VERSION file contents, baked in at build time. Empty on dev branches
-// (VERSION is only checked in on release branches) and in non-nix builds.
+// The parsed build-info.json, read once; empty when there is none. Callers
+// run after QApplication exists, which applicationDirPath() needs.
+inline const QJsonObject& data() {
+    static const QJsonObject obj = [] {
+        QFile f(QDir::cleanPath(QCoreApplication::applicationDirPath()
+                                + "/../buildinfo/build-info.json"));
+        if (!f.open(QIODevice::ReadOnly))
+            return QJsonObject();
+        return QJsonDocument::fromJson(f.readAll()).object();
+    }();
+    return obj;
+}
+
+// VERSION file contents at build time. Empty on dev branches (VERSION is only
+// checked in on release branches) and in non-nix builds.
 inline QString version() {
-#if LOGOS_BASECAMP_HAS_BUILD_INFO
-    return QStringLiteral(LOGOS_BASECAMP_VERSION);
-#else
-    return {};
-#endif
+    return data().value("version").toString();
 }
 
 // True for distributed / portable builds (AppImage, DMG) — driven by the
@@ -47,24 +53,17 @@ inline bool isPortableBuild() {
 #endif
 }
 
-// List of {name, commit} entries for logos-basecamp + each flake input,
-// populated from the nix-generated JSON blob. Empty in non-nix builds.
+// List of {name, commit} entries for logos-basecamp + each flake input.
+// Empty in non-nix builds.
 inline QVariantList commits() {
     QVariantList out;
-#if LOGOS_BASECAMP_HAS_BUILD_INFO
-    const auto doc = QJsonDocument::fromJson(
-        QByteArray::fromRawData(logos_basecamp_build_info::kCommitsJson,
-                                 qstrlen(logos_basecamp_build_info::kCommitsJson)));
-    if (doc.isArray()) {
-        for (const QJsonValue& v : doc.array()) {
-            const QJsonObject obj = v.toObject();
-            QVariantMap entry;
-            entry["name"] = obj.value("name").toString();
-            entry["commit"] = obj.value("commit").toString();
-            out.append(entry);
-        }
+    for (const QJsonValue& v : data().value("commits").toArray()) {
+        const QJsonObject obj = v.toObject();
+        QVariantMap entry;
+        entry["name"] = obj.value("name").toString();
+        entry["commit"] = obj.value("commit").toString();
+        out.append(entry);
     }
-#endif
     return out;
 }
 
@@ -72,7 +71,11 @@ inline QVariantList commits() {
 // per-session log captures exactly which sources produced this binary.
 inline void logStartupBanner() {
     const char* buildType = isPortableBuild() ? "portable" : "dev";
-#if LOGOS_BASECAMP_HAS_BUILD_INFO
+    if (data().isEmpty()) {
+        qInfo().noquote() << QString("LogosBasecamp (%1 build, no build info)")
+                                 .arg(QString::fromUtf8(buildType));
+        return;
+    }
     const QString v = version();
     if (!v.isEmpty()) {
         qInfo().noquote() << QString("LogosBasecamp version %1 (%2 build)")
@@ -91,10 +94,6 @@ inline void logStartupBanner() {
                                           m.value("commit").toString());
         }
     }
-#else
-    qInfo().noquote() << QString("LogosBasecamp (%1 build, no build info)")
-                             .arg(QString::fromUtf8(buildType));
-#endif
 }
 
 } // namespace LogosBasecampBuildInfo

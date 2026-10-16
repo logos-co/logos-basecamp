@@ -59,12 +59,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/interfaces)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/utils)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macos)
 # The ONE generated-header directory. nix/app.nix drops all of it in here:
-# the build-info header, the module-generated *_api.h wrappers, the shared
-# semver headers and logos-cpp-generator's --general-only output. Absent in
-# non-nix builds — BuildInfo.h guards its include with __has_include.
+# the module-generated *_api.h wrappers, the shared semver headers and
+# logos-cpp-generator's --general-only output.
 #
-# Keep it a SINGLE directory: a second generated dir on the include path would
-# make that __has_include depend on -I ORDER, silently.
+# Keep it a SINGLE directory: these headers are included by bare name, so a
+# second generated dir on the include path would let -I ORDER pick, silently.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/generated)
 
 # Allow override from environment or command line (for nix builds)
