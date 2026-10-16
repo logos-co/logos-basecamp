@@ -2825,6 +2825,101 @@ test("repositories: the download source round-trips through the downloader", asy
   await expectSource("any", 0, "the download source to return to any");
 });
 
+// --- Repositories (A24) — invalid URL shows a dismissible error banner ---
+//
+// The downloader's RepositoryRegistry::addRepository rejects "not a url" at
+// its scheme check — "unsupported URL scheme (https required in v1)" — before
+// any duplicate check or network fetch, so this runs everywhere including
+// offscreen CI. The banner text is the downloader's own error string ("no
+// config file (pass --config <path>)" if the test instance's registry is not
+// persistent; "Operation failed" only when the downloader sends none —
+// RepositoriesView.reportOperationResult), so the gate asserts non-empty and
+// the observed text is logged rather than pinned. If the downloader ever
+// accepts the string instead (outcome (b)), the URL is removed again so the
+// later repository tests see the list they expect, and the test fails.
+test("repositories: invalid URL shows a dismissible error banner", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+  const badUrl = "not a url";
+
+  const initialCount = assertType(
+    await evalOn(app, anchorId, "backend.repositories.length"),
+    "number", "backend.repositories.length");
+
+  const field = await requireObject(app, "repositories.urlField");
+  const addButton = await requireObject(app, "repositories.addButton");
+  const banner = await requireObject(app, "repositories.errorBanner");
+
+  // Assigning `text` replaces the field's binding, as every text-field poke
+  // in this file does — harmless, and the restore below clears it again.
+  await evalOn(app, field.id, `text = ${JSON.stringify(badUrl)}`);
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), true,
+             "repositories.addButton enabled with a non-blank URL");
+  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
+
+  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+
+  // The verdict is the downloader's: wait for either the banner (pinned
+  // outcome (a)) or an accepted row (outcome (b), handled below).
+  let accepted = false;
+  await app.waitFor(async () => {
+    const count = await evalOn(app, anchorId, "backend.repositories.length");
+    const row = await findByObjectName(app.inspector, `repositories.row.${badUrl}`);
+    if (count > initialCount && row) { accepted = true; return; }
+    if (await evalOn(app, banner.id, "visible") !== true) {
+      throw new Error("repositories.errorBanner not visible and URL not accepted");
+    }
+  }, { timeout: 10000, interval: 250,
+       description: "error banner (or an accepted row) after the add" });
+
+  if (accepted) {
+    await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(badUrl)})`);
+    await evalOn(app, field.id, 'text = ""');
+    throw new Error(`A24 outcome (b): the downloader accepted ${JSON.stringify(badUrl)} `
+      + "— removed it again; fold this case into A25");
+  }
+
+  // The banner's message is its LogosText descendant; expected text is
+  // "unsupported URL scheme (https required in v1)" (see the header comment).
+  const bannerText = await evalOn(app, banner.id, `(() => {
+    const firstText = (node) => {
+      if (!node) return "";
+      if (typeof node.text === "string" && node.text.length > 0) return node.text;
+      if (!node.children || typeof node.children.length !== "number") return "";
+      for (let i = 0; i < node.children.length; i += 1) {
+        const t = firstText(node.children[i]);
+        if (t.length > 0) return t;
+      }
+      return "";
+    };
+    return firstText(this);
+  })()`);
+  if (typeof bannerText !== "string" || bannerText.length === 0) {
+    throw new Error(`error banner visible with empty text (expected the `
+      + `downloader's error string, e.g. "unsupported URL scheme (https `
+      + `required in v1)"); got ${JSON.stringify(bannerText)}`);
+  }
+  console.log(`    A24: banner text ${JSON.stringify(bannerText)}`);
+
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+           initialCount, "backend.repositories.length after the rejected add");
+
+  const dismiss = await requireObject(app, "repositories.errorDismiss");
+  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, banner.id, "visible"), false,
+             "repositories.errorBanner visible after dismiss");
+  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
+
+  // A failed add keeps the field's text; clear it so the view is back at
+  // rest for the tests that follow.
+  await evalOn(app, field.id, 'text = ""');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), false,
+             "repositories.addButton enabled after clearing the field");
+  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+});
+
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 
