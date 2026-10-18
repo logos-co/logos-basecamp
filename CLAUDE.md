@@ -149,6 +149,23 @@ Where things are: dialogs in `src/Basecamp/Shell/Intent*Dialog.qml`, wiring in `
 ### Construction & Destruction Order
 CoreModuleManager is constructed first, UIPluginManager second (receives CoreModuleManager), PackageCoordinator third (receives both). UIPluginManager's `setPackageCoordinator` is called after all three exist, closing the cycle and wiring the `uiPluginsFetched`/`uiModulesChanged`/`launcherAppsChanged`/`coreModulesChanged` signal flow. Qt's reverse-order child destruction tears PackageCoordinator down first (stops emitting), then UIPluginManager (tears down widgets while the C API handle is still valid), then CoreModuleManager.
 
+## Themes and text size
+
+The look comes from `Logos.Theme` (logos-design-system): Dark, Day (`"light"`)
+and High contrast, plus a text size. The choice lives in one file,
+`<GenericConfigLocation>/Logos/design-system.ini`, which every Theme instance
+re-reads each second, so a change reaches every shell engine and app process.
+
+- Set from **View** in the macOS menu bar (`Window::createViewMenu`: Dark / Day /
+  High Contrast, Bigger / Smaller Text, Actual Size) or **Settings → Display**
+  (`src/Basecamp/Settings/DisplayView.qml`).
+- Shell parts drawn in C++ (window, workspace, tab bar, corner cut, loading
+  label) take their colours from `app/interfaces/ShellTheme.h`, which reads the
+  same file; `ShellTheme::follow(owner, apply)` re-applies on a change.
+- In QML, use `Theme.palette.*` and `Theme.typography.*` rather than hex
+  colours and fixed pixel sizes; `Theme.typography.scaled(n)` scales a one-off
+  size. The sidebar logo has a dark-ink copy (`BasecampIcons.logoInk`) for Day.
+
 ## Key QML Files
 
 | File | Purpose |

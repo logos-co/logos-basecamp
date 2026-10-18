@@ -2032,15 +2032,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1790070347,
-        "narHash": "sha256-58ZfV4SeZaFenjgzlDoBVy4aH3qcMFAgcUkIKUKs2W0=",
-        "owner": "logos-co",
+        "lastModified": 1792338509,
+        "narHash": "sha256-WgNDyYFC7W120xUYX4brQQeTUHTB0X+BaSYW3mBZWPg=",
+        "owner": "jefdiesel",
         "repo": "logos-design-system",
-        "rev": "88330d04968954be956311b0be429048a41da2ea",
+        "rev": "a700079aa1f3647d5a8f4e72731c60bafe7ad56b",
         "type": "github"
       },
       "original": {
-        "owner": "logos-co",
+        "owner": "jefdiesel",
+        "ref": "feat/themes-text-size",
         "repo": "logos-design-system",
         "type": "github"
       }

@@ -93,6 +93,7 @@ private:
 #ifdef Q_OS_MAC
     void setupMacOSDockReopen();
     void createMenuBar();
+    void createViewMenu();
 #endif
 
     LogosAPI* m_logosAPI;

@@ -46,7 +46,7 @@
     # signer-binding fix.
     logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
     logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
-    logos-design-system.url = "github:logos-co/logos-design-system";
+    logos-design-system.url = "github:jefdiesel/logos-design-system/feat/themes-text-size"; # until logos-co/logos-design-system takes the themes PR
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     # ui-host links the same qt-host and protocol the app does.
     logos-view-module-runtime.inputs.logos-protocol.follows = "logos-protocol";

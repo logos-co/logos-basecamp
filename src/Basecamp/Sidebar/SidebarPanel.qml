@@ -65,7 +65,7 @@ Control {
             Layout.preferredWidth: 46
             Layout.preferredHeight: 25
             Layout.alignment: Qt.AlignHCenter
-            source: BasecampIcons.logo
+            source: Theme.isDark ? BasecampIcons.logo : BasecampIcons.logoInk
         }
 
         SeparatorLine {}

@@ -1,3 +1,4 @@
+#include "ShellTheme.h"
 #include "WorkspaceArea.h"
 #include "ShellDevQml.h"
 
@@ -64,13 +65,14 @@ public:
 class CornerCutOverlay : public QWidget {
 public:
     explicit CornerCutOverlay(QWidget* parent = nullptr,
-                              QColor cutColor = QColor("#171717"),
+                              QColor cutColor = ShellTheme::colors().shell,
                               qreal radius = 16.0)
         : QWidget(parent), m_cutColor(cutColor), m_radius(radius)
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         setAttribute(Qt::WA_TranslucentBackground);
         setAutoFillBackground(false);
+        ShellTheme::follow(this, [this](const ShellTheme::Colors& c) { m_cutColor = c.shell; update(); });
     }
 
 protected:
@@ -220,17 +222,18 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
     setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
 
     setAutoFillBackground(true);
-    {
+    ShellTheme::follow(this, [this](const ShellTheme::Colors& c) {
         QPalette pal = palette();
-        pal.setColor(QPalette::Window, QColor("#171717"));
+        pal.setColor(QPalette::Window, c.shell);
         setPalette(pal);
-    }
+        if (m_welcomeWidget) m_welcomeWidget->setClearColor(c.shell);
+    });
     setContentsMargins(0, 0, 0, 0);
 
     if (backend) {
         m_welcomeWidget = new QQuickWidget(this);
         m_welcomeWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-        m_welcomeWidget->setClearColor(QColor("#171717"));
+        m_welcomeWidget->setClearColor(ShellTheme::colors().shell);
         m_welcomeWidget->setMinimumSize(300, 200);
         m_welcomeWidget->rootContext()->setContextProperty("backend", backend);
         ShellDevQml::load(m_welcomeWidget,
@@ -574,23 +577,24 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
     props.setScrollMetric(QScrollerProperties::ScrollingCurve, QEasingCurve::OutCubic);
     QScroller::scroller(tabBar)->setScrollerProperties(props);
 
-    tabBar->setStyleSheet(QStringLiteral(R"(
+    const QString tabSheet = QStringLiteral(R"(
         QTabBar {
-            background: #171717;
+            background: %1;
             border: none;
             qproperty-drawBase: false;
         }
 
         QTabBar::tab {
-            background: #262626;
-            color: #A4A4A4;
+            background: %2;
+            color: %3;
 
             padding: 0px 8px 0px 4px;
             margin-right: 10px;
 
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
-            height: 20px;
+            height: %6px;
+            font-size: %7px;
             min-width: 120px;
         }
 
@@ -604,19 +608,25 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
         QTabBar::tab:first, QTabBar::tab:only-one {
             min-width: 15px;
             max-width: 15px;
-            height: 20px;
+            height: %6px;
             padding: 0px 5px 0px 5px;
         }
 
         QTabBar::tab:!selected {
-            background: rgba(38, 38, 38, 0.6);
-            color: #626262;
+            background: %4;
+            color: %5;
         }
 
         QTabBar::tab:hover {
-            background: #262626;
+            background: %2;
         }
-    )"));
+    )");
+    ShellTheme::follow(tabBar, [tabBar, tabSheet](const ShellTheme::Colors& c) {
+        // A 26px tab with 13px text, both scaled by the text size setting.
+        tabBar->setStyleSheet(tabSheet.arg(ShellTheme::css(c.shell), ShellTheme::css(c.tab), ShellTheme::css(c.tabText),
+                                           ShellTheme::css(c.idleTab), ShellTheme::css(c.idleTabText))
+                                  .arg(c.px(26)).arg(c.px(13)));
+    });
 
     connect(tabBar, &QTabBar::tabMoved, this, [this, tabBar](int from, int to) {
         Q_UNUSED(from)
@@ -673,10 +683,12 @@ void WorkspaceArea::installTabBarCloseButtons(QTabBar* tabBar)
         btn->setIconSize(QSize(12, 12));
         btn->setFixedSize(12, 12);
         btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(QStringLiteral(R"(
-            QToolButton { background: transparent; border: none; }
-            QToolButton:hover { background: rgba(255,255,255,0.1); border-radius: 6px; }
-        )"));
+        ShellTheme::follow(btn, [btn](const ShellTheme::Colors& c) {
+            btn->setStyleSheet(QStringLiteral(R"(
+                QToolButton { background: transparent; border: none; }
+                QToolButton:hover { background: %1; border-radius: 6px; }
+            )").arg(ShellTheme::css(c.hoverWash)));
+        });
         connect(btn, &QToolButton::clicked, this, [tabBar, btn, closeSide]() {
             for (int j = 0; j < tabBar->count(); ++j) {
                 if (tabBar->tabButton(j, closeSide) == btn) {

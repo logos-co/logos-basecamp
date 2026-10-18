@@ -49,14 +49,16 @@ Rectangle {
         readonly property int sectionDashboard:       0
         readonly property int sectionAppsInspector:   1
         readonly property int sectionModuleInspector: 2
-        readonly property int sectionRepositories:    3
+        readonly property int sectionDisplay:         3
+        readonly property int sectionRepositories:    4
 
         readonly property var sections: [
             { label: qsTr("Dashboard") },
             { label: qsTr("Apps Inspector") },
             { label: qsTr("Module Inspector") },
+            { label: qsTr("Display") },
             { label: qsTr("Package Repositories") }
-        ].slice(0, root.repositoriesAvailable ? 4 : 3)   // Repositories must stay last
+        ].slice(0, root.repositoriesAvailable ? 5 : 4)   // Repositories must stay last
 
         property int selectedIndex: 0
 
@@ -218,7 +220,10 @@ Rectangle {
                         onVisibleChanged:  if (visible) root.moduleInspectorBecameVisible()
                     }
 
-                    // 3 — Package Repositories.
+                    // 3 — Display: text size and contrast.
+                    DisplayView {}
+
+                    // 4 — Package Repositories.
                     RepositoriesView {
                         id: repositoriesView
 

@@ -1,3 +1,4 @@
+#include "ShellTheme.h"
 #include "MainContainer.h"
 #include "ShellSections.h"
 #include "ShellDevQml.h"
@@ -40,7 +41,9 @@ QWidget* makePmuiPlaceholder(QWidget* parent)
     phLayout->setAlignment(Qt::AlignCenter);
     QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"), ph);
     loadingLabel->setAlignment(Qt::AlignCenter);
-    loadingLabel->setStyleSheet(QStringLiteral("color: #a0a0a0; font-size: 14px;"));
+    ShellTheme::follow(loadingLabel, [loadingLabel](const ShellTheme::Colors& c) {
+        loadingLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 14px;").arg(ShellTheme::css(c.secondaryText)));
+    });
     phLayout->addWidget(loadingLabel);
     return ph;
 }
@@ -209,13 +212,13 @@ void MainContainer::detachFromHost()
 
 void MainContainer::setupUi()
 {
-    // We would likely move this to qml and use Logos.Theme instead
-    QColor bgColor("#171717");
-    // set background color
+    // Background follows the design system's theme (ShellTheme.h).
     setAutoFillBackground(true);
-    QPalette p = palette();
-    p.setColor(QPalette::Window, bgColor);
-    setPalette(p);
+    ShellTheme::follow(this, [this](const ShellTheme::Colors& c) {
+        QPalette p = palette();
+        p.setColor(QPalette::Window, c.shell);
+        setPalette(p);
+    });
 
     // Create main horizontal layout
     m_mainLayout = new QHBoxLayout(this);
@@ -232,7 +235,7 @@ void MainContainer::setupUi()
     m_sidebarWidget->setMinimumWidth(80);
     m_sidebarWidget->setMaximumWidth(80);
     // set clear color to sidebar so that rounded corners don't show white
-    m_sidebarWidget->setClearColor(bgColor);
+    ShellTheme::follow(m_sidebarWidget, [w = m_sidebarWidget](const ShellTheme::Colors& c) { w->setClearColor(c.shell); });
 
     // === CONTENT AREA (vertical layout with stack + app launcher) ===
     QWidget* contentArea = new QWidget(this);
@@ -250,7 +253,7 @@ void MainContainer::setupUi()
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    m_contentWidget->setClearColor(bgColor);
+    ShellTheme::follow(m_contentWidget, [w = m_contentWidget](const ShellTheme::Colors& c) { w->setClearColor(c.shell); });
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
     ShellDevQml::load(m_contentWidget,
         QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));

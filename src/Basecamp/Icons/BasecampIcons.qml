@@ -3,6 +3,8 @@ import QtQuick
 
 QtObject {
     readonly property url logo:       Qt.resolvedUrl("basecamp.svg")
+    // The logo in dark ink, for light themes.
+    readonly property url logoInk:    Qt.resolvedUrl("basecamp-ink.svg")
     readonly property url tents:      Qt.resolvedUrl("tent.png")
     readonly property url dashboard:  Qt.resolvedUrl("dashboard.svg")
     readonly property url filter:     Qt.resolvedUrl("filter.svg")

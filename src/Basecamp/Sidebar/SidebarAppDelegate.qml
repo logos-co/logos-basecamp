@@ -128,7 +128,7 @@ AbstractButton {
             // Red cross = something is absent, "mixed" included. Amber "!" =
             // all present but rejected. Resolved differently by the user, so
             // they must not look identical.
-            color: root._presentButRejected ? "#e8a33d" : "#d32f2f"
+            color: root._presentButRejected ? Theme.palette.warning : Theme.palette.error
             anchors.right: tile.right
             anchors.top: tile.top
             anchors.rightMargin: -2

@@ -21,7 +21,8 @@ AbstractButton {
     // Dark gray pill background extending to left edge when active/highlighted
     background: Rectangle {
         radius: width / 2
-        color: root.hovered || root.checked ? Theme.palette.accentOrange: Theme.palette.surface
+        color: root.hovered || root.checked ? Theme.palette.accentOrange
+             : Theme.isDark ? Theme.palette.surface : Theme.palette.backgroundButton
     }
 
     contentItem: Item {
@@ -31,7 +32,10 @@ AbstractButton {
             width: 24
             height: 24
             source: root.icon.source
-            color: root.hovered || root.checked ? Theme.palette.backgroundBlack: "transparent"
+            // Idle icons take the theme's text colour (their own grey is too
+            // faint on a light theme); on the orange, black at night, white by day.
+            color: root.hovered || root.checked ? (Theme.isDark ? Theme.palette.backgroundBlack : "#FFFFFF")
+                                                : Theme.palette.textSecondary
             visible: !!root.icon.source &&
                      !(appIcon.status === Image.Null ||
                        appIcon.status === Image.Error)

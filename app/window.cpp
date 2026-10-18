@@ -1,3 +1,4 @@
+#include "ShellTheme.h"
 #include "window.h"
 #include <QApplication>
 #include <QGuiApplication>
@@ -18,6 +19,8 @@
 #include <QWindow>
 #include <QPointer>
 #include <QScopedValueRollback>
+#include <QActionGroup>
+#include <QSettings>
 #include "LogosBasecampPaths.h"
 #include "MainUIBackend.h"
 #include "ShellHostAdapter.h"
@@ -189,11 +192,11 @@ void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
     }
 
     setAutoFillBackground(true);
-    {
+    ShellTheme::follow(this, [this](const ShellTheme::Colors& c) {
         QPalette p = palette();
-        p.setColor(QPalette::Window, QColor("#171717"));
+        p.setColor(QPalette::Window, c.shell);
         setPalette(p);
-    }
+    });
 
 #ifdef Q_OS_MAC
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
@@ -414,6 +417,70 @@ void Window::createMenuBar()
     minimize->setShortcut(QKeySequence(QStringLiteral("Ctrl+M"))); // Cmd+M on macOS
     minimize->setMenuRole(QAction::NoRole);
     connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
+
+    createViewMenu();
+}
+
+// The design system's theme settings: the file every window and app process
+// reads (Logos.Theme re-reads it each second), so a change here reaches all.
+static QSettings& themeSettings()
+{
+    static QSettings settings(
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+            + QStringLiteral("/Logos/design-system.ini"),
+        QSettings::IniFormat);
+    return settings;
+}
+
+void Window::createViewMenu()
+{
+    QMenu* view = menuBar()->addMenu(tr("View"));
+
+    auto* appearance = new QActionGroup(view);
+    const QList<QPair<QString, QString>> themes = {
+        {QStringLiteral("dark"), tr("Dark")},
+        {QStringLiteral("light"), tr("Day")},
+        {QStringLiteral("high-contrast"), tr("High Contrast")},
+    };
+    for (const auto& [name, label] : themes) {
+        QAction* action = view->addAction(label);
+        action->setObjectName(QStringLiteral("logosTheme_") + name);
+        action->setCheckable(true);
+        action->setData(name);
+        action->setMenuRole(QAction::NoRole);
+        appearance->addAction(action);
+        connect(action, &QAction::triggered, this, [name]() {
+            themeSettings().setValue(QStringLiteral("LogosDesignSystem/theme"), name);
+            themeSettings().sync();
+        });
+    }
+    view->addSeparator();
+
+    auto scaleBy = [](double step, bool reset) {
+        QSettings& settings = themeSettings();
+        settings.sync();
+        double scale = reset ? 1.0 : settings.value(QStringLiteral("LogosDesignSystem/textScale"), 1.0).toDouble() + step;
+        scale = qRound(qBound(0.85, scale, 1.6) * 100) / 100.0;
+        settings.setValue(QStringLiteral("LogosDesignSystem/textScale"), scale);
+        settings.sync();
+    };
+    QAction* bigger = view->addAction(tr("Bigger Text"));
+    bigger->setShortcuts({QKeySequence(QStringLiteral("Ctrl+=")), QKeySequence::ZoomIn});
+    connect(bigger, &QAction::triggered, this, [scaleBy]() { scaleBy(0.1, false); });
+    QAction* smaller = view->addAction(tr("Smaller Text"));
+    smaller->setShortcuts({QKeySequence(QStringLiteral("Ctrl+-")), QKeySequence::ZoomOut});
+    connect(smaller, &QAction::triggered, this, [scaleBy]() { scaleBy(-0.1, false); });
+    QAction* actual = view->addAction(tr("Actual Size"));
+    actual->setShortcut(QKeySequence(QStringLiteral("Ctrl+0")));
+    connect(actual, &QAction::triggered, this, [scaleBy]() { scaleBy(0, true); });
+    for (QAction* action : {bigger, smaller, actual}) action->setMenuRole(QAction::NoRole);
+
+    // Tick the current theme each time the menu opens: it may have changed in Settings.
+    connect(view, &QMenu::aboutToShow, this, [appearance]() {
+        themeSettings().sync();
+        const QString current = themeSettings().value(QStringLiteral("LogosDesignSystem/theme"), QStringLiteral("dark")).toString();
+        for (QAction* action : appearance->actions()) action->setChecked(action->data().toString() == current);
+    });
 }
 #endif
 
