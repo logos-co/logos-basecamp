@@ -3169,6 +3169,69 @@ test("repositories: whitespace is rejected, duplicate URL is a no-op", async (ap
   }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
 });
 
+// --- Repositories (A27) — refresh flips the button label -------------------
+//
+// The button's text is `root.loading ? "Refreshing…" : "Refresh"` and its
+// enabled is `!root.loading`; `loading` is backend.repositoriesLoading
+// (RepositoriesView.qml, SettingsView.qml, ContentViews.qml). The click goes
+// backend.refreshRepositories() → PackageCoordinator, which raises its
+// loading counter before asking the downloader for listRepositories and
+// lowers it when the reply lands. The downloader answers from its in-memory
+// registry with no network fetch, so the loading window is ONE IPC round trip
+// over QtRO — tens of milliseconds, not the ~2 s catalog fetch A12 gets — and
+// this runs everywhere including offscreen CI. The phase gate therefore polls
+// all three observables in a tight loop with no sleep (three evaluate round
+// trips per iteration are the pacing), and any one counts. The list is
+// re-read, not changed, so its length must survive verbatim. The button is a
+// LogosButton read by objectName: "Refresh" appears elsewhere in the tree.
+test("repositories: refresh flips the button label", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+  const refreshButton = await requireObject(app, "repositories.refreshButton");
+  const reposLoading = () => evalOn(app, anchorId, "backend.repositoriesLoading");
+  const buttonText = () => evalOn(app, refreshButton.id, "text");
+  const buttonEnabled = () => evalOn(app, refreshButton.id, "enabled");
+
+  // No refresh may be in flight while the count is recorded (opening the view
+  // schedules one).
+  await app.waitFor(async () => {
+    assertEq(await reposLoading(), false, "backend.repositoriesLoading");
+    assertEq(await buttonEnabled(), true, "refresh button enabled");
+    assertEq(await buttonText(), "Refresh", "refresh button text");
+  }, { timeout: 30000, interval: 500, description: "no refresh to be in flight before the click" });
+  const preCount = assertType(
+    await evalOn(app, anchorId, "backend.repositories.length"),
+    "number", "backend.repositories.length");
+
+  await invoke(app, refreshButton.id, "clicked", "clicking repositories.refreshButton");
+
+  // "Refreshing…" is a single U+2026, as in the QML.
+  const phaseDeadline = Date.now() + 2000;
+  let observed = null;
+  for (;;) {
+    if ((await buttonText()) === "Refreshing…") { observed = 'button text "Refreshing…"'; break; }
+    if ((await reposLoading()) === true) { observed = "backend.repositoriesLoading === true"; break; }
+    if ((await buttonEnabled()) === false) { observed = "refresh button disabled"; break; }
+    if (Date.now() >= phaseDeadline) {
+      throw new Error(
+        "no loading observable within 2s of clicking repositories.refreshButton " +
+        '(button text never "Refreshing…", backend.repositoriesLoading never true, ' +
+        "refresh button never disabled)");
+    }
+  }
+  console.log(`    loading phase observed via: ${observed}`);
+
+  await app.waitFor(async () => {
+    assertEq(await buttonText(), "Refresh", "refresh button text after refresh");
+    assertEq(await buttonEnabled(), true, "refresh button enabled after refresh");
+    assertEq(await reposLoading(), false, "backend.repositoriesLoading after refresh");
+  }, { timeout: 30000, interval: 250, description: "refresh to settle" });
+
+  // Single-shot read: the list must already be back the moment the loading
+  // flag clears, and a retried wait would mask a transient drop.
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"), preCount,
+           "backend.repositories.length after the refresh settled");
+});
+
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 
