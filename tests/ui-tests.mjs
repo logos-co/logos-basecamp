@@ -3232,6 +3232,130 @@ test("repositories: refresh flips the button label", async (app) => {
            "backend.repositories.length after the refresh settled");
 });
 
+// --- Repositories (A28) — Cancel on "Remove default repository?" keeps it ---
+//
+// The two removal tests further down stay as they are: they drive
+// backend.removeRepository directly, so the dialog wiring is theirs to skip
+// and this one's to guard. On the default row the Remove button
+// (RepositoriesView.qml) opens the LogosWarningDialog `removeDefaultDialog`
+// instead of emitting removeRequested; its Cancel
+// (repositories.removeConfirm.cancel) clears the pending URL and closes the
+// dialog with no backend call. Confirm is never clicked. The row's button has
+// no objectName and every row — plus the dialog's confirm — is labelled
+// "Remove", so the candidate "Remove" LogosButtons are narrowed by walking
+// their parent chain up to the default row's objectName. A closed Popup's
+// content may stay in the object tree, so "dialog gone" accepts the title and
+// the Cancel button being absent or visible === false. No network and no
+// state change: runs everywhere including offscreen CI, and must stay ahead
+// of the tests that remove the default (the remove-only one leaves it removed
+// on offscreen).
+test("repositories: cancel on 'Remove default repository?' keeps it", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+  const title = "Remove default repository?";
+
+  if (!(await isDefaultInList(app, anchorId))) {
+    throw new Error("default repository not listed at test start — this test "
+      + "was moved after the tests that remove the default; it must run before them");
+  }
+  const defaultUrl = await evalOn(app, anchorId, `(function() {
+    var rs = backend.repositories;
+    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
+    return null;
+  })()`);
+  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
+    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
+  }
+  const initialCount = assertType(
+    await evalOn(app, anchorId, "backend.repositories.length"),
+    "number", "backend.repositories.length");
+
+  const rowName = `repositories.row.${defaultUrl}`;
+  await requireObject(app, rowName);
+
+  // The default row's own Remove button: a "Remove" LogosButton whose parent
+  // chain reaches the row.
+  const underDefaultRow = (id) => evalOn(app, id, `(() => {
+    let node = this;
+    for (let up = 0; up < 20 && node; up += 1) {
+      if (node.objectName === ${JSON.stringify(rowName)}) return true;
+      node = node.parent;
+    }
+    return false;
+  })()`);
+  let removeButton = null;
+  await app.waitFor(async () => {
+    const hits = (await app.findByProperty("text", "Remove")).matches ?? [];
+    for (const m of hits) {
+      if (!(m.type ?? "").includes("LogosButton")) continue;
+      if (m.objectName === "repositories.removeConfirm.confirm") continue;
+      if ((await underDefaultRow(m.id)) !== true) continue;
+      assertEq(await evalOn(app, m.id, "visible"), true, `Remove button of ${rowName} visible`);
+      removeButton = m;
+      return;
+    }
+    throw new Error(`no "Remove" LogosButton under ${rowName}`);
+  }, { timeout: 10000, interval: 500, description: "the default row's Remove button" });
+
+  // Visible-or-not of the dialog's title text and Cancel button: null when
+  // the item is not in the tree at all.
+  const titleVisible = async () => {
+    const hits = (await app.findByProperty("text", title)).matches ?? [];
+    if (hits.length === 0) return null;
+    for (const m of hits) {
+      if ((await evalOn(app, m.id, "visible")) === true) return true;
+    }
+    return false;
+  };
+  const cancelButton = async () => findByObjectName(app.inspector, "repositories.removeConfirm.cancel");
+  const cancelVisible = async () => {
+    const button = await cancelButton();
+    return button ? (await evalOn(app, button.id, "visible")) === true : null;
+  };
+
+  await invoke(app, removeButton.id, "clicked", `clicking Remove on ${rowName}`);
+
+  await app.waitFor(async () => {
+    assertEq(await titleVisible(), true, `"${title}" title visible`);
+    assertEq(await cancelVisible(), true, "repositories.removeConfirm.cancel visible");
+  }, { timeout: 10000, interval: 250, description: "the remove-default dialog to open" });
+
+  // Cancel only: Confirm is never touched, and no key is pressed.
+  await invoke(app, (await cancelButton()).id, "clicked",
+               "clicking repositories.removeConfirm.cancel");
+
+  await app.waitFor(async () => {
+    const shown = await titleVisible();
+    if (shown === true) throw new Error(`"${title}" title still visible after Cancel`);
+    if ((await cancelVisible()) === true) {
+      throw new Error("repositories.removeConfirm.cancel still visible after Cancel");
+    }
+  }, { timeout: 10000, interval: 250, description: "the remove-default dialog to close" });
+
+  // Single-shot reads: the row, its badge and the list must already be intact
+  // the moment the dialog is gone; a retried wait would mask a transient drop.
+  const row = await findByObjectName(app.inspector, rowName);
+  if (!row) throw new Error(`${rowName} not in the QML tree after Cancel`);
+  const badgeVisible = await evalOn(app, row.id, `(() => {
+    const find = (node) => {
+      if (!node) return null;
+      if (node.text === "Default" && typeof node.visible === "boolean") return node;
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return null;
+      for (let i = 0; i < kids.length; i += 1) {
+        const hit = find(kids[i]);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const badge = find(this);
+    return badge ? badge.visible : null;
+  })()`);
+  assertEq(badgeVisible, true, `"Default" badge visible on ${rowName} after Cancel`);
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"), initialCount,
+           "backend.repositories.length after Cancel");
+  assertEq(await isDefaultInList(app, anchorId), true, "default repository listed after Cancel");
+});
+
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 
