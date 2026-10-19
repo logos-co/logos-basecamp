@@ -3714,6 +3714,83 @@ test("window: tray toggle hides a shown window", async (app) => {
   }
 });
 
+// --- Window (A30) — Cmd+M minimize action is wired (macOS only) -------------
+//
+// Window::createMenuBar (app/window.cpp) is compiled under Q_OS_MAC only: it
+// adds a "Window" menu with a "Minimize" QAction, objectName
+// logosMinimizeAction, shortcut Ctrl+M (Cmd+M on macOS), connected to
+// QWidget::showMinimized. The test triggers the action itself through the
+// inspector (QAction::trigger() is a public slot, reachable via callMethod)
+// rather than injecting the key — the inspector has no reliable key
+// injection, and the shortcut is the action's; the wiring is what is under
+// test. Calling showMinimized directly would only test Qt.
+//
+// On Linux the action does not exist, so the test is a skip by construction
+// and the Linux integration-test gate passes through this branch. The real
+// run is the repository's test-macos CI job (same file, offscreen platform).
+// There a missing action is a failure — the menu bar was not built — not a
+// skip. The restore goes through showHideWindow, the tray's path, so the
+// minimized→shown transition is asserted on this entry path too (#268).
+
+test("window: Cmd+M minimize action is wired (macOS only)", async (app) => {
+  if (process.platform !== "darwin") {
+    console.log(
+      "    SKIP: A30 — macOS only (logosMinimizeAction exists only in Q_OS_MAC builds)");
+    return;
+  }
+
+  const res = await app.inspector.send("findByProperty", {
+    property: "objectName", value: "logosMinimizeAction",
+  });
+  const action = (res.matches ?? [])[0];
+  if (!action) {
+    throw new Error(
+      "QAction objectName=logosMinimizeAction not found on darwin (menu bar not created)");
+  }
+  if (!(action.type || "").startsWith("QAction")) {
+    throw new Error(`logosMinimizeAction object is ${action.type}, expected QAction`);
+  }
+
+  const win = await windowObject(app);
+  try {
+    // A defined start: shown and not minimized, so a later minimized=true can
+    // only have come from the action.
+    let start = await windowProps(app, win);
+    if (start.minimized !== false || start.visible !== true) {
+      await invoke(app, win, "show");
+      await app.waitFor(async () => {
+        start = await windowProps(app, win);
+        if (start.minimized !== false || start.visible !== true) {
+          throw new Error(
+            `window not in start state: visible=${start.visible} minimized=${start.minimized}`);
+        }
+      }, { timeout: 5000, interval: 250, description: "window shown and not minimized" });
+    }
+
+    await invoke(app, action.id, "trigger", "triggering logosMinimizeAction");
+
+    await app.waitFor(async () => {
+      const { minimized } = await windowProps(app, win);
+      if (minimized !== true) {
+        throw new Error(`after trigger: minimized=${minimized} (expected true)`);
+      }
+    }, { timeout: 5000, interval: 250, description: "window minimized after Cmd+M action" });
+
+    await invoke(app, win, "showHideWindow");
+
+    await app.waitFor(async () => {
+      const { visible, minimized } = await windowProps(app, win);
+      if (minimized !== false || visible !== true) {
+        throw new Error(
+          `after tray toggle: visible=${visible} minimized=${minimized} ` +
+          `(expected visible=true minimized=false)`);
+      }
+    }, { timeout: 5000, interval: 250, description: "tray toggle restores the minimized window" });
+  } finally {
+    await invoke(app, win, "show");
+  }
+});
+
 // --- App-to-app intents -----------------------------------------------------
 //
 // These need the fixtures in tests/fixtures/intents staged into the app's
