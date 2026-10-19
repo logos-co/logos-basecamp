@@ -3030,6 +3030,145 @@ test("repositories: unreachable URL is refused with a fetch error", async (app) 
   }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
 });
 
+// --- Repositories (A26) — whitespace is rejected, duplicate URL is a no-op ---
+//
+// Whitespace: the Add button is `enabled: d.newRepoUrl.trim().length > 0`
+// (RepositoriesView.qml), so "   " never reaches the backend. The suite
+// clicks at signal level and invoking `clicked` ignores `enabled`, so the
+// whitespace half asserts the button is disabled and sends no click — the
+// button refusing IS the plan's "→ Add" step.
+//
+// Duplicate: the downloader's RepositoryRegistry::addRepository handles the
+// default repository's URL in its own branch before the https check — while
+// the default is present and enabled it returns "already registered: <url>"
+// with no network use and no change to the list, so this runs everywhere
+// including offscreen CI. (Had the default been removed or disabled, the same
+// call would probe it over the network and re-enable it; hence this test
+// runs BEFORE the disable/remove tests below and asserts that precondition.)
+// The banner text is pinned exactly; any other text fails with the observed
+// text in the message.
+test("repositories: whitespace is rejected, duplicate URL is a no-op", async (app) => {
+  const anchorId = await openRepositoriesView(app);
+
+  // Precondition: the default is listed and enabled. If not, this test has
+  // been moved after the removal tests.
+  if (!(await isDefaultInList(app, anchorId))) {
+    throw new Error("A26 precondition: default repository not in the list — "
+      + "this test must run before the tests that remove it");
+  }
+  if ((await isDefaultEnabled(app, anchorId)) !== true) {
+    throw new Error("A26 precondition: default repository not enabled — "
+      + "this test must run before the tests that disable/remove it");
+  }
+  const defaultUrl = await evalOn(app, anchorId, `(function() {
+    var rs = backend.repositories;
+    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
+    return null;
+  })()`);
+  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
+    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
+  }
+  const expectedText = `already registered: ${defaultUrl}`;
+
+  const initialCount = assertType(
+    await evalOn(app, anchorId, "backend.repositories.length"),
+    "number", "backend.repositories.length");
+
+  const field = await requireObject(app, "repositories.urlField");
+  const addButton = await requireObject(app, "repositories.addButton");
+  const banner = await requireObject(app, "repositories.errorBanner");
+  const duplicateWarning = await requireObject(app, "repositories.duplicateNameWarning");
+
+  assertEq(await evalOn(app, banner.id, "visible"), false,
+           "repositories.errorBanner visible at test start");
+
+  // --- Whitespace: the button refuses; nothing is sent. ---
+  await evalOn(app, field.id, 'text = "   "');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, field.id, "text"), "   ",
+             "repositories.urlField text after setting whitespace");
+    assertEq(await evalOn(app, addButton.id, "enabled"), false,
+             "repositories.addButton enabled with a whitespace-only URL");
+  }, { timeout: 10000, interval: 250, description: "Add button to stay disabled on whitespace" });
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+           initialCount, "backend.repositories.length after the whitespace entry");
+  assertEq(await evalOn(app, banner.id, "visible"), false,
+           "repositories.errorBanner visible after the whitespace entry");
+
+  // --- Duplicate: the default's own URL is refused as already registered. ---
+  await evalOn(app, field.id, `text = ${JSON.stringify(defaultUrl)}`);
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), true,
+             "repositories.addButton enabled with the default URL set");
+  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
+
+  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, banner.id, "visible"), true,
+             "repositories.errorBanner visible after the duplicate add");
+  }, { timeout: 10000, interval: 250, description: "error banner after the duplicate add" });
+
+  // The banner's message is its LogosText descendant, as in A24/A25.
+  const bannerText = await evalOn(app, banner.id, `(() => {
+    const firstText = (node) => {
+      if (!node) return "";
+      if (typeof node.text === "string" && node.text.length > 0) return node.text;
+      if (!node.children || typeof node.children.length !== "number") return "";
+      for (let i = 0; i < node.children.length; i += 1) {
+        const t = firstText(node.children[i]);
+        if (t.length > 0) return t;
+      }
+      return "";
+    };
+    return firstText(this);
+  })()`);
+  if (bannerText !== expectedText) {
+    throw new Error(`duplicate add did not take the downloader's already-registered `
+      + `branch (expected banner text ${JSON.stringify(expectedText)}); `
+      + `got ${JSON.stringify(bannerText)}`);
+  }
+  console.log(`    A26: banner text ${JSON.stringify(bannerText)}`);
+
+  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+           initialCount, "backend.repositories.length after the duplicate add");
+
+  const rows = await app.inspector.send("findByProperty", {
+    property: "objectName", value: `repositories.row.${defaultUrl}`,
+  });
+  assertEq((rows.matches ?? []).length, 1,
+           `rows named repositories.row.${defaultUrl} after the duplicate add`);
+
+  const defaultSwitch = await requireObject(app, `repositories.enableSwitch.${defaultUrl}`);
+  assertEq(await evalOn(app, defaultSwitch.id, "checked"), true,
+           "default repository's enable switch checked after the duplicate add");
+  assertEq(await isDefaultEnabled(app, anchorId), true,
+           "backend default repository enabled after the duplicate add");
+
+  // Nothing was added, so no display name can be claimed twice.
+  assertEq(await evalOn(app, duplicateWarning.id, "shown"), false,
+           "repositories.duplicateNameWarning shown after the duplicate add");
+
+  // A failed add keeps the field's text (reportOperationResult clears it only
+  // on success).
+  assertEq(await evalOn(app, field.id, "text"), defaultUrl,
+           "repositories.urlField text after the duplicate add");
+
+  // --- Restore: dismiss the banner, clear the field. ---
+  const dismiss = await requireObject(app, "repositories.errorDismiss");
+  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, banner.id, "visible"), false,
+             "repositories.errorBanner visible after dismiss");
+  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
+
+  await evalOn(app, field.id, 'text = ""');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), false,
+             "repositories.addButton enabled after clearing the field");
+  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+});
+
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 
