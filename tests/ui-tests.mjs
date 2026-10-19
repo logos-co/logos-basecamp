@@ -3820,6 +3820,72 @@ test("window: Cmd+M minimize action is wired (macOS only)", async (app) => {
   }
 });
 
+// --- Window (A31) — hide-to-tray and restore preserves open docks ------------
+//
+// Window::showHideWindow hides the QMainWindow only: the WorkspaceArea and its
+// dock widgets stay alive, so a hidden-then-restored window still shows the
+// app that was open. A hide that tore the docks down would read dockCount 0
+// and currentVisibleApp "" after the restore (what closing looks like, A4).
+// Leaves the workspace as found: the dock is closed only if it was closed at
+// the start, so the intents block sees what it would have seen.
+
+test("window: hide-to-tray and restore preserves open docks", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  const startDockCount = await evalOn(app, workspace.id, "dockCount");
+
+  // Open fixture A unless its dock is already open, so the test stands alone.
+  if (startDockCount !== 1) {
+    if (!(await openFixtureA(app, "A31", welcome.id, workspace.id))) return;
+  }
+  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
+  await app.waitFor(
+    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
+    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
+  );
+
+  const win = await windowObject(app);
+  try {
+    await invoke(app, win, "show");
+    await invoke(app, win, "showHideWindow");
+    await app.waitFor(async () => {
+      const { visible } = await windowProps(app, win);
+      if (visible !== false) {
+        throw new Error(`after hide toggle: visible=${visible} (expected false)`);
+      }
+    }, { timeout: 5000, interval: 250, description: "tray toggle hides the window" });
+
+    await invoke(app, win, "showHideWindow");
+    await app.waitFor(async () => {
+      const { visible, minimized } = await windowProps(app, win);
+      if (visible !== true || minimized !== false) {
+        throw new Error(
+          `after show toggle: visible=${visible} minimized=${minimized} ` +
+          `(expected visible=true minimized=false)`);
+      }
+    }, { timeout: 5000, interval: 250, description: "tray toggle restores the window" });
+
+    // The docks survived the hide: still one dock, fixture A still front-most
+    // and its payload still rendered.
+    await sleep(500);
+    assertEq(await evalOn(app, workspace.id, "dockCount"), 1,
+             "WorkspaceArea.dockCount after restore");
+    await waitForVisibleApp(app, welcome.id, FIXTURE_A.name,
+                            "fixture A to be front-most after restore");
+    await app.waitFor(
+      async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
+      { timeout: 10000, interval: 500,
+        description: "fixture A payload text to render after restore" }
+    );
+
+    if (startDockCount === 0) {
+      await closeFixtureADock(app, workspace.id, "fixture A dock to close after A31");
+    }
+  } finally {
+    await invoke(app, win, "show");
+  }
+});
+
 // --- App-to-app intents -----------------------------------------------------
 //
 // These need the fixtures in tests/fixtures/intents staged into the app's
