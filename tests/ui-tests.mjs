@@ -3886,6 +3886,115 @@ test("window: hide-to-tray and restore preserves open docks", async (app) => {
   }
 });
 
+// --- Settings (A32) — Apps Inspector unload of the visible app closes its dock
+//
+// An inspector test, placed here for the fixture-A state it shares with A31:
+// dock open and payload rendered. The row's toggle ends in
+// UIPluginManager::unloadUiModule (deferred through the event loop) →
+// pluginWindowRemoveRequested → MainContainer::removePluginDock, the removal
+// A4's closeDock takes, so the dock count drops to 0 and the active app
+// clears. Nothing on that path switches the section: Settings stays current
+// and the welcome page's host QQuickWidget sits hidden behind it, so the test
+// switches to the workspace (backend index 0, the C++ WorkspaceArea —
+// ContentViews.qml) before asserting the greeting. The reload goes through
+// the sidebar tile, as the gate says; loading reopens the dock and flips the
+// shell to the workspace by itself (MainContainer::onPluginWindowRequested /
+// onNavigateToApps). Fixture A has no dependents, so no unload-cascade dialog
+// is expected — one would hold the dock count at 1 and fail the first gate.
+// Leaves the workspace as found: the dock is closed only if it was closed at
+// the start, and the test ends in the workspace section either way.
+
+test("apps inspector: unloading the visible app closes its dock", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  const startDockCount = await evalOn(app, workspace.id, "dockCount");
+
+  // Open fixture A unless its dock is already open, and prove the payload
+  // renders, so the unload closes a dock that is really on screen.
+  if (startDockCount !== 1) {
+    if (!(await openFixtureA(app, "A32", welcome.id, workspace.id))) return;
+  }
+  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
+  await app.waitFor(
+    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
+    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
+  );
+
+  // The badge is read from the source model (StatusTextRole is what the row's
+  // ModuleStatusBadge renders), on the welcome anchor where `backend` is in
+  // scope, rather than from the table's text: the model is instantiated
+  // whatever section is current.
+  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
+    const m = backend.uiModulesModel;
+    for (let i = 0; i < m.rowCount(); i += 1) {
+      const idx = m.index(i, 0);
+      if (m.data(idx, ${A18_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
+        return JSON.stringify({
+          isLoaded: m.data(idx, ${A18_ROLES.isLoaded}),
+          statusText: m.data(idx, ${A18_ROLES.statusText}),
+        });
+      }
+    }
+    return "null";
+  })()`));
+
+  // Settings → Apps Inspector with the shared search empty, so the row is in
+  // the proxy whatever an earlier test typed.
+  await openAppsInspector(app);
+  await (await searchFieldOn(app, "settings.searchField")).normalize();
+  await requireObject(app, "appsInspector.table");
+
+  // The table populates asynchronously, and a load flip rebuilds the row's
+  // delegate, so the toggle is found and clicked in the same read. Signal-
+  // level click (see "Shared helpers"); callMethod ignores `enabled`, so the
+  // not-busy check is part of the click.
+  await app.waitFor(async () => {
+    const toggle = await findByObjectName(app.inspector, FIXTURE_A_TOGGLE);
+    if (!toggle) throw new Error(`${FIXTURE_A_TOGGLE} not in the QML tree`);
+    assertEq(await evalOn(app, toggle.id, "text"), "Unload", `${FIXTURE_A_TOGGLE} text`);
+    assertEq(await evalOn(app, toggle.id, "enabled"), true, `${FIXTURE_A_TOGGLE} enabled`);
+    await invoke(app, toggle.id, "clicked", "clicking the toggle to unload fixture A");
+  }, { timeout: 10000, interval: 500, description: `${FIXTURE_A_TOGGLE} to read "Unload"` });
+
+  // Gate, after the unload: dock gone, active app cleared, badge "Not loaded".
+  await waitForDockCount(app, workspace.id, 0, "unload to close fixture A's dock");
+  await waitForVisibleApp(app, welcome.id, "", "currentVisibleApp to clear after unload");
+  await app.waitFor(async () => {
+    const row = await modelRow();
+    if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
+    assertEq(row.isLoaded, false, "uiModulesModel isLoaded after unload");
+    assertEq(row.statusText, "Not loaded", "status badge text after unload");
+  }, { timeout: 10000, interval: 500, description: 'row to read "Not loaded" after unload' });
+
+  // The welcome page is back once the workspace section is current again.
+  await evalOn(app, welcome.id, "backend.setCurrentActiveSectionIndex(0)");
+  await app.waitFor(async () => {
+    if (await welcomePageHidden(app, welcome.id)) {
+      throw new Error("welcome page is still hidden after the unload");
+    }
+  }, { timeout: 10000, interval: 250, description: "welcome page to show after unload" });
+  await app.waitFor(
+    async () => { await app.expectTexts(["Welcome Back,"]); },
+    { timeout: 10000, interval: 500, description: '"Welcome Back," greeting to render' }
+  );
+
+  // Reload through the tile: the unload moved it to the unloaded Repeater
+  // (same objectName, new object), so presence is a retried re-find.
+  await app.waitFor(() => findFixtureATile(app),
+    { timeout: 10000, interval: 250, description: "fixture A tile to be present after unload" });
+  if (!(await openFixtureA(app, "A32", welcome.id, workspace.id))) {
+    throw new Error(`${FIXTURE_A_TILE} was present a moment ago but openFixtureA gave up`);
+  }
+  await app.waitFor(
+    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
+    { timeout: 10000, interval: 500, description: "fixture A payload text to render after reload" }
+  );
+
+  if (startDockCount === 0) {
+    await closeFixtureADock(app, workspace.id, "fixture A dock to close after A32");
+  }
+});
+
 // --- App-to-app intents -----------------------------------------------------
 //
 // These need the fixtures in tests/fixtures/intents staged into the app's
