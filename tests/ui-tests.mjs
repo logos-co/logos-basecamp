@@ -3015,6 +3015,8 @@ test("repositories: unreachable URL is refused with a fetch error", async (app) 
   // on success).
   assertEq(await evalOn(app, field.id, "text"), badUrl,
            "repositories.urlField text after the refused add");
+  assertEq(await evalOn(app, addButton.id, "enabled"), true,
+           "repositories.addButton enabled after the refused add");
 
   const dismiss = await requireObject(app, "repositories.errorDismiss");
   await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
