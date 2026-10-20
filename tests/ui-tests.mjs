@@ -3878,11 +3878,11 @@ test("window: hide-to-tray and restore preserves open docks", async (app) => {
         description: "fixture A payload text to render after restore" }
     );
 
+  } finally {
+    await invoke(app, win, "show");
     if (startDockCount === 0) {
       await closeFixtureADock(app, workspace.id, "fixture A dock to close after A31");
     }
-  } finally {
-    await invoke(app, win, "show");
   }
 });
 
