@@ -3208,9 +3208,11 @@ test("repositories: refresh flips the button label", async (app) => {
   const phaseDeadline = Date.now() + 2000;
   let observed = null;
   for (;;) {
-    if ((await buttonText()) === "Refreshing…") { observed = 'button text "Refreshing…"'; break; }
-    if ((await reposLoading()) === true) { observed = "backend.repositoriesLoading === true"; break; }
-    if ((await buttonEnabled()) === false) { observed = "refresh button disabled"; break; }
+    if ((await evalOn(app, refreshButton.id,
+      'text === "Refreshing…" && (backend.repositoriesLoading === true || enabled === false)')) === true) {
+      observed = 'button text "Refreshing…" with loading or disabled state';
+      break;
+    }
     if (Date.now() >= phaseDeadline) {
       throw new Error(
         "no loading observable within 2s of clicking repositories.refreshButton " +
