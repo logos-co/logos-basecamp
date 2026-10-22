@@ -61,11 +61,12 @@ Control {
         spacing: Theme.spacing.large
 
         Image {
-            // As per design
-            Layout.preferredWidth: 46
+            // The Logos λ, as on logos.co (20 × 26 viewBox).
+            Layout.preferredWidth: 19
             Layout.preferredHeight: 25
             Layout.alignment: Qt.AlignHCenter
             source: BasecampIcons.logo
+            sourceSize: Qt.size(38, 50)   // 2× the drawn size, sharp on HiDPI
         }
 
         SeparatorLine {}
