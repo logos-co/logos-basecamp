@@ -251,19 +251,10 @@ test("welcome: first launch shows the welcome page", async (app) => {
   const welcome = await requireWelcomePage(app);
   assertEq(await evalOn(app, welcome.id, "visible"), true, "WelcomePage visible");
 
-  // launcherApps populates asynchronously; count and greeting are read together.
+  // One greeting for everyone: no name to address, so no "Welcome Back,".
   await app.waitFor(async () => {
-    const count = assertType(await evalOn(app, welcome.id, "backend.launcherApps.length"),
-                             "number", "backend.launcherApps.length");
-    await app.expectTexts([count === 0 ? "Welcome to Basecamp!" : "Welcome Back,"]);
-  }, { timeout: 10000, interval: 500, description: "greeting to match backend.launcherApps" });
-
-  const missing = await missingTexts(app, welcome.id, "this",
-                                     ["Welcome to Basecamp!", "Welcome Back,"]);
-  if (missing.length !== 1) {
-    throw new Error(`greetings missing from the welcome page: ${JSON.stringify(missing)} ` +
-                    "(expected exactly one of the two)");
-  }
+    await app.expectTexts(["Welcome to Basecamp"]);
+  }, { timeout: 10000, interval: 500, description: "greeting to render" });
 });
 
 // Nothing at launch reads the catalog, so nothing fetches it: no repository
@@ -501,11 +492,9 @@ test("workspace: closing the last dock brings the welcome page back", async (app
     }
   }, { timeout: 5000, interval: 250, description: "welcome page to reappear" });
 
-  // Closing unloads fixture A but does not uninstall it, so the greeting is
-  // the installed-apps one.
   await app.waitFor(
-    async () => { await app.expectTexts(["Welcome Back,"]); },
-    { timeout: 5000, interval: 250, description: '"Welcome Back," greeting to render' }
+    async () => { await app.expectTexts(["Welcome to Basecamp"]); },
+    { timeout: 5000, interval: 250, description: "greeting to render" }
   );
   await waitForVisibleApp(app, welcome.id, "", "currentVisibleApp to clear");
 });

@@ -2,7 +2,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    readonly property url logo:       Qt.resolvedUrl("basecamp.svg")
+    readonly property url logo:       Qt.resolvedUrl("logos-lambda.svg")
     readonly property url tents:      Qt.resolvedUrl("tent.png")
     readonly property url dashboard:  Qt.resolvedUrl("dashboard.svg")
     readonly property url filter:     Qt.resolvedUrl("filter.svg")
