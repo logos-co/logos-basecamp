@@ -3945,8 +3945,8 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
     }
   }, { timeout: 10000, interval: 250, description: "welcome page to show after unload" });
   await app.waitFor(
-    async () => { await app.expectTexts(["Welcome Back,"]); },
-    { timeout: 10000, interval: 500, description: '"Welcome Back," greeting to render' }
+    async () => { await app.expectTexts(["Welcome to Basecamp"]); },
+    { timeout: 10000, interval: 500, description: '"Welcome to Basecamp" greeting to render' }
   );
 
   // Reload through the tile: the unload moved it to the unloaded Repeater
