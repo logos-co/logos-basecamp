@@ -6,6 +6,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
+#include "OnboardingState.h"
 #include "RepositorySource.h"
 #include "PackageInstallDecision.h"
 #include "utils/DependencyBlocker.h"
@@ -43,6 +44,11 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     , m_appsModel(appsModel)
     , m_installRegistry(new InstallRegistry(this))
 {
+    // Only where the catalogue and the user's own install dir are: a dev host
+    // has neither to set up.
+    m_onboardingRequired = m_hostProfile.packageCatalog && m_hostProfile.useUserModules
+        && OnboardingState::required(LogosBasecampPaths::baseDirectory());
+
     subscribeToPackageInstallationEvents();
     subscribeToPackageDownloaderEvents();
 
@@ -258,9 +264,10 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         setStorageState(data.value(0).toString(), data.value(1).toString());
     });
 
-    // Started as soon as it is loaded, as before it had start(). The storage
-    // node comes up with it unless the download source is "http", and a stop
-    // in the Storage UI sticks.
+    // Started as soon as it is loaded, as before it had start(), unless
+    // onboarding has yet to choose the download source. The storage node comes
+    // up with it unless that source is "http", and a stop in the Storage UI
+    // sticks.
     withDownloaderStarted([this]() {
         refreshDownloadSource();
         refreshStorageState();
@@ -278,12 +285,23 @@ void PackageCoordinator::withDownloaderStarted(std::function<void()> then)
     }
 
     m_waitingForDownloaderStart.append(std::move(then));
-    if (m_waitingForDownloaderStart.size() > 1) return;  // a start is on its way
+
+    // chooseOnboardingSource() starts it.
+    if (m_onboardingRequired && !m_onboardingSourceChosen) return;
+
+    startDownloader();
+}
+
+void PackageCoordinator::startDownloader()
+{
+    if (m_downloaderStarting) return;  // a start is on its way
+    m_downloaderStarting = true;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
     logos.package_downloader.startAsyncResult([self](logos::AsyncResult<QVariantMap> r) {
         if (!self) return;
+        self->m_downloaderStarting = false;
         self->m_downloaderStarted = r.ok() && r.value.value("success").toBool();
         if (!self->m_downloaderStarted) {
             qWarning() << "PackageCoordinator: package_downloader.start did not succeed:"
@@ -1576,6 +1594,48 @@ void PackageCoordinator::setDownloadSource(const QString& source)
                 self->refreshDownloadSource();
             });
     });
+}
+
+void PackageCoordinator::completeOnboarding()
+{
+    if (!m_onboardingRequired) return;
+
+    OnboardingState::markCompleted(LogosBasecampPaths::baseDirectory());
+    m_onboardingRequired = false;
+    emit onboardingRequiredChanged();
+}
+
+// Onboarding can go back and choose again: only the first choice starts the
+// downloader, later ones change its source like Settings does.
+void PackageCoordinator::chooseOnboardingSource(const QString& source)
+{
+    if (!m_onboardingRequired || m_onboardingSourceChosen) {
+        setDownloadSource(source);
+        return;
+    }
+    m_onboardingSourceChosen = true;
+
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient) {
+        if (!m_waitingForDownloaderStart.isEmpty()) startDownloader();
+        return;
+    }
+
+    // Before start(), which saves it: under "http" the node then never comes
+    // up. A downloader that predates that refuses it, and gets it once started.
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "setDownloadSource", QVariantList{source},
+        [self, source](QVariant result) {
+            if (!self) return;
+            const bool saved = result.toMap().value("success").toBool();
+            self->withDownloaderStarted([self, source, saved]() {
+                if (!self) return;
+                if (saved) self->refreshDownloadSource();
+                else self->setDownloadSource(source);
+                self->refreshStorageState();
+            });
+        });
 }
 
 void PackageCoordinator::retryStorage()

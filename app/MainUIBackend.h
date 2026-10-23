@@ -128,6 +128,7 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
+    Q_PROPERTY(bool onboardingRequired READ onboardingRequired NOTIFY onboardingRequiredChanged)
     Q_PROPERTY(QString storageState READ storageState NOTIFY storageStateChanged)
     Q_PROPERTY(QString storageError READ storageError NOTIFY storageStateChanged)
 
@@ -178,6 +179,7 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     QString downloadSource() const;
+    bool onboardingRequired() const;
     QString storageState() const;
     QString storageError() const;
     bool appsLoading() const;
@@ -330,6 +332,8 @@ public slots:
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
     Q_INVOKABLE void refreshDownloadSource();
     Q_INVOKABLE void setDownloadSource(const QString& source);
+    Q_INVOKABLE void chooseOnboardingSource(const QString& source);
+    Q_INVOKABLE void completeOnboarding();
     Q_INVOKABLE void retryStorage();
 
 signals:
@@ -449,6 +453,7 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
+    void onboardingRequiredChanged();
     void storageStateChanged();
     void appsLoadingChanged();
     void modulesLoadingChanged();

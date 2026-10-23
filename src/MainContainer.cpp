@@ -295,6 +295,23 @@ void MainContainer::setupUi()
         });
     m_overlayWidget->setVisible(false);
 
+    // === FIRST-RUN ONBOARDING (QML) ===
+    // Until the user has chosen how apps download, the backend holds back the
+    // downloader and with it the storage node. A backend without the property
+    // (shell-preview) never shows it.
+    if (m_host->backendObject()->property("onboardingRequired").toBool()) {
+        m_onboardingWidget = new QQuickWidget(this);
+        m_onboardingWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+        m_onboardingWidget->setClearColor(bgColor);
+        m_onboardingWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
+        ShellDevQml::load(m_onboardingWidget,
+            QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OnboardingShell.qml")),
+            [this](QObject* root) {
+                connect(root, SIGNAL(finished()), this, SLOT(onOnboardingFinished()));
+            });
+        m_onboardingWidget->raise();
+    }
+
     // Watch for the mouse leaving the sidebar so we can hide the tooltip
     // overlay.
     if (m_sidebarWidget) m_sidebarWidget->installEventFilter(this);
@@ -309,12 +326,23 @@ void MainContainer::setupUi()
 void MainContainer::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (m_onboardingWidget) {
+        m_onboardingWidget->setGeometry(0, 0, width(), height());
+        m_onboardingWidget->raise();
+    }
     if (m_overlayWidget) {
         m_overlayWidget->setGeometry(0, 0, width(), height());
         // Qt re-stacks siblings on resize in some cases; keep the
         // overlay on top explicitly.
         m_overlayWidget->raise();
     }
+}
+
+void MainContainer::onOnboardingFinished()
+{
+    if (!m_onboardingWidget) return;
+    m_onboardingWidget->hide();
+    m_onboardingWidget->deleteLater();
 }
 
 void MainContainer::onOverlayActiveChanged(bool active)

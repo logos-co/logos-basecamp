@@ -55,6 +55,7 @@ private slots:
     void onOverlayActiveChanged(bool active);
     void onSidebarTooltipRequested(const QString& text, qreal y);
     void onAddApplicationDialogRequested(const QVariantMap& metadata);
+    void onOnboardingFinished();
 
 private:
     void wireSidebar(QObject* sidebarRoot);
@@ -91,6 +92,10 @@ private:
     // anchored inside m_contentWidget and never rendered while the
     // Apps/MDI screen was active.
     QQuickWidget* m_overlayWidget;
+
+    // First-run onboarding, over the whole window until it finishes; null
+    // otherwise. Lives outside the layout, like the overlay.
+    QPointer<QQuickWidget> m_onboardingWidget;
 
     // Not owned — Window owns it and it outlives this widget.
     IShellHost* m_host;

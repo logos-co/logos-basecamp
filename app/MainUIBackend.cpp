@@ -192,6 +192,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,             &MainUIBackend::repositoriesLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
             this,             &MainUIBackend::downloadSourceChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::onboardingRequiredChanged,
+            this,             &MainUIBackend::onboardingRequiredChanged);
     connect(m_packageCoordinator, &PackageCoordinator::storageStateChanged,
             this,             &MainUIBackend::storageStateChanged);
     connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
@@ -903,6 +905,7 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 QString      MainUIBackend::downloadSource() const      { return m_packageCoordinator->downloadSource(); }
+bool         MainUIBackend::onboardingRequired() const  { return m_packageCoordinator->onboardingRequired(); }
 QString      MainUIBackend::storageState() const        { return m_packageCoordinator->storageState(); }
 QString      MainUIBackend::storageError() const        { return m_packageCoordinator->storageError(); }
 bool MainUIBackend::appsLoading() const
@@ -935,6 +938,8 @@ void MainUIBackend::removeRepository(const QString& url)                   { m_p
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
 void MainUIBackend::refreshDownloadSource()                                { m_packageCoordinator->refreshDownloadSource(); }
 void MainUIBackend::setDownloadSource(const QString& source)               { m_packageCoordinator->setDownloadSource(source); }
+void MainUIBackend::chooseOnboardingSource(const QString& source)          { m_packageCoordinator->chooseOnboardingSource(source); }
+void MainUIBackend::completeOnboarding()                                    { m_packageCoordinator->completeOnboarding(); }
 void MainUIBackend::retryStorage()                                         { m_packageCoordinator->retryStorage(); }
 
 // --- CoreModuleManager delegations ----------------------------------------

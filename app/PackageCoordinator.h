@@ -93,6 +93,10 @@ public:
     // until it answers, and when it predates the setting.
     QString downloadSource() const { return m_downloadSource; }
 
+    // First-run onboarding is ahead: nothing starts the downloader, and with it
+    // the storage node, until chooseOnboardingSource() has chosen the source.
+    bool onboardingRequired() const { return m_onboardingRequired; }
+
     // package_downloader's use of the storage node: "off", "waiting",
     // "starting", "running" or "failed" (storageError says why). Empty until
     // it answers, and when it predates the setting.
@@ -212,6 +216,11 @@ public slots:
     Q_INVOKABLE void refreshDownloadSource();
     Q_INVOKABLE void setDownloadSource(const QString& source);
 
+    // Starts the downloader with `source`; called again, changes the source.
+    Q_INVOKABLE void chooseOnboardingSource(const QString& source);
+    // Records onboarding as done.
+    Q_INVOKABLE void completeOnboarding();
+
     // Reloads storage_module and restarts the downloader, which starts the
     // node again once it is ready. Cancels the downloads in flight.
     Q_INVOKABLE void retryStorage();
@@ -294,6 +303,7 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
+    void onboardingRequiredChanged();
     void storageStateChanged();
     void appsLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
@@ -408,6 +418,7 @@ private:
     // arrive before the answer wait for it. `then` runs only while this object is
     // alive.
     void withDownloaderStarted(std::function<void()> then);
+    void startDownloader();
 
     void refreshStorageState();
     void setStorageState(const QString& state, const QString& error);
@@ -607,8 +618,11 @@ private:
     // step with starts and stops made by other consumers, and losing the
     // instance (an unload or reload) clears it.
     bool m_downloaderStarted = false;
+    bool m_downloaderStarting = false;
     QList<std::function<void()>> m_waitingForDownloaderStart;
 
+    bool    m_onboardingRequired = false;
+    bool    m_onboardingSourceChosen = false;
     QString m_storageState;
     QString m_storageError;
     UIPluginManager*   m_uiPluginManager;
