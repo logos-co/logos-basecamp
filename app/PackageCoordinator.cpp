@@ -222,7 +222,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     });
 
     // Live byte progress for whatever is downloading. Payload is
-    // [packageName, received, total]
+    // [packageName, received, total, transport]; a downloader that predates
+    // the transport sends three.
     logos.package_downloader.on("downloadProgress", [this](const QVariantList& data) {
         if (!m_installRegistry) return;
         if (data.size() < 3) {
@@ -232,7 +233,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         }
         m_installRegistry->setDownloadProgress(data.at(0).toString(),
                                                data.at(1).toULongLong(),
-                                               data.at(2).toULongLong());
+                                               data.at(2).toULongLong(),
+                                               data.value(3).toString());
     });
 
     // Which transport served a package, `logos:<cid>` or the https url. Payload

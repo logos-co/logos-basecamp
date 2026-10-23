@@ -73,6 +73,42 @@ static quint64 sumOverPlan(const QHash<QString, InstallRegistry::Entry>& ops,
     return own == ops.cend() ? 0 : pick(*own);
 }
 
+QString InstallRegistry::downloadTransport(const QString& name) const
+{
+    const auto it = m_ops.constFind(name);
+    return it == m_ops.cend() ? QString() : it->transport;
+}
+
+bool InstallRegistry::downloadFellBack(const QString& name) const
+{
+    const auto it = m_ops.constFind(name);
+    return it != m_ops.cend() && it->fellBackFromStorage;
+}
+
+// The entry of `topLevel`'s plan that is downloading, else its own entry.
+static const InstallRegistry::Entry* onTheWire(const QHash<QString, InstallRegistry::Entry>& ops,
+                                               const QString& topLevel)
+{
+    for (auto it = ops.cbegin(); it != ops.cend(); ++it) {
+        if (it->topLevels.contains(topLevel) && it->stage == InstallStage::Downloading)
+            return &*it;
+    }
+    const auto own = ops.constFind(topLevel);
+    return own == ops.cend() ? nullptr : &*own;
+}
+
+QString InstallRegistry::planDownloadTransport(const QString& name) const
+{
+    const Entry* e = onTheWire(m_ops, name);
+    return e ? e->transport : QString();
+}
+
+bool InstallRegistry::planDownloadFellBack(const QString& name) const
+{
+    const Entry* e = onTheWire(m_ops, name);
+    return e && e->fellBackFromStorage;
+}
+
 quint64 InstallRegistry::planDownloadReceived(const QString& name) const
 {
     return sumOverPlan(m_ops, name,
@@ -193,7 +229,8 @@ void InstallRegistry::setStage(const QString& name, InstallStage::Value stage)
 }
 
 void InstallRegistry::setDownloadProgress(const QString& name,
-                                          quint64 received, quint64 total)
+                                          quint64 received, quint64 total,
+                                          const QString& transport)
 {
     auto it = m_ops.find(name);
     if (it == m_ops.end()) return;
@@ -203,6 +240,12 @@ void InstallRegistry::setDownloadProgress(const QString& name,
         for (const QString& t : it->topLevels) emit planStageChanged(t);
     }
     if (it->stage != InstallStage::Downloading) return;
+
+    if (!transport.isEmpty() && transport != it->transport) {
+        if (it->transport == QStringLiteral("logos") && transport == QStringLiteral("http"))
+            it->fellBackFromStorage = true;
+        it->transport = transport;
+    }
 
     it->downloadReceived = received;
     if (total > 0) it->downloadTotal = total;

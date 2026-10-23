@@ -44,6 +44,18 @@ ItemDelegate {
         readonly property real dlTotal:
             root.appData ? (root.appData.planDownloadTotal || 0) : 0
         readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        readonly property string transport: root.appData ? (root.appData.planDownloadTransport || "") : ""
+        readonly property string transportCaption: d.installStage === InstallStage.Downloading
+            ? DownloadFormat.transportCaption(d.transport, root.appData && root.appData.planDownloadFellBack)
+            : ""
+        // The badge's tooltip while downloading: where the bytes come from.
+        readonly property string downloadToolTip: d.findingPeers
+            ? qsTr("Finding peers on Logos Storage that have this app")
+            : d.transportCaption
+        readonly property url badgeIcon: d.installStage === InstallStage.Downloading
+            ? DownloadFormat.transportIcon(d.transport) : ""
+        readonly property bool findingPeers: d.installStage === InstallStage.Downloading
+            && !d.downloadDone && DownloadFormat.findingPeers(d.transport, d.dlReceived)
         // A determinate bar claims a FRACTION, so it needs a real sample.
         // dlTotal is seeded from the catalog when the plan is registered —
         // before any transfer — so gating on it alone parked the bar at 0%.
@@ -146,10 +158,14 @@ ItemDelegate {
 
                 LogosBadge {
                     id: stateBadge
+                    objectName: "appGridStateBadge"
                     anchors.bottom: parent.bottom
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottomMargin: Theme.spacing.tiny
-                    width: (d.hasProgress || d.indeterminateProgress) ? 64 : implicitWidth
+                    width: (d.hasProgress || d.indeterminateProgress) && !d.findingPeers
+                           ? 64 + (d.badgeIcon.toString().length > 0 ? DownloadFormat.badgeIconWidth : 0)
+                           : implicitWidth
+                    iconSource: d.badgeIcon
                     visible: !d.isAvailable
                              || d.isInstalling
                              || d.installStage === InstallStage.Failed
@@ -157,6 +173,7 @@ ItemDelegate {
                                  && (d.isInstalled || root.hovered))
                     text: !d.isAvailable                                      ? qsTr("Not available")
                         : d.hasProgress ? DownloadFormat.percent(d.dlReceived, d.dlTotal)
+                        : d.findingPeers ? qsTr("Finding peers…")
                         : d.isInstalling                                      ? qsTr("Installing…")
                         : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                         : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")
@@ -173,6 +190,14 @@ ItemDelegate {
 
                     backgroundColor: Theme.palette.surfaceRaised
                     radius: Theme.spacing.radiusXlarge
+
+                    HoverHandler { id: badgeHover }
+                    LogosToolTip {
+                        text: d.installStage === InstallStage.Downloading ? d.downloadToolTip : ""
+                        placement: LogosToolTip.Top
+                        visible: badgeHover.hovered && text.length > 0
+                    }
+
                     Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText
 
                     LogosProgressBar {

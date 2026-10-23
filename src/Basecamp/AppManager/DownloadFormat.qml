@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import Logos.Icons
 
 // Shared byte formatting for the install surfaces that show live download
 // progress: the Applications list and grid delegates, and the dependency
@@ -43,5 +44,34 @@ QtObject {
     // counts side by side.
     function percent(received, total) {
         return Math.round(fraction(received, total) * 100) + "%"
+    }
+
+    // Where a download's bytes come from, for the line under its name.
+    // `transport` is "logos", "http" or "" (unknown: no caption).
+    function transportCaption(transport, fellBack) {
+        if (transport === "logos")
+            return qsTr("via Logos Storage · peer-to-peer, may be slower")
+        if (transport === "http")
+            return fellBack ? qsTr("via GitHub · Logos Storage didn't have it")
+                            : qsTr("via GitHub")
+        return ""
+    }
+
+    // The icon at the start of a download's progress badge: where its bytes
+    // come from. Empty when not known.
+    function transportIcon(transport) {
+        if (transport === "logos") return LogosIcons.logosStorage
+        if (transport === "http") return LogosIcons.github
+        return ""
+    }
+
+    // What a badge's icon adds to its width: 12px image and 4px spacing.
+    readonly property int badgeIconWidth: 16
+
+    // Logos Storage with no byte yet is still finding peers that have the
+    // package: where a slow download spends its time. The progress badge says
+    // so instead of "0 B".
+    function findingPeers(transport, received) {
+        return transport === "logos" && !(received > 0)
     }
 }
