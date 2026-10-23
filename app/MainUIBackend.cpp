@@ -23,6 +23,7 @@
 #include <QDebug>
 #include <QJSValue>
 #include <QMap>
+#include <QNetworkInformation>
 #include <QTimer>
 
 // The shell's own capability tables and their registration live in
@@ -73,6 +74,14 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
+    // The platform's own backend: by features alone Qt can pick glib, which
+    // outside Linux never sees the connection go.
+    if (QNetworkInformation::loadDefaultBackend()) {
+        qInfo() << "MainUIBackend: reachability from"
+                << QNetworkInformation::instance()->backendName();
+        connect(QNetworkInformation::instance(), &QNetworkInformation::reachabilityChanged,
+                this, &MainUIBackend::onlineChanged);
+    }
 
     // Setter-injection closes the cycle — UIPluginManager queries
     // PackageCoordinator for installType / missing-deps when building its
@@ -908,6 +917,16 @@ QString      MainUIBackend::downloadSource() const      { return m_packageCoordi
 bool         MainUIBackend::onboardingRequired() const  { return m_packageCoordinator->onboardingRequired(); }
 QString      MainUIBackend::storageState() const        { return m_packageCoordinator->storageState(); }
 QString      MainUIBackend::storageError() const        { return m_packageCoordinator->storageError(); }
+bool MainUIBackend::online() const
+{
+    if (qEnvironmentVariableIntValue("BASECAMP_FORCE_OFFLINE") == 1) return false;
+    const QNetworkInformation* info = QNetworkInformation::instance();
+    if (!info) return true;
+    const auto r = info->reachability();
+    return r != QNetworkInformation::Reachability::Disconnected
+        && r != QNetworkInformation::Reachability::Local;
+}
+
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 

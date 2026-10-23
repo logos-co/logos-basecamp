@@ -163,6 +163,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/UninstallDialog.qml
         Basecamp/Shell/WelcomePage.qml
         Basecamp/Shell/OnboardingShell.qml
+        Basecamp/Shell/OfflineToast.qml
         Basecamp/Shell/OnboardingView.qml
         Basecamp/Shell/OnboardingWelcome.qml
         Basecamp/Shell/OnboardingChoiceCard.qml

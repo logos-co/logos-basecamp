@@ -129,6 +129,7 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
     Q_PROPERTY(bool onboardingRequired READ onboardingRequired NOTIFY onboardingRequiredChanged)
+    Q_PROPERTY(bool online READ online NOTIFY onlineChanged)
     Q_PROPERTY(QString storageState READ storageState NOTIFY storageStateChanged)
     Q_PROPERTY(QString storageError READ storageError NOTIFY storageStateChanged)
 
@@ -180,6 +181,7 @@ public:
     bool repositoriesLoading() const;
     QString downloadSource() const;
     bool onboardingRequired() const;
+    bool online() const;
     QString storageState() const;
     QString storageError() const;
     bool appsLoading() const;
@@ -454,6 +456,7 @@ signals:
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
     void onboardingRequiredChanged();
+    void onlineChanged();
     void storageStateChanged();
     void appsLoadingChanged();
     void modulesLoadingChanged();
