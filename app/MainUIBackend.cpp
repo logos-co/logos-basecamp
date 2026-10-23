@@ -192,6 +192,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,             &MainUIBackend::repositoriesLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
             this,             &MainUIBackend::downloadSourceChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::storageStateChanged,
+            this,             &MainUIBackend::storageStateChanged);
     connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
             this,             &MainUIBackend::appsLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
@@ -901,6 +903,8 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 QString      MainUIBackend::downloadSource() const      { return m_packageCoordinator->downloadSource(); }
+QString      MainUIBackend::storageState() const        { return m_packageCoordinator->storageState(); }
+QString      MainUIBackend::storageError() const        { return m_packageCoordinator->storageError(); }
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 
@@ -931,6 +935,7 @@ void MainUIBackend::removeRepository(const QString& url)                   { m_p
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
 void MainUIBackend::refreshDownloadSource()                                { m_packageCoordinator->refreshDownloadSource(); }
 void MainUIBackend::setDownloadSource(const QString& source)               { m_packageCoordinator->setDownloadSource(source); }
+void MainUIBackend::retryStorage()                                         { m_packageCoordinator->retryStorage(); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 

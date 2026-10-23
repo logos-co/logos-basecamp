@@ -92,6 +92,12 @@ public:
     // package_downloader's download source: "any", "logos" or "http". Empty
     // until it answers, and when it predates the setting.
     QString downloadSource() const { return m_downloadSource; }
+
+    // package_downloader's use of the storage node: "off", "waiting",
+    // "starting", "running" or "failed" (storageError says why). Empty until
+    // it answers, and when it predates the setting.
+    QString storageState() const { return m_storageState; }
+    QString storageError() const { return m_storageError; }
     QVariantMap repositorySource(const QString& repositoryUrl) const;
 
     // True during the first catalog fetch (see requestCatalog) and during a
@@ -206,6 +212,10 @@ public slots:
     Q_INVOKABLE void refreshDownloadSource();
     Q_INVOKABLE void setDownloadSource(const QString& source);
 
+    // Reloads storage_module and restarts the downloader, which starts the
+    // node again once it is ready. Cancels the downloads in flight.
+    Q_INVOKABLE void retryStorage();
+
     // Called by QML when the Add Application dialog closes so stale async
     // resolver callbacks for previously-opened apps don't mutate the shared
     // required-packages model or reopen the dialog.
@@ -284,6 +294,7 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
+    void storageStateChanged();
     void appsLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
                                       const QString& url,
@@ -397,6 +408,13 @@ private:
     // arrive before the answer wait for it. `then` runs only while this object is
     // alive.
     void withDownloaderStarted(std::function<void()> then);
+
+    void refreshStorageState();
+    void setStorageState(const QString& state, const QString& error);
+
+    // Under "http", unloads storage_module unless something else uses it: the
+    // Storage app, or any other loaded module that depends on it.
+    void releaseStorageIfUnused();
 
     // package_downloader's client, or null when it is not loaded in this
     // process (a host without the catalogue never loads it). isConnected() alone cannot
@@ -590,6 +608,9 @@ private:
     // instance (an unload or reload) clears it.
     bool m_downloaderStarted = false;
     QList<std::function<void()>> m_waitingForDownloaderStart;
+
+    QString m_storageState;
+    QString m_storageError;
     UIPluginManager*   m_uiPluginManager;
     AppsModel*         m_appsModel;
 

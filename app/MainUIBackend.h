@@ -128,6 +128,8 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
+    Q_PROPERTY(QString storageState READ storageState NOTIFY storageStateChanged)
+    Q_PROPERTY(QString storageError READ storageError NOTIFY storageStateChanged)
 
     // App Manager loading state — true until the first catalog populate,
     // and again during a user-initiated Reload (remoteRefresh).
@@ -176,6 +178,8 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     QString downloadSource() const;
+    QString storageState() const;
+    QString storageError() const;
     bool appsLoading() const;
     bool dependencyDataReady() const;
     bool modulesLoading() const;
@@ -326,6 +330,7 @@ public slots:
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
     Q_INVOKABLE void refreshDownloadSource();
     Q_INVOKABLE void setDownloadSource(const QString& source);
+    Q_INVOKABLE void retryStorage();
 
 signals:
     void currentActiveSectionIndexChanged();
@@ -444,6 +449,7 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
+    void storageStateChanged();
     void appsLoadingChanged();
     void modulesLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,
