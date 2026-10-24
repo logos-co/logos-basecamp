@@ -1,0 +1,14 @@
+{
+  "author": "",
+  "category": "testing",
+  "dependencies": [],
+  "description": "UI test fixture: a QML-only ui_qml app whose view compiles but fails when it is created (test artifact, not a real app)",
+  "display_name": "Required Property Fixture",
+  "icon": "",
+  "main": {},
+  "manifestVersion": "0.3.0",
+  "name": "required_prop_fixture",
+  "type": "ui_qml",
+  "version": "0.0.1",
+  "view": "qml/RequiredPropertyView.qml"
+}

@@ -4399,15 +4399,15 @@ test("intents: the word ambiguous never reaches a requester", async (app) => {
 // the only consumer was the IntentBroker; the error text never reached the
 // user. Now the overlay's loadFailed dialog names the app and shows the error.
 //
-// nix/integration-test.nix seeds tests/fixtures/plugins/broken_view_fixture,
-// whose view uses an unknown type. Outside --ci the test skips when the
-// fixture is absent.
-const BROKEN_FIXTURE = "broken_view_fixture";
-const BROKEN_FIXTURE_LABEL = "Broken View Fixture";
+// nix/integration-test.nix seeds two fixtures, one per failure stage in
+// PluginLoader: broken_view_fixture uses an unknown type, so the async
+// pre-compile fails; required_prop_fixture compiles but leaves a required
+// property unset, so creation in finishUiQmlLoad (setSource) fails. Outside
+// --ci each test skips when its fixture is absent.
 const LOAD_FAILED_DIALOG = "confirmationDialog.loadFailed";
 
-test("ui load failure: shows the loadFailed dialog with app name and error text", async (app) => {
-  const tileName = `sidebar.app.${BROKEN_FIXTURE}`;
+async function expectLoadFailedDialog(app, { fixture, label, errorSnippet }) {
+  const tileName = `sidebar.app.${fixture}`;
   const tile = await findByObjectName(app.inspector, tileName);
   if (!tile) {
     if (!CI_MODE) {
@@ -4417,10 +4417,9 @@ test("ui load failure: shows the loadFailed dialog with app name and error text"
     throw new Error(`${tileName} missing (the fixture is pre-seeded in --ci)`);
   }
 
-  // The failure deliberately prints a QML compile error ("… is not a type").
-  // Scope the G-ERR gate around it: every new QML error since the epilogue's
-  // baseline must come from the fixture, then re-baseline so the epilogue
-  // only judges what happens after.
+  // The failure deliberately prints a QML error. Scope the G-ERR gate around
+  // it: every new QML error since the epilogue's baseline must come from the
+  // fixture, then re-baseline so the epilogue only judges what happens after.
   const logPath = process.env.BASECAMP_APP_LOG || null;
   let logOffset = 0;
   if (logPath) {
@@ -4435,14 +4434,14 @@ test("ui load failure: shows the loadFailed dialog with app name and error text"
 
   await app.expectTexts([
     "Couldn't Load App",
-    `'${BROKEN_FIXTURE_LABEL}' failed to load. Details:`,
+    `'${label}' failed to load. Details:`,
   ]);
 
   const details = await requireObject(app, `${LOAD_FAILED_DIALOG}.error`);
   const detailsText = assertType(await evalOn(app, details.id, "text"), "string",
                                  "loadFailed error text");
-  if (!detailsText.includes("NonExistentFixtureType")) {
-    throw new Error(`error details lack the QML compile error: ${detailsText.slice(0, 300)}`);
+  if (!detailsText.includes(errorSnippet)) {
+    throw new Error(`error details lack "${errorSnippet}": ${detailsText.slice(0, 300)}`);
   }
 
   // The spinner must be gone — PluginLoader clears loading on every failure path.
@@ -4460,10 +4459,27 @@ test("ui load failure: shows the loadFailed dialog with app name and error text"
     let slice = "";
     try { slice = readFileSync(logPath, "utf-8").slice(logOffset); } catch { slice = ""; }
     assertNoNewQmlErrors(slice.split("\n")
-      .filter((line) => !line.includes(`/${BROKEN_FIXTURE}/`))
+      .filter((line) => !line.includes(`/${fixture}/`))
       .join("\n"));
     markQmlErrorBaseline();
   }
+}
+
+test("ui load failure: shows the loadFailed dialog with app name and error text", async (app) => {
+  await expectLoadFailedDialog(app, {
+    fixture: "broken_view_fixture",
+    label: "Broken View Fixture",
+    errorSnippet: "NonExistentFixtureType",
+  });
+});
+
+test("ui load failure: a view that compiles but fails on creation shows the loadFailed dialog", async (app) => {
+  await expectLoadFailedDialog(app, {
+    fixture: "required_prop_fixture",
+    label: "Required Property Fixture",
+    // Only finishUiQmlLoad (setSource) reports this, so it covers that path.
+    errorSnippet: "Required property fixtureRequiredValue was not initialized",
+  });
 });
 
 // --- Run ---
