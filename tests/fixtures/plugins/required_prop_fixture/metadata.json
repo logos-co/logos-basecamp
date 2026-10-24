@@ -1,0 +1,10 @@
+{
+  "name": "required_prop_fixture",
+  "display_name": "Required Property Fixture",
+  "version": "0.0.1",
+  "type": "ui_qml",
+  "category": "testing",
+  "description": "UI test fixture: a QML-only ui_qml app whose view compiles but fails when it is created (test artifact, not a real app)",
+  "view": "qml/RequiredPropertyView.qml",
+  "dependencies": []
+}

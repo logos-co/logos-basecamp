@@ -423,7 +423,8 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
 
 void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& error)
 {
-    qWarning() << "Failed to load UI module" << name << ":" << error;
+    // noquote(): keep multi-line QML errors readable in the session log.
+    qWarning().noquote() << "Failed to load UI module" << name << ":\n" << error;
     // Surface to the user, not just the log (forwarded to the QML overlay).
     emit pluginLoadFailedNotice(name, error);
 }

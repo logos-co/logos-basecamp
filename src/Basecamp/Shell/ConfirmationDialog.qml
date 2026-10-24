@@ -49,6 +49,10 @@ import Basecamp.AppManager
 //                       dialog is name + version only.
 //  - "installError"   — informational; an install failed. Shows the package
 //                       (or picked file) name + the reported error, OK only.
+//  - "loadFailed"     — informational; a UI app failed to load (e.g. its QML
+//                       view did not compile). Shows the app's display name +
+//                       the reported error in a scrollable, selectable area so
+//                       multi-line QML errors can be read and copied. OK only.
 //
 // Uninstall confirmation is NOT here — it lives in UninstallDialog.qml, which
 // renders a resolved plan (what goes, what stays and why, what breaks) rather
@@ -58,12 +62,14 @@ import Basecamp.AppManager
 // blockSummary)` for the one-list modes, `openWithUpgrade(name, version,
 // upgradeMode, installedDeps, loadedDeps, depChanges, requester)` for
 // upgradeCascade, or `openWithInstallGate(name, version, depChanges,
-// requester)` for the install gate. Backend wiring listens for
+// requester)` for the install gate, `openWithInstallError(name, error)` /
+// `openWithLoadError(name, error)` for the error modes. Backend wiring listens for
 // continueClicked/cancelClicked and calls the appropriate slot with `name`.
 Dialog {
     id: root
 
     // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate" | "installError"
+    // | "loadFailed"
     property string mode: "missingDeps"
     property string moduleName: ""
     // For "missingDeps" each entry is a map from
@@ -252,6 +258,19 @@ Dialog {
         open();
     }
 
+    // Load-failure variant — informational only. `error_` is shown verbatim
+    // (QML compile errors are multi-line).
+    function openWithLoadError(name_, error_) {
+        root.mode = "loadFailed";
+        root.moduleName = name_ || "";
+        root.errorMessage = (error_ || "").trim();
+        root.items = [];
+        root.loadedItems = [];
+        root.depChanges = [];
+        root._explicitClose = false;
+        open();
+    }
+
     background: Rectangle {
         color: Theme.palette.surfaceRaised
         border.color: Theme.palette.border
@@ -298,6 +317,8 @@ Dialog {
                         return "Install Package?";
                     if (root.mode === "installError")
                         return "Install Failed";
+                    if (root.mode === "loadFailed")
+                        return "Couldn't Load App";
                     return "";
                 }
                 font.pixelSize: Theme.typography.panelTitleText
@@ -427,7 +448,48 @@ Dialog {
                     return "'" + _label + "' could not be installed. "
                          + "The package manager reported:";
                 }
+                if (root.mode === "loadFailed")
+                    return "'" + _label + "' failed to load. Details:";
                 return "";
+            }
+        }
+
+        // Error details for loadFailed — scrollable + selectable so long,
+        // multi-line QML compile errors can be read and copied into a bug
+        // report.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(220, Math.max(60, loadErrorText.implicitHeight + 16))
+            color: Theme.palette.surfaceRecessed
+            radius: 4
+            border.color: Theme.palette.border
+            border.width: 1
+            visible: root.mode === "loadFailed"
+
+            ScrollView {
+                id: loadErrorScroll
+                anchors.fill: parent
+                anchors.margins: 8
+                clip: true
+
+                TextArea {
+                    id: loadErrorText
+                    objectName: "confirmationDialog." + root.mode + ".error"
+                    width: loadErrorScroll.availableWidth
+                    text: root.errorMessage.length > 0 ? root.errorMessage
+                                                       : "No error details were reported."
+                    textFormat: TextEdit.PlainText
+                    readOnly: true
+                    selectByMouse: true
+                    selectByKeyboard: true
+                    selectionColor: Theme.palette.accentOrange
+                    wrapMode: TextEdit.WrapAnywhere
+                    font.pixelSize: Theme.typography.secondaryText
+                    font.family: Theme.typography.mono
+                    color: Theme.palette.text
+                    padding: 0
+                    background: Rectangle { color: "transparent" }
+                }
             }
         }
 
@@ -691,6 +753,7 @@ Dialog {
                 objectName: "confirmationDialog." + root.mode + ".cancel"
                 text: "Cancel"
                 visible: root.mode !== "missingDeps" && root.mode !== "installError"
+                         && root.mode !== "loadFailed"
                 onClicked: {
                     root._explicitClose = true;
                     root.cancelClicked(root.moduleName);

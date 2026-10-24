@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { readFileSync, statSync, writeSync } from "node:fs";
 import {
-  assertResponsive, expectAbsent, findByObjectName, makeTest, pollProperty, sleep,
+  assertNoNewQmlErrors, assertResponsive, expectAbsent, findByObjectName, makeTest,
+  markQmlErrorBaseline, pollProperty, sleep,
 } from "./fixtures/harness.mjs";
 import { FIXTURE_A } from "./fixtures/lgx.mjs";
 
@@ -4388,6 +4389,97 @@ test("intents: the word ambiguous never reaches a requester", async (app) => {
   if (typeof r === "string" && r.includes("ambiguous")) {
     throw new Error("internal resolution state leaked into an envelope");
   }
+});
+
+// --- ui_qml load failure ---
+//
+// Regression guard: clicking a ui_qml app whose view fails to compile used
+// to show the sidebar spinner and then nothing. PluginLoader emitted
+// pluginLoadFailed and UIPluginManager re-emitted pluginLoadFailedNotice, but
+// the only consumer was the IntentBroker; the error text never reached the
+// user. Now the overlay's loadFailed dialog names the app and shows the error.
+//
+// nix/integration-test.nix seeds two fixtures, one per failure stage in
+// PluginLoader: broken_view_fixture uses an unknown type, so the async
+// pre-compile fails; required_prop_fixture compiles but leaves a required
+// property unset, so creation in finishUiQmlLoad (setSource) fails. Outside
+// --ci each test skips when its fixture is absent.
+const LOAD_FAILED_DIALOG = "confirmationDialog.loadFailed";
+
+async function expectLoadFailedDialog(app, { fixture, label, errorSnippet }) {
+  const tileName = `sidebar.app.${fixture}`;
+  const tile = await findByObjectName(app.inspector, tileName);
+  if (!tile) {
+    if (!CI_MODE) {
+      console.log(`    SKIP: ${tileName} not installed`);
+      return;
+    }
+    throw new Error(`${tileName} missing (the fixture is pre-seeded in --ci)`);
+  }
+
+  // The failure deliberately prints a QML error. Scope the G-ERR gate around
+  // it: every new QML error since the epilogue's baseline must come from the
+  // fixture, then re-baseline so the epilogue only judges what happens after.
+  const logPath = process.env.BASECAMP_APP_LOG || null;
+  let logOffset = 0;
+  if (logPath) {
+    try { logOffset = statSync(logPath).size; } catch { logOffset = 0; }
+  }
+
+  await invoke(app, tile.id, "clicked", `clicking ${tileName}`);
+
+  await app.waitFor(async () => {
+    assertEq(await visibilityOf(app, LOAD_FAILED_DIALOG), true, `${LOAD_FAILED_DIALOG}.visible`);
+  }, { timeout: 15000, interval: 500, description: "loadFailed dialog to open" });
+
+  await app.expectTexts([
+    "Couldn't Load App",
+    `'${label}' failed to load. Details:`,
+  ]);
+
+  const details = await requireObject(app, `${LOAD_FAILED_DIALOG}.error`);
+  const detailsText = assertType(await evalOn(app, details.id, "text"), "string",
+                                 "loadFailed error text");
+  if (!detailsText.includes(errorSnippet)) {
+    throw new Error(`error details lack "${errorSnippet}": ${detailsText.slice(0, 300)}`);
+  }
+
+  // The spinner must be gone — PluginLoader clears loading on every failure path.
+  const tileAfter = await findByObjectName(app.inspector, tileName);
+  if (!tileAfter) throw new Error(`${tileName} vanished after the failed load`);
+  assertEq(await evalOn(app, tileAfter.id, "loading"), false, `${tileName}.loading`);
+
+  const ok = await requireObject(app, `${LOAD_FAILED_DIALOG}.confirm`);
+  await invoke(app, ok.id, "clicked", "clicking the loadFailed OK button");
+  await app.waitFor(async () => {
+    assertEq(await visibilityOf(app, LOAD_FAILED_DIALOG), false, `${LOAD_FAILED_DIALOG}.visible`);
+  }, { timeout: 5000, interval: 250, description: "loadFailed dialog to close" });
+
+  if (logPath) {
+    let slice = "";
+    try { slice = readFileSync(logPath, "utf-8").slice(logOffset); } catch { slice = ""; }
+    assertNoNewQmlErrors(slice.split("\n")
+      .filter((line) => !line.includes(`/${fixture}/`))
+      .join("\n"));
+    markQmlErrorBaseline();
+  }
+}
+
+test("ui load failure: shows the loadFailed dialog with app name and error text", async (app) => {
+  await expectLoadFailedDialog(app, {
+    fixture: "broken_view_fixture",
+    label: "Broken View Fixture",
+    errorSnippet: "NonExistentFixtureType",
+  });
+});
+
+test("ui load failure: a view that compiles but fails on creation shows the loadFailed dialog", async (app) => {
+  await expectLoadFailedDialog(app, {
+    fixture: "required_prop_fixture",
+    label: "Required Property Fixture",
+    // Only finishUiQmlLoad (setSource) reports this, so it covers that path.
+    errorSnippet: "Required property fixtureRequiredValue was not initialized",
+  });
 });
 
 // --- Run ---
