@@ -460,9 +460,9 @@ Dialog {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(220, Math.max(60, loadErrorText.implicitHeight + 16))
-            color: "#1e1e1e"
+            color: Theme.palette.surfaceRecessed
             radius: 4
-            border.color: "#3d3d3d"
+            border.color: Theme.palette.border
             border.width: 1
             visible: root.mode === "loadFailed"
 
@@ -474,12 +474,7 @@ Dialog {
 
                 TextArea {
                     id: loadErrorText
-                    // Mode-derived, like the buttons below, so UI automation
-                    // can target the one instance that renders it.
                     objectName: "confirmationDialog." + root.mode + ".error"
-                    // availableWidth, not parent.width — inside a Qt 6
-                    // ScrollView parent.width resolves against the internal
-                    // Flickable content item.
                     width: loadErrorScroll.availableWidth
                     text: root.errorMessage.length > 0 ? root.errorMessage
                                                        : "No error details were reported."
@@ -489,9 +484,9 @@ Dialog {
                     selectByKeyboard: true
                     selectionColor: Theme.palette.accentOrange
                     wrapMode: TextEdit.WrapAnywhere
-                    font.pixelSize: 12
-                    font.family: "monospace"
-                    color: "#e0e0e0"
+                    font.pixelSize: Theme.typography.secondaryText
+                    font.family: Theme.typography.mono
+                    color: Theme.palette.text
                     padding: 0
                     background: Rectangle { color: "transparent" }
                 }
