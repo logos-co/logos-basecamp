@@ -29,6 +29,7 @@ class UIPluginPresenter;
 class ShellIntentEndpoint;
 class ShellIntentChooser;
 class ShellIntentInstaller;
+class UpdateChecker;
 
 
 
@@ -123,6 +124,8 @@ class MainUIBackend : public QObject {
     // talking to anything.
     Q_PROPERTY(bool isMockBackend READ isMockBackend CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
+    // Dashboard "Check for updates" — see UpdateChecker.
+    Q_PROPERTY(QObject* updater READ updater CONSTANT)
 
     // Package repositories
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
@@ -172,6 +175,7 @@ public:
     bool devHost() const;
     bool isMockBackend() const;
     QVariantList buildCommits() const;
+    QObject* updater() const;
 
     QVariantList repositories() const;
     bool repositoriesLoading() const;
@@ -533,6 +537,7 @@ private:
     PackageCoordinator*    m_packageCoordinator;
     ModuleInstanceModel* m_uiModulesModel;
     ModuleInstanceModel* m_coreModulesModel;
+    UpdateChecker* m_updateChecker;
 
     // Settings → Modules Reload overlay (see modulesLoading Q_PROPERTY).
     int  m_modulesLoadingCount = 0;
