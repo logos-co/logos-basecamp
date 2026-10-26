@@ -138,8 +138,16 @@ pkgs.stdenv.mkDerivation rec {
     # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.
     ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows) pkgs.krb5
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+      # The dev build's whole GL stack. The binary runs on the Nix glibc (its
+      # interpreter is the store's), so every GL library it dlopens must come
+      # from this closure too -- a host driver built against another glibc
+      # fails to load. The portable bundle is the opposite, coherent choice:
+      # host glibc AND host GL (nix-bundle-dir's defaultSystemLibs). glvnd
+      # resolves GLX vendors by name (LD_LIBRARY_PATH below is enough) but EGL
+      # vendors by the absolute path in a vendor JSON, which the wrapper
+      # therefore points at this mesa (__EGL_VENDOR_LIBRARY_DIRS).
       pkgs.libglvnd
-      pkgs.mesa.drivers
+      pkgs.mesa
       pkgs.xorg.libX11
       pkgs.xorg.libXext
       pkgs.xorg.libXrender
@@ -696,6 +704,15 @@ WRAPPER_EOF
         echo "export QML2_IMPORT_PATH=\"${qmlImportPath}\"" >> $out/bin/LogosBasecamp
         echo "export DYLD_LIBRARY_PATH=\"${qtLibPath}:\$DYLD_LIBRARY_PATH\"" >> $out/bin/LogosBasecamp
         echo "export LD_LIBRARY_PATH=\"${qtLibPath}:\$LD_LIBRARY_PATH\"" >> $out/bin/LogosBasecamp
+        ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+        # EGL from the same mesa LD_LIBRARY_PATH already gives GLX (see the
+        # runtime library list above). Without this glvnd follows the host's
+        # vendor JSON (/run/opengl-driver on NixOS, /usr/share/glvnd elsewhere)
+        # into a driver built against a different glibc; the dlopen fails
+        # silently, Qt's wayland plugin logs "EGL not available", nothing is
+        # painted. A user-set value wins (e.g. to try the host driver).
+        echo "export __EGL_VENDOR_LIBRARY_DIRS=\"\''${__EGL_VENDOR_LIBRARY_DIRS:-${pkgs.mesa}/share/glvnd/egl_vendor.d}\"" >> $out/bin/LogosBasecamp
+        ''}
         cat >> $out/bin/LogosBasecamp << 'WRAPPER_EOF'
 if [ "$(uname)" = "Linux" ]; then
   export XDG_DATA_DIRS="$APPDIR/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
