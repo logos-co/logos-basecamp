@@ -69,6 +69,11 @@ async function openPlugin(app, name, expectedTexts, opts = {}) {
   );
 }
 
+// AppManagerPanelHeader's subtitle: rendered by the Applications section alone.
+const APPLICATIONS_TEXTS = ["Install and manage applications."];
+
+const openApplications = (app) => openPlugin(app, "Applications", APPLICATIONS_TEXTS);
+
 // --- Shared helpers ---------------------------------------------------------
 //
 // Clicks are signal-level (callMethod "clicked" / evaluate "clicked()"): the
@@ -85,6 +90,38 @@ const CI_MODE = process.argv.includes("--ci");
 // app.click("Package Manager") lands on MainContainer's shallower
 // "Loading Package Manager…" placeholder label and reports success.
 const sidebarSection = { exact: true, type: "SidebarCircleButton" };
+
+// A line under the running test, indented like the framework's own output.
+function logLine(text) {
+  console.log(`    ${text}`);
+}
+
+// "SKIP: <id> — <reason>" and "<id>: <text>": CI logs and the MCP test plan
+// quote these lines verbatim, so every skip and note goes through here.
+const skip = (id, reason) => logLine(`SKIP: ${id} — ${reason}`);
+const note = (id, text) => logLine(`${id}: ${text}`);
+
+// Evaluate expects a primitive result — object literals come back as
+// opaque "<QJSValue>". So we do one call per property. Small wrapper
+// keeps call sites readable.
+async function evalOn(app, objectId, expression) {
+  const res = await app.inspector.send("evaluate", { objectId, expression });
+  if (res.error) throw new Error(`evaluate("${expression}") failed: ${res.error}`);
+  return res.result;
+}
+
+// Several primitives of one object in one round trip, so they are of one
+// moment: `fields` maps keys to expressions in the object's scope.
+async function evalFields(app, objectId, fields) {
+  const body = Object.entries(fields)
+    .map(([key, expr]) => `${JSON.stringify(key)}: (${expr})`).join(", ");
+  return JSON.parse(await evalOn(app, objectId, `JSON.stringify({ ${body} })`));
+}
+
+async function invoke(app, objectId, method, what = `callMethod(${method})`) {
+  const res = await app.inspector.send("callMethod", { objectId, method });
+  if (res.error) throw new Error(`${what} failed: ${res.error}`);
+}
 
 function assertEq(actual, expected, what) {
   if (actual !== expected) {
@@ -116,22 +153,70 @@ async function requireObject(app, objectName, timeout = 10000) {
   return obj;
 }
 
-// Which of `texts` no descendant of `rootExpr` renders, evaluated in the
-// object's own scope.
-async function missingTexts(app, objectId, rootExpr, texts) {
-  return JSON.parse(await evalOn(app, objectId, `(() => {
-    const hasText = (node, expected) => {
-      if (!node) return false;
-      if (typeof node.text === "string" && node.text.includes(expected)) return true;
-      if (!node.children || typeof node.children.length !== "number") return false;
-      for (let i = 0; i < node.children.length; i += 1) {
-        if (hasText(node.children[i], expected)) return true;
-      }
-      return false;
-    };
-    return JSON.stringify(${JSON.stringify(texts)}.filter((t) => !hasText(${rootExpr}, t)));
+// Retries app.expectTexts until every text renders.
+function waitForTexts(app, texts, description, timeout = 10000) {
+  return app.waitFor(async () => { await app.expectTexts(texts); },
+    { timeout, interval: 500, description });
+}
+
+// Eagerly instantiated views (the inspectors' StackLayout pages): only
+// `visible` proves one is selected. Returns the view.
+async function requireVisibleView(app, objectName, description) {
+  const view = await requireObject(app, objectName);
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, view.id, "visible"), true, `${objectName} visible`);
+  }, { timeout: 10000, interval: 500, description });
+  return view;
+}
+
+// The one subtree walker, as evaluate-side JS: `walk(root, visit)` visits a
+// QML object's `children` subtree depth-first in tree order; a visit that
+// returns false prunes that subtree.
+const WALK_JS = `
+    const walk = (node, visit) => {
+      if (!node || visit(node) === false) return;
+      const kids = node.children;
+      if (!kids || typeof kids.length !== "number") return;
+      for (let i = 0; i < kids.length; i += 1) walk(kids[i], visit);
+    };`;
+
+// Every descendant of `rootExpr` (in the object's own scope) that renders a
+// string `text` or carries an objectName, in tree order, as
+// { text, visible, objectName }. `visible` is the item's effective
+// visibility (QQuickItem.visible folds in ancestors) and is absent on
+// non-items. One round trip; callers filter in Node.
+async function collectTextNodes(app, objectId, rootExpr = "this") {
+  return JSON.parse(await evalOn(app, objectId, `(() => {${WALK_JS}
+    const out = [];
+    walk(${rootExpr}, (node) => {
+      const hasText = typeof node.text === "string";
+      const hasName = typeof node.objectName === "string" && node.objectName.length > 0;
+      if (!hasText && !hasName) return;
+      out.push({
+        text: hasText ? node.text : null,
+        visible: node.visible,
+        objectName: hasName ? node.objectName : null,
+      });
+    });
+    return JSON.stringify(out);
   })()`));
 }
+
+// Which of `texts` no descendant of `rootExpr` renders.
+async function missingTexts(app, objectId, rootExpr, texts) {
+  const rendered = (await collectTextNodes(app, objectId, rootExpr))
+    .map((n) => n.text).filter((t) => typeof t === "string");
+  return texts.filter((t) => !rendered.some((r) => r.includes(t)));
+}
+
+// Whether a descendant renders `text` exactly, and whether one of those is
+// shown.
+async function textState(app, objectId, text) {
+  const hits = (await collectTextNodes(app, objectId)).filter((n) => n.text === text);
+  return { found: hits.length > 0, shown: hits.some((n) => n.visible === true) };
+}
+
+const textShown = async (app, objectId, text) => (await textState(app, objectId, text)).shown;
 
 // QQuickWidget hosts carry no objectName; identify them by source URL.
 async function quickWidgetHosts(app) {
@@ -178,24 +263,27 @@ async function welcomePageHidden(app, welcomeItemId) {
     "WelcomePage.qml, and Window.visible is not a boolean");
 }
 
-// Fixture A (tests/fixtures/lgx.mjs) is pre-seeded by nix/integration-test.nix,
-// so in --ci its absence is a failure. Against a local app it is a skip:
-// logs and returns null.
-async function requireFixtureA(app, label, probe, description) {
+// A seeded precondition (nix/integration-test.nix pre-seeds fixture A and
+// the depsvc core module), so in --ci its absence is a failure. Against a
+// local app it is a skip: logs and returns null.
+async function requireSeeded(app, label, what, probe, description) {
   let value = null;
   try {
     await app.waitFor(async () => { value = await probe(); },
       { timeout: 10000, interval: 500, description });
   } catch (e) {
     if (!CI_MODE) {
-      console.log(`    SKIP: ${label} — fixture A precondition not met: ${e.message}`);
+      skip(label, `${what} precondition not met: ${e.message}`);
       return null;
     }
     throw new Error(
-      `${label} precondition failed (fixture A is pre-seeded in --ci): ${e.message}`);
+      `${label} precondition failed (${what} is pre-seeded in --ci): ${e.message}`);
   }
   return value;
 }
+
+const requireFixtureA = (app, label, probe, description) =>
+  requireSeeded(app, label, "fixture A", probe, description);
 
 const FIXTURE_A_TILE = `sidebar.app.${FIXTURE_A.name}`;
 
@@ -245,6 +333,26 @@ async function closeFixtureADock(app, workspaceId, description) {
   await waitForDockCount(app, workspaceId, 0, description, 5000);
 }
 
+// Fixture A's dock open and front-most, opening it unless it already is (an
+// earlier test may leave it either way), so a test stands alone. Returns the
+// dock count found at the start, or null when the fixture is absent outside
+// --ci (already logged).
+async function ensureFixtureAOpen(app, label, welcomeId, workspaceId) {
+  const startDockCount = await evalOn(app, workspaceId, "dockCount");
+  if (startDockCount !== 1) {
+    if (!(await openFixtureA(app, label, welcomeId, workspaceId))) return null;
+  } else {
+    await waitForVisibleApp(app, welcomeId, FIXTURE_A.name, "fixture A to be front-most");
+  }
+  return startDockCount;
+}
+
+// Leaves the workspace as found: the dock is closed only if it was closed at
+// the start.
+async function restoreFixtureADock(app, workspaceId, startDockCount, description) {
+  if (startDockCount === 0) await closeFixtureADock(app, workspaceId, description);
+}
+
 // --- Welcome page (A1) — runs first: asserts the pre-interaction state ---
 
 test("welcome: first launch shows the welcome page", async (app) => {
@@ -252,9 +360,7 @@ test("welcome: first launch shows the welcome page", async (app) => {
   assertEq(await evalOn(app, welcome.id, "visible"), true, "WelcomePage visible");
 
   // One greeting for everyone: no name to address, so no "Welcome Back,".
-  await app.waitFor(async () => {
-    await app.expectTexts(["Welcome to Basecamp"]);
-  }, { timeout: 10000, interval: 500, description: "greeting to render" });
+  await waitForTexts(app, ["Welcome to Basecamp"], "greeting to render");
 });
 
 // Nothing at launch reads the catalog, so nothing fetches it: no repository
@@ -409,10 +515,7 @@ test('welcome: "Discover Applications" navigates to Applications', async (app) =
 
   const button = await requireObject(app, "welcomePage.discoverApplications");
   await invoke(app, button.id, "clicked", 'clicking "Discover Applications"');
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
+  await waitForTexts(app, APPLICATIONS_TEXTS, "Applications view to render");
 
   // The sidebar "Applications" delegate knows the section index it activates
   // (onClicked passes _d.workspaceSections.length + index); only objects in
@@ -466,10 +569,7 @@ test("workspace: opening an app replaces the welcome page with a dock", async (a
     }
   }, { timeout: 5000, interval: 250, description: "welcome page to hide" });
 
-  await app.waitFor(
-    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
-    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
-  );
+  await waitForTexts(app, [FIXTURE_A_TEXT], "fixture A payload text to render");
 });
 
 // --- Workspace (A4) — closing the last dock brings the welcome page back ---
@@ -479,10 +579,7 @@ test("workspace: closing the last dock brings the welcome page back", async (app
   const workspace = await requireWorkspace(app);
 
   // A3 leaves the dock open; open it here if not, so the test stands alone.
-  if ((await evalOn(app, workspace.id, "dockCount")) !== 1) {
-    if (!(await openFixtureA(app, "A4", welcome.id, workspace.id))) return;
-  }
-  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
+  if ((await ensureFixtureAOpen(app, "A4", welcome.id, workspace.id)) === null) return;
 
   await closeFixtureADock(app, workspace.id, "workspace dockCount to reach 0");
 
@@ -492,10 +589,7 @@ test("workspace: closing the last dock brings the welcome page back", async (app
     }
   }, { timeout: 5000, interval: 250, description: "welcome page to reappear" });
 
-  await app.waitFor(
-    async () => { await app.expectTexts(["Welcome to Basecamp"]); },
-    { timeout: 5000, interval: 250, description: "greeting to render" }
-  );
+  await waitForTexts(app, ["Welcome to Basecamp"], "greeting to render", 5000);
   await waitForVisibleApp(app, welcome.id, "", "currentVisibleApp to clear");
 });
 
@@ -648,11 +742,7 @@ const APPS_ROLE = {
 
 // Opens the Applications view and returns the appManager.localAppsProxy id.
 async function openApplicationsWithProxy(app) {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
+  await openApplications(app);
   let proxyId = null;
   await app.waitFor(async () => {
     proxyId = await findLocalAppsProxy(app);
@@ -1051,7 +1141,7 @@ test("app manager: reload shows the loading state then settles", async (app) => 
     }
     await sleep(50);
   }
-  console.log(`    loading phase observed via: ${observed}`);
+  note("loading phase observed via", observed);
 
   await app.waitFor(async () => {
     assertEq(await appsLoading(), false, "backend.appsLoading after reload");
@@ -1306,9 +1396,9 @@ test("app manager: context menu offers actions by install state", async (app) =>
     if (id !== null) { catalogRow = row; catalogMenuId = id; break; }
   }
   if (catalogMenuId === null) {
-    console.log(
-      `    SKIP: A13 catalog-only half — ${catalogRows.length} of ${rows.length} outer ` +
-      "row(s) are not installed, but none has a live delegate");
+    skip("A13 catalog-only half",
+         `${catalogRows.length} of ${rows.length} outer row(s) are not installed, ` +
+         "but none has a live delegate");
     return;
   }
   await openContextMenuFor(app, catalogMenuId, "catalog-only");
@@ -1376,19 +1466,181 @@ test("app manager: dialog wording for an already-installed app", async (app) => 
 
 // --- Settings helpers --------------------------------------------------------
 
-async function openSettingsEntry(app, entry, expectedTexts = []) {
+const SETTINGS_ENTRIES = ["Dashboard", "Apps Inspector", "Module Inspector"];
+
+// The Settings section with its entries rendered.
+async function openSettings(app) {
   await app.click("Settings", sidebarSection);
-  await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
-    { timeout: 10000, interval: 500, description: "Settings entries to render" }
-  );
+  await waitForTexts(app, SETTINGS_ENTRIES, "Settings entries to render");
+}
+
+async function openSettingsEntry(app, entry, expectedTexts = []) {
+  await openSettings(app);
   await app.click(entry, { type: "LogosItemDelegate" });
   if (expectedTexts.length > 0) {
-    await app.waitFor(
-      async () => { await app.expectTexts(expectedTexts); },
-      { timeout: 10000, interval: 500, description: `${entry} to become active` }
-    );
+    await waitForTexts(app, expectedTexts, `${entry} to become active`);
   }
+}
+
+// The old "Settings → Modules" sub-tab (with UI Modules + Core Modules
+// nested tabs) was split into two top-level Settings sections:
+// "Apps Inspector" (UI plugins) and "Module Inspector" (core modules,
+// with live CPU/memory + Interface drilldown).
+const openAppsInspector = (app) =>
+  openSettingsEntry(app, "Apps Inspector", ["UI plugins available in this installation."]);
+
+const openModuleInspector = (app) =>
+  openSettingsEntry(app, "Module Inspector",
+                    ["Core modules known to the runtime, with live resource usage."]);
+
+// Module Inspector with at least one loaded row rendered: "Package Manager"
+// is always present and bootstrap-loaded.
+async function openModuleInspectorWithLoadedRows(app) {
+  await openModuleInspector(app);
+  await waitForTexts(app, ["Package Manager", "Loaded"], "Module Inspector to show loaded modules");
+}
+
+// ModuleInstanceRoles (app/interfaces/BasecampModelRoles.h) as evaluate
+// expressions. MODULE_SEARCH_ROLES are the ones ModulesFilterProxy's search
+// matches; MODULE_ROLE adds the ones the load-state gates read.
+const MODULE_SEARCH_ROLES = {
+  name: "Qt.UserRole + 1",
+  label: "Qt.UserRole + 2",
+  description: "Qt.UserRole + 3",
+  version: "Qt.UserRole + 6",
+  statusText: "Qt.UserRole + 12", // StatusTextRole — the badge's text
+};
+const MODULE_ROLE = { ...MODULE_SEARCH_ROLES, isLoaded: "Qt.UserRole + 9" };
+
+// Waits for an inspector table's ModulesFilterProxy to hold every row (the
+// search is empty); returns the row count.
+async function waitForModuleTable(app, tableId, description) {
+  let total = 0;
+  await app.waitFor(async () => {
+    const got = await evalOn(app, tableId, "model.totalCount");
+    if (typeof got !== "number" || got < 1) {
+      throw new Error(`model.totalCount=${JSON.stringify(got)} (expected ≥ 1)`);
+    }
+    assertEq(await evalOn(app, tableId, "model.visibleCount"), got,
+             "model.visibleCount with an empty search");
+    total = got;
+  }, { timeout: 10000, interval: 500, description });
+  return total;
+}
+
+// The roles the search matches, for the first `count` proxy rows, in one
+// round trip; unset roles coerce to "".
+async function snapshotModuleSearchRows(app, tableId, count) {
+  const fields = Object.entries(MODULE_SEARCH_ROLES)
+    .map(([key, role]) => `${JSON.stringify(key)}: String(model.data(idx, ${role}) || "")`)
+    .join(", ");
+  return JSON.parse(await evalOn(app, tableId, `(() => {
+    const rows = [];
+    for (let i = 0; i < ${count}; i += 1) {
+      const idx = model.index(i, 0);
+      rows.push({ ${fields} });
+    }
+    return JSON.stringify(rows);
+  })()`));
+}
+
+// Evaluate-side expression for `name`'s row in `modelExpr` — a source model
+// (backend.uiModulesModel, backend.coreModulesModel) or a table's proxy
+// (`model`) — as { isLoaded, statusText }, or null when absent.
+const moduleRowExpr = (modelExpr, name) => `(() => {
+    const m = ${modelExpr};
+    for (let i = 0; i < m.rowCount(); i += 1) {
+      const idx = m.index(i, 0);
+      if (String(m.data(idx, ${MODULE_ROLE.name})) === ${JSON.stringify(name)}) {
+        return {
+          isLoaded: m.data(idx, ${MODULE_ROLE.isLoaded}),
+          statusText: String(m.data(idx, ${MODULE_ROLE.statusText})),
+        };
+      }
+    }
+    return null;
+  })()`;
+
+// `name`'s row in `modelExpr`, evaluated on `objectId` (where the model is in
+// scope: `backend.*` on any shell item, `model` on the table).
+async function moduleModelRow(app, objectId, modelExpr, name) {
+  return JSON.parse(
+    await evalOn(app, objectId, `JSON.stringify(${moduleRowExpr(modelExpr, name)})`));
+}
+
+// One gate bundle per state on backend.uiModulesModel, read on the welcome
+// anchor (`backend` in scope there, whatever section is current): badge text
+// (StatusTextRole, what the row's ModuleStatusBadge renders) and isLoaded.
+// `also` runs inside the same retry for the extra checks a test bundles in.
+async function expectUiModuleRow(app, welcomeId, name, loaded, when, also = null) {
+  await app.waitFor(async () => {
+    const row = await moduleModelRow(app, welcomeId, "backend.uiModulesModel", name);
+    if (row === null) throw new Error(`${name} not in backend.uiModulesModel`);
+    assertEq(row.statusText, loaded ? "Loaded" : "Not loaded", `status badge text ${when}`);
+    assertEq(row.isLoaded, loaded, `uiModulesModel isLoaded ${when}`);
+    if (also) await also();
+  }, { timeout: 10000, interval: 500,
+       description: `row to read ${loaded ? '"Loaded"' : '"Not loaded"'} ${when}` });
+}
+
+const loadToggleName = (moduleName) => `moduleRow.loadToggle.${moduleName}`;
+
+// A row's load toggle (ModuleRowActions). A load flip rebuilds the row's
+// delegate, so the toggle is re-found on every read rather than cached, and
+// text + enabled come from one evaluate so they are of one moment.
+async function loadToggleState(app, moduleName) {
+  const name = loadToggleName(moduleName);
+  const t = await findByObjectName(app.inspector, name);
+  if (!t) throw new Error(`${name} not in the QML tree`);
+  return { id: t.id, ...(await evalFields(app, t.id, { text: "text", enabled: "enabled" })) };
+}
+
+// Signal-level click (see "Shared helpers"): callMethod ignores `enabled`, so
+// the not-busy check is part of the click, not just politeness. The table
+// populates asynchronously, so find, check and click are one retried step.
+function clickLoadToggle(app, moduleName, expectedText, what) {
+  const name = loadToggleName(moduleName);
+  return app.waitFor(async () => {
+    const t = await loadToggleState(app, moduleName);
+    assertEq(t.text, expectedText, `${name} text`);
+    assertEq(t.enabled, true, `${name} enabled`);
+    await invoke(app, t.id, "clicked", what);
+  }, { timeout: 10000, interval: 500, description: what });
+}
+
+// The interface page for a core module: moduleInspectorView.openInterface,
+// the hook the view exposes for automation, takes a QString, which callMethod
+// cannot marshal, hence evalOn. PluginInterfaceView carries no objectName of
+// its own and is reached by type; returned once it shows `moduleName`.
+async function openInterfaceView(app, viewId, moduleName) {
+  await evalOn(app, viewId, `openInterface(${JSON.stringify(moduleName)})`);
+  let iface = null;
+  await app.waitFor(async () => {
+    iface = (await findByType(app, "PluginInterfaceView"))[0] || null;
+    if (!iface) throw new Error("no PluginInterfaceView in the QML tree");
+    assertEq(await evalOn(app, iface.id, "pluginName"), moduleName,
+             "PluginInterfaceView.pluginName");
+  }, { timeout: 10000, interval: 500,
+       description: `interface view to open for ${moduleName}` });
+  return iface;
+}
+
+// "← Back", and the module table is on screen again — left as found. Ends
+// with an explicit 2 s inspector round-trip (makeTest's epilogue allows 5 s;
+// this gate guards a UI-thread stall harder).
+async function backToModuleTable(app, viewId) {
+  const back = await requireObject(app, "pluginInterface.back");
+  await invoke(app, back.id, "clicked", 'clicking "← Back"');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, viewId, "showingInterface"), false,
+             "moduleInspectorView.showingInterface after Back");
+    const table = await findByObjectName(app.inspector, "moduleInspector.table");
+    if (!table) throw new Error("moduleInspector.table not in the QML tree");
+    assertEq(await evalOn(app, table.id, "visible"), true,
+             "moduleInspector.table visible after Back");
+  }, { timeout: 10000, interval: 500,
+       description: "Module Inspector table to be visible after Back" });
+  await assertResponsive(app, { timeoutMs: 2000 });
 }
 
 // --- Settings (A16) — Dashboard shows version, build type and commits ---
@@ -1428,13 +1680,14 @@ test("settings: Dashboard shows version, build type and commit list", async (app
   const isPortable = assertType(await evalOn(app, dashboard.id, "backend.isPortableBuild"),
                                 "boolean", "backend.isPortableBuild");
 
-  const snapshotDashboard = async () => JSON.parse(await evalOn(app, dashboard.id, `(() => {
+  // One walk over the view: flat text flags, plus the commit rows read where
+  // the "Commits" heading's column is found (and not descended into).
+  const snapshotDashboard = async () => JSON.parse(await evalOn(app, dashboard.id, `(() => {${WALK_JS}
     const out = {
       hasVersion: false, versionLabelVisible: false, hasCommits: false,
       hasPortable: false, hasDev: false, rows: null,
     };
-    const walk = (node) => {
-      if (!node) return;
+    walk(this, (node) => {
       if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
       // Item.visible is effective visibility, so it tracks the hidden row.
       if (node.text === "Version" && node.visible === true) out.versionLabelVisible = true;
@@ -1446,21 +1699,18 @@ test("settings: Dashboard shows version, build type and commit list", async (app
       for (let i = 0; i < kids.length; i += 1) {
         if (kids[i] && kids[i].text === "Commits") hasHeading = true;
       }
-      if (hasHeading) {
-        out.hasCommits = true;
-        out.rows = [];
-        for (let i = 0; i < kids.length; i += 1) {
-          const k = kids[i];
-          const two = k && k.children && k.children.length === 2 ? k.children : null;
-          if (two && typeof two[0].text === "string" && typeof two[1].text === "string") {
-            out.rows.push({ name: two[0].text, commit: two[1].text });
-          }
+      if (!hasHeading) return;
+      out.hasCommits = true;
+      out.rows = [];
+      for (let i = 0; i < kids.length; i += 1) {
+        const k = kids[i];
+        const two = k && k.children && k.children.length === 2 ? k.children : null;
+        if (two && typeof two[0].text === "string" && typeof two[1].text === "string") {
+          out.rows.push({ name: two[0].text, commit: two[1].text });
         }
-        return;
       }
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
+      return false;
+    });
     return JSON.stringify(out);
   })()`));
 
@@ -1509,48 +1759,17 @@ test("settings: Dashboard shows version, build type and commit list", async (app
 // walk is first proven against the rendered badges with the search empty,
 // so an empty result cannot pass vacuously.
 
-// ModuleInstanceRoles (app/interfaces/BasecampModelRoles.h) the search matches.
-const MODULE_SEARCH_ROLES = {
-  name: "Qt.UserRole + 1",
-  label: "Qt.UserRole + 2",
-  description: "Qt.UserRole + 3",
-  version: "Qt.UserRole + 6",
-  statusText: "Qt.UserRole + 12",
-};
-
 test("apps inspector: search filters the table", async (app) => {
   await openAppsInspector(app);
-
-  // AppsInspectorView is instantiated eagerly; only `visible` proves it is selected.
-  const view = await requireObject(app, "appsInspectorView");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "visible"), true, "appsInspectorView visible");
-  }, { timeout: 10000, interval: 500, description: "Apps Inspector view to become visible" });
+  await requireVisibleView(app, "appsInspectorView", "Apps Inspector view to become visible");
 
   const table = await requireObject(app, "appsInspector.table");
   const visibleCount = () => evalOn(app, table.id, "model.visibleCount");
   const search = await searchFieldOn(app, "settings.searchField");
   await search.normalize();
 
-  let initialCount = 0;
-  await app.waitFor(async () => {
-    const total = await evalOn(app, table.id, "model.totalCount");
-    if (typeof total !== "number" || total < 1) {
-      throw new Error(`model.totalCount=${JSON.stringify(total)} (expected ≥ 1)`);
-    }
-    assertEq(await visibleCount(), total, "model.visibleCount with an empty search");
-    initialCount = total;
-  }, { timeout: 10000, interval: 500, description: "apps table to populate" });
-
-  const rows = [];
-  for (let i = 0; i < initialCount; i += 1) {
-    const row = {};
-    for (const [key, roleExpr] of Object.entries(MODULE_SEARCH_ROLES)) {
-      row[key] = await evalOn(
-        app, table.id, `String(model.data(model.index(${i}, 0), ${roleExpr}) || "")`);
-    }
-    rows.push(row);
-  }
+  const initialCount = await waitForModuleTable(app, table.id, "apps table to populate");
+  const rows = await snapshotModuleSearchRows(app, table.id, initialCount);
   const expectedMatches = rows.filter((row) =>
     Object.values(row).some((v) => v.toLowerCase().includes("package"))).length;
   if (expectedMatches < 1) {
@@ -1560,21 +1779,12 @@ test("apps inspector: search filters the table", async (app) => {
   }
 
   // Rendered "Loaded" / "Not loaded" badge texts under the table.
-  const collectStatusTexts = async () => JSON.parse(await evalOn(app, table.id, `(() => {
-    const found = [];
-    const walk = (node) => {
-      if (!node) return;
-      if (typeof node.text === "string") {
-        const t = node.text.replace(/[()]/g, "").trim().toLowerCase();
-        if (t === "loaded" || t === "not loaded") found.push(node.text);
-      }
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
-    return JSON.stringify(found);
-  })()`));
+  const isBadgeText = (text) => {
+    const t = text.replace(/[()]/g, "").trim().toLowerCase();
+    return t === "loaded" || t === "not loaded";
+  };
+  const collectStatusTexts = async () => (await collectTextNodes(app, table.id))
+    .map((n) => n.text).filter((t) => typeof t === "string" && isBadgeText(t));
 
   // Positive control: other rows carry "Main UI" / dependency wording, hence at-least.
   const badgeRows = rows.filter((row) => {
@@ -1630,15 +1840,6 @@ test("apps inspector: search filters the table", async (app) => {
 // read goes through backend.uiModulesModel and the row's toggle, which stay
 // instantiated whatever section is current, never through what is on screen.
 
-// ModuleInstanceRoles (app/interfaces/BasecampModelRoles.h) A18 reads.
-const A18_ROLES = {
-  name: "Qt.UserRole + 1",      // NameRole
-  isLoaded: "Qt.UserRole + 9",  // IsLoadedRole
-  statusText: "Qt.UserRole + 12", // StatusTextRole — the badge's text
-};
-
-const FIXTURE_A_TOGGLE = `moduleRow.loadToggle.${FIXTURE_A.name}`;
-
 test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => {
   const welcome = await requireWelcomePage(app);
   const workspace = await requireWorkspace(app);
@@ -1649,31 +1850,7 @@ test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => 
 
   // Fixture A's row in the source model, read on the welcome anchor
   // (`backend` in scope there).
-  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
-    const m = backend.uiModulesModel;
-    for (let i = 0; i < m.rowCount(); i += 1) {
-      const idx = m.index(i, 0);
-      if (m.data(idx, ${A18_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
-        return JSON.stringify({
-          isLoaded: m.data(idx, ${A18_ROLES.isLoaded}),
-          statusText: m.data(idx, ${A18_ROLES.statusText}),
-        });
-      }
-    }
-    return "null";
-  })()`));
-
-  // A load flip rebuilds the row's delegate, so the toggle is re-found on
-  // every read rather than cached.
-  const toggleState = async () => {
-    const t = await findByObjectName(app.inspector, FIXTURE_A_TOGGLE);
-    if (!t) throw new Error(`${FIXTURE_A_TOGGLE} not in the QML tree`);
-    return {
-      id: t.id,
-      text: await evalOn(app, t.id, "text"),
-      enabled: await evalOn(app, t.id, "enabled"),
-    };
-  };
+  const modelRow = () => moduleModelRow(app, welcome.id, "backend.uiModulesModel", FIXTURE_A.name);
 
   // The tile moves between the loaded/unloaded Repeaters on every flip (same
   // objectName, new object), so presence is a retried re-find.
@@ -1683,14 +1860,10 @@ test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => 
   // One gate bundle per state: badge text (StatusTextRole, what the row's
   // ModuleStatusBadge renders), source-model isLoaded, toggle text, tile.
   const expectState = async (loaded, when) => {
-    await app.waitFor(async () => {
-      const row = await modelRow();
-      if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
-      assertEq(row.statusText, loaded ? "Loaded" : "Not loaded", `status badge text ${when}`);
-      assertEq(row.isLoaded, loaded, `uiModulesModel isLoaded ${when}`);
-      assertEq((await toggleState()).text, loaded ? "Unload" : "Load", `toggle text ${when}`);
-    }, { timeout: 10000, interval: 500,
-         description: `row to read ${loaded ? '"Loaded"' : '"Not loaded"'} ${when}` });
+    await expectUiModuleRow(app, welcome.id, FIXTURE_A.name, loaded, when, async () => {
+      assertEq((await loadToggleState(app, FIXTURE_A.name)).text,
+               loaded ? "Unload" : "Load", `toggle text ${when}`);
+    });
     await requireTile(when);
   };
 
@@ -1708,23 +1881,14 @@ test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => 
   await search.normalize();
   await requireObject(app, "appsInspector.table");
 
-  // Signal-level click (see "Shared helpers"). callMethod ignores `enabled`,
-  // so the not-busy check is part of the click, not just politeness.
-  const clickToggle = (expectedText, what) => app.waitFor(async () => {
-    const t = await toggleState();
-    assertEq(t.text, expectedText, `${FIXTURE_A_TOGGLE} text`);
-    assertEq(t.enabled, true, `${FIXTURE_A_TOGGLE} enabled`);
-    await invoke(app, t.id, "clicked", what);
-  }, { timeout: 10000, interval: 500, description: what });
-
   // Before the unload: proves the setup, so the unload is not vacuous.
   await expectState(true, "before unload");
 
   // The unload is queued behind the click (UIPluginManager::unloadUiModule).
-  await clickToggle("Unload", "clicking the toggle to unload");
+  await clickLoadToggle(app, FIXTURE_A.name, "Unload", "clicking the toggle to unload");
   await expectState(false, "after unload");
 
-  await clickToggle("Load", "clicking the toggle to reload");
+  await clickLoadToggle(app, FIXTURE_A.name, "Load", "clicking the toggle to reload");
   await expectState(true, "after reload");
 
   // Restore: the reload reopened the dock; closing it unloads again, ending
@@ -1732,13 +1896,7 @@ test("apps inspector: unload/reload of a non-visible UI plugin", async (app) => 
   // defined state the tests that follow start from.
   await waitForDockCount(app, workspace.id, 1, "reload to reopen fixture A's dock");
   await closeFixtureADock(app, workspace.id, "restore: fixture A dock to close");
-  await app.waitFor(async () => {
-    const row = await modelRow();
-    if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
-    assertEq(row.isLoaded, false, "uiModulesModel isLoaded after restore");
-    assertEq(row.statusText, "Not loaded", "status badge text after restore");
-  }, { timeout: 10000, interval: 500,
-       description: 'row to read "Not loaded" after restore' });
+  await expectUiModuleRow(app, welcome.id, FIXTURE_A.name, false, "after restore");
   await search.expectText("");
 });
 
@@ -1811,7 +1969,7 @@ test("host-services: package_manager_ui completes a capability-gated call chain"
 // as the exact negation of that same presence witness.
 
 const PMUI_NAME = "package_manager_ui";
-const PMUI_TOGGLE = `moduleRow.loadToggle.${PMUI_NAME}`;
+const PMUI_TOGGLE = loadToggleName(PMUI_NAME);
 const PMUI_TEXTS = ["Manage your plugins and packages.", "Types"];
 const PMUI_PLACEHOLDER = "Loading Package Manager…";
 
@@ -1837,37 +1995,10 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
   await search.normalize();
   const table = await requireObject(app, "appsInspector.table");
 
-  // PMUI's badge text (StatusTextRole), read with A17's row pattern.
-  const pmuiStatus = async () => JSON.parse(await evalOn(app, table.id, `(() => {
-    for (let i = 0; i < model.visibleCount; i += 1) {
-      const idx = model.index(i, 0);
-      if (String(model.data(idx, ${MODULE_SEARCH_ROLES.name})) === ${JSON.stringify(PMUI_NAME)}) {
-        return JSON.stringify(String(model.data(idx, ${MODULE_SEARCH_ROLES.statusText})));
-      }
-    }
-    return "null";
-  })()`));
-
-  // A load flip rebuilds the row's delegate, so the toggle is re-found on
-  // every read rather than cached (as in A18).
-  const toggleState = async () => {
-    const t = await findByObjectName(app.inspector, PMUI_TOGGLE);
-    if (!t) throw new Error(`${PMUI_TOGGLE} not in the QML tree`);
-    return {
-      id: t.id,
-      text: await evalOn(app, t.id, "text"),
-      enabled: await evalOn(app, t.id, "enabled"),
-    };
-  };
-
-  // Signal-level click; callMethod ignores `enabled`, so the not-busy check
-  // is part of the click (as in A18).
-  const clickToggle = (expectedText, what) => app.waitFor(async () => {
-    const t = await toggleState();
-    assertEq(t.text, expectedText, `${PMUI_TOGGLE} text`);
-    assertEq(t.enabled, true, `${PMUI_TOGGLE} enabled`);
-    await invoke(app, t.id, "clicked", what);
-  }, { timeout: 10000, interval: 500, description: what });
+  // PMUI's badge text (StatusTextRole), read from the table's proxy.
+  const pmuiStatus = async () =>
+    (await moduleModelRow(app, table.id, "model", PMUI_NAME))?.statusText ?? null;
+  const toggleText = async () => (await loadToggleState(app, PMUI_NAME)).text;
 
   // Absence as the negation of the presence witness: the expectTexts call
   // that proved a string live must now fail for it. (A dead app would also
@@ -1879,7 +2010,7 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
   // Before the unload: proves the setup, so the unload is not vacuous.
   await app.waitFor(async () => {
     assertEq(await pmuiStatus(), "Loaded", "PMUI status badge before unload");
-    assertEq((await toggleState()).text, "Unload", `${PMUI_TOGGLE} text before unload`);
+    assertEq(await toggleText(), "Unload", `${PMUI_TOGGLE} text before unload`);
   }, { timeout: 10000, interval: 500,
        description: 'PMUI row to read "Loaded" before unload' });
 
@@ -1887,10 +2018,11 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
   // PMUI's ui-host and emits pluginWindowRemoveRequested — the Package
   // Manager page must fall back to the placeholder, never keep the stale
   // previously-shown view.
-  await clickToggle("Unload", "clicking the toggle to unload package_manager_ui");
+  await clickLoadToggle(app, PMUI_NAME, "Unload",
+                        "clicking the toggle to unload package_manager_ui");
   await app.waitFor(async () => {
     assertEq(await pmuiStatus(), "Not loaded", "PMUI status badge after unload");
-    assertEq((await toggleState()).text, "Load", `${PMUI_TOGGLE} text after unload`);
+    assertEq(await toggleText(), "Load", `${PMUI_TOGGLE} text after unload`);
     assertEq(await placeholderCount(), 1, "placeholder labels after unload");
     for (const text of PMUI_TEXTS) {
       if (await textPresent(text)) {
@@ -1904,7 +2036,8 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
   // Reload. onPluginLoaded emits pluginWindowRequested; the intercept folds
   // the widget back into the stack and suppresses the navigate-to-workspace
   // that normally follows a load. 45s — fresh ui-host process again.
-  await clickToggle("Load", "clicking the toggle to reload package_manager_ui");
+  await clickLoadToggle(app, PMUI_NAME, "Load",
+                        "clicking the toggle to reload package_manager_ui");
   await app.waitFor(async () => {
     assertEq(await pmuiStatus(), "Loaded", "PMUI status badge after reload");
   }, { timeout: 45000, interval: 500,
@@ -1921,24 +2054,11 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
 });
 
 test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {
-  await app.click("Settings");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
-    { timeout: 10000, interval: 500, description: "Settings entries to render" }
-  );
+  await openSettings(app);
 });
 
 test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
-  await app.click("Settings");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Dashboard", "Apps Inspector", "Module Inspector"]); },
-    { timeout: 10000, interval: 500, description: "Settings entries to render" }
-  );
-  await app.click("Dashboard", { type: "LogosItemDelegate" });
-  await app.waitFor(
-    async () => { await app.expectTexts(["Commits"]); },
-    { timeout: 10000, interval: 500, description: "Dashboard view to render" }
-  );
+  await openSettingsEntry(app, "Dashboard", ["Commits"]);
 });
 
 // --- Inspectors (Apps + Module) ---
@@ -1950,72 +2070,40 @@ test("settings: clicking Dashboard renders the Dashboard view", async (app) => {
 // which re-ran ModuleRegistry::discoverInstalledModules() and wiped the
 // `loaded` flag of every module via `m_modules.insert(qName, freshInfo)`.
 // The whole list then rendered as Not loaded with no CPU/Mem stats.
-//
-// The old "Settings → Modules" sub-tab (with UI Modules + Core Modules
-// nested tabs) was split into two top-level Settings sections:
-// "Apps Inspector" (UI plugins) and "Module Inspector" (core modules,
-// with live CPU/memory + Interface drilldown).
-const openAppsInspector = (app) =>
-  openSettingsEntry(app, "Apps Inspector", ["UI plugins available in this installation."]);
-
-const openModuleInspector = (app) =>
-  openSettingsEntry(app, "Module Inspector",
-                    ["Core modules known to the runtime, with live resource usage."]);
 
 test("apps inspector: shows installed UI plugins", async (app) => {
   await openAppsInspector(app);
-  await app.waitFor(
-    // Asserting ["Package Manager"] alone is vacuous: the sidebar's own
-    // section button carries exactly that text, so it holds with the table
-    // completely empty. Assert the RAW module name, which
-    // AppsInspectorView.qml:187-192 renders in the row
-    // (`visible: rowItem.label !== rowItem.name`). Measured on a fresh app:
-    //   findByProperty(text,"Package Manager")   -> 2  (SidebarCircleButton, row)
-    //   findByProperty(text,"package_manager_ui")-> 1  (the row's LogosText)
-    //   findByProperty(text,"Main UI")           -> 0  (not an installed plugin)
-    async () => { await app.expectTexts(["package_manager_ui"]); },
-    { timeout: 10000, interval: 500, description: "Apps Inspector list to populate" }
-  );
+  // Asserting ["Package Manager"] alone is vacuous: the sidebar's own
+  // section button carries exactly that text, so it holds with the table
+  // completely empty. Assert the RAW module name, which
+  // AppsInspectorView.qml:187-192 renders in the row
+  // (`visible: rowItem.label !== rowItem.name`). Measured on a fresh app:
+  //   findByProperty(text,"Package Manager")   -> 2  (SidebarCircleButton, row)
+  //   findByProperty(text,"package_manager_ui")-> 1  (the row's LogosText)
+  //   findByProperty(text,"Main UI")           -> 0  (not an installed plugin)
+  await waitForTexts(app, ["package_manager_ui"], "Apps Inspector list to populate");
 });
 
 test("module inspector: auto-loaded modules show as Loaded with Unload action", async (app) => {
-  await openModuleInspector(app);
-
-  // Wait for the module list to populate.
-  await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager"]); },
-    { timeout: 10000, interval: 500, description: "Module Inspector list to populate" }
-  );
+  await openModuleInspectorWithLoadedRows(app);
 
   // ModuleStatusBadge renders "Loaded" for loaded modules and "Not loaded"
   // for unloaded ones (no parens). ModuleRowActions renders "Unload" (or
   // "Load"). With the refreshCoreModules bug, every module showed
   // "Not loaded" and only "Load" buttons appeared, so neither "Loaded" nor
   // "Unload" appeared anywhere in the Module Inspector table.
-  await app.waitFor(
-    async () => { await app.expectTexts(["Loaded", "Unload"]); },
-    { timeout: 10000, interval: 500, description: "loaded status and Unload button to appear" }
-  );
+  await waitForTexts(app, ["Loaded", "Unload"], "loaded status and Unload button to appear");
 });
 
 test("module inspector: loaded modules render CPU and memory stats", async (app) => {
-  await openModuleInspector(app);
-
-  // Wait for at least one loaded plugin to appear.
-  await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "Loaded"]); },
-    { timeout: 10000, interval: 500, description: "loaded plugins to appear" }
-  );
+  await openModuleInspectorWithLoadedRows(app);
 
   // Live stats update every 2s. The current Module Inspector cell format
   // is "<num>%" for CPU and "<num> MB" for memory (the "CPU:" / "Mem:"
   // prefixes moved to the column headers). Verify the two column headers
   // are present AND that at least one numeric-with-unit value has rendered
   // — proof that the stats poll is actually populating rows.
-  await app.waitFor(
-    async () => { await app.expectTexts(["CPU", "Memory"]); },
-    { timeout: 15000, interval: 500, description: "CPU and Memory column headers to render" }
-  );
+  await waitForTexts(app, ["CPU", "Memory"], "CPU and Memory column headers to render", 15000);
   await app.waitFor(
     async () => {
       const tree = await app.getTree({ depth: 40 });
@@ -2034,28 +2122,17 @@ test("module inspector: loaded modules render CPU and memory stats", async (app)
 
 test("module inspector: leaving and returning preserves loaded state", async (app) => {
   // Navigate to Settings → Module Inspector and wait for loaded modules.
-  await openModuleInspector(app);
-
-  await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "Loaded"]); },
-    { timeout: 10000, interval: 500, description: "Module Inspector to show loaded modules" }
-  );
+  await openModuleInspectorWithLoadedRows(app);
 
   // Navigate away to a different top-level section (Applications).
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Install and manage applications."]); },
-    { timeout: 10000, interval: 500, description: "Applications view to render" }
-  );
+  await openApplications(app);
 
   // Navigate back to Settings → Module Inspector.
   await openModuleInspector(app);
 
   // The previously-loaded modules must still show as "Loaded" with the Unload action.
-  await app.waitFor(
-    async () => { await app.expectTexts(["Package Manager", "Loaded", "Unload"]); },
-    { timeout: 10000, interval: 500, description: "loaded state to be preserved after returning" }
-  );
+  await waitForTexts(app, ["Package Manager", "Loaded", "Unload"],
+                     "loaded state to be preserved after returning");
 });
 
 // --- Settings (A20) — Module Inspector search filters the table ---
@@ -2073,38 +2150,17 @@ test("module inspector: leaving and returning preserves loaded state", async (ap
 
 test("module inspector: search filters the table", async (app) => {
   await openModuleInspector(app);
-
-  // ModuleInspectorView is instantiated eagerly; only `visible` proves it is selected.
-  const view = await requireObject(app, "moduleInspectorView");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
-  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+  await requireVisibleView(app, "moduleInspectorView", "Module Inspector view to become visible");
 
   const table = await requireObject(app, "moduleInspector.table");
   const visibleCount = () => evalOn(app, table.id, "model.visibleCount");
   const search = await searchFieldOn(app, "settings.searchField");
   await search.normalize();
 
-  let initialCount = 0;
-  await app.waitFor(async () => {
-    const total = await evalOn(app, table.id, "model.totalCount");
-    if (typeof total !== "number" || total < 1) {
-      throw new Error(`model.totalCount=${JSON.stringify(total)} (expected ≥ 1)`);
-    }
-    assertEq(await visibleCount(), total, "model.visibleCount with an empty search");
-    initialCount = total;
-  }, { timeout: 10000, interval: 500, description: "modules table to populate" });
+  const initialCount = await waitForModuleTable(app, table.id, "modules table to populate");
 
   // Core-module rows expose the same ModuleInstanceRoles as the Apps table.
-  const rows = [];
-  for (let i = 0; i < initialCount; i += 1) {
-    const row = {};
-    for (const [key, roleExpr] of Object.entries(MODULE_SEARCH_ROLES)) {
-      row[key] = await evalOn(
-        app, table.id, `String(model.data(model.index(${i}, 0), ${roleExpr}) || "")`);
-    }
-    rows.push(row);
-  }
+  const rows = await snapshotModuleSearchRows(app, table.id, initialCount);
   const expectedMatches = rows.filter((row) =>
     Object.values(row).some((v) => v.toLowerCase().includes("package"))).length;
   if (expectedMatches < 2) {
@@ -2117,19 +2173,8 @@ test("module inspector: search filters the table", async (app) => {
   // Whether any *visible* descendant of the table renders the filtered-empty
   // text. QQuickItem.visible already folds in ancestor visibility.
   const emptyText = "No modules match the current filter.";
-  const emptyTextShown = async () => JSON.parse(await evalOn(app, table.id, `(() => {
-    let shown = false;
-    const walk = (node) => {
-      if (!node || shown) return;
-      if (typeof node.text === "string" && node.text.includes(${JSON.stringify(emptyText)})
-          && node.visible === true) { shown = true; return; }
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
-    return JSON.stringify(shown);
-  })()`));
+  const emptyTextShown = async () => (await collectTextNodes(app, table.id))
+    .some((n) => typeof n.text === "string" && n.text.includes(emptyText) && n.visible === true);
 
   // Control: with rows present the empty text must not be shown, so the
   // "zzz" assertion below cannot hold vacuously.
@@ -2182,15 +2227,12 @@ let noMatchSearch = "zzz";
 // loaded.
 
 const DEPSVC_NAME = "depsvc";
-const DEPSVC_TOGGLE = `moduleRow.loadToggle.${DEPSVC_NAME}`;
+const DEPSVC_TOGGLE = loadToggleName(DEPSVC_NAME);
 const DEPSVC_STATUS = `moduleInspector.status.${DEPSVC_NAME}`;
 const PROTECTED_MODULE_TOGGLES =
-  ["package_manager", "package_downloader", "capability_module"]
-    .map((name) => `moduleRow.loadToggle.${name}`);
+  ["package_manager", "package_downloader", "capability_module"].map(loadToggleName);
 
 test("module inspector: unloading a leaf module and reloading it", async (app) => {
-  // Welcome page is the evaluate anchor with `backend` in scope (as in A18).
-  const welcome = await requireWelcomePage(app);
   await openModuleInspector(app);
 
   // Shared search cleared so depsvc's row is in the proxy whatever an
@@ -2200,51 +2242,26 @@ test("module inspector: unloading a leaf module and reloading it", async (app) =
   await requireObject(app, "moduleInspector.table");
 
   // depsvc is pre-seeded by nix/integration-test.nix, so in --ci its absence
-  // is a failure; against a local app it is a skip (requireFixtureA's policy).
-  try {
-    await app.waitFor(async () => {
-      if (!(await findByObjectName(app.inspector, DEPSVC_TOGGLE))) {
-        throw new Error(`${DEPSVC_TOGGLE} not in the QML tree`);
-      }
-    }, { timeout: 10000, interval: 500, description: "depsvc row to appear" });
-  } catch (e) {
-    if (!CI_MODE) {
-      console.log(`    SKIP: A21 — depsvc fixture precondition not met: ${e.message}`);
-      return;
-    }
-    throw new Error(
-      `A21 precondition failed (depsvc is pre-seeded in --ci): ${e.message}`);
-  }
-
-  // depsvc's row in the source model, read on the welcome anchor — A18's
-  // pattern, on coreModulesModel.
-  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
-    const m = backend.coreModulesModel;
-    for (let i = 0; i < m.rowCount(); i += 1) {
-      const idx = m.index(i, 0);
-      if (m.data(idx, ${MODULE_SEARCH_ROLES.name}) === ${JSON.stringify(DEPSVC_NAME)}) {
-        return JSON.stringify({ isLoaded: m.data(idx, ${A18_ROLES.isLoaded}) });
-      }
-    }
-    return "null";
-  })()`));
-
-  // A load flip rebuilds the row's delegate, so toggle and badge are
-  // re-found on every read rather than cached (as in A18/A19).
-  const toggleState = async () => {
+  // is a failure; against a local app it is a skip (fixture A's policy).
+  if (await requireSeeded(app, "A21", "depsvc fixture", async () => {
     const t = await findByObjectName(app.inspector, DEPSVC_TOGGLE);
     if (!t) throw new Error(`${DEPSVC_TOGGLE} not in the QML tree`);
-    return {
-      id: t.id,
-      text: await evalOn(app, t.id, "text"),
-      enabled: await evalOn(app, t.id, "enabled"),
-    };
-  };
+    return t;
+  }, "depsvc row to appear") === null) {
+    return;
+  }
 
-  const statusText = async () => {
+  // A load flip rebuilds the row's delegate, so the badge is re-found on
+  // every read rather than cached (as in A18/A19). Its rendered text and
+  // depsvc's source-model row (`backend` is in scope on any shell item)
+  // come from one evaluate, so they are of one moment.
+  const badgeState = async () => {
     const b = await findByObjectName(app.inspector, DEPSVC_STATUS);
     if (!b) throw new Error(`${DEPSVC_STATUS} not in the QML tree`);
-    return evalOn(app, b.id, "text");
+    return evalFields(app, b.id, {
+      status: "text",
+      row: moduleRowExpr("backend.coreModulesModel", DEPSVC_NAME),
+    });
   };
 
   const expectProtectedLocked = async (when) => {
@@ -2266,29 +2283,20 @@ test("module inspector: unloading a leaf module and reloading it", async (app) =
   const rowCellTexts = async () => {
     const b = await findByObjectName(app.inspector, DEPSVC_STATUS);
     if (!b) throw new Error(`${DEPSVC_STATUS} not in the QML tree`);
-    return JSON.parse(await evalOn(app, b.id, `(() => {
+    return JSON.parse(await evalOn(app, b.id, `(() => {${WALK_JS}
       const hasName = (node) => {
-        if (!node) return false;
-        if (node.text === ${JSON.stringify(DEPSVC_NAME)}) return true;
-        const kids = node.children;
-        if (!kids || typeof kids.length !== "number") return false;
-        for (let i = 0; i < kids.length; i += 1) {
-          if (hasName(kids[i])) return true;
-        }
-        return false;
+        let hit = false;
+        walk(node, (n) => {
+          if (n.text === ${JSON.stringify(DEPSVC_NAME)}) hit = true;
+          return !hit;
+        });
+        return hit;
       };
       let row = this;
       for (let up = 0; up < 15 && row && !hasName(row); up += 1) row = row.parent;
       if (!row || !hasName(row)) return "null";
       const texts = [];
-      const collect = (node) => {
-        if (!node) return;
-        if (typeof node.text === "string") texts.push(node.text);
-        const kids = node.children;
-        if (!kids || typeof kids.length !== "number") return;
-        for (let i = 0; i < kids.length; i += 1) collect(kids[i]);
-      };
-      collect(row);
+      walk(row, (n) => { if (typeof n.text === "string") texts.push(n.text); });
       return JSON.stringify(texts);
     })()`));
   };
@@ -2310,31 +2318,27 @@ test("module inspector: unloading a leaf module and reloading it", async (app) =
   // text — then the protected rows' lock, which must hold throughout.
   const expectState = async (loaded, when, timeout = 10000) => {
     await app.waitFor(async () => {
-      assertEq(await statusText(), loaded ? "Loaded" : "Not loaded",
-               `depsvc status badge ${when}`);
-      const row = await modelRow();
+      const { status, row } = await badgeState();
+      assertEq(status, loaded ? "Loaded" : "Not loaded", `depsvc status badge ${when}`);
       if (row === null) throw new Error(`${DEPSVC_NAME} not in backend.coreModulesModel`);
       assertEq(row.isLoaded, loaded, `coreModulesModel isLoaded ${when}`);
-      assertEq((await toggleState()).text, loaded ? "Unload" : "Load", `toggle text ${when}`);
+      assertEq((await loadToggleState(app, DEPSVC_NAME)).text, loaded ? "Unload" : "Load",
+               `toggle text ${when}`);
     }, { timeout, interval: 500,
          description: `depsvc row to read ${loaded ? '"Loaded"' : '"Not loaded"'} ${when}` });
     await expectProtectedLocked(when);
   };
 
-  // Signal-level click; callMethod ignores `enabled`, so the enabled check
-  // is part of the click (as in A18/A19) — and here it is also the proof
-  // that depsvc's toggle is NOT locked, unlike the protected rows'.
-  const clickToggle = (expectedText, what) => app.waitFor(async () => {
-    const t = await toggleState();
-    assertEq(t.text, expectedText, `${DEPSVC_TOGGLE} text`);
-    assertEq(t.enabled, true, `${DEPSVC_TOGGLE} enabled`);
-    await invoke(app, t.id, "clicked", what);
-  }, { timeout: 10000, interval: 500, description: what });
+  // Signal-level click; the enabled check inside clickLoadToggle is here
+  // also the proof that depsvc's toggle is NOT locked, unlike the protected
+  // rows'.
+  const clickToggle = (expectedText, what) =>
+    clickLoadToggle(app, DEPSVC_NAME, expectedText, what);
 
   // Setup: depsvc is seeded installed-but-not-loaded, so load it first —
   // the unload below must not pass vacuously against a never-loaded row.
   // Tolerates a local run that already left it loaded.
-  const before = await modelRow();
+  const before = (await badgeState()).row;
   if (before === null || before.isLoaded !== true) {
     await clickToggle("Load", "clicking the toggle to load depsvc (setup)");
   }
@@ -2399,30 +2403,13 @@ test("module inspector: interface view lists methods/events and calls a method",
   const INTERFACE_MODULE = "package_manager";
 
   await openModuleInspector(app);
-
-  // ModuleInspectorView is instantiated eagerly; only `visible` proves it is selected.
-  const view = await requireObject(app, "moduleInspectorView");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
-  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+  const view = await requireVisibleView(app, "moduleInspectorView",
+                                        "Module Inspector view to become visible");
 
   // Open the interface page: sets selectedPlugin + showingInterface, and the
   // StackLayout flips to the PluginInterfaceView.
-  await evalOn(app, view.id, `openInterface(${JSON.stringify(INTERFACE_MODULE)})`);
-
-  let iface = null;
-  await app.waitFor(async () => {
-    iface = (await findByType(app, "PluginInterfaceView"))[0] || null;
-    if (!iface) throw new Error("no PluginInterfaceView in the QML tree");
-    assertEq(await evalOn(app, iface.id, "pluginName"), INTERFACE_MODULE,
-             "PluginInterfaceView.pluginName");
-  }, { timeout: 10000, interval: 500,
-       description: `interface view to open for ${INTERFACE_MODULE}` });
-
-  await app.waitFor(
-    async () => { await app.expectTexts([`Interface: ${INTERFACE_MODULE}`]); },
-    { timeout: 10000, interval: 500, description: "interface title to render" }
-  );
+  const iface = await openInterfaceView(app, view.id, INTERFACE_MODULE);
+  await waitForTexts(app, [`Interface: ${INTERFACE_MODULE}`], "interface title to render");
 
   // Methods/events come back from the module over IPC as parsed JSON; an
   // entry is { name, signature?, description? } or a bare string.
@@ -2442,21 +2429,7 @@ test("module inspector: interface view lists methods/events and calls a method",
 
   // Whether any *visible* descendant of the interface view renders `text`
   // exactly. QQuickItem.visible already folds in ancestor visibility.
-  const headerShown = async (text) => JSON.parse(await evalOn(app, iface.id, `(() => {
-    let shown = false;
-    const walk = (node) => {
-      if (!node || shown) return;
-      if (node.text === ${JSON.stringify(text)} && node.visible === true) {
-        shown = true;
-        return;
-      }
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
-    return JSON.stringify(shown);
-  })()`));
+  const headerShown = (text) => textShown(app, iface.id, text);
 
   // The headers are visible iff their lists are non-empty, so an empty
   // events list fails here, not silently.
@@ -2488,7 +2461,7 @@ test("module inspector: interface view lists methods/events and calls a method",
       `(methods=${JSON.stringify(methods)})`);
   }
   const methodName = nameOf(chosen);
-  console.log(`    A22: calling ${INTERFACE_MODULE}.${methodName}${chosen.signature}`);
+  note("A22", `calling ${INTERFACE_MODULE}.${methodName}${chosen.signature}`);
 
   const call = await requireObject(app, `pluginInterface.call.${methodName}`);
   await evalOn(app, iface.id, 'resultText = ""');
@@ -2528,19 +2501,7 @@ test("module inspector: interface view lists methods/events and calls a method",
   }
   await assertResponsive(app, { timeoutMs: 2000 });
 
-  // Back, and the module table is on screen again — left as found.
-  const back = await requireObject(app, "pluginInterface.back");
-  await invoke(app, back.id, "clicked", 'clicking "← Back"');
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "showingInterface"), false,
-             "moduleInspectorView.showingInterface after Back");
-    const table = await findByObjectName(app.inspector, "moduleInspector.table");
-    if (!table) throw new Error("moduleInspector.table not in the QML tree");
-    assertEq(await evalOn(app, table.id, "visible"), true,
-             "moduleInspector.table visible after Back");
-  }, { timeout: 10000, interval: 500,
-       description: "Module Inspector table to be visible after Back" });
-  await assertResponsive(app, { timeoutMs: 2000 });
+  await backToModuleTable(app, view.id);
 });
 
 // --- Settings (A23) — Module Inspector interface view, method-less module ---
@@ -2566,11 +2527,8 @@ test("module inspector: interface view for a method-less module", async (app) =>
   const CANDIDATES = ["package_manager", "package_downloader", "capability_module"];
 
   await openModuleInspector(app);
-
-  const view = await requireObject(app, "moduleInspectorView");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "visible"), true, "moduleInspectorView visible");
-  }, { timeout: 10000, interval: 500, description: "Module Inspector view to become visible" });
+  const view = await requireVisibleView(app, "moduleInspectorView",
+                                        "Module Inspector view to become visible");
 
   // The same call PluginInterfaceView makes from QML: a JSON array string,
   // "[]" when the module reports no methods. Evaluated in the view's scope,
@@ -2594,51 +2552,19 @@ test("module inspector: interface view for a method-less module", async (app) =>
     const summary = counts
       .map(({ name, count }, i) => `${name}: ${count}${i === 0 ? " methods" : ""}`)
       .join(", ");
-    console.log(
-      `    SKIP: A23 — no method-less module in the shared instance (${summary})`);
+    skip("A23", `no method-less module in the shared instance (${summary})`);
     return;
   }
-  console.log(`    A23: method-less module ${chosen}`);
+  note("A23", `method-less module ${chosen}`);
 
-  // Open the interface page the same way A22 does: openInterface takes a
-  // QString, which callMethod cannot marshal, hence evalOn.
-  await evalOn(app, view.id, `openInterface(${JSON.stringify(chosen)})`);
-
-  let iface = null;
-  await app.waitFor(async () => {
-    iface = (await findByType(app, "PluginInterfaceView"))[0] || null;
-    if (!iface) throw new Error("no PluginInterfaceView in the QML tree");
-    assertEq(await evalOn(app, iface.id, "pluginName"), chosen,
-             "PluginInterfaceView.pluginName");
-  }, { timeout: 10000, interval: 500,
-       description: `interface view to open for ${chosen}` });
+  // Open the interface page the same way A22 does.
+  const iface = await openInterfaceView(app, view.id, chosen);
   await assertResponsive(app, { timeoutMs: 2000 });
-
-  await app.waitFor(
-    async () => { await app.expectTexts([`Interface: ${chosen}`]); },
-    { timeout: 10000, interval: 500, description: "interface title to render" }
-  );
+  await waitForTexts(app, [`Interface: ${chosen}`], "interface title to render");
 
   // Whether any descendant of the interface view carries `text` exactly, and
   // whether one of those is shown. QQuickItem.visible already folds in
   // ancestor visibility.
-  const textState = async (text) => JSON.parse(await evalOn(app, iface.id, `(() => {
-    let found = false;
-    let shown = false;
-    const walk = (node) => {
-      if (!node) return;
-      if (node.text === ${JSON.stringify(text)}) {
-        found = true;
-        if (node.visible === true) shown = true;
-      }
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
-    return JSON.stringify({ found: found, shown: shown });
-  })()`));
-
   const EMPTY_TEXT = "No methods available for this plugin.";
   await app.waitFor(async () => {
     const methods = JSON.parse(await evalOn(app, iface.id, "JSON.stringify(methods)"));
@@ -2646,10 +2572,10 @@ test("module inspector: interface view for a method-less module", async (app) =>
 
     // Empty state shown; "Methods" header present in the tree but hidden
     // (its complement: `visible` binds on methods.length > 0).
-    const empty = await textState(EMPTY_TEXT);
+    const empty = await textState(app, iface.id, EMPTY_TEXT);
     assertEq(empty.found, true, `empty-state text ${JSON.stringify(EMPTY_TEXT)} in the tree`);
     assertEq(empty.shown, true, `empty-state text ${JSON.stringify(EMPTY_TEXT)} visible`);
-    const header = await textState("Methods");
+    const header = await textState(app, iface.id, "Methods");
     assertEq(header.found, true, '"Methods" header in the tree');
     assertEq(header.shown, false, '"Methods" header visible');
   }, { timeout: 10000, interval: 500,
@@ -2658,37 +2584,13 @@ test("module inspector: interface view for a method-less module", async (app) =>
   // No Call button anywhere under the view: each method row's Button is named
   // pluginInterface.call.<method>, and findByObjectName matches exact names,
   // so walk the descendants for the prefix instead.
-  const callButtons = JSON.parse(await evalOn(app, iface.id, `(() => {
-    const found = [];
-    const walk = (node) => {
-      if (!node) return;
-      if (typeof node.objectName === "string"
-          && node.objectName.indexOf("pluginInterface.call.") === 0) {
-        found.push(node.objectName);
-      }
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
-    };
-    walk(this);
-    return JSON.stringify(found);
-  })()`));
+  const callButtons = (await collectTextNodes(app, iface.id))
+    .map((n) => n.objectName)
+    .filter((name) => typeof name === "string" && name.startsWith("pluginInterface.call."));
   assertEq(callButtons.length, 0,
            `pluginInterface.call.* buttons in the view (${JSON.stringify(callButtons)})`);
 
-  // Back, and the module table is on screen again — left as found.
-  const back = await requireObject(app, "pluginInterface.back");
-  await invoke(app, back.id, "clicked", 'clicking "← Back"');
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, view.id, "showingInterface"), false,
-             "moduleInspectorView.showingInterface after Back");
-    const table = await findByObjectName(app.inspector, "moduleInspector.table");
-    if (!table) throw new Error("moduleInspector.table not in the QML tree");
-    assertEq(await evalOn(app, table.id, "visible"), true,
-             "moduleInspector.table visible after Back");
-  }, { timeout: 10000, interval: 500,
-       description: "Module Inspector table to be visible after Back" });
-  await assertResponsive(app, { timeoutMs: 2000 });
+  await backToModuleTable(app, view.id);
 });
 
 // --- Sidebar: sequential section opening ---
@@ -2729,11 +2631,7 @@ test("sidebar: open multiple sections sequentially without failure", async (app)
 
 // --- App Manager ---
 test("app manager: panel + categories sidebar render on first open", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Apps", "Categories", "All"]); },
-    { timeout: 15000, interval: 500, description: "App Manager content" }
-  );
+  await openPlugin(app, "Applications", ["Apps", "Categories", "All"], { timeout: 15000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -2767,26 +2665,125 @@ async function openRepositoriesView(app) {
   return anchor.matches[0].id;
 }
 
-async function isDefaultInList(app, anchorId) {
-  return (await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return true;
-      return false;
-    })()`,
-  })).result === true;
+// The default repository's entry in backend.repositories as { url, enabled },
+// or null when none is listed — the one lookup every default-repository
+// check goes through.
+async function defaultRepository(app, anchorId) {
+  return JSON.parse(await evalOn(app, anchorId, `(function() {
+    var rs = backend.repositories;
+    for (var i = 0; i < rs.length; ++i) {
+      if (rs[i].isDefault) {
+        return JSON.stringify({ url: rs[i].url, enabled: rs[i].enabled !== false });
+      }
+    }
+    return "null";
+  })()`));
 }
 
+async function isDefaultInList(app, anchorId) {
+  return (await defaultRepository(app, anchorId)) !== null;
+}
+
+// true / false, or null when the default is not listed.
 async function isDefaultEnabled(app, anchorId) {
-  return (await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].enabled !== false;
-      return null;
-    })()`,
-  })).result;
+  return (await defaultRepository(app, anchorId))?.enabled ?? null;
+}
+
+async function defaultRepositoryUrl(app, anchorId) {
+  const entry = await defaultRepository(app, anchorId);
+  if (!entry || typeof entry.url !== "string" || entry.url.length === 0) {
+    throw new Error(
+      `no default repository in backend.repositories (got ${JSON.stringify(entry)})`);
+  }
+  return entry.url;
+}
+
+async function repositoryCount(app, anchorId) {
+  return assertType(await evalOn(app, anchorId, "backend.repositories.length"),
+                    "number", "backend.repositories.length");
+}
+
+// The controls every add goes through.
+async function repositoryAddControls(app) {
+  return {
+    field: await requireObject(app, "repositories.urlField"),
+    addButton: await requireObject(app, "repositories.addButton"),
+    banner: await requireObject(app, "repositories.errorBanner"),
+  };
+}
+
+// Types `url` and clicks Add once the button enables. Assigning `text`
+// replaces the field's binding, as every text-field poke in this file does —
+// harmless, and the restore clears it again. Signal-level click, so the
+// enabled check is the gate the button itself applies.
+async function addRepositoryUrl(app, { field, addButton }, url, what) {
+  await evalOn(app, field.id, `text = ${JSON.stringify(url)}`);
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), true,
+             `repositories.addButton enabled ${what}`);
+  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
+  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+}
+
+// The banner's message is its first LogosText descendant.
+async function errorBannerText(app, bannerId) {
+  return (await collectTextNodes(app, bannerId))
+    .map((n) => n.text).find((t) => typeof t === "string" && t.length > 0) ?? "";
+}
+
+function waitForErrorBanner(app, bannerId, visible, description, timeout = 10000) {
+  return app.waitFor(async () => {
+    assertEq(await evalOn(app, bannerId, "visible"), visible,
+             `repositories.errorBanner visible ${description}`);
+  }, { timeout, interval: 250, description: `error banner ${description}` });
+}
+
+// The downloader's verdict on an add: the refusal banner (returns its text),
+// or an accepted row. An accepted row is removed again so the later
+// repository tests see the list they expect, and `onAccepted` fails the test.
+async function expectAddRefused(app, anchorId, { field, banner }, url,
+                                { timeout, description, onAccepted }) {
+  let accepted = false;
+  await app.waitFor(async () => {
+    if (await findByObjectName(app.inspector, `repositories.row.${url}`)) {
+      accepted = true;
+      return;
+    }
+    if (await evalOn(app, banner.id, "visible") !== true) {
+      throw new Error("repositories.errorBanner not visible and URL not accepted");
+    }
+  }, { timeout, interval: 250, description });
+  if (accepted) {
+    await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(url)})`);
+    await evalOn(app, field.id, 'text = ""');
+    throw new Error(onAccepted);
+  }
+  return errorBannerText(app, banner.id);
+}
+
+// Dismisses the banner and clears the field (a failed add keeps its text),
+// so the view is back at rest for the tests that follow.
+async function dismissBannerAndClearField(app, { field, addButton, banner }) {
+  const dismiss = await requireObject(app, "repositories.errorDismiss");
+  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
+  await waitForErrorBanner(app, banner.id, false, "after dismiss");
+  await evalOn(app, field.id, 'text = ""');
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, addButton.id, "enabled"), false,
+             "repositories.addButton enabled after clearing the field");
+  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+}
+
+// Drives backend.removeRepository on the default and waits for its row to go.
+async function removeDefaultRepository(app, anchorId) {
+  const defaultUrl = await defaultRepositoryUrl(app, anchorId);
+  await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(defaultUrl)})`);
+  await app.waitFor(async () => {
+    if (await isDefaultInList(app, anchorId)) {
+      throw new Error("default still in list after remove — remove must drop the row");
+    }
+  }, { timeout: 5000, interval: 250, description: "default row to disappear" });
+  return defaultUrl;
 }
 
 // Picks go through the selector's own onActivated, so the view -> backend ->
@@ -2830,83 +2827,32 @@ test("repositories: invalid URL shows a dismissible error banner", async (app) =
   const anchorId = await openRepositoriesView(app);
   const badUrl = "not a url";
 
-  const initialCount = assertType(
-    await evalOn(app, anchorId, "backend.repositories.length"),
-    "number", "backend.repositories.length");
+  const initialCount = await repositoryCount(app, anchorId);
+  const controls = await repositoryAddControls(app);
 
-  const field = await requireObject(app, "repositories.urlField");
-  const addButton = await requireObject(app, "repositories.addButton");
-  const banner = await requireObject(app, "repositories.errorBanner");
-
-  // Assigning `text` replaces the field's binding, as every text-field poke
-  // in this file does — harmless, and the restore below clears it again.
-  await evalOn(app, field.id, `text = ${JSON.stringify(badUrl)}`);
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), true,
-             "repositories.addButton enabled with a non-blank URL");
-  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
-
-  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+  await addRepositoryUrl(app, controls, badUrl, "with a non-blank URL");
 
   // The verdict is the downloader's: wait for either the banner (pinned
-  // outcome (a)) or an accepted row (outcome (b), handled below).
-  let accepted = false;
-  await app.waitFor(async () => {
-    const count = await evalOn(app, anchorId, "backend.repositories.length");
-    const row = await findByObjectName(app.inspector, `repositories.row.${badUrl}`);
-    if (count > initialCount && row) { accepted = true; return; }
-    if (await evalOn(app, banner.id, "visible") !== true) {
-      throw new Error("repositories.errorBanner not visible and URL not accepted");
-    }
-  }, { timeout: 10000, interval: 250,
-       description: "error banner (or an accepted row) after the add" });
-
-  if (accepted) {
-    await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(badUrl)})`);
-    await evalOn(app, field.id, 'text = ""');
-    throw new Error(`A24 outcome (b): the downloader accepted ${JSON.stringify(badUrl)} `
-      + "— removed it again; fold this case into A25");
-  }
-
-  // The banner's message is its LogosText descendant; expected text is
-  // "unsupported URL scheme (https required in v1)" (see the header comment).
-  const bannerText = await evalOn(app, banner.id, `(() => {
-    const firstText = (node) => {
-      if (!node) return "";
-      if (typeof node.text === "string" && node.text.length > 0) return node.text;
-      if (!node.children || typeof node.children.length !== "number") return "";
-      for (let i = 0; i < node.children.length; i += 1) {
-        const t = firstText(node.children[i]);
-        if (t.length > 0) return t;
-      }
-      return "";
-    };
-    return firstText(this);
-  })()`);
-  if (typeof bannerText !== "string" || bannerText.length === 0) {
+  // outcome (a)) or an accepted row (outcome (b), undone by the helper).
+  // Expected text is "unsupported URL scheme (https required in v1)" (see
+  // the header comment).
+  const bannerText = await expectAddRefused(app, anchorId, controls, badUrl, {
+    timeout: 10000,
+    description: "error banner (or an accepted row) after the add",
+    onAccepted: `A24 outcome (b): the downloader accepted ${JSON.stringify(badUrl)} `
+      + "— removed it again; fold this case into A25",
+  });
+  if (bannerText.length === 0) {
     throw new Error(`error banner visible with empty text (expected the `
       + `downloader's error string, e.g. "unsupported URL scheme (https `
       + `required in v1)"); got ${JSON.stringify(bannerText)}`);
   }
-  console.log(`    A24: banner text ${JSON.stringify(bannerText)}`);
+  note("A24", `banner text ${JSON.stringify(bannerText)}`);
 
-  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+  assertEq(await repositoryCount(app, anchorId),
            initialCount, "backend.repositories.length after the rejected add");
 
-  const dismiss = await requireObject(app, "repositories.errorDismiss");
-  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, banner.id, "visible"), false,
-             "repositories.errorBanner visible after dismiss");
-  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
-
-  // A failed add keeps the field's text; clear it so the view is back at
-  // rest for the tests that follow.
-  await evalOn(app, field.id, 'text = ""');
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), false,
-             "repositories.addButton enabled after clearing the field");
-  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+  await dismissBannerAndClearField(app, controls);
 });
 
 // --- Repositories (A25) — unreachable URL is refused with a fetch error ---
@@ -2927,73 +2873,30 @@ test("repositories: unreachable URL is refused with a fetch error", async (app) 
   const badUrl = "https://127.0.0.1:9/logos-repo.json";
   const expectedPrefix = `fetch failed: ${badUrl}`;
 
-  const initialCount = assertType(
-    await evalOn(app, anchorId, "backend.repositories.length"),
-    "number", "backend.repositories.length");
+  const initialCount = await repositoryCount(app, anchorId);
+  const defaultUrl = await defaultRepositoryUrl(app, anchorId);
+  const controls = await repositoryAddControls(app);
+  const { field, addButton } = controls;
 
-  const defaultUrl = await evalOn(app, anchorId, `(function() {
-    var rs = backend.repositories;
-    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
-    return null;
-  })()`);
-  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
-    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
-  }
-
-  const field = await requireObject(app, "repositories.urlField");
-  const addButton = await requireObject(app, "repositories.addButton");
-  const banner = await requireObject(app, "repositories.errorBanner");
-
-  await evalOn(app, field.id, `text = ${JSON.stringify(badUrl)}`);
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), true,
-             "repositories.addButton enabled with the unreachable URL set");
-  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
-
-  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
+  await addRepositoryUrl(app, controls, badUrl, "with the unreachable URL set");
 
   // The connect to 127.0.0.1:9 is refused immediately, but the fetch runs
   // asynchronously inside the downloader module, so allow 30 s anyway.
-  let accepted = false;
-  await app.waitFor(async () => {
-    const row = await findByObjectName(app.inspector, `repositories.row.${badUrl}`);
-    if (row) { accepted = true; return; }
-    if (await evalOn(app, banner.id, "visible") !== true) {
-      throw new Error("repositories.errorBanner not visible and URL not accepted");
-    }
-  }, { timeout: 30000, interval: 250,
-       description: "fetch-failed banner (or an accepted row) after the add" });
-
-  if (accepted) {
-    await evalOn(app, anchorId, `backend.removeRepository(${JSON.stringify(badUrl)})`);
-    await evalOn(app, field.id, 'text = ""');
-    throw new Error(`A25 outcome changed: the downloader accepted unreachable `
-      + `${JSON.stringify(badUrl)} — removed it again; revisit the plan`);
-  }
-
-  // The banner's message is its LogosText descendant, as in A24.
-  const bannerText = await evalOn(app, banner.id, `(() => {
-    const firstText = (node) => {
-      if (!node) return "";
-      if (typeof node.text === "string" && node.text.length > 0) return node.text;
-      if (!node.children || typeof node.children.length !== "number") return "";
-      for (let i = 0; i < node.children.length; i += 1) {
-        const t = firstText(node.children[i]);
-        if (t.length > 0) return t;
-      }
-      return "";
-    };
-    return firstText(this);
-  })()`);
-  if (typeof bannerText !== "string" || !bannerText.startsWith(expectedPrefix)) {
+  const bannerText = await expectAddRefused(app, anchorId, controls, badUrl, {
+    timeout: 30000,
+    description: "fetch-failed banner (or an accepted row) after the add",
+    onAccepted: `A25 outcome changed: the downloader accepted unreachable `
+      + `${JSON.stringify(badUrl)} — removed it again; revisit the plan`,
+  });
+  if (!bannerText.startsWith(expectedPrefix)) {
     throw new Error(`banner is not the fetch failure — the add never reached `
       + `the downloader's fetch (expected text starting `
       + `${JSON.stringify(expectedPrefix)}); got ${JSON.stringify(bannerText)}`);
   }
-  console.log(`    A25: banner text ${JSON.stringify(bannerText)}`);
+  note("A25", `banner text ${JSON.stringify(bannerText)}`);
 
   await expectAbsent(app, `repositories.row.${badUrl}`, 3000);
-  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+  assertEq(await repositoryCount(app, anchorId),
            initialCount, "backend.repositories.length after the refused add");
 
   const defaultSwitch = await requireObject(app, `repositories.enableSwitch.${defaultUrl}`);
@@ -3007,18 +2910,7 @@ test("repositories: unreachable URL is refused with a fetch error", async (app) 
   assertEq(await evalOn(app, addButton.id, "enabled"), true,
            "repositories.addButton enabled after the refused add");
 
-  const dismiss = await requireObject(app, "repositories.errorDismiss");
-  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, banner.id, "visible"), false,
-             "repositories.errorBanner visible after dismiss");
-  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
-
-  await evalOn(app, field.id, 'text = ""');
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), false,
-             "repositories.addButton enabled after clearing the field");
-  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+  await dismissBannerAndClearField(app, controls);
 });
 
 // --- Repositories (A26) — whitespace is rejected, duplicate URL is a no-op ---
@@ -3051,23 +2943,12 @@ test("repositories: whitespace is rejected, duplicate URL is a no-op", async (ap
     throw new Error("A26 precondition: default repository not enabled — "
       + "this test must run before the tests that disable/remove it");
   }
-  const defaultUrl = await evalOn(app, anchorId, `(function() {
-    var rs = backend.repositories;
-    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
-    return null;
-  })()`);
-  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
-    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
-  }
+  const defaultUrl = await defaultRepositoryUrl(app, anchorId);
   const expectedText = `already registered: ${defaultUrl}`;
 
-  const initialCount = assertType(
-    await evalOn(app, anchorId, "backend.repositories.length"),
-    "number", "backend.repositories.length");
-
-  const field = await requireObject(app, "repositories.urlField");
-  const addButton = await requireObject(app, "repositories.addButton");
-  const banner = await requireObject(app, "repositories.errorBanner");
+  const initialCount = await repositoryCount(app, anchorId);
+  const controls = await repositoryAddControls(app);
+  const { field, addButton, banner } = controls;
   const duplicateWarning = await requireObject(app, "repositories.duplicateNameWarning");
 
   assertEq(await evalOn(app, banner.id, "visible"), false,
@@ -3081,47 +2962,24 @@ test("repositories: whitespace is rejected, duplicate URL is a no-op", async (ap
     assertEq(await evalOn(app, addButton.id, "enabled"), false,
              "repositories.addButton enabled with a whitespace-only URL");
   }, { timeout: 10000, interval: 250, description: "Add button to stay disabled on whitespace" });
-  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+  assertEq(await repositoryCount(app, anchorId),
            initialCount, "backend.repositories.length after the whitespace entry");
   assertEq(await evalOn(app, banner.id, "visible"), false,
            "repositories.errorBanner visible after the whitespace entry");
 
   // --- Duplicate: the default's own URL is refused as already registered. ---
-  await evalOn(app, field.id, `text = ${JSON.stringify(defaultUrl)}`);
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), true,
-             "repositories.addButton enabled with the default URL set");
-  }, { timeout: 10000, interval: 250, description: "Add button to enable" });
+  await addRepositoryUrl(app, controls, defaultUrl, "with the default URL set");
+  await waitForErrorBanner(app, banner.id, true, "after the duplicate add");
 
-  await invoke(app, addButton.id, "clicked", "repositories.addButton click");
-
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, banner.id, "visible"), true,
-             "repositories.errorBanner visible after the duplicate add");
-  }, { timeout: 10000, interval: 250, description: "error banner after the duplicate add" });
-
-  // The banner's message is its LogosText descendant, as in A24/A25.
-  const bannerText = await evalOn(app, banner.id, `(() => {
-    const firstText = (node) => {
-      if (!node) return "";
-      if (typeof node.text === "string" && node.text.length > 0) return node.text;
-      if (!node.children || typeof node.children.length !== "number") return "";
-      for (let i = 0; i < node.children.length; i += 1) {
-        const t = firstText(node.children[i]);
-        if (t.length > 0) return t;
-      }
-      return "";
-    };
-    return firstText(this);
-  })()`);
+  const bannerText = await errorBannerText(app, banner.id);
   if (bannerText !== expectedText) {
     throw new Error(`duplicate add did not take the downloader's already-registered `
       + `branch (expected banner text ${JSON.stringify(expectedText)}); `
       + `got ${JSON.stringify(bannerText)}`);
   }
-  console.log(`    A26: banner text ${JSON.stringify(bannerText)}`);
+  note("A26", `banner text ${JSON.stringify(bannerText)}`);
 
-  assertEq(await evalOn(app, anchorId, "backend.repositories.length"),
+  assertEq(await repositoryCount(app, anchorId),
            initialCount, "backend.repositories.length after the duplicate add");
 
   const rows = await app.inspector.send("findByProperty", {
@@ -3146,18 +3004,7 @@ test("repositories: whitespace is rejected, duplicate URL is a no-op", async (ap
            "repositories.urlField text after the duplicate add");
 
   // --- Restore: dismiss the banner, clear the field. ---
-  const dismiss = await requireObject(app, "repositories.errorDismiss");
-  await invoke(app, dismiss.id, "clicked", "repositories.errorDismiss click");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, banner.id, "visible"), false,
-             "repositories.errorBanner visible after dismiss");
-  }, { timeout: 10000, interval: 250, description: "error banner to dismiss" });
-
-  await evalOn(app, field.id, 'text = ""');
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, addButton.id, "enabled"), false,
-             "repositories.addButton enabled after clearing the field");
-  }, { timeout: 5000, interval: 250, description: "Add button to disable again" });
+  await dismissBannerAndClearField(app, controls);
 });
 
 // --- Repositories (A27) — refresh flips the button label -------------------
@@ -3179,9 +3026,7 @@ test("repositories: refresh flips the button label", async (app) => {
     assertEq(await buttonEnabled(), true, "refresh button enabled");
     assertEq(await buttonText(), "Refresh", "refresh button text");
   }, { timeout: 30000, interval: 500, description: "no refresh to be in flight before the click" });
-  const preCount = assertType(
-    await evalOn(app, anchorId, "backend.repositories.length"),
-    "number", "backend.repositories.length");
+  const preCount = await repositoryCount(app, anchorId);
 
   const inFlight = JSON.parse(await evalOn(app, refreshButton.id, `(function () {
     clicked();
@@ -3228,17 +3073,8 @@ test("repositories: cancel on 'Remove default repository?' keeps it", async (app
     throw new Error("default repository not listed at test start — this test "
       + "was moved after the tests that remove the default; it must run before them");
   }
-  const defaultUrl = await evalOn(app, anchorId, `(function() {
-    var rs = backend.repositories;
-    for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
-    return null;
-  })()`);
-  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
-    throw new Error(`no default repository in backend.repositories (got ${JSON.stringify(defaultUrl)})`);
-  }
-  const initialCount = assertType(
-    await evalOn(app, anchorId, "backend.repositories.length"),
-    "number", "backend.repositories.length");
+  const defaultUrl = await defaultRepositoryUrl(app, anchorId);
+  const initialCount = await repositoryCount(app, anchorId);
 
   const rowName = `repositories.row.${defaultUrl}`;
   await requireObject(app, rowName);
@@ -3306,23 +3142,11 @@ test("repositories: cancel on 'Remove default repository?' keeps it", async (app
   // the moment the dialog is gone; a retried wait would mask a transient drop.
   const row = await findByObjectName(app.inspector, rowName);
   if (!row) throw new Error(`${rowName} not in the QML tree after Cancel`);
-  const badgeVisible = await evalOn(app, row.id, `(() => {
-    const find = (node) => {
-      if (!node) return null;
-      if (node.text === "Default" && typeof node.visible === "boolean") return node;
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return null;
-      for (let i = 0; i < kids.length; i += 1) {
-        const hit = find(kids[i]);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    const badge = find(this);
-    return badge ? badge.visible : null;
-  })()`);
-  assertEq(badgeVisible, true, `"Default" badge visible on ${rowName} after Cancel`);
-  assertEq(await evalOn(app, anchorId, "backend.repositories.length"), initialCount,
+  const badge = (await collectTextNodes(app, row.id))
+    .find((n) => n.text === "Default" && typeof n.visible === "boolean");
+  assertEq(badge ? badge.visible : null, true,
+           `"Default" badge visible on ${rowName} after Cancel`);
+  assertEq(await repositoryCount(app, anchorId), initialCount,
            "backend.repositories.length after Cancel");
   assertEq(await isDefaultInList(app, anchorId), true, "default repository listed after Cancel");
 });
@@ -3330,10 +3154,8 @@ test("repositories: cancel on 'Remove default repository?' keeps it", async (app
 test("repositories: disabling default keeps it in the list", async (app) => {
   const anchorId = await openRepositoriesView(app);
 
-  const initialCount = (await app.inspector.send("evaluate", {
-    objectId: anchorId, expression: "backend.repositories.length",
-  })).result;
-  if (typeof initialCount !== "number" || initialCount < 1) {
+  const initialCount = await repositoryCount(app, anchorId);
+  if (initialCount < 1) {
     throw new Error(`backend.repositories.length=${initialCount} (expected ≥ 1)`);
   }
 
@@ -3341,20 +3163,13 @@ test("repositories: disabling default keeps it in the list", async (app) => {
   // is fragile). The bug lived in the library round-trip
   // (setRepositoryEnabled → getRepositories), which is exactly what this
   // flow exercises via `backend`.
-  await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) {
-        if (rs[i].isDefault) { backend.setRepositoryEnabled(rs[i].url, false); return; }
-      }
-    })()`,
-  });
+  const defaultUrl = await defaultRepositoryUrl(app, anchorId);
+  const setDefaultEnabled = (enabled) => evalOn(app, anchorId,
+    `backend.setRepositoryEnabled(${JSON.stringify(defaultUrl)}, ${enabled})`);
 
+  await setDefaultEnabled(false);
   await app.waitFor(async () => {
-    const count = (await app.inspector.send("evaluate", {
-      objectId: anchorId, expression: "backend.repositories.length",
-    })).result;
+    const count = await repositoryCount(app, anchorId);
     if (count !== initialCount) {
       throw new Error(
         `default repo dropped from list after disable: length=${count}, ` +
@@ -3366,15 +3181,7 @@ test("repositories: disabling default keeps it in the list", async (app) => {
   }, { timeout: 5000, interval: 250, description: "disabled default to stay in list" });
 
   // Restore so subsequent tests start clean.
-  await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) {
-        if (rs[i].isDefault) { backend.setRepositoryEnabled(rs[i].url, true); return; }
-      }
-    })()`,
-  });
+  await setDefaultEnabled(true);
   await app.waitFor(async () => {
     if ((await isDefaultEnabled(app, anchorId)) !== true) {
       throw new Error("default did not re-enable");
@@ -3400,33 +3207,10 @@ test("repositories: removing default drops it from list; re-adding restores it",
   if (!(await isDefaultInList(app, anchorId))) {
     throw new Error("default not present at test start");
   }
-  const defaultUrl = (await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
-      return "";
-    })()`,
-  })).result;
-  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
-    throw new Error("could not read default url");
-  }
-
-  await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `backend.removeRepository(${JSON.stringify(defaultUrl)})`,
-  });
-  await app.waitFor(async () => {
-    if (await isDefaultInList(app, anchorId)) {
-      throw new Error("default still in list after remove — remove must drop the row");
-    }
-  }, { timeout: 5000, interval: 250, description: "default row to disappear" });
+  const defaultUrl = await removeDefaultRepository(app, anchorId);
 
   // Re-add by URL — flips both defaultRemoved and defaultDisabled off.
-  await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `backend.addRepository(${JSON.stringify(defaultUrl)})`,
-  });
+  await evalOn(app, anchorId, `backend.addRepository(${JSON.stringify(defaultUrl)})`);
   await app.waitFor(async () => {
     if (!(await isDefaultInList(app, anchorId))) {
       throw new Error("default did not come back after addRepository");
@@ -3448,38 +3232,14 @@ test("repositories: removing default drops it from list", async (app) => {
   if (!(await isDefaultInList(app, anchorId))) {
     throw new Error("default not present at test start");
   }
-  const defaultUrl = (await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `(function() {
-      var rs = backend.repositories;
-      for (var i = 0; i < rs.length; ++i) if (rs[i].isDefault) return rs[i].url;
-      return "";
-    })()`,
-  })).result;
-  if (typeof defaultUrl !== "string" || defaultUrl.length === 0) {
-    throw new Error("could not read default url");
-  }
-
-  await app.inspector.send("evaluate", {
-    objectId: anchorId,
-    expression: `backend.removeRepository(${JSON.stringify(defaultUrl)})`,
-  });
-  await app.waitFor(async () => {
-    if (await isDefaultInList(app, anchorId)) {
-      throw new Error("default still in list after remove — remove must drop the row");
-    }
-  }, { timeout: 5000, interval: 250, description: "default row to disappear" });
+  await removeDefaultRepository(app, anchorId);
 });
 
 // ---------------------------------------------------------------------------
 // ShortcutBridge end-to-end
 // ---------------------------------------------------------------------------
 test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Apps", "Categories"]); },
-    { timeout: 15000, interval: 500, description: "App Manager visible" }
-  );
+  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
 
   // QML declares sequence: "Ctrl+K". QShortcut.key stringifies as NativeText
   // — "⌘K" on macOS, "Ctrl+K" elsewhere — so try both.
@@ -3555,21 +3315,8 @@ async function findLocalAppsProxy(app) {
   return res.matches[0].id;
 }
 
-// Evaluate expects a primitive result — object literals come back as
-// opaque "<QJSValue>". So we do one call per property. Small wrapper
-// keeps call sites readable.
-async function evalOn(app, objectId, expression) {
-  const res = await app.inspector.send("evaluate", { objectId, expression });
-  if (res.error) throw new Error(`evaluate("${expression}") failed: ${res.error}`);
-  return res.result;
-}
-
 test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Apps", "Categories"]); },
-    { timeout: 15000, interval: 500, description: "App Manager to render" }
-  );
+  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) {
@@ -3604,11 +3351,7 @@ test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (a
 });
 
 test("app manager: 'local' header renders iff local rows exist", async (app) => {
-  await app.click("Applications");
-  await app.waitFor(
-    async () => { await app.expectTexts(["Apps", "Categories"]); },
-    { timeout: 15000, interval: 500, description: "App Manager to render" }
-  );
+  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) throw new Error("appManager.localAppsProxy not found");
@@ -3650,10 +3393,7 @@ test("app manager: 'local' header renders iff local rows exist", async (app) => 
 // semantics; these cover our state machine on top of them.
 
 async function windowObject(app) {
-  const res = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "logosMainWindow",
-  });
-  const win = (res.matches ?? [])[0];
+  const win = await findByObjectName(app.inspector, "logosMainWindow");
   if (!win) throw new Error("objectName=logosMainWindow not found");
   return win.id;
 }
@@ -3672,46 +3412,52 @@ async function windowProps(app, objectId) {
   return { visible: read("visible"), minimized: read("minimized") };
 }
 
-async function invoke(app, objectId, method, what = `callMethod(${method})`) {
-  const res = await app.inspector.send("callMethod", { objectId, method });
-  if (res.error) throw new Error(`${what} failed: ${res.error}`);
-}
-
-test("window: tray toggle restores a minimized window on the first click", async (app) => {
+// Runs `body` against the main window, and shows it again afterwards
+// whatever the body left it as.
+async function withMainWindow(app, body) {
   const win = await windowObject(app);
   try {
-    await invoke(app, win, "showMinimized");
-    await invoke(app, win, "showHideWindow");
-
-    const { visible, minimized } = await windowProps(app, win);
-    // Regression guard for #268: a minimized window is still visible() to Qt,
-    // so a visibility-only toggle hid it again and the click did nothing.
-    if (visible !== true || minimized === true) {
-      throw new Error(
-        `after one toggle: visible=${visible} minimized=${minimized} ` +
-        `(expected visible=true minimized=false)`);
-    }
+    await body(win);
   } finally {
     await invoke(app, win, "show");
   }
+}
+
+// show / showMinimized / showHideWindow flip `visible` and the minimized bit
+// before they return (app/window.cpp: hide(), show(), setWindowState()), so
+// the state is read once rather than polled — a retried wait would mask a
+// transient wrong state. `expected` names the properties to pin.
+async function assertWindowState(app, win, expected, when) {
+  const got = await windowProps(app, win);
+  const wrong = Object.entries(expected).some(([key, want]) => got[key] !== want);
+  if (wrong) {
+    const want = Object.entries(expected).map(([k, v]) => `${k}=${v}`).join(" ");
+    throw new Error(
+      `${when}: visible=${got.visible} minimized=${got.minimized} (expected ${want})`);
+  }
+}
+
+test("window: tray toggle restores a minimized window on the first click", async (app) => {
+  await withMainWindow(app, async (win) => {
+    await invoke(app, win, "showMinimized");
+    await invoke(app, win, "showHideWindow");
+
+    // Regression guard for #268: a minimized window is still visible() to Qt,
+    // so a visibility-only toggle hid it again and the click did nothing.
+    await assertWindowState(app, win, { visible: true, minimized: false }, "after one toggle");
+  });
 });
 
 test("window: tray toggle hides a shown window", async (app) => {
-  const win = await windowObject(app);
-  try {
+  await withMainWindow(app, async (win) => {
     await invoke(app, win, "show");
     await invoke(app, win, "showHideWindow");
 
     // Offscreen CI reports the window as active, so this can't cover the
     // background-window case: gating Hide on activation makes it unreachable
     // from the tray menu, and that stays a manual check.
-    const { visible } = await windowProps(app, win);
-    if (visible !== false) {
-      throw new Error(`toggle left visible=${visible} (expected false)`);
-    }
-  } finally {
-    await invoke(app, win, "show");
-  }
+    await assertWindowState(app, win, { visible: false }, "toggle left the window");
+  });
 });
 
 // --- Window (A30) — Cmd+M minimize action is wired (macOS only) -------------
@@ -3734,15 +3480,11 @@ test("window: tray toggle hides a shown window", async (app) => {
 
 test("window: Cmd+M minimize action is wired (macOS only)", async (app) => {
   if (process.platform !== "darwin") {
-    console.log(
-      "    SKIP: A30 — macOS only (logosMinimizeAction exists only in Q_OS_MAC builds)");
+    skip("A30", "macOS only (logosMinimizeAction exists only in Q_OS_MAC builds)");
     return;
   }
 
-  const res = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "logosMinimizeAction",
-  });
-  const action = (res.matches ?? [])[0];
+  const action = await findByObjectName(app.inspector, "logosMinimizeAction");
   if (!action) {
     throw new Error(
       "QAction objectName=logosMinimizeAction not found on darwin (menu bar not created)");
@@ -3751,44 +3493,23 @@ test("window: Cmd+M minimize action is wired (macOS only)", async (app) => {
     throw new Error(`logosMinimizeAction object is ${action.type}, expected QAction`);
   }
 
-  const win = await windowObject(app);
-  try {
+  await withMainWindow(app, async (win) => {
     // A defined start: shown and not minimized, so a later minimized=true can
     // only have come from the action.
-    let start = await windowProps(app, win);
+    const start = await windowProps(app, win);
     if (start.minimized !== false || start.visible !== true) {
       await invoke(app, win, "show");
-      await app.waitFor(async () => {
-        start = await windowProps(app, win);
-        if (start.minimized !== false || start.visible !== true) {
-          throw new Error(
-            `window not in start state: visible=${start.visible} minimized=${start.minimized}`);
-        }
-      }, { timeout: 5000, interval: 250, description: "window shown and not minimized" });
+      await assertWindowState(app, win, { visible: true, minimized: false },
+                              "window not in start state");
     }
 
+    // QAction::trigger emits triggered() synchronously into showMinimized.
     await invoke(app, action.id, "trigger", "triggering logosMinimizeAction");
-
-    await app.waitFor(async () => {
-      const { minimized } = await windowProps(app, win);
-      if (minimized !== true) {
-        throw new Error(`after trigger: minimized=${minimized} (expected true)`);
-      }
-    }, { timeout: 5000, interval: 250, description: "window minimized after Cmd+M action" });
+    await assertWindowState(app, win, { minimized: true }, "after trigger");
 
     await invoke(app, win, "showHideWindow");
-
-    await app.waitFor(async () => {
-      const { visible, minimized } = await windowProps(app, win);
-      if (minimized !== false || visible !== true) {
-        throw new Error(
-          `after tray toggle: visible=${visible} minimized=${minimized} ` +
-          `(expected visible=true minimized=false)`);
-      }
-    }, { timeout: 5000, interval: 250, description: "tray toggle restores the minimized window" });
-  } finally {
-    await invoke(app, win, "show");
-  }
+    await assertWindowState(app, win, { visible: true, minimized: false }, "after tray toggle");
+  });
 });
 
 // --- Window (A31) — hide-to-tray and restore preserves open docks ------------
@@ -3803,57 +3524,31 @@ test("window: Cmd+M minimize action is wired (macOS only)", async (app) => {
 test("window: hide-to-tray and restore preserves open docks", async (app) => {
   const welcome = await requireWelcomePage(app);
   const workspace = await requireWorkspace(app);
-  const startDockCount = await evalOn(app, workspace.id, "dockCount");
 
   // Open fixture A unless its dock is already open, so the test stands alone.
-  if (startDockCount !== 1) {
-    if (!(await openFixtureA(app, "A31", welcome.id, workspace.id))) return;
-  }
-  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
-  await app.waitFor(
-    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
-    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
-  );
+  const startDockCount = await ensureFixtureAOpen(app, "A31", welcome.id, workspace.id);
+  if (startDockCount === null) return;
+  await waitForTexts(app, [FIXTURE_A_TEXT], "fixture A payload text to render");
 
-  const win = await windowObject(app);
   try {
-    await invoke(app, win, "show");
-    await invoke(app, win, "showHideWindow");
-    await app.waitFor(async () => {
-      const { visible } = await windowProps(app, win);
-      if (visible !== false) {
-        throw new Error(`after hide toggle: visible=${visible} (expected false)`);
-      }
-    }, { timeout: 5000, interval: 250, description: "tray toggle hides the window" });
+    await withMainWindow(app, async (win) => {
+      await invoke(app, win, "show");
+      await invoke(app, win, "showHideWindow");
+      await assertWindowState(app, win, { visible: false }, "after hide toggle");
 
-    await invoke(app, win, "showHideWindow");
-    await app.waitFor(async () => {
-      const { visible, minimized } = await windowProps(app, win);
-      if (visible !== true || minimized !== false) {
-        throw new Error(
-          `after show toggle: visible=${visible} minimized=${minimized} ` +
-          `(expected visible=true minimized=false)`);
-      }
-    }, { timeout: 5000, interval: 250, description: "tray toggle restores the window" });
+      await invoke(app, win, "showHideWindow");
+      await assertWindowState(app, win, { visible: true, minimized: false }, "after show toggle");
 
-    // The docks survived the hide: still one dock, fixture A still front-most
-    // and its payload still rendered.
-    await sleep(500);
-    assertEq(await evalOn(app, workspace.id, "dockCount"), 1,
-             "WorkspaceArea.dockCount after restore");
-    await waitForVisibleApp(app, welcome.id, FIXTURE_A.name,
-                            "fixture A to be front-most after restore");
-    await app.waitFor(
-      async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
-      { timeout: 10000, interval: 500,
-        description: "fixture A payload text to render after restore" }
-    );
-
+      // The docks survived the hide: still one dock, fixture A still
+      // front-most and its payload still rendered.
+      await waitForDockCount(app, workspace.id, 1, "fixture A's dock to survive the restore");
+      await waitForVisibleApp(app, welcome.id, FIXTURE_A.name,
+                              "fixture A to be front-most after restore");
+      await waitForTexts(app, [FIXTURE_A_TEXT], "fixture A payload text to render after restore");
+    });
   } finally {
-    await invoke(app, win, "show");
-    if (startDockCount === 0) {
-      await closeFixtureADock(app, workspace.id, "fixture A dock to close after A31");
-    }
+    await restoreFixtureADock(app, workspace.id, startDockCount,
+                              "fixture A dock to close after A31");
   }
 });
 
@@ -3878,36 +3573,12 @@ test("window: hide-to-tray and restore preserves open docks", async (app) => {
 test("apps inspector: unloading the visible app closes its dock", async (app) => {
   const welcome = await requireWelcomePage(app);
   const workspace = await requireWorkspace(app);
-  const startDockCount = await evalOn(app, workspace.id, "dockCount");
 
   // Open fixture A unless its dock is already open, and prove the payload
   // renders, so the unload closes a dock that is really on screen.
-  if (startDockCount !== 1) {
-    if (!(await openFixtureA(app, "A32", welcome.id, workspace.id))) return;
-  }
-  await waitForVisibleApp(app, welcome.id, FIXTURE_A.name, "fixture A to be front-most");
-  await app.waitFor(
-    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
-    { timeout: 10000, interval: 500, description: "fixture A payload text to render" }
-  );
-
-  // The badge is read from the source model (StatusTextRole is what the row's
-  // ModuleStatusBadge renders), on the welcome anchor where `backend` is in
-  // scope, rather than from the table's text: the model is instantiated
-  // whatever section is current.
-  const modelRow = async () => JSON.parse(await evalOn(app, welcome.id, `(() => {
-    const m = backend.uiModulesModel;
-    for (let i = 0; i < m.rowCount(); i += 1) {
-      const idx = m.index(i, 0);
-      if (m.data(idx, ${A18_ROLES.name}) === ${JSON.stringify(FIXTURE_A.name)}) {
-        return JSON.stringify({
-          isLoaded: m.data(idx, ${A18_ROLES.isLoaded}),
-          statusText: m.data(idx, ${A18_ROLES.statusText}),
-        });
-      }
-    }
-    return "null";
-  })()`));
+  const startDockCount = await ensureFixtureAOpen(app, "A32", welcome.id, workspace.id);
+  if (startDockCount === null) return;
+  await waitForTexts(app, [FIXTURE_A_TEXT], "fixture A payload text to render");
 
   // Settings → Apps Inspector with the shared search empty, so the row is in
   // the proxy whatever an earlier test typed.
@@ -3915,27 +3586,15 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
   await (await searchFieldOn(app, "settings.searchField")).normalize();
   await requireObject(app, "appsInspector.table");
 
-  // The table populates asynchronously, and a load flip rebuilds the row's
-  // delegate, so the toggle is found and clicked in the same read. Signal-
-  // level click (see "Shared helpers"); callMethod ignores `enabled`, so the
-  // not-busy check is part of the click.
-  await app.waitFor(async () => {
-    const toggle = await findByObjectName(app.inspector, FIXTURE_A_TOGGLE);
-    if (!toggle) throw new Error(`${FIXTURE_A_TOGGLE} not in the QML tree`);
-    assertEq(await evalOn(app, toggle.id, "text"), "Unload", `${FIXTURE_A_TOGGLE} text`);
-    assertEq(await evalOn(app, toggle.id, "enabled"), true, `${FIXTURE_A_TOGGLE} enabled`);
-    await invoke(app, toggle.id, "clicked", "clicking the toggle to unload fixture A");
-  }, { timeout: 10000, interval: 500, description: `${FIXTURE_A_TOGGLE} to read "Unload"` });
+  await clickLoadToggle(app, FIXTURE_A.name, "Unload", "clicking the toggle to unload fixture A");
 
-  // Gate, after the unload: dock gone, active app cleared, badge "Not loaded".
+  // Gate, after the unload: dock gone, active app cleared, badge "Not loaded"
+  // — the badge read from the source model (StatusTextRole is what the row's
+  // ModuleStatusBadge renders) rather than from the table's text: the model
+  // is instantiated whatever section is current.
   await waitForDockCount(app, workspace.id, 0, "unload to close fixture A's dock");
   await waitForVisibleApp(app, welcome.id, "", "currentVisibleApp to clear after unload");
-  await app.waitFor(async () => {
-    const row = await modelRow();
-    if (row === null) throw new Error(`${FIXTURE_A.name} not in backend.uiModulesModel`);
-    assertEq(row.isLoaded, false, "uiModulesModel isLoaded after unload");
-    assertEq(row.statusText, "Not loaded", "status badge text after unload");
-  }, { timeout: 10000, interval: 500, description: 'row to read "Not loaded" after unload' });
+  await expectUiModuleRow(app, welcome.id, FIXTURE_A.name, false, "after unload");
 
   // The welcome page is back once the workspace section is current again.
   await evalOn(app, welcome.id, "backend.setCurrentActiveSectionIndex(0)");
@@ -3944,10 +3603,7 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
       throw new Error("welcome page is still hidden after the unload");
     }
   }, { timeout: 10000, interval: 250, description: "welcome page to show after unload" });
-  await app.waitFor(
-    async () => { await app.expectTexts(["Welcome to Basecamp"]); },
-    { timeout: 10000, interval: 500, description: '"Welcome to Basecamp" greeting to render' }
-  );
+  await waitForTexts(app, ["Welcome to Basecamp"], '"Welcome to Basecamp" greeting to render');
 
   // Reload through the tile: the unload moved it to the unloaded Repeater
   // (same objectName, new object), so presence is a retried re-find.
@@ -3956,14 +3612,9 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
   if (!(await openFixtureA(app, "A32", welcome.id, workspace.id))) {
     throw new Error(`${FIXTURE_A_TILE} was present a moment ago but openFixtureA gave up`);
   }
-  await app.waitFor(
-    async () => { await app.expectTexts([FIXTURE_A_TEXT]); },
-    { timeout: 10000, interval: 500, description: "fixture A payload text to render after reload" }
-  );
+  await waitForTexts(app, [FIXTURE_A_TEXT], "fixture A payload text to render after reload");
 
-  if (startDockCount === 0) {
-    await closeFixtureADock(app, workspace.id, "fixture A dock to close after A32");
-  }
+  await restoreFixtureADock(app, workspace.id, startDockCount, "fixture A dock to close after A32");
 });
 
 // --- App-to-app intents -----------------------------------------------------
@@ -3971,6 +3622,13 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
 // These need the fixtures in tests/fixtures/intents staged into the app's
 // --user-dir (see stage.sh). They are skipped when the fixtures are absent so a
 // plain `node tests/ui-tests.mjs` against a normal install still runs green.
+
+// The raw lookup behind the two anchors below: the requester view's root, or
+// null while it is not up. Only openIntentRequester's retry may act on null.
+async function findRequesterAnchor(app) {
+  const found = await findByObjectName(app.inspector, "requesterRoot");
+  return found ? found.id : null;
+}
 
 // ALWAYS resolve an objectId from the requester's own view before evaluating.
 // The inspector falls back to the FIRST QQuickWidget's root when no objectId is
@@ -3983,16 +3641,14 @@ test("apps inspector: unloading the visible app closes its dock", async (app) =>
 // that had asserted nothing. A fixture that is not there is a broken test run,
 // not a reason to skip.
 async function requesterAnchor(app) {
-  const found = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "requesterRoot",
-  });
-  if (!found.matches || !found.matches.length) {
+  const anchor = await findRequesterAnchor(app);
+  if (anchor === null) {
     throw new Error(
       "intent fixture not loaded — expected an item with objectName " +
       "'requesterRoot'. Stage tests/fixtures/intents via stage.sh into the " +
       "--user-dir, and make sure the test opened the app first.");
   }
-  return found.matches[0].id;
+  return anchor;
 }
 
 // The fixtures are staged on disk but not loaded until something opens them.
@@ -4005,14 +3661,33 @@ async function openIntentRequester(app) {
   await app.click("Intent Requester");
   let anchor = null;
   await app.waitFor(async () => {
-    const found = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "requesterRoot",
-    });
-    if (!found.matches || !found.matches.length)
-      throw new Error("requester view not up yet");
-    anchor = found.matches[0].id;
+    anchor = await findRequesterAnchor(app);
+    if (anchor === null) throw new Error("requester view not up yet");
   }, { timeout: 20000, interval: 500, description: "intent requester view" });
   return anchor;
+}
+
+// The chooser (confirmation) dialog; `missing` names what its absence means.
+function waitForIntentChooser(app, description, missing) {
+  return app.waitFor(async () => {
+    if (!(await findByObjectName(app.inspector, "intentChooserDialog"))) {
+      throw new Error(missing);
+    }
+  }, { timeout: 8000, interval: 250, description });
+}
+
+// Clicks a provider's chooser delegate BY OBJECT ID, never by text.
+//
+// app.click() is a breadth-first substring walk that stops at the first
+// clickable match, and "Provider B" also labels the app's SIDEBAR launcher.
+// Clicking that launches the app directly and leaves the request unresolved —
+// which looked exactly like a broken dispatch, and is the same trap this file
+// already documents for "Package Manager". Throws before clicking when the
+// delegate is absent, so it is safe to retry.
+async function chooseProvider(app, provider, missing = `chooser has no delegate for ${provider}`) {
+  const delegate = await findByObjectName(app.inspector, `intentProvider_${provider}`);
+  if (!delegate) throw new Error(missing);
+  await app.inspector.send("click", { objectId: delegate.id });
 }
 
 // Returns null when that provider has no view up at all, and its lastHandled
@@ -4062,17 +3737,8 @@ async function dispatchToManualProvider(app, anchor, intent) {
     objectId: anchor, expression: `root.request("${intent}")`,
   });
 
-  let delegateId = null;
-  await app.waitFor(async () => {
-    const d = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "intentProvider_intent_provider_manual",
-    });
-    if (!d.matches || !d.matches.length)
-      throw new Error("chooser has no delegate for intent_provider_manual");
-    delegateId = d.matches[0].id;
-  }, { timeout: 8000, interval: 250, description: "confirmation dialog" });
-
-  await app.inspector.send("click", { objectId: delegateId });
+  await app.waitFor(() => chooseProvider(app, "intent_provider_manual"),
+    { timeout: 8000, interval: 250, description: "confirmation dialog" });
 
   await app.waitFor(async () => {
     const visible = await currentVisibleApp(app);
@@ -4140,26 +3806,8 @@ test("intents: two providers raise the chooser, and only the chosen one hears", 
   // The chooser must appear — with no chooser mounted the broker fails closed,
   // so this also covers the guard that used to be defeated by the shell's
   // signal re-emit.
-  await app.waitFor(async () => {
-    const d = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "intentChooserDialog",
-    });
-    if (!d.matches || !d.matches.length) throw new Error("chooser did not appear");
-  }, { timeout: 8000, interval: 250, description: "intent chooser" });
-
-  // Click the delegate BY OBJECT ID, never by text.
-  //
-  // app.click() is a breadth-first substring walk that stops at the first
-  // clickable match, and "Provider B" also labels the app's SIDEBAR launcher.
-  // Clicking that launches the app directly and leaves the request unresolved —
-  // which looked exactly like a broken dispatch, and is the same trap this file
-  // already documents for "Package Manager".
-  const delegate = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "intentProvider_intent_provider_b",
-  });
-  if (!delegate.matches || !delegate.matches.length)
-    throw new Error("chooser has no delegate for intent_provider_b");
-  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+  await waitForIntentChooser(app, "intent chooser", "chooser did not appear");
+  await chooseProvider(app, "intent_provider_b");
 
   // POSITIVE CONTROL AND ISOLATION IN ONE BODY. Asserting only that B stayed
   // empty passes trivially when nothing works at all — the requester's success
@@ -4197,20 +3845,9 @@ test("intents: a single provider still asks before dispatching", async (app) => 
     objectId: anchor, expression: 'root.request("test.solo")',
   });
 
-  await app.waitFor(async () => {
-    const d = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "intentChooserDialog",
-    });
-    if (!d.matches || !d.matches.length)
-      throw new Error("single provider dispatched without asking");
-  }, { timeout: 8000, interval: 250, description: "confirmation for one provider" });
-
-  const delegate = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "intentProvider_intent_provider_a",
-  });
-  if (!delegate.matches || !delegate.matches.length)
-    throw new Error("the sole provider is not offered in the dialog");
-  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+  await waitForIntentChooser(app, "confirmation for one provider",
+                             "single provider dispatched without asking");
+  await chooseProvider(app, "intent_provider_a", "the sole provider is not offered in the dialog");
 
   await app.waitFor(async () => {
     const r = await lastResult(app, anchor);
@@ -4311,19 +3948,8 @@ test("intents: a payload the provider declared unusable never reaches it", async
   // never at submit: at submit several providers may describe one intent
   // differently, and testing all their specs would answer "how many providers
   // are there".
-  await app.waitFor(async () => {
-    const d = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "intentChooserDialog",
-    });
-    if (!d.matches || !d.matches.length) throw new Error("no confirmation shown");
-  }, { timeout: 8000, interval: 250, description: "confirmation for one provider" });
-
-  const delegate = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "intentProvider_intent_provider_a",
-  });
-  if (!delegate.matches || !delegate.matches.length)
-    throw new Error("the sole provider is not offered in the dialog");
-  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+  await waitForIntentChooser(app, "confirmation for one provider", "no confirmation shown");
+  await chooseProvider(app, "intent_provider_a", "the sole provider is not offered in the dialog");
 
   await app.waitFor(async () => {
     const r = await lastResult(app, anchor);
@@ -4361,19 +3987,8 @@ test("intents: every permitted data shape survives the round trip", async (app) 
   });
 
   // test.roundtrip has one provider, and one provider still confirms.
-  await app.waitFor(async () => {
-    const d = await app.inspector.send("findByProperty", {
-      property: "objectName", value: "intentChooserDialog",
-    });
-    if (!d.matches || !d.matches.length) throw new Error("no confirmation shown");
-  }, { timeout: 8000, interval: 250, description: "chooser for test.roundtrip" });
-
-  const delegate = await app.inspector.send("findByProperty", {
-    property: "objectName", value: "intentProvider_intent_provider_a",
-  });
-  if (!delegate.matches || !delegate.matches.length)
-    throw new Error("provider_a not offered");
-  await app.inspector.send("click", { objectId: delegate.matches[0].id });
+  await waitForIntentChooser(app, "chooser for test.roundtrip", "no confirmation shown");
+  await chooseProvider(app, "intent_provider_a", "provider_a not offered");
 
   await app.waitFor(async () => {
     const r = await lastResult(app, anchor);
