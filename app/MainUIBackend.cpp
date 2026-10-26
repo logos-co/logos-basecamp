@@ -919,7 +919,9 @@ QString      MainUIBackend::storageState() const        { return m_packageCoordi
 QString      MainUIBackend::storageError() const        { return m_packageCoordinator->storageError(); }
 bool MainUIBackend::online() const
 {
-    if (qEnvironmentVariableIntValue("BASECAMP_FORCE_OFFLINE") == 1) return false;
+    // Test switch: 1 offline, 0 online (a sandbox has no network).
+    const QByteArray forced = qgetenv("BASECAMP_FORCE_OFFLINE");
+    if (forced == "1" || forced == "0") return forced == "0";
     const QNetworkInformation* info = QNetworkInformation::instance();
     if (!info) return true;
     const auto r = info->reachability();
