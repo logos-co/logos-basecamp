@@ -353,6 +353,22 @@ sections:
           qt_mcp: "logos-qt-mcp"
           launch_timeout: 300
           tests:
+            # A fresh user dir opens on first-run onboarding, over the whole
+            # window. "Let's go" takes the defaults; the same two steps open
+            # every doctest that starts from an empty user dir.
+            - name: "First-run onboarding shows"
+              action: expect_property
+              find_value: "onboardingQuickSetupButton"
+              property: "visible"
+              value: true
+              timeout: 60000
+              text: "A new user dir opens on Basecamp's first-run onboarding."
+
+            - name: "Let's go"
+              action: click_object
+              find_value: "onboardingQuickSetupButton"
+              text: "**Let's go** downloads from GitHub and Logos Storage and opens Basecamp."
+
             - name: "App window opens with the sidebar visible"
               action: wait_for
               texts: ["Applications", "Settings"]

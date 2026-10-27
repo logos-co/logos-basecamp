@@ -41,7 +41,10 @@ Item {
         property string pendingRemoveUrl: ""
 
         readonly property var downloadSourceValues: ["any", "logos", "http"]
-        readonly property var downloadSourceLabels: [qsTr("Any"), qsTr("Logos only"), qsTr("HTTP only")]
+        // The onboarding's words for the same choice.
+        readonly property var downloadSourceLabels: [qsTr("GitHub and Logos Storage"),
+                                                     qsTr("Logos Storage only"),
+                                                     qsTr("GitHub only")]
         // The pick, shown until the downloader confirms it.
         property string pendingDownloadSource: ""
         readonly property int downloadSourceIndex: Math.max(0,
@@ -214,7 +217,7 @@ Item {
                 LogosComboBox {
                     objectName: "repositories.downloadSource"
                     Layout.topMargin: Theme.spacing.tiny
-                    Layout.preferredWidth: 220
+                    Layout.preferredWidth: 260
                     Layout.preferredHeight: 40
                     model: d.downloadSourceLabels
                     currentIndex: d.downloadSourceIndex

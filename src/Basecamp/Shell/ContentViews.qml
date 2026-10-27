@@ -107,6 +107,9 @@ Item {
             hostVariant:    backend.appsModel ? backend.appsModel.hostVariant : ""
             repositories:   backend.repositories
             loading:        backend.appsLoading
+            online:         backend.online !== false
+            downloadSource: backend.downloadSource || ""
+            storageState:   backend.storageState || ""
             onAppClicked: function(name, repositoryUrl) {
                 // Primary click — fast-path launch for installed apps.
                 backend.openApp(name, repositoryUrl, ({}), true)

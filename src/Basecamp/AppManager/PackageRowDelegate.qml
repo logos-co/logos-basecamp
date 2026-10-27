@@ -57,6 +57,14 @@ ItemDelegate {
         readonly property real dlTotal:
             root.appRow ? (root.appRow.downloadTotal || 0) : 0
         readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        readonly property string transport: root.appRow ? (root.appRow.downloadTransport || "") : ""
+        readonly property string transportCaption: d.rowStage === InstallStage.Downloading
+            ? DownloadFormat.transportCaption(d.transport, root.appRow && root.appRow.downloadFellBack)
+            : ""
+        readonly property url badgeIcon: d.rowStage === InstallStage.Downloading
+            ? DownloadFormat.transportIcon(d.transport) : ""
+        readonly property bool findingPeers: d.rowStage === InstallStage.Downloading
+            && !d.downloadDone && DownloadFormat.findingPeers(d.transport, d.dlReceived)
         // A determinate bar claims a FRACTION, so it needs a real sample.
         // dlTotal is seeded from the catalog when the plan is registered —
         // before any transfer — so gating on it alone parked the bar at 0%.
@@ -193,6 +201,7 @@ ItemDelegate {
             id: descLabel
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
+            objectName: "packageRowDescription"
             text: root.appRow ? (root.appRow.description || "") : ""
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textTertiary
@@ -208,6 +217,7 @@ ItemDelegate {
 
         LogosBadge {
             id: stageBadge
+            objectName: "packageRowStageBadge"
             TextMetrics {
                 id: widestInstallLabel
                 font: stageBadge.labelItem.font
@@ -215,7 +225,17 @@ ItemDelegate {
             }
             property int pillWidth: (d.rowStage === InstallStage.Downloading || d.rowStage === InstallStage.Downloaded || d.rowStage === InstallStage.Queued || d.rowStage === InstallStage.Installing)
                 ? Math.ceil(widestInstallLabel.width) + leftPadding + rightPadding
+                  + (d.badgeIcon.toString().length > 0 ? DownloadFormat.badgeIconWidth : 0)
                 : implicitWidth
+            // Where the bytes come from, at the start of the progress.
+            iconSource: d.badgeIcon
+
+            HoverHandler { id: sourceHover }
+            LogosToolTip {
+                text: d.rowStage === InstallStage.Downloading ? d.transportCaption : ""
+                placement: LogosToolTip.Top
+                visible: sourceHover.hovered && text.length > 0
+            }
             Behavior on pillWidth {
                 NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
             }
@@ -224,6 +244,7 @@ ItemDelegate {
             text: {
                 if (d.isError) return root.selectable ? qsTr("Unavailable") : qsTr("Conflict")
                 if (d.hasProgress) return DownloadFormat.label(d.dlReceived, d.dlTotal)
+                if (d.findingPeers) return qsTr("Finding peers…")
                 switch (d.rowStage) {
                 case InstallStage.Downloading: return qsTr("Downloading…")
                 case InstallStage.Downloaded:  return qsTr("Downloaded")

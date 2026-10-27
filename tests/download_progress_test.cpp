@@ -446,10 +446,13 @@ private slots:
             if (r.contains(AppsModel::DownloadReceivedRole)) { roles = r; break; }
         }
         QVERIFY2(!roles.isEmpty(), "no dataChanged carried the progress roles");
-        // The per-package pair, the plan pair, and the derived session
-        // stage. Still narrow — the point is that a row's other bindings
-        // aren't churned several times a second, not the exact count.
-        QCOMPARE(roles.size(), 5);
+        // The per-package pair, the plan pair, the derived session stage,
+        // and where the bytes come from (per package and per plan). Still
+        // narrow — the point is that a row's other bindings aren't churned
+        // several times a second, not the exact count.
+        QCOMPARE(roles.size(), 9);
+        QVERIFY(roles.contains(AppsModel::DownloadTransportRole));
+        QVERIFY(roles.contains(AppsModel::PlanDownloadTransportRole));
         QVERIFY(roles.contains(AppsModel::DownloadReceivedRole));
         QVERIFY(roles.contains(AppsModel::DownloadTotalRole));
         QVERIFY(roles.contains(AppsModel::PlanDownloadReceivedRole));
@@ -475,6 +478,65 @@ private slots:
         QSignalSpy spy(&model, &QAbstractItemModel::dataChanged);
         reg.setDownloadProgress("wallet_ui", 2048, 4096);
         QCOMPARE(spy.count(), 2);
+    }
+
+    // ── Where the bytes come from ───────────────────────────────────────
+
+    void theTransportIsRecordedWithTheBytes()
+    {
+        InstallRegistry reg;
+        beginDownloading(reg, "wallet_ui");
+        reg.setDownloadProgress("wallet_ui", 0, 4096, "logos");
+        QCOMPARE(reg.downloadTransport("wallet_ui"), QStringLiteral("logos"));
+        QVERIFY(!reg.downloadFellBack("wallet_ui"));
+    }
+
+    // Logos Storage could not serve it: the next sample says https and the
+    // count starts over, which the row explains rather than jumping to 0.
+    void httpsAfterLogosIsAFallback()
+    {
+        InstallRegistry reg;
+        beginDownloading(reg, "wallet_ui");
+        reg.setDownloadProgress("wallet_ui", 0, 4096, "logos");
+        reg.setDownloadProgress("wallet_ui", 0, 4096, "http");
+        QCOMPARE(reg.downloadTransport("wallet_ui"), QStringLiteral("http"));
+        QVERIFY(reg.downloadFellBack("wallet_ui"));
+    }
+
+    void httpsFromTheStartIsNoFallback()
+    {
+        InstallRegistry reg;
+        beginDownloading(reg, "wallet_ui");
+        reg.setDownloadProgress("wallet_ui", 0, 4096, "http");
+        reg.setDownloadProgress("wallet_ui", 2048, 4096, "http");
+        QVERIFY(!reg.downloadFellBack("wallet_ui"));
+    }
+
+    // A downloader that predates the transport sends none: keep what is known.
+    void aSampleWithoutATransportKeepsTheLastOne()
+    {
+        InstallRegistry reg;
+        beginDownloading(reg, "wallet_ui");
+        reg.setDownloadProgress("wallet_ui", 0, 4096, "logos");
+        reg.setDownloadProgress("wallet_ui", 1024, 4096);
+        QCOMPARE(reg.downloadTransport("wallet_ui"), QStringLiteral("logos"));
+    }
+
+    // The app's row speaks for the package on the wire now.
+    void thePlanReportsThePackageDownloadingNow()
+    {
+        InstallRegistry reg;
+        reg.beginPlan("wallet_ui", {
+            {"wallet_ui",     "1.0", "H_ui", 1000},
+            {"wallet_module", "1.0", "H_mod", 4000},
+        });
+
+        reg.setDownloadProgress("wallet_module", 0, 4000, "logos");
+        QCOMPARE(reg.planDownloadTransport("wallet_ui"), QStringLiteral("logos"));
+
+        reg.setDownloadProgress("wallet_module", 0, 4000, "http");
+        QCOMPARE(reg.planDownloadTransport("wallet_ui"), QStringLiteral("http"));
+        QVERIFY(reg.planDownloadFellBack("wallet_ui"));
     }
 };
 
