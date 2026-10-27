@@ -539,6 +539,15 @@
             standaloneApp = appStandalone;
             lgpm = logos-package-manager.packages.${system}.cli;
           };
+          # The same around the portable build — what users run — with the
+          # portable lgpm, which installs portable variants. What
+          # logos-module-builder's `.#ui-dev-portable` launches.
+          dev-portable = import ./nix/dev.nix {
+            inherit pkgs system logosQtMcp;
+            standaloneApp = appStandalonePortableBundle;
+            lgpm = logos-package-manager.packages.${system}.cli-portable;
+            portable = true;
+          };
 
           # Basecamp against the fixture-backed mock — no Logos runtime at all.
           # Run: nix run .#app-mock        (see mock/README.md)
@@ -803,6 +812,10 @@
         dev = {
           type = "app";
           program = "${self.packages.${system}.dev}/bin/logos-basecamp-dev";
+        };
+        dev-portable = {
+          type = "app";
+          program = "${self.packages.${system}.dev-portable}/bin/logos-basecamp-dev-portable";
         };
         bin-bundle-dir = {
           type = "app";

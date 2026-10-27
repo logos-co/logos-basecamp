@@ -21,16 +21,22 @@
 #
 # Everything else goes to LogosBasecamp. The dependencies are installed by
 # devDeps.nix; the version check is standalone mode's own.
-{ pkgs, system, standaloneApp, logosQtMcp, lgpm }:
+#
+# `portable`: `logos-basecamp-dev-portable` (`nix run .#dev-portable`), the same
+# command around the portable build — what users run. It loads only portable
+# package variants, so --module must be an `#install-portable`, --dep-package a
+# portable .lgx, and --dep / --app are built as `#install-portable`.
+{ pkgs, system, standaloneApp, logosQtMcp, lgpm, portable ? false }:
 
 let
+  installAttr = if portable then "install-portable" else "install";
   launch = pkgs.writeShellScript "logos-basecamp-dev-launch" ''
     mapfile -t args < "$BASECAMP_DEV_ARGS"
     exec ${standaloneApp}/bin/LogosBasecamp "''${args[@]}" --user-dir "$BASECAMP_TEST_USER_DIR" "$@"
   '';
 in
 pkgs.writeShellApplication {
-  name = "logos-basecamp-dev";
+  name = if portable then "logos-basecamp-dev-portable" else "logos-basecamp-dev";
   runtimeInputs = [ pkgs.jq pkgs.coreutils ];
   text = ''
     modules=()
@@ -105,10 +111,10 @@ pkgs.writeShellApplication {
         fi
       done
 
-      install=$(nix build "$locked#install" "''${overrides[@]}" \
+      install=$(nix build "$locked#${installAttr}" "''${overrides[@]}" \
         --no-link --print-out-paths --no-write-lock-file)
       if [ ! -e "$install/plugins/$appName" ] && [ ! -e "$install/modules/$appName" ]; then
-        echo "--app $spec: $ref#install has no module named $appName" >&2
+        echo "--app $spec: $ref#${installAttr} has no module named $appName" >&2
         exit 1
       fi
       modules+=("$install")
@@ -127,6 +133,7 @@ pkgs.writeShellApplication {
           pkgs = import ${pkgs.path} { system = \"${system}\"; };
           system = \"${system}\";
           lgpm = builtins.storePath \"${lgpm}\";
+          portable = ${pkgs.lib.boolToString portable};
         } {
           packages = [ $packageEntries ];
           deps = [ $depEntries ];

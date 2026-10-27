@@ -232,6 +232,11 @@ would silently replace the version under test. Dependencies are installed by
 `nix/devDeps.nix`: `--dep-package`s with lgpm, the rest from each one's
 `packages.<system>.install`.
 
+`nix run .#dev-portable` is the same command around the portable build — what
+users run — with the portable lgpm. A portable Basecamp loads only portable
+variants, so it expects an `#install-portable` for `--module` and portable
+`.lgx` packages, and builds `--dep` / `--app` as `#install-portable`.
+
 ##### From a module's repo
 
 logos-module-builder's `nix run .` and `.#ui-dev` launch `dev` with the module,
@@ -244,6 +249,7 @@ flake named by `LOGOS_BASECAMP`; `LOGOS_BASECAMP_DEV` names a prebuilt one.
 nix run .                                              # published Basecamp
 LOGOS_BASECAMP=path:../logos-basecamp nix run .        # a local checkout
 nix build .#ui-dev && ./result/bin/run-logos-standalone-ui   # + QML hot reload
+nix build .#ui-dev-portable && ./result/bin/run-logos-standalone-ui-portable   # the portable build (dev-portable)
 nix run . -- --app blockchain_ui=path:../logos-blockchain-ui   # + another app
 nix run .#ui-tests                                     # tests/*.mjs, headless
 ```

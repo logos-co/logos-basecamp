@@ -12,7 +12,7 @@
 # module's dependencies are read from its flake's `config.dependencies`
 # (logos-module-builder), else its metadata.json, and resolved through ITS
 # flake inputs — so each comes at the revision its dependant's lock pins.
-{ pkgs, system, lgpm ? null }:
+{ pkgs, system, lgpm ? null, portable ? false }:
 
 { packages ? []   # [ { name; package; } ] — .lgx packages, ready-built
 , deps ? []       # [ { name; flake; } ] — dependencies to resolve from source
@@ -52,8 +52,9 @@ let
   packageNames = map (p: p.name) packages;
   resolved = walk (deps ++ lib.concatMap childrenOf apps) (exclude ++ packageNames) [];
 
-  installOf = d: d.flake.packages.${system}.install or (throw
-    "standalone deps: ${d.name} has no packages.${system}.install");
+  installAttr = if portable then "install-portable" else "install";
+  installOf = d: d.flake.packages.${system}.${installAttr} or (throw
+    "standalone deps: ${d.name} has no packages.${system}.${installAttr}");
 in
 pkgs.runCommand "standalone-deps" {
   nativeBuildInputs = lib.optional (packages != []) (
