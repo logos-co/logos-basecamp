@@ -261,7 +261,9 @@ for a flake that has Basecamp as an input. Modules use `nix run .#ui-tests`
 instead. Basecamp's own checks use it: `standalone-test` (a QML-only app
 calling a core dependency through the bridge), `standalone-backend-test` (the
 module builder's `ui-qml-backend` template, backend in ui-host),
-and `standalone-rejects-module-dir`.
+`standalone-module-backend-test` (the same `.rep` backend as a core module:
+module context, no core access for the view, another app refused, unloaded on
+close) and `standalone-rejects-module-dir`.
 
 ##### Moving from `logos-standalone-app`
 

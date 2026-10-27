@@ -259,6 +259,9 @@ private:
     void reloadLoadedPluginIcon(const QString& name, QWidget* widget) const;
     void loadLegacyUiModule(const QString& moduleName);
     QString resolveQmlViewPath(const QVariantMap& meta) const;
+    // The core module a ui_qml app's backend runs as ("backend" in its
+    // metadata.json), or empty for a ui-host or QML-only app.
+    QString backendModuleOf(const QVariantMap& meta) const;
     // Open the profile's appsToOpen once, after the first scan.
     void openStartupApps();
     QString getPluginPath(const QString& name) const;
@@ -326,6 +329,9 @@ private:
     // Wiring
     LogosAPI*          m_logosAPI;          // not owned
     CoreModuleManager* m_coreModuleManager; // not owned (sibling Qt child)
+    // App -> the core module its backend runs as. Unloaded with the app.
+    QHash<QString, QString> m_moduleBackends;
+    void unloadModuleBackendOf(const QString& appName);
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator
 
     // Load parked on dependencyDataReadyChanged; empty when idle. Mirrors

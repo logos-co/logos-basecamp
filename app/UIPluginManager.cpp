@@ -1,4 +1,6 @@
 #include "UIPluginManager.h"
+#include <QJsonObject>
+#include <QJsonDocument>
 
 #include "IntentBridgeAdapter.h"
 #include "AppsModel.h"
@@ -345,6 +347,9 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         request.iconPath = pluginIconUrl(moduleName, true);
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
+        request.backendModule = backendModuleOf(meta);
+        if (!request.backendModule.isEmpty())
+            m_moduleBackends.insert(moduleName, request.backendModule);
         request.coreDependencies = meta.value("dependencies").toList();
         request.optionalCoreDependencies = meta.value("optionalDependencies").toList();
 
@@ -425,6 +430,8 @@ void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& err
 {
     // noquote(): keep multi-line QML errors readable in the session log.
     qWarning().noquote() << "Failed to load UI module" << name << ":\n" << error;
+    // The backend may already be running even though the view never came up.
+    unloadModuleBackendOf(name);
     // Surface to the user, not just the log (forwarded to the QML overlay).
     emit pluginLoadFailedNotice(name, error);
 }
@@ -539,6 +546,7 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
         m_viewModuleHosts[moduleName]->stop();
         delete m_viewModuleHosts.take(moduleName);
     }
+    unloadModuleBackendOf(moduleName);
 
     m_loadedUiModules.remove(moduleName);
     m_uiModuleWidgets.remove(moduleName);
@@ -1160,6 +1168,7 @@ void UIPluginManager::teardownUiPluginWidgetNow(const QString& moduleName)
         m_viewModuleHosts[moduleName]->stop();
         delete m_viewModuleHosts.take(moduleName);
     }
+    unloadModuleBackendOf(moduleName);
 
     m_loadedUiModules.remove(moduleName);
     m_uiModuleWidgets.remove(moduleName);
@@ -1192,6 +1201,34 @@ QString UIPluginManager::getPluginType(const QString& name) const
 bool UIPluginManager::isQmlPlugin(const QString& name) const
 {
     return getPluginType(name) == QStringLiteral("ui_qml");
+}
+
+void UIPluginManager::unloadModuleBackendOf(const QString& appName)
+{
+    const QString backend = m_moduleBackends.take(appName);
+    if (backend.isEmpty() || !m_coreModuleManager) return;
+    if (m_shuttingDown) {
+        m_coreModuleManager->unloadModule(backend);
+        return;
+    }
+    QMetaObject::invokeMethod(this, [this, backend] {
+        if (m_coreModuleManager && m_coreModuleManager->unloadModule(backend)) {
+            qDebug() << "Unloaded backend module" << backend;
+            emit coreModulesChanged();
+        }
+    }, Qt::QueuedConnection);
+}
+
+QString UIPluginManager::backendModuleOf(const QVariantMap& meta) const
+{
+    QString backend = meta.value("backend").toString();
+    if (backend.isEmpty()) {
+        QFile file(QDir(meta.value("installDir").toString()).filePath("metadata.json"));
+        if (file.open(QIODevice::ReadOnly))
+            backend = QJsonDocument::fromJson(file.readAll()).object()
+                          .value(QStringLiteral("backend")).toString();
+    }
+    return backend;
 }
 
 QString UIPluginManager::resolveQmlViewPath(const QVariantMap& meta) const

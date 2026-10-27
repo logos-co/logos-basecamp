@@ -37,6 +37,9 @@ public:
     QStringList loadedModules() const;
     // Loads with forward dependencies resolved. Returns true on success.
     bool loadModule(const QString& name);
+    // A module file outside the modules dirs (a UI app's in-package backend);
+    // returns the name it registered under, or empty.
+    QString registerModuleFile(const QString& path);
     // Returns true on success. Does NOT cascade — see
     // unloadModuleWithDependents.
     bool unloadModule(const QString& name);

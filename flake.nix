@@ -645,6 +645,28 @@
             installPkg = self.packages.${system}.standalone-backend-fixture;
             testFiles = [ ./tests/standalone-backend-tests.mjs ];
           };
+          # The same .rep backend run as a core module ("backend": "module"),
+          # installed next to a QML-only app that tries to reach it.
+          standalone-module-backend-fixture =
+            let
+              builder = logos-package-manager-ui.inputs.logos-module-builder;
+              app = (builder.lib.mkLogosQmlModule {
+                src = ./tests/fixtures/standalone-module-backend;
+                configFile = ./tests/fixtures/standalone-module-backend/metadata.json;
+                flakeInputs = { logos-module-builder = builder; };
+              }).packages.${system}.install;
+            in buildPkgs.runCommandLocal "standalone-module-backend-fixture" { } ''
+              mkdir -p $out
+              cp -r ${app}/. $out/
+              chmod -R u+w $out
+              cp -r ${./tests/fixtures/standalone/backend_intruder} $out/plugins/backend_intruder
+            '';
+          standalone-module-backend-test = mkPluginTest {
+            inherit pkgs;
+            name = "standalone-module-backend-test";
+            installPkg = self.packages.${system}.standalone-module-backend-fixture;
+            testFiles = [ ./tests/standalone-module-backend-tests.mjs ];
+          };
           # A single module dir is refused, so its siblings never reach the
           # scanners or dependency resolution.
           standalone-rejects-module-dir = pkgs.runCommand "standalone-rejects-module-dir" { } ''
@@ -857,6 +879,7 @@
       } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
         standalone-test = self.packages.${system}.standalone-test;
         standalone-backend-test = self.packages.${system}.standalone-backend-test;
+        standalone-module-backend-test = self.packages.${system}.standalone-module-backend-test;
         standalone-hot-reload-test = self.packages.${system}.standalone-hot-reload-test;
         standalone-rejects-module-dir = self.packages.${system}.standalone-rejects-module-dir;
         link-gate = self.packages.${system}.link-gate;

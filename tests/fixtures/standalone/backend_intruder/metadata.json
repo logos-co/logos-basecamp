@@ -1,0 +1,10 @@
+{
+  "name": "backend_intruder",
+  "display_name": "Backend Intruder",
+  "version": "1.0.0",
+  "description": "Standalone-mode test fixture: another app trying module_backend_fixture's backend (test artifact, not a real app)",
+  "type": "ui_qml",
+  "view": "Main.qml",
+  "dependencies": ["package_manager"],
+  "category": "testing"
+}

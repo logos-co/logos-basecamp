@@ -41,6 +41,7 @@ struct PluginLoadRequest {
     QString installDir;      // Module install directory (import paths root)
     QString qmlViewPath;     // Resolved QML view entry point
     QString mainFilePath;    // Backend plugin .so/.dylib path (empty if QML-only)
+    QString backendModule;   // Set when the backend runs as a core module ("backend" in metadata.json)
     QString hotReloadDir;    // Standalone --qml-source: rebuild the view on save
 };
 
@@ -88,6 +89,9 @@ private:
 
     // ui_qml module loading
     void loadUiQmlModule(const PluginLoadRequest& request);
+    void loadModuleBackendView(const PluginLoadRequest& request,
+                               const logos::ConsumerIdentity& consumer);
+    bool restrictBackendToView(const QString& backendModule, const QString& viewName);
     void loadQmlView(const PluginLoadRequest& request,
                      LogosQmlBridge* bridge,
                      ViewModuleHost* viewHost);

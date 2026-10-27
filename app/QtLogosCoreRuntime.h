@@ -22,6 +22,7 @@ public:
     QStringList loadedModules() const override;
     bool        loadModule(const QString& name, LoadPolicy policy) override;
     bool        unloadModule(const QString& name, bool withDependents) override;
+    QString     registerModuleFile(const QString& path) override;
     void        refreshModules() override;
     QVariantList allStats() const override;
 
