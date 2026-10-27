@@ -698,7 +698,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders;
+            inherit pkgs src logosPackageHeaders logosViewModuleRuntime;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 

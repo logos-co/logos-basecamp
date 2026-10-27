@@ -42,6 +42,10 @@ struct PluginLoadRequest {
     QString qmlViewPath;     // Resolved QML view entry point
     QString mainFilePath;    // Backend plugin .so/.dylib path (empty if QML-only)
     QString hotReloadDir;    // Standalone --qml-source: rebuild the view on save
+    // metadata.json `view_surface` (RFC-5): the backend renders its own
+    // surface, so ui-host runs as a GUI process on the host's nested
+    // compositor and the view shows it through Logos.Surface.
+    bool viewSurface = false;
 };
 
 class PluginLoader : public QObject {
@@ -69,6 +73,11 @@ public:
 
     bool isLoading(const QString& name) const;
     QStringList loadingPlugins() const;
+
+    // The one way to stop a ui-host: withdraws the module's surface token from
+    // the nested compositor first (RFC-5 rule 4), then ViewModuleHost::stop().
+    // UIPluginManager's unload and teardown paths call this rather than stop().
+    static void stopViewModuleHost(ViewModuleHost* viewHost);
 
 signals:
     void pluginLoaded(const QString& name, QWidget* widget,

@@ -14,12 +14,18 @@
 //     Logos.* namespace; the plugin doesn't get to answer for it.
 //
 // Extend this list when the design system publishes a new module.
+//
+// "Surface" is not from the design system: Logos.Surface is Basecamp's own
+// (app/surface/LogosSurfaceItem.*, RFC-3), registered from this executable.
+// It is listed here for the second use above — a plugin tree must not be able
+// to answer for Logos.Surface either.
 inline const QStringList& kSharedLogosModules()
 {
     static const QStringList v = {
         QStringLiteral("Theme"),
         QStringLiteral("Controls"),
         QStringLiteral("Icons"),
+        QStringLiteral("Surface"),
     };
     return v;
 }

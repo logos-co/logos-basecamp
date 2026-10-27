@@ -14,6 +14,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QMetaObject>
 #include <QPixmap>
 #include <QPointer>
@@ -42,6 +45,21 @@ namespace {
 // through the uninstall cascade that calls us, stall a package operation —
 // indefinitely.
 constexpr int kUnloadGraceMs = 3000;
+
+// metadata.json `view_surface` (RFC-5 Part A), read from the installed record
+// the way IntentRegistry reads `provides`/`uses`. Anything other than a literal
+// `true` on a module with a backend is false: an old builder passes the key
+// through untouched and an old host ignores it, so this must be as forgiving.
+bool readViewSurfaceFlag(const QString& installDir)
+{
+    if (installDir.isEmpty()) return false;
+    QFile file(QDir(installDir).filePath(QStringLiteral("metadata.json")));
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject()) return false;
+    const QJsonValue value = doc.object().value(QStringLiteral("view_surface"));
+    return value.isBool() && value.toBool();
+}
 
 } // namespace
 
@@ -343,8 +361,10 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
             }
         }
         request.iconPath = pluginIconUrl(moduleName, true);
-        if (hasBackendPlugin(moduleName))
+        if (hasBackendPlugin(moduleName)) {
             request.mainFilePath = meta.value("mainFilePath").toString();
+            request.viewSurface = readViewSurfaceFlag(request.installDir);
+        }
         request.coreDependencies = meta.value("dependencies").toList();
         request.optionalCoreDependencies = meta.value("optionalDependencies").toList();
 
@@ -536,7 +556,7 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
 
     // Stop view module host process if this was a view module
     if (m_viewModuleHosts.contains(moduleName)) {
-        m_viewModuleHosts[moduleName]->stop();
+        PluginLoader::stopViewModuleHost(m_viewModuleHosts[moduleName]);
         delete m_viewModuleHosts.take(moduleName);
     }
 
@@ -1157,7 +1177,7 @@ void UIPluginManager::teardownUiPluginWidgetNow(const QString& moduleName)
     if (m_qmlPluginWidgets.contains(moduleName) && widget) widget->deleteLater();
 
     if (m_viewModuleHosts.contains(moduleName)) {
-        m_viewModuleHosts[moduleName]->stop();
+        PluginLoader::stopViewModuleHost(m_viewModuleHosts[moduleName]);
         delete m_viewModuleHosts.take(moduleName);
     }
 

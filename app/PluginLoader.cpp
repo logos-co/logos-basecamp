@@ -32,8 +32,107 @@
 #include "logos_api.h"
 #include "logos_consumer.h"
 #include "restricted/QmlSandbox.h"
+#include "surface/LogosSurfaceItem.h"
+#include "surface/SurfacePolicy.h"
+#include "surface/SurfaceTransportSelector.h"
+#ifdef LOGOS_HAVE_WAYLAND_COMPOSITOR
+#include "surface/SurfaceCompositor.h"
+#endif
+#ifdef LOGOS_HAVE_SURFACE_CHANNEL
+#include "surface/SurfaceChannelHost.h"
+#endif
 #include "utils/DependencyEntry.h"
 #include <ViewModuleHost.h>
+
+namespace {
+
+// A view_surface backend (RFC-5) is spawned as a GUI process on the
+// SurfaceTransport the policy grants (RFC-6 §3): the host's nested
+// compositor (RFC-4) or a SurfaceHostSession of the channel host (RFC-7).
+// Denied, or with neither available, it still runs --gui and may open an
+// ordinary window; the Logos.Surface item then reports noCompositor/denied.
+ViewSpawnOptions spawnOptionsFor(const PluginLoadRequest& request)
+{
+    ViewSpawnOptions options;
+    if (!request.viewSurface) return options;
+    options.gui = true;
+    const SurfaceGrant grant = SurfacePolicy::decide(request);
+    if (!grant.allowed) {
+        qInfo() << "view_surface for" << request.name << "not granted:" << grant.denialReason;
+        return options;
+    }
+#ifdef LOGOS_HAVE_WAYLAND_COMPOSITOR
+    if (grant.transport == QLatin1String("wayland")) {
+        if (SurfaceCompositor* compositor = SurfaceCompositor::instance();
+            compositor && compositor->isAvailable()) {
+            options.surfaceSocket = compositor->socketName();
+            options.surfaceTransport = QStringLiteral("wayland");
+            return options;
+        }
+    }
+#endif
+#ifdef LOGOS_HAVE_SURFACE_CHANNEL
+    if (grant.transport == QLatin1String("channel")
+        || options.surfaceTransport.isEmpty()) {
+        SurfaceChannelHost* host = SurfaceChannelHost::instance();
+        host->setForcedShm(grant.shmOnly);
+        const QString server = host->open(request.name);
+        if (!server.isEmpty()) {
+            options.surfaceSocket = server;
+            options.surfaceTransport = QStringLiteral("channel");
+            return options;
+        }
+        qWarning() << "could not open a surface channel for" << request.name;
+    }
+#endif
+    return options;
+}
+
+// After spawn(), before the child can commit anything: the transport admits
+// a surface only under the token it expects from exactly this pid (RFC-4 §2,
+// RFC-7 §3), and the item learns which family to bind.
+void expectSurface(const PluginLoadRequest& request, ViewModuleHost* viewHost,
+                   const ViewSpawnOptions& spawnOptions)
+{
+    if (spawnOptions.surfaceTransport.isEmpty()) return;
+    SurfaceTransportSelector::record(request.name, spawnOptions.surfaceTransport);
+#ifdef LOGOS_HAVE_WAYLAND_COMPOSITOR
+    if (spawnOptions.surfaceTransport == QLatin1String("wayland")) {
+        if (SurfaceCompositor* compositor = SurfaceCompositor::existing())
+            compositor->expect(request.name, viewHost->surfaceToken(), viewHost->processId());
+    }
+#endif
+#ifdef LOGOS_HAVE_SURFACE_CHANNEL
+    if (spawnOptions.surfaceTransport == QLatin1String("channel")) {
+        if (SurfaceChannelHost* host = SurfaceChannelHost::existing())
+            host->expect(request.name, viewHost->surfaceToken(), viewHost->processId());
+    }
+#endif
+}
+
+// forget() before stop(): the transport must not read the disconnect that
+// follows as a lost surface (RFC-5 rule 4).
+void stopViewHost(ViewModuleHost* viewHost)
+{
+    if (!viewHost) return;
+#ifdef LOGOS_HAVE_WAYLAND_COMPOSITOR
+    if (SurfaceCompositor* compositor = SurfaceCompositor::existing())
+        compositor->forget(viewHost->surfaceToken());
+#endif
+#ifdef LOGOS_HAVE_SURFACE_CHANNEL
+    if (SurfaceChannelHost* host = SurfaceChannelHost::existing())
+        host->forget(viewHost->moduleName());
+#endif
+    SurfaceTransportSelector::forget(viewHost->moduleName());
+    viewHost->stop();
+}
+
+} // namespace
+
+void PluginLoader::stopViewModuleHost(ViewModuleHost* viewHost)
+{
+    stopViewHost(viewHost);
+}
 
 PluginLoader::PluginLoader(LogosAPI* logosAPI,
                            CoreModuleManager* coreModuleManager,
@@ -384,8 +483,14 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     // lose to them and capability_module would refuse with "auth token not
     // recognized".
     auto* viewHost = new ViewModuleHost(this);
-    if (!viewHost->spawn(request.name, request.mainFilePath, consumer.credential)) {
+    const ViewSpawnOptions spawnOptions = spawnOptionsFor(request);
+    if (!viewHost->spawn(request.name, request.mainFilePath, consumer.credential,
+                         spawnOptions)) {
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
+#ifdef LOGOS_HAVE_SURFACE_CHANNEL
+        if (SurfaceChannelHost* host = SurfaceChannelHost::existing())
+            host->forget(request.name);
+#endif
         delete viewHost;
         delete bridge;
         setLoading(request.name, false);
@@ -393,10 +498,17 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
             QStringLiteral("Failed to spawn ui-host for ") + request.name);
         return;
     }
+    expectSurface(request, viewHost, spawnOptions);
 
     auto onHostReady = [this, request, bridge, viewHost]() {
         bridge->setViewModuleSocket(request.name, viewHost->socketName(),
                                     viewHost->sourceName());
+        if (viewHost->isGui()) {
+            if (!viewHost->surfaceTokenConfirmed())
+                qWarning() << "ui-host for" << request.name
+                           << "did not confirm its surface token";
+            bridge->setViewModuleSurface(request.name, viewHost->surfaceToken());
+        }
         auto exitConn = std::make_shared<QMetaObject::Connection>(
             connect(viewHost, &ViewModuleHost::processExited, bridge,
                 [bridge, name = request.name](int) { bridge->notifyViewModuleCrashed(name); }));
@@ -406,7 +518,7 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
                 QObject::disconnect(*exitConn);
                 if (!ok) {
                     qWarning() << "Backend of" << request.name << "not ready:" << error;
-                    viewHost->stop();
+                    stopViewHost(viewHost);
                     viewHost->deleteLater();
                     delete bridge;
                     setLoading(request.name, false);
@@ -435,7 +547,7 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
             QObject::disconnect(*timeoutConn);
             timeout->deleteLater();
             qWarning() << "Timeout waiting for ui-host ready signal for" << request.name;
-            viewHost->stop();
+            stopViewHost(viewHost);
             viewHost->deleteLater();
             delete bridge;
             setLoading(request.name, false);
@@ -458,6 +570,10 @@ QQuickWidget* createSandboxedView(const PluginLoadRequest& request)
         QmlSandbox::configure(engine, request.installDir, request.qmlViewPath,
                               appLibDir, request.name);
         engine->setBaseUrl(QUrl::fromLocalFile(request.installDir + "/"));
+        // Which module this engine's view belongs to, for Logos.Surface: a
+        // property on the engine object, out of QML's reach, so a view can
+        // only ever ask for its own backend's surface (RFC-3).
+        LogosSurfaceItem::bindEngine(engine, request.name);
     }
     return qmlWidget;
 }
@@ -492,7 +608,7 @@ void PluginLoader::loadQmlView(const PluginLoadRequest& request,
             qWarning() << "Failed to compile ui_qml view" << request.name << ":" << errors;
             qmlWidget->deleteLater();
             delete bridge;
-            if (viewHost) { viewHost->stop(); delete viewHost; }
+            if (viewHost) { stopViewHost(viewHost); delete viewHost; }
             setLoading(request.name, false);
             emit pluginLoadFailed(request.name, errors);
         }
@@ -538,7 +654,7 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
             details += error.toString() + QStringLiteral("\n");
         }
         qmlWidget->deleteLater();
-        if (viewHost) { viewHost->stop(); delete viewHost; }
+        if (viewHost) { stopViewHost(viewHost); delete viewHost; }
         setLoading(request.name, false);
         emit pluginLoadFailed(request.name,
             QStringLiteral("Failed to load QML view for ") + request.name

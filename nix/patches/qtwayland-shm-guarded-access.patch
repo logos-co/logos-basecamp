@@ -1,0 +1,90 @@
+From: Logos Basecamp <basecamp@logos.co>
+Subject: [PATCH] compositor: guard wl_shm reads with begin_access/end_access
+
+SharedMemoryBuffer::image() returned a QImage that borrowed the client's
+mapped pixels, and toOpenGlTexture() uploaded from it, without the
+wl_shm_buffer_begin_access()/wl_shm_buffer_end_access() pair libwayland
+requires around every read of client memory. A client that truncates its
+pool after committing (or whose pool was never fully backed) made the
+compositor's render thread take SIGBUS. With the guard libwayland turns
+that fault into a protocol error that disconnects the client.
+
+- toOpenGlTexture() reads the borrowed image inside the guard, keeping the
+  single upload copy;
+- image() deep-copies inside the guard, so the software path
+  (createTextureFromImage) and every other caller never hold borrowed
+  pixels. Its contract ("returns an image") is unchanged.
+
+Carried by logos-basecamp (RFC-4 rev 2 H1) against qtwayland 6.9.2; also
+offered upstream.
+---
+--- a/src/compositor/wayland_wrapper/qwlclientbuffer_p.h
++++ b/src/compositor/wayland_wrapper/qwlclientbuffer_p.h
+@@ -104,6 +104,10 @@
+     QWaylandSurface::Origin origin() const  override;
+     QImage image() const override;
+ 
++    // The client's pixels without a copy; only valid between
++    // wl_shm_buffer_begin_access()/end_access() on the same thread.
++    QImage borrowedImage() const;
++
+ #if QT_CONFIG(opengl)
+     QOpenGLTexture *toOpenGlTexture(int plane = 0) override;
+ 
+--- a/src/compositor/wayland_wrapper/qwlclientbuffer.cpp
++++ b/src/compositor/wayland_wrapper/qwlclientbuffer.cpp
+@@ -103,7 +103,14 @@
+     wl_shm_pool_unref(pool);
+ }
+ 
+-QImage SharedMemoryBuffer::image() const
++// The pixels belong to the client, which may truncate the pool behind them at
++// any time: libwayland requires every read to sit between
++// wl_shm_buffer_begin_access() and wl_shm_buffer_end_access(), which turn the
++// SIGBUS that would otherwise kill the compositor into a disconnect of that
++// client. image() therefore never hands out borrowed pixels: it copies inside
++// the guard. toOpenGlTexture() below keeps the single upload copy by reading
++// the borrowed image inside its own guard.
++QImage SharedMemoryBuffer::borrowedImage() const
+ {
+     if (wl_shm_buffer *shmBuffer = wl_shm_buffer_get(m_buffer)) {
+         int width = wl_shm_buffer_get_width(shmBuffer);
+@@ -122,6 +129,17 @@
+     return QImage();
+ }
+ 
++QImage SharedMemoryBuffer::image() const
++{
++    wl_shm_buffer *shmBuffer = wl_shm_buffer_get(m_buffer);
++    if (!shmBuffer)
++        return QImage();
++    wl_shm_buffer_begin_access(shmBuffer);
++    QImage copy = borrowedImage().copy();
++    wl_shm_buffer_end_access(shmBuffer);
++    return copy;
++}
++
+ #if QT_CONFIG(opengl)
+ QOpenGLTexture *SharedMemoryBuffer::toOpenGlTexture(int plane)
+ {
+@@ -136,7 +154,10 @@
+             m_shmTexture->bind();
+             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+             // TODO: partial texture upload
+-            QImage image = this->image();
++            wl_shm_buffer *shmBuffer = wl_shm_buffer_get(m_buffer);
++            if (shmBuffer)
++                wl_shm_buffer_begin_access(shmBuffer);
++            QImage image = this->borrowedImage();
+             m_shmTexture->setSize(image.width(), image.height());
+             if (image.hasAlphaChannel()) {
+                 m_shmTexture->setFormat(QOpenGLTexture::RGBAFormat);
+@@ -149,6 +170,8 @@
+                     image = image.convertToFormat(QImage::Format_RGBX8888);
+                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.width(), image.height(), 0, GL_RGB, GL_UNSIGNED_BYTE, image.constBits());
+             }
++            if (shmBuffer)
++                wl_shm_buffer_end_access(shmBuffer);
+             //we can release the buffer after uploading, since we have a copy
+             if (isCommitted())
+                 sendRelease();

@@ -9,6 +9,8 @@ let
   # webkitgtk became ABI-versioned; pick the newest available while staying
   # compatible with older nixpkgs where the unversioned attribute still exists.
   webkitgtk = pkgs.webkitgtk_4_1 or pkgs.webkitgtk_4_0 or pkgs.webkitgtk;
+  # qtwayland with the compositor-side wl_shm guard (RFC-4 rev 2 H1).
+  qtwayland = import ./qtwayland.nix { inherit pkgs; };
 
   buildInfoHeader = import ./build-info.nix { inherit pkgs buildInfo; };
   # qtwebview is dead weight that becomes a hard blocker under cross.
@@ -101,7 +103,7 @@ pkgs.stdenv.mkDerivation rec {
   ] ++ (
     if pkgs.stdenv.isLinux then
       # Linux: WebKitGTK as backend + Wayland platform plugin
-      [ webkitgtk pkgs.qt6.qtwayland ]
+      [ webkitgtk qtwayland ]
     else
       []
   );
@@ -156,7 +158,14 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.xorg.libXi
       pkgs.xorg.libXfixes
       pkgs.xorg.libxcb
-      pkgs.qt6.qtwayland
+      qtwayland
+      # libwayland-server: the nested compositor (Qt6::WaylandCompositor,
+      # app/surface/) links it directly, so the dev wrapper must find it.
+      pkgs.wayland
+      # libxkbcommon: Qt6::WaylandCompositorPrivate (one private header, for
+      # SurfaceCompositor::gpuBuffersAvailable) carries XKB in its interface
+      # link line, so the binary now needs it directly too.
+      pkgs.libxkbcommon
     ]
   );
   qtPluginPath = pkgs.lib.concatStringsSep ":" ([
@@ -166,7 +175,7 @@ pkgs.stdenv.mkDerivation rec {
   ++ pkgs.lib.optional (!pkgs.stdenv.hostPlatform.isWindows)
     "${pkgs.qt6.qtwebview}/lib/qt-6/plugins"
   ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-    "${pkgs.qt6.qtwayland}/lib/qt-6/plugins"
+    "${qtwayland}/lib/qt-6/plugins"
   ]);
   qmlImportPath = pkgs.lib.concatStringsSep ":" ([
     "${placeholder "out"}/lib"
@@ -255,7 +264,7 @@ pkgs.stdenv.mkDerivation rec {
   passthru = {
     extraDirs = [ "modules" "plugins" ];
     extraClosurePaths = qtWebview ++ [ pkgs.qt6.qtsvg ]
-      ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.qt6.qtwayland ]
+      ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ qtwayland ]
       # Windows ONLY, and NOT because Windows needs extra Qt features -- it
       # needs the same ones, DECLARED differently.
       #
@@ -733,6 +742,23 @@ WRAPPER_EOF
         cp -L "${logosViewModuleRuntime}/bin/ui-host$_x" "$out/bin/ui-host$_x"
         echo "Installed ui-host$_x from logos-view-module-runtime"
         break
+      fi
+    done
+    # The channel SurfaceTransport library (RFC-7): Basecamp links it and
+    # ui-host loads it from ../lib relative to its own binary, so it ships
+    # next to both. Absent on a runtime built before RFC-7.
+    mkdir -p "$out/lib"
+    for _f in "${logosViewModuleRuntime}"/lib/libLogosViewSurface*; do
+      if [ -e "$_f" ]; then
+        cp -a "$_f" "$out/lib/"
+        echo "Installed $(basename "$_f") from logos-view-module-runtime"
+      fi
+    done
+    # Windows: the DLL sits next to the executables.
+    for _f in "${logosViewModuleRuntime}"/bin/LogosViewSurface*.dll; do
+      if [ -e "$_f" ]; then
+        cp -a "$_f" "$out/bin/"
+        echo "Installed $(basename "$_f") from logos-view-module-runtime"
       fi
     done
 
