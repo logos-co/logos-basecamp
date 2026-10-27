@@ -80,6 +80,7 @@ signals:
                       IComponent* component, UIPluginType type,
                       ViewModuleHost* viewHost);
     void pluginLoadFailed(const QString& name, const QString& error);
+    void moduleBackendStopped(const QString& name);
     void loadingChanged();
 
 private:

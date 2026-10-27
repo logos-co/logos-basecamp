@@ -1,9 +1,10 @@
 // Standalone mode end to end with a backend that runs as a core module
 // ("backend": "module"): the backend gets a module's context, the view reaches
-// it but not the core, another app cannot reach it, and closing the app
+// it but not the core, another app cannot reach it, a crashed backend gets
+// Basecamp's stopped panel and restarts on Reopen, and closing the app
 // unloads it. Run by `nix build .#standalone-module-backend-test` through
 // nix/mkPluginTest.nix.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = process.env.LOGOS_QT_MCP || new URL("../result-mcp", import.meta.url).pathname;
@@ -100,6 +101,15 @@ test("module backend: another app cannot reach it", async (app) => {
   }
 });
 
+// Every sidebar app has its own marker; true if any of them is showing.
+async function anyStoppedBadgeVisible(app) {
+  const matches = (await app.findByProperty("objectName", "sidebar.marker.stopped")).matches ?? [];
+  for (const m of matches) {
+    if (await evalOn(app, m.id, "visible").catch(() => false) === true) return true;
+  }
+  return false;
+}
+
 // The backend's host process, found by the module name on its command line.
 function backendPids() {
   const pids = [];
@@ -177,6 +187,54 @@ test("module backend: an app cannot take over an installed module's name", async
   }, { timeout: 30000, interval: 500, description: "depsvc to unload" });
   await evalBackend(`backend.loadCoreModule("depsvc")`);
   expectRealDepsvc(await waitForDepsvc("depsvc to load again", before.pid), "after the attempts");
+});
+
+test("module backend: a crashed backend shows a stopped panel, and Reopen restarts it", async (app) => {
+  const loaded = findMarker("backend-loaded");
+  if (!loaded) throw new Error("no backend-loaded marker to start from");
+  unlinkSync(loaded);
+
+  const pids = backendPids();
+  if (pids.length === 0) throw new Error("no process with module_backend_fixture_backend on its command line");
+  for (const pid of pids) process.kill(pid, "SIGKILL");
+
+  const title = await requireObject(app, "appStopped.title");
+  const titleText = await evalOn(app, title.id, "text");
+  if (titleText !== "Module Backend Fixture stopped unexpectedly")
+    throw new Error(`unexpected stopped-panel title: ${titleText}`);
+  if (!(await anyStoppedBadgeVisible(app)))
+    throw new Error("no sidebar badge is shown for the stopped app");
+
+  const reopen = await requireObject(app, "appStopped.reopen");
+  await evalOn(app, reopen.id, "clicked()");
+
+  await app.waitFor(async () => {
+    if (!findMarker("backend-loaded")) throw new Error("no new backend-loaded marker yet");
+  }, { timeout: 60000, interval: 500, description: "a fresh backend to start" });
+  await app.waitFor(
+    async () => { await app.expectTexts(["Backend: connected", "Backend sum: 5"]); },
+    { timeout: 60000, interval: 500, description: "the reopened view to reach the new backend" });
+  if ((await app.findByProperty("objectName", "appStopped.root")).matches?.length)
+    throw new Error("the stopped panel is still there after Reopen");
+  if (await anyStoppedBadgeVisible(app))
+    throw new Error("the sidebar badge is still shown after Reopen");
+});
+
+test("module backend: a second crash after Reopen is shown too", async (app) => {
+  const pids = backendPids();
+  if (pids.length === 0) throw new Error("no reopened backend to crash");
+  for (const pid of pids) process.kill(pid, "SIGKILL");
+
+  await requireObject(app, "appStopped.title");
+  await app.waitFor(async () => {
+    if (!(await anyStoppedBadgeVisible(app))) throw new Error("no sidebar badge");
+  }, { timeout: 10000, interval: 500, description: "the sidebar badge after the second crash" });
+
+  const reopen = await requireObject(app, "appStopped.reopen");
+  await evalOn(app, reopen.id, "clicked()");
+  await app.waitFor(
+    async () => { await app.expectTexts(["Backend: connected", "Backend sum: 5"]); },
+    { timeout: 60000, interval: 500, description: "the view to reach a third backend" });
 });
 
 test("module backend: closing the app unloads it", async (app) => {

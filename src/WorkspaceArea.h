@@ -42,6 +42,7 @@ public:
     void activatePluginDock(const QString& moduleName);
     void removePluginDock(QWidget* pluginWidget);
     void activatePluginDock(QWidget* pluginWidget);
+    bool showStoppedPanel(QWidget* pluginWidget, QWidget* panel);
 
     QDockWidget* dockFor(const QString& moduleName) const { return m_docks.value(moduleName); }
     QString nameForWidget(QWidget* w) const;

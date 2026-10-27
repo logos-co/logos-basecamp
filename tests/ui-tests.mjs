@@ -1921,6 +1921,30 @@ test("apps inspector: unload/reload of package_manager_ui restores the Package M
   await expectNoDock("after the reload + section click");
 });
 
+// Reopen on a stopped Package Manager page is restartUiModule: the page must
+// still be the one on screen once PMUI is back, not whatever the stack showed
+// when the old page was taken out (the App Manager).
+test("package manager: a reload while it is on screen keeps it on screen", async (app) => {
+  await openPlugin(app, "Package Manager", PMUI_TEXTS, { ...sidebarSection, timeout: 45000 });
+  const stack = await requireObject(app, "contentStack");
+  const pageShown = async () => {
+    const res = await app.inspector.send("getProperties", { objectId: stack.id });
+    const props = res.properties ?? res.result?.properties ?? [];
+    return props.find((p) => p.name === "currentIndex")?.value;
+  };
+  const PMUI_PAGE = 2;  // MainContainer kModulesStackIndex
+  assertEq(await pageShown(), PMUI_PAGE, "page shown before the reload");
+
+  const welcome = await requireWelcomePage(app);
+  await evalOn(app, welcome.id, `backend.restartUiModule(${JSON.stringify(PMUI_NAME)})`);
+  await app.waitFor(async () => {
+    assertEq(((await app.findByProperty("text", PMUI_PLACEHOLDER)).matches || []).length, 0,
+             "placeholder after the reload");
+    await app.expectTexts(PMUI_TEXTS);
+    assertEq(await pageShown(), PMUI_PAGE, "page shown after the reload");
+  }, { timeout: 45000, interval: 500, description: "PMUI back, on screen" });
+});
+
 test("settings: shows Dashboard, Apps Inspector, Module Inspector entries", async (app) => {
   await app.click("Settings");
   await app.waitFor(

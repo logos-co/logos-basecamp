@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QTimer>
+#include <cstdlib>
 
 namespace {
 void writeMarker(const std::string& dir, const char* name)
@@ -21,6 +23,13 @@ int ModuleBackendFixtureBackend::add(int a, int b)
 void ModuleBackendFixtureBackend::onContextReady()
 {
     writeMarker(instancePersistencePath(), "backend-loaded");
+    // For trying Basecamp's crash handling by hand; the tests never set it.
+    //   MODULE_BACKEND_FIXTURE_CRASH=start      crash while the app opens
+    //   MODULE_BACKEND_FIXTURE_CRASH=after:<s>  crash <s> seconds after that
+    const QString crash = qEnvironmentVariable("MODULE_BACKEND_FIXTURE_CRASH");
+    if (crash == QStringLiteral("start")) std::abort();
+    if (crash.startsWith(QStringLiteral("after:")))
+        QTimer::singleShot(crash.mid(6).toInt() * 1000, [] { std::abort(); });
 }
 
 LogosShutdown ModuleBackendFixtureBackend::aboutToUnload()

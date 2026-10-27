@@ -77,6 +77,15 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
             this, &UIPluginManager::onPluginLoadFailed);
     connect(m_pluginLoader, &PluginLoader::loadingChanged,
             this, &UIPluginManager::loadingModulesChanged);
+    connect(m_pluginLoader, &PluginLoader::moduleBackendStopped,
+            this, [this](const QString& name) {
+                qWarning() << "The backend of" << name << "stopped; reopen the app to restart it";
+                if (!m_stoppedApps.contains(name)) {
+                    m_stoppedApps.append(name);
+                    emit stoppedAppsChanged();
+                }
+                emit appBackendStopped(name, m_uiModuleWidgets.value(name));
+            });
 }
 
 UIPluginManager::~UIPluginManager()
@@ -488,6 +497,17 @@ void UIPluginManager::unloadUiModule(const QString& moduleName)
     }, Qt::QueuedConnection);
 }
 
+void UIPluginManager::restartUiModule(const QString& moduleName)
+{
+    QMetaObject::invokeMethod(this, [this, moduleName] {
+        unloadUiModuleImpl(moduleName);
+        // Still open: the unload is waiting on a cascade confirmation.
+        if (m_qmlPluginWidgets.contains(moduleName) || m_loadedUiModules.contains(moduleName))
+            return;
+        loadUiModule(moduleName);
+    }, Qt::QueuedConnection);
+}
+
 void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
 {
     qDebug() << "Unloading UI module:" << moduleName;
@@ -553,6 +573,7 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
     m_uiModuleWidgets.remove(moduleName);
     m_qmlPluginWidgets.remove(moduleName);
     m_loadedApps.remove(moduleName);
+    if (m_stoppedApps.removeAll(moduleName) > 0) emit stoppedAppsChanged();
 
     // The user closed this app. Three paths deliberately do NOT record:
     //   * shutdown() — it unloads every open app on quit, which would file them
@@ -1175,6 +1196,7 @@ void UIPluginManager::teardownUiPluginWidgetNow(const QString& moduleName)
     m_uiModuleWidgets.remove(moduleName);
     m_qmlPluginWidgets.remove(moduleName);
     m_loadedApps.remove(moduleName);
+    if (m_stoppedApps.removeAll(moduleName) > 0) emit stoppedAppsChanged();
 
     // This is the uninstall path. Drop any recent-close record so a later
     // reinstall does not resurrect the app as "recently closed". The read-time

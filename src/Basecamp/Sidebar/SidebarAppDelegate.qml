@@ -20,6 +20,7 @@ AbstractButton {
 
     property bool loaded: false
     property bool loading: false
+    property bool stopped: false
     // True iff the backend reports this plugin has core dependencies that
     // won't let it load. When set, a marker renders top-right — clicking
     // still emits `clicked`, and the backend decides whether to load or show
@@ -114,65 +115,21 @@ AbstractButton {
             }
         }
 
-        Rectangle {
-            id: missingDepsMarker
-            // Three names, so a UI test can tell the states apart: the amber
+        BrokenAppMarker {
+            id: brokenMarker
+            // One name per state, so a UI test can tell them apart: the amber
             // marker means two different things a screenshot cannot separate.
-            objectName: root.depBlockKind === "signer" ? "sidebar.marker.signerConflict"
-                      : root._presentButRejected       ? "sidebar.marker.versionConflict"
-                                                       : "sidebar.marker.missingDeps"
-            visible: root.hasMissingDeps && !root.loading
-            width: 14
-            height: 14
-            radius: 7
-            // Red cross = something is absent, "mixed" included. Amber "!" =
-            // all present but rejected. Resolved differently by the user, so
-            // they must not look identical.
-            color: root._presentButRejected ? "#e8a33d" : "#d32f2f"
+            // A stopped app was open, so its dependencies were met.
+            objectName: root.stopped                    ? "sidebar.marker.stopped"
+                      : root.depBlockKind === "signer"  ? "sidebar.marker.signerConflict"
+                      : root._presentButRejected        ? "sidebar.marker.versionConflict"
+                                                        : "sidebar.marker.missingDeps"
+            visible: (root.stopped || root.hasMissingDeps) && !root.loading
+            exclamation: !root.stopped && root._presentButRejected
             anchors.right: tile.right
             anchors.top: tile.top
             anchors.rightMargin: -2
             anchors.topMargin: -2
-
-            // Cross — absent (or mixed).
-            Rectangle {
-                visible: !root._presentButRejected
-                width: 8
-                height: 1.5
-                color: "white"
-                anchors.centerIn: parent
-                rotation: 45
-            }
-            Rectangle {
-                visible: !root._presentButRejected
-                width: 8
-                height: 1.5
-                color: "white"
-                anchors.centerIn: parent
-                rotation: -45
-            }
-
-            // Exclamation — version conflict.
-            Rectangle {
-                visible: root._presentButRejected
-                width: 1.5
-                height: 5
-                radius: 0.75
-                color: "white"
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                anchors.topMargin: 3
-            }
-            Rectangle {
-                visible: root._presentButRejected
-                width: 1.5
-                height: 1.5
-                radius: 0.75
-                color: "white"
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 3
-            }
         }
     }
 }

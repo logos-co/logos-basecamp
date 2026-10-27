@@ -128,6 +128,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,              &MainUIBackend::recentlyClosedAppsChanged);
     connect(m_uiPluginManager, &UIPluginManager::loadingModulesChanged,
             this,              &MainUIBackend::loadingModulesChanged);
+    connect(m_uiPluginManager, &UIPluginManager::stoppedAppsChanged,
+            this,              &MainUIBackend::stoppedAppsChanged);
     connect(m_uiPluginManager, &UIPluginManager::currentVisibleAppChanged,
             this,              &MainUIBackend::currentVisibleAppChanged);
     connect(m_uiPluginManager, &UIPluginManager::navigateToApps,
@@ -329,10 +331,12 @@ QVariantList MainUIBackend::launcherApps() const     { return m_uiPluginManager-
 QVariantList MainUIBackend::recentlyClosedApps() const { return m_uiPluginManager->recentlyClosedApps(); }
 QString      MainUIBackend::currentVisibleApp() const{ return m_uiPluginManager->currentVisibleApp(); }
 QStringList  MainUIBackend::loadingModules() const   { return m_uiPluginManager->loadingModules(); }
+QStringList  MainUIBackend::stoppedApps() const      { return m_uiPluginManager->stoppedApps(); }
 
 // UIPluginManager — UI plugin widget lifecycle + local unload cascade.
 void MainUIBackend::loadUiModule(const QString& n)            { m_uiPluginManager->loadUiModule(n); }
 void MainUIBackend::unloadUiModule(const QString& n)          { m_uiPluginManager->unloadUiModule(n); }
+void MainUIBackend::restartUiModule(const QString& n)         { m_uiPluginManager->restartUiModule(n); }
 void MainUIBackend::activateApp(const QString& n)             { m_uiPluginManager->activateApp(n); }
 void MainUIBackend::confirmUnloadCascade(const QString& n)    { m_uiPluginManager->confirmUnloadCascade(n); }
 void MainUIBackend::loadCoreModule(const QString& n)          { m_uiPluginManager->loadCoreModule(n); }
@@ -368,6 +372,11 @@ void MainUIBackend::wireIntents()
     connect(m_uiPluginManager, &UIPluginManager::pluginLoadFailedNotice,
             this, [this](const QString& name, const QString&) {
                 m_intentBroker->onAppUnavailable(name);
+            });
+    connect(m_uiPluginManager, &UIPluginManager::appBackendStopped,
+            this, [this](const QString& name, QWidget* widget) {
+                m_intentBroker->onAppUnavailable(name);
+                emit appStopped(widget, name);
             });
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
             this, [this](const QString& name, const QVariantList&, const QString&) {

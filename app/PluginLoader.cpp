@@ -577,6 +577,10 @@ void PluginLoader::loadModuleBackendView(const PluginLoadRequest& request,
                 // Intents still go through the shell's router (attached later).
                 auto* bridge = new LogosQmlBridge(nullptr, self);
                 bridge->setViewModuleSocket(request.name, socket, source, secret);
+                connect(bridge, &LogosQmlBridge::viewModuleCrashed, self,
+                        [self, name = request.name](const QString&) {
+                            if (self) emit self->moduleBackendStopped(name);
+                        });
                 bridge->prepareViewModule(request.name, kBackendReadyTimeoutMs,
                     [self, request, bridge, fail](bool ok, const QString& error) {
                         if (!self) return;

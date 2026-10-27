@@ -107,6 +107,7 @@ qt_add_qml_module(basecamp_sidebar_qml
         Basecamp/Sidebar/SidebarIconButton.qml
         Basecamp/Sidebar/SidebarCircleButton.qml
         Basecamp/Sidebar/SidebarAppDelegate.qml
+        Basecamp/Sidebar/BrokenAppMarker.qml
 )
 
 qt_add_qml_module(basecamp_appmanager_qml
@@ -170,6 +171,7 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/OnboardingDownloadsStep.qml
         Basecamp/Shell/OnboardingStorageStep.qml
         Basecamp/Shell/OnboardingStepPage.qml
+        Basecamp/Shell/AppStoppedPanel.qml
 )
 
 qt_add_qml_module(basecamp_icons_qml

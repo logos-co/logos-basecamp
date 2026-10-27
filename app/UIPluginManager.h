@@ -95,6 +95,7 @@ public:
     QVariantList recentlyClosedApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
+    QStringList  stoppedApps() const { return m_stoppedApps; }
 
     // Cross-class helpers used by PackageCoordinator during cascade work.
 
@@ -144,6 +145,7 @@ public slots:
     // UI module lifecycle
     void loadUiModule(const QString& moduleName);
     void unloadUiModule(const QString& moduleName);
+    void restartUiModule(const QString& moduleName);
     void activateApp(const QString& appName);
 
     // Local unload-cascade confirmation flow, called from QML dialogs.
@@ -197,6 +199,8 @@ signals:
     // Re-emitted from onPluginLoadFailed so MainUIBackend can forward a load
     // failure to the QML overlay instead of only logging it.
     void pluginLoadFailedNotice(const QString& name, const QString& error);
+    void appBackendStopped(const QString& name, QWidget* widget);
+    void stoppedAppsChanged();
 
 
     // Failures filtered out of package_manager_ui's installationProgressUpdated.
@@ -355,6 +359,7 @@ private:
 
     // App launcher
     QSet<QString> m_loadedApps;
+    QStringList m_stoppedApps;
     QString       m_currentVisibleApp;
 
     // Recently-closed list, persisted under LogosBasecampPaths::baseDirectory().

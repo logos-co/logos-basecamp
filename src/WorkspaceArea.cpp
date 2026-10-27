@@ -121,6 +121,15 @@ public:
         return layout()->itemAt(0)->widget();
     }
 
+    // Shows `panel` in the plugin's place. The plugin widget stays at index 0,
+    // where every lookup reads it, only hidden; removing the dock deletes the
+    // panel with the card.
+    void showPanel(QWidget* panel) {
+        if (QWidget* w = pluginWidget()) w->hide();
+        layout()->addWidget(panel);
+        if (m_cornerOverlay) m_cornerOverlay->raise();
+    }
+
     // Detach the plugin widget so the caller (UIPluginManager) retains
     // ownership — mirrors the ownership contract WorkspaceArea gives
     // its consumers.
@@ -541,6 +550,15 @@ void WorkspaceArea::removePluginDock(QWidget* pluginWidget)
 {
     const QString name = nameForWidget(pluginWidget);
     if (!name.isEmpty()) removePluginDock(name);
+}
+
+bool WorkspaceArea::showStoppedPanel(QWidget* pluginWidget, QWidget* panel)
+{
+    QDockWidget* dock = m_docks.value(nameForWidget(pluginWidget));
+    auto* card = dock ? dynamic_cast<DockCard*>(dock->widget()) : nullptr;
+    if (!card) return false;
+    card->showPanel(panel);
+    return true;
 }
 
 void WorkspaceArea::activatePluginDock(QWidget* pluginWidget)

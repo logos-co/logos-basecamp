@@ -22,6 +22,7 @@ public:
     void     setCurrentSectionIndex(int index) override;
     void     loadUiModule(const QString& name) override;
     void     unloadUiModule(const QString& name) override;
+    void     restartUiModule(const QString& name) override;
     void     setCurrentVisibleApp(const QString& name) override;
     QString  displayNameFor(const QString& name) const override;
     void     setObserver(IShellObserver* observer) override;
