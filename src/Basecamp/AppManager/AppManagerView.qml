@@ -27,6 +27,10 @@ Rectangle {
 
     // This host's variant, for the "nothing for this platform" empty state.
     property string hostVariant: ""
+    // Why downloads may not work right now, for the notice under the header.
+    property bool online: true
+    property string downloadSource: ""
+    property string storageState: ""
     signal appClicked(string name, string repositoryUrl)
     signal manageAppRequested(string name, string repositoryUrl)
     signal uninstallAppRequested(string name, string repositoryUrl)
@@ -145,6 +149,23 @@ Rectangle {
                     searchBar.textInput.selectAll()
                 }
             }
+        }
+
+        // The App Manager does not show where each download comes from, so
+        // Logos Storage being down while GitHub covers for it is not news here.
+        LogosNotice {
+            id: downloadNotice
+            objectName: "appManager.downloadNotice"
+            readonly property var notice: DownloadFormat.downloadNotice(
+                root.online, root.downloadSource, root.storageState, false)
+            Layout.fillWidth: true
+            shown: notice !== null
+            severity: !notice ? LogosNotice.Info
+                    : notice.severity === "error" ? LogosNotice.Error
+                    : notice.severity === "warning" ? LogosNotice.Warning
+                    : LogosNotice.Info
+            title: notice ? notice.title : ""
+            message: notice ? notice.message : ""
         }
 
         RowLayout {

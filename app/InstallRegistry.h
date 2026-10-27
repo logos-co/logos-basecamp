@@ -35,6 +35,8 @@ public:
         quint64             downloadReceived = 0;
         quint64             downloadTotal    = 0;
         bool                downloadComplete = false;
+        QString             transport;
+        bool                fellBackFromStorage = false;
     };
 
     explicit InstallRegistry(QObject* parent = nullptr);
@@ -51,9 +53,13 @@ public:
     QString          targetHash(const QString& name) const;
     quint64          downloadReceived(const QString& name) const;
     quint64          downloadTotal(const QString& name) const;
+    QString          downloadTransport(const QString& name) const;
+    bool             downloadFellBack(const QString& name) const;
     quint64          planDownloadReceived(const QString& name) const;
     quint64          planDownloadTotal(const QString& name) const;
     int              planStage(const QString& name) const;
+    QString          planDownloadTransport(const QString& name) const;
+    bool             planDownloadFellBack(const QString& name) const;
     QStringList      activeNames() const { return m_ops.keys(); }
 
     void beginOrTrack(const QString& name,
@@ -80,7 +86,8 @@ public:
 
     void beginPlan(const QString& topLevel, const QList<PlannedPackage>& plan);
     void setStage(const QString& name, InstallStage::Value stage);
-    void setDownloadProgress(const QString& name, quint64 received, quint64 total);
+    void setDownloadProgress(const QString& name, quint64 received, quint64 total,
+                             const QString& transport = {});
     void fail(const QString& name, const QString& error);
     void finish(const QString& name);
     void clear(const QString& name);

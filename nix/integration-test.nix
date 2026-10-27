@@ -90,6 +90,17 @@ pkgs.runCommand "logos-basecamp-integration-test" {
     done
   '') seedModules}
 
+  # Deliberately broken QML-only ui_qml apps, so ui-tests.mjs can assert that
+  # a view-load failure is surfaced to the user (loadFailed dialog) instead of
+  # a spinner that silently disappears. broken_view_fixture fails to compile
+  # (async pre-compile); required_prop_fixture compiles but fails when it is
+  # created (finishUiQmlLoad / setSource).
+  mkdir -p "$LOGOS_USER_DIR/plugins"
+  for _fixture in broken_view_fixture required_prop_fixture; do
+    cp -r ${src}/tests/fixtures/plugins/$_fixture "$LOGOS_USER_DIR/plugins/"
+    chmod -R u+w "$LOGOS_USER_DIR/plugins/$_fixture"
+  done
+
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"
 

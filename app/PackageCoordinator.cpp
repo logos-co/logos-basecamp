@@ -6,6 +6,7 @@
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
+#include "OnboardingState.h"
 #include "RepositorySource.h"
 #include "PackageInstallDecision.h"
 #include "utils/DependencyBlocker.h"
@@ -43,6 +44,11 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     , m_appsModel(appsModel)
     , m_installRegistry(new InstallRegistry(this))
 {
+    // Only where the catalogue and the user's own install dir are: a dev host
+    // has neither to set up.
+    m_onboardingRequired = m_hostProfile.packageCatalog && m_hostProfile.useUserModules
+        && OnboardingState::required(LogosBasecampPaths::baseDirectory());
+
     subscribeToPackageInstallationEvents();
     subscribeToPackageDownloaderEvents();
 
@@ -216,7 +222,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     });
 
     // Live byte progress for whatever is downloading. Payload is
-    // [packageName, received, total]
+    // [packageName, received, total, transport]; a downloader that predates
+    // the transport sends three.
     logos.package_downloader.on("downloadProgress", [this](const QVariantList& data) {
         if (!m_installRegistry) return;
         if (data.size() < 3) {
@@ -226,7 +233,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         }
         m_installRegistry->setDownloadProgress(data.at(0).toString(),
                                                data.at(1).toULongLong(),
-                                               data.at(2).toULongLong());
+                                               data.at(2).toULongLong(),
+                                               data.value(3).toString());
     });
 
     // Which transport served a package, `logos:<cid>` or the https url. Payload
@@ -243,16 +251,29 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     // A reloaded instance starts stopped, and the next operation here starts it.
     // The status can arrive off the GUI thread.
     QPointer<PackageCoordinator> self(this);
+    // Armed: storageStateChanged events sent before this are lost, so read the
+    // state once now.
     logos.package_downloader.onSubscriptionStatus([self](logos::SubStatus status, std::uint64_t) {
-        if (status == logos::SubStatus::Armed) return;
-        QMetaObject::invokeMethod(QCoreApplication::instance(), [self]() {
-            if (self) self->m_downloaderStarted = false;
+        const bool armed = status == logos::SubStatus::Armed;
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, armed]() {
+            if (!self) return;
+            if (armed) self->refreshStorageState();
+            else self->m_downloaderStarted = false;
         }, Qt::QueuedConnection);
     });
 
-    // Started as soon as it is loaded, as before it had start(): the storage
-    // node it brings up comes up at launch, and a stop in the Storage UI sticks.
-    withDownloaderStarted([]() {});
+    logos.package_downloader.on("storageStateChanged", [this](const QVariantList& data) {
+        setStorageState(data.value(0).toString(), data.value(1).toString());
+    });
+
+    // Started as soon as it is loaded, as before it had start(), unless
+    // onboarding has yet to choose the download source. The storage node comes
+    // up with it unless that source is "http", and a stop in the Storage UI
+    // sticks.
+    withDownloaderStarted([this]() {
+        refreshDownloadSource();
+        refreshStorageState();
+    });
 }
 
 // The calls run whatever start() answers: a downloader that predates it refuses
@@ -266,12 +287,23 @@ void PackageCoordinator::withDownloaderStarted(std::function<void()> then)
     }
 
     m_waitingForDownloaderStart.append(std::move(then));
-    if (m_waitingForDownloaderStart.size() > 1) return;  // a start is on its way
+
+    // chooseOnboardingSource() starts it.
+    if (m_onboardingRequired && !m_onboardingSourceChosen) return;
+
+    startDownloader();
+}
+
+void PackageCoordinator::startDownloader()
+{
+    if (m_downloaderStarting) return;  // a start is on its way
+    m_downloaderStarting = true;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
     logos.package_downloader.startAsyncResult([self](logos::AsyncResult<QVariantMap> r) {
         if (!self) return;
+        self->m_downloaderStarting = false;
         self->m_downloaderStarted = r.ok() && r.value.value("success").toBool();
         if (!self->m_downloaderStarted) {
             qWarning() << "PackageCoordinator: package_downloader.start did not succeed:"
@@ -1522,6 +1554,7 @@ void PackageCoordinator::refreshDownloadSource()
                 if (!self) return;
                 // A downloader without the method answers nothing: stays empty.
                 const QString source = result.toString();
+                if (source == QStringLiteral("http")) self->releaseStorageIfUnused();
                 if (source == self->m_downloadSource) return;
                 self->m_downloadSource = source;
                 emit self->downloadSourceChanged();
@@ -1537,6 +1570,13 @@ void PackageCoordinator::setDownloadSource(const QString& source)
         emit repositoryOperationCompleted(QStringLiteral("setDownloadSource"), source, false,
             QStringLiteral("package_downloader not connected"));
         return;
+    }
+
+    // Back from "http": the downloader starts the node once storage_module is
+    // ready again.
+    if (source != QStringLiteral("http") && m_coreModuleManager
+        && !moduleIsLoaded(m_coreModuleManager, "storage_module")) {
+        m_coreModuleManager->loadModule(QStringLiteral("storage_module"));
     }
 
     withDownloaderStarted([this, dlClient, source]() {
@@ -1556,6 +1596,128 @@ void PackageCoordinator::setDownloadSource(const QString& source)
                 self->refreshDownloadSource();
             });
     });
+}
+
+void PackageCoordinator::completeOnboarding()
+{
+    if (!m_onboardingRequired) return;
+
+    OnboardingState::markCompleted(LogosBasecampPaths::baseDirectory());
+    m_onboardingRequired = false;
+    emit onboardingRequiredChanged();
+}
+
+// Onboarding can go back and choose again: only the first choice starts the
+// downloader, later ones change its source like Settings does.
+void PackageCoordinator::chooseOnboardingSource(const QString& source)
+{
+    if (!m_onboardingRequired || m_onboardingSourceChosen) {
+        setDownloadSource(source);
+        return;
+    }
+    m_onboardingSourceChosen = true;
+
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient) {
+        if (!m_waitingForDownloaderStart.isEmpty()) startDownloader();
+        return;
+    }
+
+    // Before start(), which saves it: under "http" the node then never comes
+    // up. A downloader that predates that refuses it, and gets it once started.
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "setDownloadSource", QVariantList{source},
+        [self, source](QVariant result) {
+            if (!self) return;
+            const bool saved = result.toMap().value("success").toBool();
+            self->withDownloaderStarted([self, source, saved]() {
+                if (!self) return;
+                if (saved) self->refreshDownloadSource();
+                else self->setDownloadSource(source);
+                self->refreshStorageState();
+            });
+        });
+}
+
+void PackageCoordinator::retryStorage()
+{
+    if (!m_coreModuleManager) return;
+
+    if (moduleIsLoaded(m_coreModuleManager, "storage_module"))
+        m_coreModuleManager->unloadModule(QStringLiteral("storage_module"));
+    m_coreModuleManager->loadModule(QStringLiteral("storage_module"));
+
+    // A restart, not just the reload: a start that never answered holds the
+    // downloader in "starting", and it waits that out rather than start twice.
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient) return;
+
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "stop", QVariantList{},
+        [self](QVariant) {
+            if (!self) return;
+            self->m_downloaderStarted = false;
+            self->withDownloaderStarted([self]() {
+                if (self) self->refreshStorageState();
+            });
+        });
+}
+
+void PackageCoordinator::refreshStorageState()
+{
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient) return;
+
+    QPointer<PackageCoordinator> self(this);
+    dlClient->invokeRemoteMethodAsync(
+        "package_downloader", "getStorageState", QVariantList{},
+        [self](QVariant result) {
+            if (!self) return;
+            // A downloader without the method answers nothing: stays empty.
+            const QVariantMap r = result.toMap();
+            if (r.isEmpty()) return;
+            const QString state = r.value("state").toString();
+            self->setStorageState(state, r.value("error").toString());
+
+            // Asked again until it settles, in case an event is lost.
+            if (state == QStringLiteral("waiting") || state == QStringLiteral("starting")) {
+                QTimer::singleShot(2000, self, [self]() {
+                    if (self) self->refreshStorageState();
+                });
+            }
+        });
+}
+
+void PackageCoordinator::setStorageState(const QString& state, const QString& error)
+{
+    if (state == m_storageState && error == m_storageError) return;
+    m_storageState = state;
+    m_storageError = error;
+    emit storageStateChanged();
+}
+
+void PackageCoordinator::releaseStorageIfUnused()
+{
+    if (!m_coreModuleManager || !moduleIsLoaded(m_coreModuleManager, "storage_module"))
+        return;
+
+    // The downloader is the user being released from; anything else loaded
+    // that depends on storage keeps it.
+    const QStringList loaded = m_coreModuleManager->loadedModules();
+    QStringList users = m_dependentsByModule.value(QStringLiteral("storage_module"));
+    users.append(QStringLiteral("storage_ui"));
+    users.removeAll(QStringLiteral("package_downloader"));
+    for (const QString& user : users) {
+        if (loaded.contains(user)) return;
+    }
+    if (m_uiPluginManager && !m_uiPluginManager->intersectWithLoaded(users).isEmpty())
+        return;
+
+    qInfo() << "PackageCoordinator: downloads are GitHub only and nothing else uses "
+               "storage_module -- unloading it";
+    m_coreModuleManager->unloadModule(QStringLiteral("storage_module"));
 }
 
 void PackageCoordinator::refreshDependencyInfo()

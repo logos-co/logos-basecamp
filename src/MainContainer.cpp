@@ -22,6 +22,8 @@
 #include <QColor>
 #include <QPalette>
 #include <QEvent>
+#include <QtMath>
+#include <QTimer>
 
 namespace {
 constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
@@ -263,6 +265,37 @@ void MainContainer::setupUi()
     // pluginWindowRequested intercept
     m_contentStack->addWidget(makePmuiPlaceholder(m_contentStack));
 
+    // === OFFLINE TOAST (QML) ===
+    // Over the content, outside the layout so nothing moves; only its own
+    // rectangle takes input.
+    m_offlineToast = new QQuickWidget(this);
+    m_offlineToast->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    m_offlineToast->setAttribute(Qt::WA_AlwaysStackOnTop);
+    m_offlineToast->setAttribute(Qt::WA_TranslucentBackground);
+    m_offlineToast->setClearColor(Qt::transparent);
+    m_offlineToast->setVisible(false);
+    ShellDevQml::load(m_offlineToast,
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OfflineToast.qml")),
+        [this](QObject* root) {
+            connect(root, SIGNAL(toastRectChanged()), this, SLOT(maskOfflineToast()));
+            connect(root, SIGNAL(dismissed()), this, SLOT(closeOfflineToast()));
+        });
+    m_offlineToastReturn = new QTimer(this);
+    m_offlineToastReturn->setSingleShot(true);
+    m_offlineToastReturn->setInterval(5 * 60 * 1000);
+    connect(m_offlineToastReturn, &QTimer::timeout, this, [this]() {
+        m_offlineToastClosed = false;
+        updateOfflineToast();
+    });
+    // A backend without `online` (shell-preview) never shows it.
+    if (m_host->backendObject()->metaObject()->indexOfSignal("onlineChanged()") >= 0) {
+        connect(m_host->backendObject(), SIGNAL(onlineChanged()),
+                this, SLOT(onOnlineChanged()));
+    }
+    // It follows the content area, which the layout sizes after the window.
+    m_contentStack->installEventFilter(this);
+    updateOfflineToast();
+
     // Content stack fills the content area — the version footer that
     // used to live in a QML bottom toolbar is now inside SidebarPanel.qml.
     contentLayout->addWidget(m_contentStack, 1);
@@ -295,6 +328,23 @@ void MainContainer::setupUi()
         });
     m_overlayWidget->setVisible(false);
 
+    // === FIRST-RUN ONBOARDING (QML) ===
+    // Until the user has chosen how apps download, the backend holds back the
+    // downloader and with it the storage node. A backend without the property
+    // (shell-preview) never shows it.
+    if (m_host->backendObject()->property("onboardingRequired").toBool()) {
+        m_onboardingWidget = new QQuickWidget(this);
+        m_onboardingWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+        m_onboardingWidget->setClearColor(bgColor);
+        m_onboardingWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
+        ShellDevQml::load(m_onboardingWidget,
+            QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OnboardingShell.qml")),
+            [this](QObject* root) {
+                connect(root, SIGNAL(finished()), this, SLOT(onOnboardingFinished()));
+            });
+        m_onboardingWidget->raise();
+    }
+
     // Watch for the mouse leaving the sidebar so we can hide the tooltip
     // overlay.
     if (m_sidebarWidget) m_sidebarWidget->installEventFilter(this);
@@ -309,12 +359,77 @@ void MainContainer::setupUi()
 void MainContainer::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (m_onboardingWidget) {
+        m_onboardingWidget->setGeometry(0, 0, width(), height());
+        m_onboardingWidget->raise();
+    }
+    if (m_offlineToast && !m_offlineToast->isHidden()) placeOfflineToast();
     if (m_overlayWidget) {
         m_overlayWidget->setGeometry(0, 0, width(), height());
         // Qt re-stacks siblings on resize in some cases; keep the
         // overlay on top explicitly.
         m_overlayWidget->raise();
     }
+}
+
+bool MainContainer::isOffline() const
+{
+    const QVariant online = m_host->backendObject()->property("online");
+    return online.isValid() && !online.toBool();
+}
+
+void MainContainer::onOnlineChanged()
+{
+    // Each time the connection goes, the toast comes back.
+    if (!isOffline()) {
+        m_offlineToastClosed = false;
+        m_offlineToastReturn->stop();
+    }
+    updateOfflineToast();
+}
+
+void MainContainer::closeOfflineToast()
+{
+    m_offlineToastClosed = true;
+    m_offlineToastReturn->start();
+    updateOfflineToast();
+}
+
+void MainContainer::updateOfflineToast()
+{
+    if (!m_offlineToast) return;
+    const bool show = isOffline() && !m_offlineToastClosed;
+    m_offlineToast->setVisible(show);
+    // Once shown: while hidden, the widget does not pass a new size on.
+    if (show) placeOfflineToast();
+}
+
+// Over the content area, under dialogs and onboarding.
+void MainContainer::placeOfflineToast()
+{
+    if (!m_offlineToast || !m_contentStack) return;
+    m_offlineToast->setGeometry(QRect(m_contentStack->mapTo(this, QPoint(0, 0)),
+                                      m_contentStack->size()));
+    maskOfflineToast();
+    m_offlineToast->raise();
+    if (m_overlayWidget && m_overlayWidget->isVisible()) m_overlayWidget->raise();
+    if (m_onboardingWidget) m_onboardingWidget->raise();
+}
+
+// Only the notice draws and takes clicks; the content around it stays usable.
+void MainContainer::maskOfflineToast()
+{
+    if (!m_offlineToast || !m_offlineToast->rootObject()) return;
+    const QRectF r = m_offlineToast->rootObject()->property("toastRect").toRectF();
+    if (r.isEmpty()) return;
+    m_offlineToast->setMask(QRegion(r.toAlignedRect()));
+}
+
+void MainContainer::onOnboardingFinished()
+{
+    if (!m_onboardingWidget) return;
+    m_onboardingWidget->hide();
+    m_onboardingWidget->deleteLater();
 }
 
 void MainContainer::onOverlayActiveChanged(bool active)
@@ -344,6 +459,10 @@ void MainContainer::onSidebarTooltipRequested(const QString& text, qreal y)
 
 bool MainContainer::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == m_contentStack && event->type() == QEvent::Resize
+        && m_offlineToast && !m_offlineToast->isHidden()) {
+        placeOfflineToast();
+    }
     if (watched == m_sidebarWidget && event->type() == QEvent::Leave) {
         if (m_overlayWidget) {
             QObject* overlayRoot = m_overlayWidget->rootObject();

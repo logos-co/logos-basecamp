@@ -187,4 +187,61 @@ TestCase {
         compare(label.lineCount, 1, "list names do not wrap");
         compare(label.truncated, true, "they elide");
     }
+
+    // ── Where a download comes from ──────────────────────────────────────────
+    // Shown in the window: TestCase itself is invisible.
+    function gridTile(extra) {
+        var data = appData("wallet", "Wallet");
+        for (var k in extra) data[k] = extra[k];
+        return createTemporaryObject(gridDelegateComp, testCase.Window.window.contentItem, {
+            width: 200, height: 162, appData: data,
+        });
+    }
+
+    // While downloading, the source rides at the start of the progress badge.
+    function test_a_download_carries_its_source_in_the_badge() {
+        var tile = gridTile({
+            isInstalled: false, installStatus: InstallStatus.NotInstalled,
+            planInstallStage: InstallStage.Downloading,
+            planDownloadReceived: 0, planDownloadTotal: 4096,
+            planDownloadTransport: "logos",
+        });
+        var badge = findByObjectName(tile, "appGridStateBadge");
+        verify(badge, "found the state badge");
+        compare(badge.text, "Finding peers…");
+        verify(String(badge.iconSource).indexOf("logos-storage.svg") >= 0,
+               "the badge starts with the Logos Storage icon");
+    }
+
+    function test_a_github_download_shows_the_github_icon() {
+        var tile = gridTile({
+            isInstalled: false, installStatus: InstallStatus.NotInstalled,
+            planInstallStage: InstallStage.Downloading,
+            planDownloadReceived: 1024, planDownloadTotal: 4096,
+            planDownloadTransport: "http",
+        });
+        var badge = findByObjectName(tile, "appGridStateBadge");
+        verify(String(badge.iconSource).indexOf("github.svg") >= 0);
+    }
+
+    // The list row, like the tile: the source rides in the badge, and the
+    // description stays the description.
+    function test_a_list_row_download_carries_its_source_in_the_badge() {
+        var data = appData("wallet", "Wallet");
+        data.description = "Send and receive";
+        data.isInstalled = false;
+        data.installStatus = InstallStatus.NotInstalled;
+        data.planInstallStage = InstallStage.Downloading;
+        data.planDownloadReceived = 0;
+        data.planDownloadTotal = 4096;
+        data.planDownloadTransport = "logos";
+        var row = createTemporaryObject(listDelegateComp, testCase.Window.window.contentItem, {
+            width: 600, height: 56, appData: data,
+        });
+        compare(findByObjectName(row, "appListDescription").text, "Send and receive");
+        var badge = findByObjectName(row, "appListStateBadge");
+        verify(badge, "found the list badge");
+        compare(badge.text, "Finding peers…");
+        verify(String(badge.iconSource).indexOf("logos-storage.svg") >= 0);
+    }
 }

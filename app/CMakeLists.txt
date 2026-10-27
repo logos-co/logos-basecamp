@@ -322,6 +322,7 @@ set(PROJECT_SOURCES
     CoreModuleManager.cpp
     CoreDependencyLoader.cpp
     RecentlyClosedStore.cpp
+    OnboardingState.cpp
     UIPluginManager.cpp
     PackageCoordinator.cpp
     RepositorySource.cpp

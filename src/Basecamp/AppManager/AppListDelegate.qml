@@ -47,6 +47,18 @@ ItemDelegate {
         readonly property real dlTotal:
             root.appData ? (root.appData.planDownloadTotal || 0) : 0
         readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
+        readonly property string transport: root.appData ? (root.appData.planDownloadTransport || "") : ""
+        readonly property string transportCaption: d.installStage === InstallStage.Downloading
+            ? DownloadFormat.transportCaption(d.transport, root.appData && root.appData.planDownloadFellBack)
+            : ""
+        // The badge's tooltip while downloading: where the bytes come from.
+        readonly property string downloadToolTip: d.findingPeers
+            ? qsTr("Finding peers on Logos Storage that have this app")
+            : d.transportCaption
+        readonly property url badgeIcon: d.installStage === InstallStage.Downloading
+            ? DownloadFormat.transportIcon(d.transport) : ""
+        readonly property bool findingPeers: d.installStage === InstallStage.Downloading
+            && !d.downloadDone && DownloadFormat.findingPeers(d.transport, d.dlReceived)
         // A determinate bar claims a FRACTION, so it needs a real sample.
         // dlTotal is seeded from the catalog when the plan is registered —
         // before any transfer — so gating on it alone parked the bar at 0%.
@@ -174,6 +186,7 @@ ItemDelegate {
             LogosText {
                 id: descLabel
                 Layout.fillWidth: true
+                objectName: "appListDescription"
                 text: d.description
                 font.pixelSize: Theme.typography.secondaryText
                 color: Theme.palette.textTertiary
@@ -182,7 +195,7 @@ ItemDelegate {
 
                 HoverHandler { id: descHover }
                 LogosToolTip {
-                    text: d.description
+                    text: descLabel.text
                     placement: LogosToolTip.Top
                     visible: descHover.hovered && descLabel.truncated
                 }
@@ -191,6 +204,7 @@ ItemDelegate {
 
         LogosBadge {
             id: stateBadge
+            objectName: "appListStateBadge"
             TextMetrics {
                 id: widestInstallLabel
                 font: stateBadge.labelItem.font
@@ -198,7 +212,16 @@ ItemDelegate {
             }
             property int pillWidth: (d.isInstalling)
                 ? Math.ceil(widestInstallLabel.width) + leftPadding + rightPadding
+                  + (d.badgeIcon.toString().length > 0 ? DownloadFormat.badgeIconWidth : 0)
                 : implicitWidth
+            iconSource: d.badgeIcon
+
+            HoverHandler { id: badgeHover }
+            LogosToolTip {
+                text: d.installStage === InstallStage.Downloading ? d.downloadToolTip : ""
+                placement: LogosToolTip.Top
+                visible: badgeHover.hovered && text.length > 0
+            }
             Behavior on pillWidth {
                 NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
             }
@@ -215,6 +238,7 @@ ItemDelegate {
             // the plain label instead of parking at 100%.
             text: !d.isAvailable                                      ? qsTr("Not available")
                 : d.hasProgress ? DownloadFormat.label(d.dlReceived, d.dlTotal)
+                : d.findingPeers ? qsTr("Finding peers…")
                 : d.isInstalling                                      ? qsTr("Installing…")
                 : d.installStage === InstallStage.Failed              ? qsTr("Failed")
                 : d.installStatus === InstallStatus.UpgradeAvailable      ? qsTr("Update")

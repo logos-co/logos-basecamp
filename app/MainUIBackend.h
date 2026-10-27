@@ -128,6 +128,10 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
+    Q_PROPERTY(bool onboardingRequired READ onboardingRequired NOTIFY onboardingRequiredChanged)
+    Q_PROPERTY(bool online READ online NOTIFY onlineChanged)
+    Q_PROPERTY(QString storageState READ storageState NOTIFY storageStateChanged)
+    Q_PROPERTY(QString storageError READ storageError NOTIFY storageStateChanged)
 
     // App Manager loading state — true until the first catalog populate,
     // and again during a user-initiated Reload (remoteRefresh).
@@ -176,6 +180,10 @@ public:
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     QString downloadSource() const;
+    bool onboardingRequired() const;
+    bool online() const;
+    QString storageState() const;
+    QString storageError() const;
     bool appsLoading() const;
     bool dependencyDataReady() const;
     bool modulesLoading() const;
@@ -326,6 +334,9 @@ public slots:
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
     Q_INVOKABLE void refreshDownloadSource();
     Q_INVOKABLE void setDownloadSource(const QString& source);
+    Q_INVOKABLE void chooseOnboardingSource(const QString& source);
+    Q_INVOKABLE void completeOnboarding();
+    Q_INVOKABLE void retryStorage();
 
 signals:
     void currentActiveSectionIndexChanged();
@@ -377,6 +388,10 @@ signals:
     // `packageName` falls back to the file name if the manifest was unreadable.
     void installFailureNoticeRequested(const QString& packageName,
                                        const QString& errorMessage);
+
+    // A UI app failed to load. Re-emit of UIPluginManager::pluginLoadFailedNotice
+    // for the QML overlay (wireIntents() still forwards it to the IntentBroker).
+    void loadFailureNoticeRequested(const QString& name, const QString& errorMessage);
 
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
@@ -440,6 +455,9 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
+    void onboardingRequiredChanged();
+    void onlineChanged();
+    void storageStateChanged();
     void appsLoadingChanged();
     void modulesLoadingChanged();
     void repositoryOperationCompleted(const QString& operation,

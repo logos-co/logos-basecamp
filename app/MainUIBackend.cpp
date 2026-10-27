@@ -23,6 +23,7 @@
 #include <QDebug>
 #include <QJSValue>
 #include <QMap>
+#include <QNetworkInformation>
 #include <QTimer>
 
 // The shell's own capability tables and their registration live in
@@ -73,6 +74,14 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
+    // The platform's own backend: by features alone Qt can pick glib, which
+    // outside Linux never sees the connection go.
+    if (QNetworkInformation::loadDefaultBackend()) {
+        qInfo() << "MainUIBackend: reachability from"
+                << QNetworkInformation::instance()->backendName();
+        connect(QNetworkInformation::instance(), &QNetworkInformation::reachabilityChanged,
+                this, &MainUIBackend::onlineChanged);
+    }
 
     // Setter-injection closes the cycle — UIPluginManager queries
     // PackageCoordinator for installType / missing-deps when building its
@@ -125,6 +134,8 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,              &MainUIBackend::navigateToApps);
     connect(m_uiPluginManager, &UIPluginManager::packageInstallFailedNotice,
             this,              &MainUIBackend::installFailureNoticeRequested);
+    connect(m_uiPluginManager, &UIPluginManager::pluginLoadFailedNotice,
+            this,              &MainUIBackend::loadFailureNoticeRequested);
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
             this,              &MainUIBackend::missingDepsPopupRequested);
     connect(m_uiPluginManager, &UIPluginManager::unloadCascadeConfirmationRequested,
@@ -190,6 +201,10 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,             &MainUIBackend::repositoriesLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
             this,             &MainUIBackend::downloadSourceChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::onboardingRequiredChanged,
+            this,             &MainUIBackend::onboardingRequiredChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::storageStateChanged,
+            this,             &MainUIBackend::storageStateChanged);
     connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
             this,             &MainUIBackend::appsLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
@@ -899,6 +914,21 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 QString      MainUIBackend::downloadSource() const      { return m_packageCoordinator->downloadSource(); }
+bool         MainUIBackend::onboardingRequired() const  { return m_packageCoordinator->onboardingRequired(); }
+QString      MainUIBackend::storageState() const        { return m_packageCoordinator->storageState(); }
+QString      MainUIBackend::storageError() const        { return m_packageCoordinator->storageError(); }
+bool MainUIBackend::online() const
+{
+    // Test switch: 1 offline, 0 online (a sandbox has no network).
+    const QByteArray forced = qgetenv("BASECAMP_FORCE_OFFLINE");
+    if (forced == "1" || forced == "0") return forced == "0";
+    const QNetworkInformation* info = QNetworkInformation::instance();
+    if (!info) return true;
+    const auto r = info->reachability();
+    return r != QNetworkInformation::Reachability::Disconnected
+        && r != QNetworkInformation::Reachability::Local;
+}
+
 bool MainUIBackend::appsLoading() const
 { return !m_packageCoordinator || m_packageCoordinator->appsLoading(); }
 
@@ -929,6 +959,9 @@ void MainUIBackend::removeRepository(const QString& url)                   { m_p
 void MainUIBackend::setRepositoryEnabled(const QString& url, bool enabled) { m_packageCoordinator->setRepositoryEnabled(url, enabled); }
 void MainUIBackend::refreshDownloadSource()                                { m_packageCoordinator->refreshDownloadSource(); }
 void MainUIBackend::setDownloadSource(const QString& source)               { m_packageCoordinator->setDownloadSource(source); }
+void MainUIBackend::chooseOnboardingSource(const QString& source)          { m_packageCoordinator->chooseOnboardingSource(source); }
+void MainUIBackend::completeOnboarding()                                    { m_packageCoordinator->completeOnboarding(); }
+void MainUIBackend::retryStorage()                                         { m_packageCoordinator->retryStorage(); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 

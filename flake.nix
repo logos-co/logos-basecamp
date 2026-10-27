@@ -740,6 +740,12 @@
             uiTestRun = if pkgs.stdenv.isDarwin then integrationTestBundle else integrationTest;
           };
 
+          # Where apps download from, end to end: onboarding's choice, then
+          # the App Manager and the Package Manager in each state.
+          download-source-test = import ./nix/download-source-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+          };
+
           # Default package
           default = app;
         } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
@@ -830,6 +836,7 @@
         qml-tests = self.packages.${system}.qml-tests;
         integration-test = self.packages.${system}.integration-test;
         shutdown-test = self.packages.${system}.shutdown-test;
+        download-source-test = self.packages.${system}.download-source-test;
         host-services-test = self.packages.${system}.host-services-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;

@@ -67,6 +67,10 @@ struct AppsModelRoles {
                                  //   when the row is shown anyway.
         WebProvidesRole,         // QStringList — the provides entries that set
                                  //   "web": true (reachable from a basecamp:// link)
+        DownloadTransportRole,       // "logos" | "http" | "" — where this package's bytes come from
+        DownloadFellBackRole,        // bool — Logos Storage could not serve it, HTTP took over
+        PlanDownloadTransportRole,   // the same, for the plan's package on the wire now
+        PlanDownloadFellBackRole,
     };
 };
 

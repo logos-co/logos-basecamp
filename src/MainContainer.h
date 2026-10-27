@@ -8,6 +8,7 @@
 #include <QStackedWidget>
 
 class QQuickWidget;
+class QTimer;
 class WorkspaceArea;
 class ShortcutBridge;
 
@@ -55,6 +56,11 @@ private slots:
     void onOverlayActiveChanged(bool active);
     void onSidebarTooltipRequested(const QString& text, qreal y);
     void onAddApplicationDialogRequested(const QVariantMap& metadata);
+    void onOnboardingFinished();
+    void onOnlineChanged();
+    void closeOfflineToast();
+    void updateOfflineToast();
+    void maskOfflineToast();
 
 private:
     void wireSidebar(QObject* sidebarRoot);
@@ -91,6 +97,19 @@ private:
     // anchored inside m_contentWidget and never rendered while the
     // Apps/MDI screen was active.
     QQuickWidget* m_overlayWidget;
+
+    // First-run onboarding, over the whole window until it finishes; null
+    // otherwise. Lives outside the layout, like the overlay.
+    QPointer<QQuickWidget> m_onboardingWidget;
+
+    bool isOffline() const;
+    void placeOfflineToast();
+
+    // Floats over the bottom of the content while offline, until closed;
+    // comes back if still offline a while later, or offline again.
+    QQuickWidget* m_offlineToast = nullptr;
+    QTimer*       m_offlineToastReturn = nullptr;
+    bool          m_offlineToastClosed = false;
 
     // Not owned — Window owns it and it outlives this widget.
     IShellHost* m_host;
