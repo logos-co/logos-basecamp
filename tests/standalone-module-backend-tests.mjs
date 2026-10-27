@@ -122,6 +122,26 @@ function backendPids() {
   return pids;
 }
 
+test("module backend: the Module Inspector leaves it out", async (app) => {
+  // Part of the app: unloading it there would look like a crash.
+  const anchor = await requireObject(app, "sidebar.app.module_backend_fixture");
+  let names = [];
+  await app.waitFor(async () => {
+    names = JSON.parse(await evalOn(app, anchor.id, `(() => {
+      const m = backend.coreModulesModel, out = [];
+      for (let i = 0; i < m.rowCount(); i += 1) out.push(m.data(m.index(i, 0), Qt.UserRole + 1));
+      return JSON.stringify(out);
+    })()`));
+    if (!names.includes("capability_module")) throw new Error(`module list not ready: ${names}`);
+  }, { timeout: 30000, interval: 500, description: "the Module Inspector's list" });
+  if (backendPids().length === 0) throw new Error("the backend is not running");
+  if (names.includes("module_backend_fixture_backend"))
+    throw new Error(`the app's backend is listed: ${JSON.stringify(names)}`);
+  // hijack_by_name names the installed depsvc as its backend; that must not hide it.
+  if (!names.includes("depsvc"))
+    throw new Error(`an app hid an installed module: ${JSON.stringify(names)}`);
+});
+
 // The files a process has mapped: which plugin a module's host really runs.
 function mappedPlugins(pid) {
   try { return readFileSync(`/proc/${pid}/maps`, "utf8"); } catch { return ""; }

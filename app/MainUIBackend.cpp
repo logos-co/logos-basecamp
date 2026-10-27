@@ -281,6 +281,7 @@ QVariantList MainUIBackend::buildCoreModulesSnapshot() const
     const QStringList loaded = m_coreModuleManager->loadedModules();
 
     for (const QString& name : known) {
+        if (m_uiPluginManager && m_uiPluginManager->isAppBackend(name)) continue;
         QVariantMap module;
         module["name"] = name;
         module["displayName"] = m_packageCoordinator ? m_packageCoordinator->displayNameFor(name) : name;
