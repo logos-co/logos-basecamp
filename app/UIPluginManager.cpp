@@ -348,7 +348,8 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
         request.backendModule = backendModuleOf(meta);
-        if (!request.backendModule.isEmpty())
+        // PluginLoader refuses any other name; nothing is recorded for it.
+        if (isBackendNameFor(moduleName, request.backendModule))
             m_moduleBackends.insert(moduleName, request.backendModule);
         request.coreDependencies = meta.value("dependencies").toList();
         request.optionalCoreDependencies = meta.value("optionalDependencies").toList();
@@ -1203,10 +1204,18 @@ bool UIPluginManager::isQmlPlugin(const QString& name) const
     return getPluginType(name) == QStringLiteral("ui_qml");
 }
 
+bool UIPluginManager::isBackendNameFor(const QString& appName, const QString& backend)
+{
+    // The builder's name for it, and the only one Basecamp registers: any other
+    // could be an installed module the app wants loaded, unloaded or hidden.
+    return !backend.isEmpty() && backend == appName + QStringLiteral("_backend");
+}
+
 void UIPluginManager::unloadModuleBackendOf(const QString& appName)
 {
     const QString backend = m_moduleBackends.take(appName);
-    if (backend.isEmpty() || !m_coreModuleManager) return;
+    if (backend.isEmpty() || !m_coreModuleManager
+        || !m_pluginLoader->isRegisteredBackend(backend)) return;
     if (m_shuttingDown) {
         m_coreModuleManager->unloadModule(backend);
         return;

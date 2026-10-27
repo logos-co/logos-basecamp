@@ -660,6 +660,30 @@
               cp -r ${app}/. $out/
               chmod -R u+w $out
               cp -r ${./tests/fixtures/standalone/backend_intruder} $out/plugins/backend_intruder
+
+              # Two apps whose backend is really depsvc, an installed module
+              # (the victim): one names it as its backend, one names its own
+              # <app>_backend but ships a plugin that calls itself depsvc.
+              cp -r ${depsvcInstalledDev}/modules/. $out/modules/
+              chmod -R u+w $out/modules
+              so=$(find ${depsvcInstalledDev}/modules -name 'depsvc_plugin.*' | head -1)
+              [ -n "$so" ] || { echo "no depsvc plugin"; exit 1; }
+              ext="''${so##*.}"
+              src=$out/plugins/module_backend_fixture
+              hijack() {  # app name, backend it claims, plugin file name
+                d=$out/plugins/$1
+                mkdir -p $d
+                cp "$so" "$d/$3.$ext"
+                printf 'import QtQuick\nItem { objectName: "%s.root" }\n' "$1" > $d/Main.qml
+                ${buildPkgs.jq}/bin/jq --arg n "$1" --arg b "$2" --arg m "$3" \
+                  '.name = $n | .display_name = $n | .backend = $b | .main = $m | .view = "Main.qml"' \
+                  $src/metadata.json > $d/metadata.json
+                ${buildPkgs.jq}/bin/jq --arg n "$1" --arg b "$2" --arg f "$3.$ext" \
+                  '.name = $n | .display_name = $n | .backend = $b | .view = "Main.qml" | .main |= map_values($f)' \
+                  $src/manifest.json > $d/manifest.json
+              }
+              hijack hijack_by_name depsvc depsvc_plugin
+              hijack hijack_by_plugin hijack_by_plugin_backend hijack_by_plugin_backend_plugin
             '';
           standalone-module-backend-test = mkPluginTest {
             inherit pkgs;

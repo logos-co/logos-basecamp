@@ -146,8 +146,48 @@ void PluginLoader::startLoad(const PluginLoadRequest& incoming)
     if (!request.backendModule.isEmpty()) {
         // The backend ships inside the app's package, outside the modules
         // dirs: make it known to the core, then load it like a dependency.
-        const QString registered = m_coreModuleManager
-            ? m_coreModuleManager->registerModuleFile(request.mainFilePath) : QString();
+        // The core takes the plugin's own name and replaces whatever module it
+        // knew under it, so an app may only register `<app>_backend`, and only
+        // if that name is not a module from the modules dirs.
+        auto refuse = [this, &request](const QString& why) {
+            qWarning() << "Refusing the backend of" << request.name << ":" << why;
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Could not register the backend of ") + request.name);
+        };
+        if (request.backendModule != request.name + QStringLiteral("_backend")) {
+            refuse(QStringLiteral("its backend must be named ") + request.name
+                   + QStringLiteral("_backend, not ") + request.backendModule);
+            return;
+        }
+        if (!m_coreModuleManager) {
+            refuse(QStringLiteral("no core"));
+            return;
+        }
+        if (!m_registeredBackends.contains(request.backendModule)
+            && m_coreModuleManager->knownModules().contains(request.backendModule)) {
+            refuse(request.backendModule + QStringLiteral(" is an installed module"));
+            return;
+        }
+        // The core registers the plugin under the name embedded in the file,
+        // which the manifest does not vouch for: read it the way the core does
+        // (metadata only, nothing loaded) before letting the core see it.
+        const QString embedded = QPluginLoader(request.mainFilePath).metaData()
+            .value(QStringLiteral("MetaData")).toObject()
+            .value(QStringLiteral("name")).toString();
+        if (embedded != request.backendModule) {
+            refuse(request.mainFilePath + QStringLiteral(" declares the module name \"")
+                   + embedded + QStringLiteral("\""));
+            return;
+        }
+        // capability_module lets anyone call a module it has no rule for, so the
+        // rule goes in before the core can start the backend.
+        if (!restrictBackendToView(request.backendModule, request.name)) {
+            refuse(QStringLiteral("could not restrict it to its view"));
+            return;
+        }
+        const QString registered = m_coreModuleManager->registerModuleFile(request.mainFilePath);
+        if (registered == request.backendModule) m_registeredBackends.insert(registered);
         if (registered != request.backendModule) {
             qWarning() << "Backend" << request.mainFilePath << "of" << request.name
                        << "did not register as" << request.backendModule;
@@ -490,6 +530,7 @@ bool PluginLoader::restrictBackendToView(const QString& backendModule, const QSt
         QStringLiteral("capability_module"), QStringLiteral("registerRestriction"),
         QVariantList{ capToken, backendModule,
                       QStringList{ viewName, QStringLiteral("core"), QStringLiteral("core_service") } });
+    if (ok.toBool()) qInfo().noquote() << "Restricted" << backendModule << "to" << viewName;
     return ok.toBool();
 }
 

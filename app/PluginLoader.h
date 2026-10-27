@@ -71,6 +71,10 @@ public:
     bool isLoading(const QString& name) const;
     QStringList loadingPlugins() const;
 
+    // An app backend this loader registered with the core: the only modules
+    // Basecamp may unload on an app's behalf.
+    bool isRegisteredBackend(const QString& module) const { return m_registeredBackends.contains(module); }
+
 signals:
     void pluginLoaded(const QString& name, QWidget* widget,
                       IComponent* component, UIPluginType type,
@@ -148,6 +152,9 @@ private:
     // time — and, now that a credential is registered rather than discarded,
     // would invalidate the credential the previous incarnation still holds.
     QHash<QString, logos::ConsumerIdentity> m_consumers;
+    // Backend module names this loader registered for apps. Any other module
+    // the core knows under such a name is not the app's to replace.
+    QSet<QString> m_registeredBackends;
 
     mutable QMutex m_mutex;
     QSet<QString> m_loading;

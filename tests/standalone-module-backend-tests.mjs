@@ -3,7 +3,7 @@
 // it but not the core, another app cannot reach it, and closing the app
 // unloads it. Run by `nix build .#standalone-module-backend-test` through
 // nix/mkPluginTest.nix.
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = process.env.LOGOS_QT_MCP || new URL("../result-mcp", import.meta.url).pathname;
@@ -73,6 +73,21 @@ test("module backend: the view has no core access", async (app) => {
   if (access !== "none") throw new Error(`the view reached the core: ${access}`);
 });
 
+test("module backend: it is closed to other apps before it starts", async () => {
+  // capability_module lets anyone call a module it has no rule for, so the
+  // rule must be in place before the core starts the backend. The session log
+  // has Basecamp's and the core's lines in one stream, in order.
+  const logs = join(userDir, "logs");
+  const file = readdirSync(logs).filter((f) => /^basecamp_.*\.log$/.test(f)).sort().pop();
+  if (!file) throw new Error(`no session log in ${logs}`);
+  const log = readFileSync(join(logs, file), "utf8");
+  const restricted = log.indexOf("Restricted module_backend_fixture_backend to module_backend_fixture");
+  const loaded = log.indexOf("Module loaded: module_backend_fixture_backend");
+  if (restricted < 0) throw new Error("no restriction line in the session log");
+  if (loaded < 0) throw new Error("no load line for the backend in the session log");
+  if (restricted > loaded) throw new Error("the backend started before it was restricted to its view");
+});
+
 test("module backend: another app cannot reach it", async (app) => {
   const intruder = await requireObject(app, "intruder.root");
   await evalOn(app, intruder.id, "attack()");
@@ -83,6 +98,85 @@ test("module backend: another app cannot reach it", async (app) => {
     const outcome = await waitForAnswer(app, intruder.id, attempt, `the intruder's ${attempt} attempt`);
     if (outcome.startsWith("REACHED")) throw new Error(`the intruder got through (${attempt}): ${outcome}`);
   }
+});
+
+// The backend's host process, found by the module name on its command line.
+function backendPids() {
+  const pids = [];
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    let cmd = "";
+    try { cmd = readFileSync(`/proc/${entry}/cmdline`, "utf8"); } catch { continue; }
+    if (cmd.includes("module_backend_fixture_backend")) pids.push(Number(entry));
+  }
+  return pids;
+}
+
+// The files a process has mapped: which plugin a module's host really runs.
+function mappedPlugins(pid) {
+  try { return readFileSync(`/proc/${pid}/maps`, "utf8"); } catch { return ""; }
+}
+
+// The process running a depsvc plugin, and the files it has mapped.
+function depsvcProcess() {
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const maps = mappedPlugins(entry);
+    if (maps.includes("depsvc_plugin") || maps.includes("hijack_by_plugin_backend_plugin"))
+      return { pid: Number(entry), maps };
+  }
+  return null;
+}
+
+function expectRealDepsvc(proc, when) {
+  const hijacked = proc.maps.split("\n").find((l) => l.includes("/plugins/hijack_by_"));
+  if (hijacked) throw new Error(`depsvc runs an app's plugin ${when}: ${hijacked}`);
+  if (!proc.maps.includes("/modules/depsvc/"))
+    throw new Error(`depsvc's process does not map modules/depsvc ${when}`);
+}
+
+test("module backend: an app cannot take over an installed module's name", async (app) => {
+  // depsvc is installed (modules/depsvc); both apps ship a copy of its plugin
+  // as their "backend": one names depsvc outright, one names its own
+  // <app>_backend but the plugin inside calls itself depsvc.
+  const anchor = await requireObject(app, "sidebar.app.module_backend_fixture");
+  const evalBackend = (expr) => evalOn(app, anchor.id, expr);
+  const waitForDepsvc = async (what, notPid = 0) => {
+    let proc = null;
+    await app.waitFor(async () => {
+      proc = depsvcProcess();
+      if (!proc || proc.pid === notPid) throw new Error("no depsvc process yet");
+    }, { timeout: 30000, interval: 500, description: what });
+    return proc;
+  };
+
+  await evalBackend(`backend.loadCoreModule("depsvc")`);
+  const before = await waitForDepsvc("depsvc to load");
+  expectRealDepsvc(before, "before the attempts");
+
+  for (const name of ["hijack_by_name", "hijack_by_plugin"]) {
+    await evalBackend(`backend.loadUiModule(${JSON.stringify(name)})`);
+    await app.waitFor(async () => {
+      if (JSON.parse(await evalBackend("JSON.stringify(backend.loadingModules)")).includes(name))
+        throw new Error(`${name} still loading`);
+    }, { timeout: 30000, interval: 500, description: `${name}'s load to finish` });
+    if ((await app.findByProperty("objectName", `${name}.root`)).matches?.length)
+      throw new Error(`${name} opened: its backend was accepted`);
+  }
+
+  // A refused app must not have unloaded the module it named.
+  await new Promise((r) => setTimeout(r, 2000));
+  const still = depsvcProcess();
+  if (!still || still.pid !== before.pid)
+    throw new Error("depsvc was stopped by an app it does not belong to");
+
+  // Next start of depsvc: from its own file, not an app's.
+  await evalBackend(`backend.unloadCoreModule("depsvc")`);
+  await app.waitFor(async () => {
+    if (depsvcProcess()?.pid === before.pid) throw new Error("depsvc still running");
+  }, { timeout: 30000, interval: 500, description: "depsvc to unload" });
+  await evalBackend(`backend.loadCoreModule("depsvc")`);
+  expectRealDepsvc(await waitForDepsvc("depsvc to load again", before.pid), "after the attempts");
 });
 
 test("module backend: closing the app unloads it", async (app) => {
