@@ -339,8 +339,6 @@ private:
     CoreModuleManager* m_coreModuleManager; // not owned (sibling Qt child)
     // App -> the core module its backend runs as. Unloaded with the app.
     QHash<QString, QString> m_moduleBackends;
-    // Every installed app's backend module, rebuilt with m_uiPluginMetadata.
-    QSet<QString> m_appBackends;
     void unloadModuleBackendOf(const QString& appName);
     static bool isBackendNameFor(const QString& appName, const QString& backend);
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator

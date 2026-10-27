@@ -13,6 +13,8 @@ Rectangle {
     property string sum: "pending"
     property string coreAccess: "pending"
 
+    function crashBackend() { backend.crash() }
+
     function callBackend() {
         logos.watch(backend.add(2, 3),
                     function(value) { root.sum = String(value) },

@@ -20,6 +20,11 @@ int ModuleBackendFixtureBackend::add(int a, int b)
     return result;
 }
 
+void ModuleBackendFixtureBackend::crash()
+{
+    std::abort();
+}
+
 void ModuleBackendFixtureBackend::onContextReady()
 {
     writeMarker(instancePersistencePath(), "backend-loaded");

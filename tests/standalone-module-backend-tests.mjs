@@ -110,18 +110,6 @@ async function anyStoppedBadgeVisible(app) {
   return false;
 }
 
-// The backend's host process, found by the module name on its command line.
-function backendPids() {
-  const pids = [];
-  for (const entry of readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
-    let cmd = "";
-    try { cmd = readFileSync(`/proc/${entry}/cmdline`, "utf8"); } catch { continue; }
-    if (cmd.includes("module_backend_fixture_backend")) pids.push(Number(entry));
-  }
-  return pids;
-}
-
 test("module backend: the Module Inspector leaves it out", async (app) => {
   // Part of the app: unloading it there would look like a crash.
   const anchor = await requireObject(app, "sidebar.app.module_backend_fixture");
@@ -134,34 +122,33 @@ test("module backend: the Module Inspector leaves it out", async (app) => {
     })()`));
     if (!names.includes("capability_module")) throw new Error(`module list not ready: ${names}`);
   }, { timeout: 30000, interval: 500, description: "the Module Inspector's list" });
-  if (backendPids().length === 0) throw new Error("the backend is not running");
+  await app.expectTexts(["Backend: connected"]);
   if (names.includes("module_backend_fixture_backend"))
     throw new Error(`the app's backend is listed: ${JSON.stringify(names)}`);
-  // hijack_by_name names the installed depsvc as its backend; that must not hide it.
-  if (!names.includes("depsvc"))
-    throw new Error(`an app hid an installed module: ${JSON.stringify(names)}`);
+  // hijack_by_name names the installed depsvc as its backend, and "shadow"
+  // declares shadow_backend, an installed module's name: neither may hide it.
+  for (const installed of ["depsvc", "shadow_backend"]) {
+    if (!names.includes(installed))
+      throw new Error(`an app hid the installed ${installed}: ${JSON.stringify(names)}`);
+  }
 });
 
-// The files a process has mapped: which plugin a module's host really runs.
-function mappedPlugins(pid) {
-  try { return readFileSync(`/proc/${pid}/maps`, "utf8"); } catch { return ""; }
-}
-
-// The process running a depsvc plugin, and the files it has mapped.
-function depsvcProcess() {
+// Which plugin file depsvc's host process has mapped. Linux only (/proc):
+// the macOS build sandbox lets a test see no other process.
+function depsvcMaps() {
   for (const entry of readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
-    const maps = mappedPlugins(entry);
-    if (maps.includes("depsvc_plugin") || maps.includes("hijack_by_plugin_backend_plugin"))
-      return { pid: Number(entry), maps };
+    let maps = "";
+    try { maps = readFileSync(`/proc/${entry}/maps`, "utf8"); } catch { continue; }
+    if (maps.includes("depsvc_plugin") || maps.includes("hijack_by_plugin_backend_plugin")) return maps;
   }
   return null;
 }
 
-function expectRealDepsvc(proc, when) {
-  const hijacked = proc.maps.split("\n").find((l) => l.includes("/plugins/hijack_by_"));
+function expectRealDepsvc(maps, when) {
+  const hijacked = maps.split("\n").find((l) => l.includes("/plugins/hijack_by_"));
   if (hijacked) throw new Error(`depsvc runs an app's plugin ${when}: ${hijacked}`);
-  if (!proc.maps.includes("/modules/depsvc/"))
+  if (!maps.includes("/modules/depsvc/"))
     throw new Error(`depsvc's process does not map modules/depsvc ${when}`);
 }
 
@@ -171,18 +158,29 @@ test("module backend: an app cannot take over an installed module's name", async
   // <app>_backend but the plugin inside calls itself depsvc.
   const anchor = await requireObject(app, "sidebar.app.module_backend_fixture");
   const evalBackend = (expr) => evalOn(app, anchor.id, expr);
-  const waitForDepsvc = async (what, notPid = 0) => {
-    let proc = null;
+  const depsvcLoaded = async () => JSON.parse(await evalBackend(`(() => {
+    const m = backend.coreModulesModel;
+    for (let i = 0; i < m.rowCount(); i += 1)
+      if (m.data(m.index(i, 0), Qt.UserRole + 1) === "depsvc")
+        return JSON.stringify(m.data(m.index(i, 0), Qt.UserRole + 9) === true);
+    return "false";
+  })()`));
+  const waitForDepsvc = (loaded, what) => app.waitFor(async () => {
+    if (await depsvcLoaded() !== loaded) throw new Error(`depsvc not ${loaded ? "loaded" : "unloaded"} yet`);
+  }, { timeout: 30000, interval: 500, description: what });
+  const checkPlugin = async (when) => {
+    if (process.platform !== "linux") return;  // see depsvcMaps
+    let maps = null;
     await app.waitFor(async () => {
-      proc = depsvcProcess();
-      if (!proc || proc.pid === notPid) throw new Error("no depsvc process yet");
-    }, { timeout: 30000, interval: 500, description: what });
-    return proc;
+      maps = depsvcMaps();
+      if (!maps) throw new Error("no depsvc process yet");
+    }, { timeout: 30000, interval: 500, description: `depsvc's process ${when}` });
+    expectRealDepsvc(maps, when);
   };
 
   await evalBackend(`backend.loadCoreModule("depsvc")`);
-  const before = await waitForDepsvc("depsvc to load");
-  expectRealDepsvc(before, "before the attempts");
+  await waitForDepsvc(true, "depsvc to load");
+  await checkPlugin("before the attempts");
 
   for (const name of ["hijack_by_name", "hijack_by_plugin"]) {
     await evalBackend(`backend.loadUiModule(${JSON.stringify(name)})`);
@@ -196,17 +194,14 @@ test("module backend: an app cannot take over an installed module's name", async
 
   // A refused app must not have unloaded the module it named.
   await new Promise((r) => setTimeout(r, 2000));
-  const still = depsvcProcess();
-  if (!still || still.pid !== before.pid)
-    throw new Error("depsvc was stopped by an app it does not belong to");
+  if (!(await depsvcLoaded())) throw new Error("depsvc was stopped by an app it does not belong to");
 
   // Next start of depsvc: from its own file, not an app's.
   await evalBackend(`backend.unloadCoreModule("depsvc")`);
-  await app.waitFor(async () => {
-    if (depsvcProcess()?.pid === before.pid) throw new Error("depsvc still running");
-  }, { timeout: 30000, interval: 500, description: "depsvc to unload" });
+  await waitForDepsvc(false, "depsvc to unload");
   await evalBackend(`backend.loadCoreModule("depsvc")`);
-  expectRealDepsvc(await waitForDepsvc("depsvc to load again", before.pid), "after the attempts");
+  await waitForDepsvc(true, "depsvc to load again");
+  await checkPlugin("after the attempts");
 });
 
 test("module backend: a crashed backend shows a stopped panel, and Reopen restarts it", async (app) => {
@@ -214,9 +209,7 @@ test("module backend: a crashed backend shows a stopped panel, and Reopen restar
   if (!loaded) throw new Error("no backend-loaded marker to start from");
   unlinkSync(loaded);
 
-  const pids = backendPids();
-  if (pids.length === 0) throw new Error("no process with module_backend_fixture_backend on its command line");
-  for (const pid of pids) process.kill(pid, "SIGKILL");
+  await evalOn(app, (await requireObject(app, "fixture.root")).id, "crashBackend()");
 
   const title = await requireObject(app, "appStopped.title");
   const titleText = await evalOn(app, title.id, "text");
@@ -241,9 +234,7 @@ test("module backend: a crashed backend shows a stopped panel, and Reopen restar
 });
 
 test("module backend: a second crash after Reopen is shown too", async (app) => {
-  const pids = backendPids();
-  if (pids.length === 0) throw new Error("no reopened backend to crash");
-  for (const pid of pids) process.kill(pid, "SIGKILL");
+  await evalOn(app, (await requireObject(app, "fixture.root")).id, "crashBackend()");
 
   await requireObject(app, "appStopped.title");
   await app.waitFor(async () => {

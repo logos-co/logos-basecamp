@@ -650,6 +650,26 @@
           standalone-module-backend-fixture =
             let
               builder = logos-package-manager-ui.inputs.logos-module-builder;
+              # An installed module that happens to be named like an app's
+              # backend (shadow_backend): depsvc under another name.
+              shadowConfig = builtins.toFile "metadata.json" (builtins.toJSON (
+                builtins.fromJSON (builtins.readFile ./tests/fixtures/depsvc/metadata.json)
+                // { name = "shadow_backend"; main = "shadow_backend_plugin"; }));
+              shadowSrc = buildPkgs.runCommandLocal "shadow-backend-src" { } ''
+                cp -r ${./tests/fixtures/depsvc} $out
+                chmod -R u+w $out
+                cp ${shadowConfig} $out/metadata.json
+                mv $out/src/depsvc_impl.h $out/src/shadow_backend_impl.h
+                mv $out/src/depsvc_impl.cpp $out/src/shadow_backend_impl.cpp
+                sed -i -e 's/depsvc_impl/shadow_backend_impl/g' -e 's/DepsvcImpl/ShadowBackendImpl/g' \
+                  -e 's/DepsvcModulePlugin/ShadowBackendModulePlugin/g' \
+                  $out/CMakeLists.txt $out/src/*
+              '';
+              shadowModule = installDev (builder.lib.mkLogosModule {
+                src = shadowSrc;
+                configFile = shadowConfig;
+                flakeInputs = { logos-module-builder = builder; };
+              }).packages.${system}.default;
               app = (builder.lib.mkLogosQmlModule {
                 src = ./tests/fixtures/standalone-module-backend;
                 configFile = ./tests/fixtures/standalone-module-backend/metadata.json;
@@ -684,6 +704,11 @@
               }
               hijack hijack_by_name depsvc depsvc_plugin
               hijack hijack_by_plugin hijack_by_plugin_backend hijack_by_plugin_backend_plugin
+
+              # An app "shadow" whose backend name is that installed module's.
+              cp -r ${shadowModule}/modules/. $out/modules/
+              chmod -R u+w $out/modules
+              hijack shadow shadow_backend shadow_backend_plugin
             '';
           standalone-module-backend-test = mkPluginTest {
             inherit pkgs;

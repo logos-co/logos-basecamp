@@ -22,7 +22,6 @@
 #include <QQmlContext>
 #include <QQuickWidget>
 #include <QSet>
-#include <algorithm>
 #include <QTimer>
 #include <QUrl>
 
@@ -157,7 +156,6 @@ void UIPluginManager::setPackageCoordinator(PackageCoordinator* packageCoordinat
 void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
 {
     m_uiPluginMetadata.clear();
-    m_appBackends.clear();
     for (const QVariant& item : uiPlugins) {
         QVariantMap pluginInfo = item.toMap();
         QString name = pluginInfo.value("name").toString();
@@ -172,10 +170,6 @@ void UIPluginManager::onUiPluginsFetched(const QVariantList& uiPlugins)
             if (pluginInfo.value("mainFilePath").toString().isEmpty()) continue;
         }
         m_uiPluginMetadata[name] = pluginInfo;
-        if (type == QStringLiteral("ui_qml")) {
-            const QString backend = backendModuleOf(pluginInfo);
-            if (isBackendNameFor(name, backend)) m_appBackends.insert(backend);
-        }
     }
 
     for (auto it = m_qmlPluginWidgets.cbegin(); it != m_qmlPluginWidgets.cend(); ++it)
@@ -1258,10 +1252,9 @@ void UIPluginManager::unloadModuleBackendOf(const QString& appName)
 
 bool UIPluginManager::isAppBackend(const QString& moduleName) const
 {
-    // m_moduleBackends also covers an app opened before the next scan.
-    return m_appBackends.contains(moduleName)
-        || std::find(m_moduleBackends.cbegin(), m_moduleBackends.cend(), moduleName)
-               != m_moduleBackends.cend();
+    // Registered from an app's package by PluginLoader, which refuses a name an
+    // installed module already has: the core only knows a backend from then on.
+    return m_pluginLoader->isRegisteredBackend(moduleName);
 }
 
 QString UIPluginManager::backendModuleOf(const QVariantMap& meta) const

@@ -11,6 +11,7 @@ class ModuleBackendFixtureBackend : public ModuleBackendFixtureSimpleSource,
 {
 public:
     int add(int a, int b) override;
+    void crash() override;  // the test's way to make the backend die
 
 protected:
     void onContextReady() override;
