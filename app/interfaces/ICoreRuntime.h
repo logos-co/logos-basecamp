@@ -64,6 +64,10 @@ public:
     // `name` first, leaves-first, so nothing is briefly left pointing at a
     // terminated parent.
     virtual bool unloadModule(const QString& name, bool withDependents = false) = 0;
+    // Makes a module file outside the modules dirs known — a UI app's backend
+    // ships inside the app's package. Returns the name it registered under, or
+    // empty. Defaulted so runtimes that have no use for it need not say so.
+    virtual QString registerModuleFile(const QString& path) { (void)path; return QString(); }
 
     // Re-scan for modules that appeared since start(). Called after installs.
     virtual void refreshModules() = 0;

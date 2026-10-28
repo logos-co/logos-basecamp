@@ -41,6 +41,7 @@ public:
     // Presentation seam. Branches on the widget pointer because this class
     // decided where each widget was mounted.
     void onPresentAppRequested(QWidget* widget) override;
+    void onAppStopped(QWidget* widget, const QString& name) override;
 
 protected:
     // Keeps the overlay sized to the full MainContainer: it floats over both
@@ -61,9 +62,12 @@ private slots:
     void closeOfflineToast();
     void updateOfflineToast();
     void maskOfflineToast();
+    void onStoppedAppReopenRequested(const QString& name);
+    void onStoppedAppCloseRequested(const QString& name);
 
 private:
     void wireSidebar(QObject* sidebarRoot);
+    QQuickWidget* makeAppStoppedPanel(const QString& name);
     bool offersSection(int section) const;
     void applyAppManagerSearch(const QString& query);
     void invokeOpenApp(const QString& name, const QString& repositoryUrl);
@@ -85,6 +89,8 @@ private:
     // forever, so the Package Manager section could never reload. Same guard the
     // host applies to its own widget maps.
     QPointer<QWidget> m_pmuiWidget;
+    // Shown in the Package Manager page's place while its backend is stopped.
+    QPointer<QWidget> m_pmuiStoppedPanel;
     bool m_suppressNextNavToApps = false;
 
     // Content views (QML for Dashboard, Modules, PackageManager, Settings)

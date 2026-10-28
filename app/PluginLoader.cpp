@@ -6,6 +6,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPointer>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QMutexLocker>
@@ -30,7 +33,9 @@
 #include "IntentBridgeAdapter.h"
 #include "LogosQmlBridge.h"
 #include "logos_api.h"
+#include "logos_api_client.h"
 #include "logos_consumer.h"
+#include "token_manager.h"
 #include "restricted/QmlSandbox.h"
 #include "utils/DependencyEntry.h"
 #include <ViewModuleHost.h>
@@ -135,8 +140,65 @@ logos::ConsumerIdentity PluginLoader::consumerFor(const QString& name)
     return consumer;
 }
 
-void PluginLoader::startLoad(const PluginLoadRequest& request)
+void PluginLoader::startLoad(const PluginLoadRequest& incoming)
 {
+    PluginLoadRequest request = incoming;
+    if (!request.backendModule.isEmpty()) {
+        // The backend ships inside the app's package, outside the modules
+        // dirs: make it known to the core, then load it like a dependency.
+        // The core takes the plugin's own name and replaces whatever module it
+        // knew under it, so an app may only register `<app>_backend`, and only
+        // if that name is not a module from the modules dirs.
+        auto refuse = [this, &request](const QString& why) {
+            qWarning() << "Refusing the backend of" << request.name << ":" << why;
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Could not register the backend of ") + request.name);
+        };
+        if (request.backendModule != request.name + QStringLiteral("_backend")) {
+            refuse(QStringLiteral("its backend must be named ") + request.name
+                   + QStringLiteral("_backend, not ") + request.backendModule);
+            return;
+        }
+        if (!m_coreModuleManager) {
+            refuse(QStringLiteral("no core"));
+            return;
+        }
+        if (!m_registeredBackends.contains(request.backendModule)
+            && m_coreModuleManager->knownModules().contains(request.backendModule)) {
+            refuse(request.backendModule + QStringLiteral(" is an installed module"));
+            return;
+        }
+        // The core registers the plugin under the name embedded in the file,
+        // which the manifest does not vouch for: read it the way the core does
+        // (metadata only, nothing loaded) before letting the core see it.
+        const QString embedded = QPluginLoader(request.mainFilePath).metaData()
+            .value(QStringLiteral("MetaData")).toObject()
+            .value(QStringLiteral("name")).toString();
+        if (embedded != request.backendModule) {
+            refuse(request.mainFilePath + QStringLiteral(" declares the module name \"")
+                   + embedded + QStringLiteral("\""));
+            return;
+        }
+        // capability_module lets anyone call a module it has no rule for, so the
+        // rule goes in before the core can start the backend.
+        if (!restrictBackendToView(request.backendModule, request.name)) {
+            refuse(QStringLiteral("could not restrict it to its view"));
+            return;
+        }
+        const QString registered = m_coreModuleManager->registerModuleFile(request.mainFilePath);
+        if (registered == request.backendModule) m_registeredBackends.insert(registered);
+        if (registered != request.backendModule) {
+            qWarning() << "Backend" << request.mainFilePath << "of" << request.name
+                       << "did not register as" << request.backendModule;
+            setLoading(request.name, false);
+            emit pluginLoadFailed(request.name,
+                QStringLiteral("Could not register the backend of ") + request.name);
+            return;
+        }
+        request.coreDependencies.append(request.backendModule);
+    }
+
     if (request.coreDependencies.isEmpty() && request.optionalCoreDependencies.isEmpty()) {
         continueLoad(request);
         return;
@@ -366,6 +428,11 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
             QStringLiteral("Could not establish an isolated identity for ") + request.name);
         return;
     }
+    if (!request.backendModule.isEmpty()) {
+        loadModuleBackendView(request, consumer);
+        return;
+    }
+
     auto* bridge = new LogosQmlBridge(consumer.api, this);
 
     if (request.mainFilePath.isEmpty()) {
@@ -383,6 +450,11 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
     // enters its event loop, so a registration deferred to onHostReady would
     // lose to them and capability_module would refuse with "auth token not
     // recognized".
+    qWarning().noquote() << QStringLiteral(
+        "DEPRECATED: %1 runs its backend in ui-host. Add \"backend\": \"module\" to its "
+        "metadata.json to run the same .rep backend as a core module; ui-host will be removed "
+        "in the next breaking release.").arg(request.name);
+
     auto* viewHost = new ViewModuleHost(this);
     if (!viewHost->spawn(request.name, request.mainFilePath, consumer.credential)) {
         qWarning() << "Failed to spawn ui-host for ui_qml module" << request.name;
@@ -443,6 +515,84 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
                 QStringLiteral("Timeout waiting for ui-host for ") + request.name);
         });
     timeout->start(30000);
+}
+
+bool PluginLoader::restrictBackendToView(const QString& backendModule, const QString& viewName)
+{
+    // capability_module takes rules only over the trusted core channel, which
+    // is this host's. Same trusted callers liblogos adds to its own rules.
+    LogosAPIClient* cap = m_logosAPI
+        ? m_logosAPI->getClient(QStringLiteral("capability_module")) : nullptr;
+    if (!cap) return false;
+    const QString capToken =
+        m_logosAPI->getTokenManager()->getToken(QStringLiteral("capability_module"));
+    const QVariant ok = cap->invokeRemoteMethod(
+        QStringLiteral("capability_module"), QStringLiteral("registerRestriction"),
+        QVariantList{ capToken, backendModule,
+                      QStringList{ viewName, QStringLiteral("core"), QStringLiteral("core_service") } });
+    if (ok.toBool()) qInfo().noquote() << "Restricted" << backendModule << "to" << viewName;
+    return ok.toBool();
+}
+
+void PluginLoader::loadModuleBackendView(const PluginLoadRequest& request,
+                                         const logos::ConsumerIdentity& consumer)
+{
+    QPointer<PluginLoader> self(this);
+    auto fail = [self, name = request.name](const QString& error) {
+        if (!self) return;
+        qWarning() << "Backend of" << name << "not ready:" << error;
+        self->setLoading(name, false);
+        emit self->pluginLoadFailed(name, error);
+    };
+
+    if (!restrictBackendToView(request.backendModule, request.name)) {
+        fail(QStringLiteral("Could not restrict ") + request.backendModule
+             + QStringLiteral(" to its view"));
+        return;
+    }
+    LogosAPIClient* client = consumer.api->getClient(request.backendModule);
+    if (!client) {
+        fail(QStringLiteral("No client for ") + request.backendModule);
+        return;
+    }
+
+    // The one logos-core call of the view's life: where the backend's private
+    // channel is, plus a one-time secret for it.
+    client->invokeRemoteMethodAsync(request.backendModule, QStringLiteral("view_endpoint"),
+        QVariantList(),
+        LogosAPIClient::AsyncResultErrorCallback(
+            [self, request, fail](QVariant result, const logos::CallError& err) {
+                if (!self) return;
+                const QJsonObject endpoint =
+                    QJsonDocument::fromJson(result.toString().toUtf8()).object();
+                const QString socket = endpoint.value(QStringLiteral("socket")).toString();
+                const QString source = endpoint.value(QStringLiteral("source")).toString();
+                const QString secret = endpoint.value(QStringLiteral("secret")).toString();
+                if (!err.ok() || socket.isEmpty() || source.isEmpty()) {
+                    fail(QStringLiteral("No view endpoint from ") + request.backendModule);
+                    return;
+                }
+                // No LogosAPI: module(), model() and the enums reach this
+                // backend; callModule() and friends have nothing to call with.
+                // Intents still go through the shell's router (attached later).
+                auto* bridge = new LogosQmlBridge(nullptr, self);
+                bridge->setViewModuleSocket(request.name, socket, source, secret);
+                connect(bridge, &LogosQmlBridge::viewModuleCrashed, self,
+                        [self, name = request.name](const QString&) {
+                            if (self) emit self->moduleBackendStopped(name);
+                        });
+                bridge->prepareViewModule(request.name, kBackendReadyTimeoutMs,
+                    [self, request, bridge, fail](bool ok, const QString& error) {
+                        if (!self) return;
+                        if (!ok) {
+                            delete bridge;
+                            fail(error);
+                            return;
+                        }
+                        self->loadQmlView(request, bridge, nullptr);
+                    });
+            }),
+        Timeout(kBackendReadyTimeoutMs));
 }
 
 namespace {

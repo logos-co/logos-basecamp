@@ -35,7 +35,8 @@ Control {
         // Only those the host offers; a backend without the list offers all.
         readonly property var viewSections: [
             { name: "Applications",    icon: BasecampIcons.dashboard, section: 1 },
-            { name: "Package Manager", icon: BasecampIcons.modules,   section: 2 },
+            { name: "Package Manager", icon: BasecampIcons.modules,   section: 2,
+              app: "package_manager_ui" },
             { name: "Settings",        icon: BasecampIcons.settings,  section: 3 }
         ].filter(function(item) {
             return !backend.availableSections || backend.availableSections.indexOf(item.section) >= 0
@@ -131,6 +132,7 @@ Control {
                             Layout.fillWidth: true
                             loaded: true
                             loading: backend.loadingModules.indexOf(modelData.name) >= 0
+                            stopped: (backend.stoppedApps || []).indexOf(modelData.name) >= 0
                             enabled: !loading
                             checked: modelData.name === (backend.currentVisibleApp || "")
                             appName: modelData.name
@@ -186,6 +188,8 @@ Control {
                     checked: backend.currentActiveSectionIndex === modelData.section
                     text: modelData.name
                     icon.source: modelData.icon
+                    stopped: !!modelData.app
+                             && (backend.stoppedApps || []).indexOf(modelData.app) >= 0
                     onClicked: root.updateLauncherIndex(modelData.section)
                     onTooltipRequested: (text, y) => root.tooltipRequested(text, y)
                 }

@@ -245,6 +245,7 @@ void MainContainer::setupUi()
     contentLayout->setContentsMargins(4, 1, 4, 0);
     // Create content stack
     m_contentStack = new QStackedWidget(contentArea);
+    m_contentStack->setObjectName(QStringLiteral("contentStack"));  // UI tests
     m_contentStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     
     // Index 0: WorkspaceArea (QDockWidget-based)
@@ -546,8 +547,10 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
         && offersSection(ShellSection::PackageManager)) {
         m_pmuiWidget = widget;
         QWidget* placeholder = m_contentStack->widget(kModulesStackIndex);
+        const bool showing = placeholder && m_contentStack->currentWidget() == placeholder;
         widget->setParent(m_contentStack);
         m_contentStack->insertWidget(kModulesStackIndex, widget);
+        if (showing) m_contentStack->setCurrentWidget(widget);
         if (placeholder) {
             m_contentStack->removeWidget(placeholder);
             placeholder->deleteLater();
@@ -576,6 +579,16 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
     if (widget && widget == m_pmuiWidget) {
+        // Removing the page on screen lets the stack show whichever is next;
+        // keep the Package Manager page on screen across a reload (Reopen).
+        QWidget* current = m_contentStack->currentWidget();
+        const bool showing = current == widget
+            || (m_pmuiStoppedPanel && current == m_pmuiStoppedPanel);
+        if (m_pmuiStoppedPanel) {
+            m_contentStack->removeWidget(m_pmuiStoppedPanel);
+            m_pmuiStoppedPanel->deleteLater();
+            m_pmuiStoppedPanel = nullptr;
+        }
         // package_manager_ui is the Package Manager PAGE, not a dock, so it must
         // not reach removePluginDock() -- but it cannot simply be left in the
         // stack either: the host deleteLater()s it the moment this returns.
@@ -583,13 +596,77 @@ void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
         // that every `setCurrentIndex(kModulesStackIndex)` then indexes past the
         // end of, and the section is dead for the rest of the session.
         m_contentStack->removeWidget(widget);
-        m_contentStack->insertWidget(kModulesStackIndex,
-                                     makePmuiPlaceholder(m_contentStack));
+        QWidget* placeholder = makePmuiPlaceholder(m_contentStack);
+        m_contentStack->insertWidget(kModulesStackIndex, placeholder);
+        if (showing) m_contentStack->setCurrentWidget(placeholder);
         m_pmuiWidget = nullptr;
         return;
     }
     if (m_workspaceArea && widget)
         m_workspaceArea->removePluginDock(widget);
+}
+
+QQuickWidget* MainContainer::makeAppStoppedPanel(const QString& name)
+{
+    auto* panel = new QQuickWidget;
+    panel->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    panel->setClearColor(QColor("#171717"));
+    panel->setSource(QUrl(QStringLiteral(
+        "qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/AppStoppedPanel.qml")));
+    QObject* root = panel->rootObject();
+    if (!root) {
+        qWarning() << "MainContainer: AppStoppedPanel.qml failed to load:" << panel->errors();
+        return panel;
+    }
+    const QString label = m_host->displayNameFor(name);
+    root->setProperty("appId", name);
+    root->setProperty("appName", label.isEmpty() ? name : label);
+    // The Package Manager page cannot be closed, only reloaded.
+    root->setProperty("closable", name != QStringLiteral("package_manager_ui"));
+    connect(root, SIGNAL(reopenRequested(QString)), this, SLOT(onStoppedAppReopenRequested(QString)));
+    connect(root, SIGNAL(closeRequested(QString)), this, SLOT(onStoppedAppCloseRequested(QString)));
+    return panel;
+}
+
+void MainContainer::onAppStopped(QWidget* widget, const QString& name)
+{
+    if (!widget) {
+        qWarning() << "MainContainer: no widget for stopped app" << name;
+        return;
+    }
+    QQuickWidget* panel = makeAppStoppedPanel(name);
+
+    if (widget == m_pmuiWidget) {
+        const int index = m_contentStack->indexOf(widget);
+        if (index < 0 || m_pmuiStoppedPanel) {
+            panel->deleteLater();
+            return;
+        }
+        const bool showing = m_contentStack->currentWidget() == widget;
+        panel->setParent(m_contentStack);
+        m_contentStack->insertWidget(index, panel);
+        m_contentStack->removeWidget(widget);
+        if (showing) m_contentStack->setCurrentWidget(panel);
+        m_pmuiStoppedPanel = panel;
+        return;
+    }
+
+    if (!m_workspaceArea || !m_workspaceArea->showStoppedPanel(widget, panel)) {
+        qWarning() << "MainContainer: no tab holds" << name << "- stopped panel not shown";
+        panel->deleteLater();
+        return;
+    }
+    qInfo() << "MainContainer: showing the stopped panel for" << name;
+}
+
+void MainContainer::onStoppedAppReopenRequested(const QString& name)
+{
+    m_host->restartUiModule(name);
+}
+
+void MainContainer::onStoppedAppCloseRequested(const QString& name)
+{
+    m_host->unloadUiModule(name);
 }
 
 void MainContainer::onPresentAppRequested(QWidget* widget)

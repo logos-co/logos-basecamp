@@ -41,6 +41,7 @@ struct PluginLoadRequest {
     QString installDir;      // Module install directory (import paths root)
     QString qmlViewPath;     // Resolved QML view entry point
     QString mainFilePath;    // Backend plugin .so/.dylib path (empty if QML-only)
+    QString backendModule;   // Set when the backend runs as a core module ("backend" in metadata.json)
     QString hotReloadDir;    // Standalone --qml-source: rebuild the view on save
 };
 
@@ -70,11 +71,16 @@ public:
     bool isLoading(const QString& name) const;
     QStringList loadingPlugins() const;
 
+    // An app backend this loader registered with the core: the only modules
+    // Basecamp may unload on an app's behalf.
+    bool isRegisteredBackend(const QString& module) const { return m_registeredBackends.contains(module); }
+
 signals:
     void pluginLoaded(const QString& name, QWidget* widget,
                       IComponent* component, UIPluginType type,
                       ViewModuleHost* viewHost);
     void pluginLoadFailed(const QString& name, const QString& error);
+    void moduleBackendStopped(const QString& name);
     void loadingChanged();
 
 private:
@@ -88,6 +94,9 @@ private:
 
     // ui_qml module loading
     void loadUiQmlModule(const PluginLoadRequest& request);
+    void loadModuleBackendView(const PluginLoadRequest& request,
+                               const logos::ConsumerIdentity& consumer);
+    bool restrictBackendToView(const QString& backendModule, const QString& viewName);
     void loadQmlView(const PluginLoadRequest& request,
                      LogosQmlBridge* bridge,
                      ViewModuleHost* viewHost);
@@ -144,6 +153,9 @@ private:
     // time — and, now that a credential is registered rather than discarded,
     // would invalidate the credential the previous incarnation still holds.
     QHash<QString, logos::ConsumerIdentity> m_consumers;
+    // Backend module names this loader registered for apps. Any other module
+    // the core knows under such a name is not the app's to replace.
+    QSet<QString> m_registeredBackends;
 
     mutable QMutex m_mutex;
     QSet<QString> m_loading;
