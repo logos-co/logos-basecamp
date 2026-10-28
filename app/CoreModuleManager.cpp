@@ -97,6 +97,11 @@ bool CoreModuleManager::loadModule(const QString& name)
     return m_core->loadModule(name, LoadPolicy::RequiredAndOptional);
 }
 
+QString CoreModuleManager::registerModuleFile(const QString& path)
+{
+    return m_core->registerModuleFile(path);
+}
+
 bool CoreModuleManager::unloadModule(const QString& name)
 {
     return m_core->unloadModule(name, /*withDependents=*/false);

@@ -1,4 +1,6 @@
 #include "UIPluginManager.h"
+#include <QJsonObject>
+#include <QJsonDocument>
 
 #include "IntentBridgeAdapter.h"
 #include "AppsModel.h"
@@ -75,6 +77,15 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
             this, &UIPluginManager::onPluginLoadFailed);
     connect(m_pluginLoader, &PluginLoader::loadingChanged,
             this, &UIPluginManager::loadingModulesChanged);
+    connect(m_pluginLoader, &PluginLoader::moduleBackendStopped,
+            this, [this](const QString& name) {
+                qWarning() << "The backend of" << name << "stopped; reopen the app to restart it";
+                if (!m_stoppedApps.contains(name)) {
+                    m_stoppedApps.append(name);
+                    emit stoppedAppsChanged();
+                }
+                emit appBackendStopped(name, m_uiModuleWidgets.value(name));
+            });
 }
 
 UIPluginManager::~UIPluginManager()
@@ -345,6 +356,10 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
         request.iconPath = pluginIconUrl(moduleName, true);
         if (hasBackendPlugin(moduleName))
             request.mainFilePath = meta.value("mainFilePath").toString();
+        request.backendModule = backendModuleOf(meta);
+        // PluginLoader refuses any other name; nothing is recorded for it.
+        if (isBackendNameFor(moduleName, request.backendModule))
+            m_moduleBackends.insert(moduleName, request.backendModule);
         request.coreDependencies = meta.value("dependencies").toList();
         request.optionalCoreDependencies = meta.value("optionalDependencies").toList();
 
@@ -425,6 +440,8 @@ void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& err
 {
     // noquote(): keep multi-line QML errors readable in the session log.
     qWarning().noquote() << "Failed to load UI module" << name << ":\n" << error;
+    // The backend may already be running even though the view never came up.
+    unloadModuleBackendOf(name);
     // Surface to the user, not just the log (forwarded to the QML overlay).
     emit pluginLoadFailedNotice(name, error);
 }
@@ -477,6 +494,17 @@ void UIPluginManager::unloadUiModule(const QString& moduleName)
     // by the time the lambda runs the Repeater delegate tree is stable again.
     QMetaObject::invokeMethod(this, [this, moduleName]{
         unloadUiModuleImpl(moduleName);
+    }, Qt::QueuedConnection);
+}
+
+void UIPluginManager::restartUiModule(const QString& moduleName)
+{
+    QMetaObject::invokeMethod(this, [this, moduleName] {
+        unloadUiModuleImpl(moduleName);
+        // Still open: the unload is waiting on a cascade confirmation.
+        if (m_qmlPluginWidgets.contains(moduleName) || m_loadedUiModules.contains(moduleName))
+            return;
+        loadUiModule(moduleName);
     }, Qt::QueuedConnection);
 }
 
@@ -539,11 +567,13 @@ void UIPluginManager::unloadUiModuleImpl(const QString& moduleName)
         m_viewModuleHosts[moduleName]->stop();
         delete m_viewModuleHosts.take(moduleName);
     }
+    unloadModuleBackendOf(moduleName);
 
     m_loadedUiModules.remove(moduleName);
     m_uiModuleWidgets.remove(moduleName);
     m_qmlPluginWidgets.remove(moduleName);
     m_loadedApps.remove(moduleName);
+    if (m_stoppedApps.removeAll(moduleName) > 0) emit stoppedAppsChanged();
 
     // The user closed this app. Three paths deliberately do NOT record:
     //   * shutdown() — it unloads every open app on quit, which would file them
@@ -1160,11 +1190,13 @@ void UIPluginManager::teardownUiPluginWidgetNow(const QString& moduleName)
         m_viewModuleHosts[moduleName]->stop();
         delete m_viewModuleHosts.take(moduleName);
     }
+    unloadModuleBackendOf(moduleName);
 
     m_loadedUiModules.remove(moduleName);
     m_uiModuleWidgets.remove(moduleName);
     m_qmlPluginWidgets.remove(moduleName);
     m_loadedApps.remove(moduleName);
+    if (m_stoppedApps.removeAll(moduleName) > 0) emit stoppedAppsChanged();
 
     // This is the uninstall path. Drop any recent-close record so a later
     // reinstall does not resurrect the app as "recently closed". The read-time
@@ -1192,6 +1224,49 @@ QString UIPluginManager::getPluginType(const QString& name) const
 bool UIPluginManager::isQmlPlugin(const QString& name) const
 {
     return getPluginType(name) == QStringLiteral("ui_qml");
+}
+
+bool UIPluginManager::isBackendNameFor(const QString& appName, const QString& backend)
+{
+    // The builder's name for it, and the only one Basecamp registers: any other
+    // could be an installed module the app wants loaded, unloaded or hidden.
+    return !backend.isEmpty() && backend == appName + QStringLiteral("_backend");
+}
+
+void UIPluginManager::unloadModuleBackendOf(const QString& appName)
+{
+    const QString backend = m_moduleBackends.take(appName);
+    if (backend.isEmpty() || !m_coreModuleManager
+        || !m_pluginLoader->isRegisteredBackend(backend)) return;
+    if (m_shuttingDown) {
+        m_coreModuleManager->unloadModule(backend);
+        return;
+    }
+    QMetaObject::invokeMethod(this, [this, backend] {
+        if (m_coreModuleManager && m_coreModuleManager->unloadModule(backend)) {
+            qDebug() << "Unloaded backend module" << backend;
+            emit coreModulesChanged();
+        }
+    }, Qt::QueuedConnection);
+}
+
+bool UIPluginManager::isAppBackend(const QString& moduleName) const
+{
+    // Registered from an app's package by PluginLoader, which refuses a name an
+    // installed module already has: the core only knows a backend from then on.
+    return m_pluginLoader->isRegisteredBackend(moduleName);
+}
+
+QString UIPluginManager::backendModuleOf(const QVariantMap& meta) const
+{
+    QString backend = meta.value("backend").toString();
+    if (backend.isEmpty()) {
+        QFile file(QDir(meta.value("installDir").toString()).filePath("metadata.json"));
+        if (file.open(QIODevice::ReadOnly))
+            backend = QJsonDocument::fromJson(file.readAll()).object()
+                          .value(QStringLiteral("backend")).toString();
+    }
+    return backend;
 }
 
 QString UIPluginManager::resolveQmlViewPath(const QVariantMap& meta) const

@@ -645,6 +645,77 @@
             installPkg = self.packages.${system}.standalone-backend-fixture;
             testFiles = [ ./tests/standalone-backend-tests.mjs ];
           };
+          # The same .rep backend run as a core module ("backend": "module"),
+          # installed next to a QML-only app that tries to reach it.
+          standalone-module-backend-fixture =
+            let
+              builder = logos-package-manager-ui.inputs.logos-module-builder;
+              # An installed module that happens to be named like an app's
+              # backend (shadow_backend): depsvc under another name.
+              shadowConfig = builtins.toFile "metadata.json" (builtins.toJSON (
+                builtins.fromJSON (builtins.readFile ./tests/fixtures/depsvc/metadata.json)
+                // { name = "shadow_backend"; main = "shadow_backend_plugin"; }));
+              shadowSrc = buildPkgs.runCommandLocal "shadow-backend-src" { } ''
+                cp -r ${./tests/fixtures/depsvc} $out
+                chmod -R u+w $out
+                cp ${shadowConfig} $out/metadata.json
+                mv $out/src/depsvc_impl.h $out/src/shadow_backend_impl.h
+                mv $out/src/depsvc_impl.cpp $out/src/shadow_backend_impl.cpp
+                sed -i -e 's/depsvc_impl/shadow_backend_impl/g' -e 's/DepsvcImpl/ShadowBackendImpl/g' \
+                  -e 's/DepsvcModulePlugin/ShadowBackendModulePlugin/g' \
+                  $out/CMakeLists.txt $out/src/*
+              '';
+              shadowModule = installDev (builder.lib.mkLogosModule {
+                src = shadowSrc;
+                configFile = shadowConfig;
+                flakeInputs = { logos-module-builder = builder; };
+              }).packages.${system}.default;
+              app = (builder.lib.mkLogosQmlModule {
+                src = ./tests/fixtures/standalone-module-backend;
+                configFile = ./tests/fixtures/standalone-module-backend/metadata.json;
+                flakeInputs = { logos-module-builder = builder; };
+              }).packages.${system}.install;
+            in buildPkgs.runCommandLocal "standalone-module-backend-fixture" { } ''
+              mkdir -p $out
+              cp -r ${app}/. $out/
+              chmod -R u+w $out
+              cp -r ${./tests/fixtures/standalone/backend_intruder} $out/plugins/backend_intruder
+
+              # Two apps whose backend is really depsvc, an installed module
+              # (the victim): one names it as its backend, one names its own
+              # <app>_backend but ships a plugin that calls itself depsvc.
+              cp -r ${depsvcInstalledDev}/modules/. $out/modules/
+              chmod -R u+w $out/modules
+              so=$(find ${depsvcInstalledDev}/modules -name 'depsvc_plugin.*' | head -1)
+              [ -n "$so" ] || { echo "no depsvc plugin"; exit 1; }
+              ext="''${so##*.}"
+              src=$out/plugins/module_backend_fixture
+              hijack() {  # app name, backend it claims, plugin file name
+                d=$out/plugins/$1
+                mkdir -p $d
+                cp "$so" "$d/$3.$ext"
+                printf 'import QtQuick\nItem { objectName: "%s.root" }\n' "$1" > $d/Main.qml
+                ${buildPkgs.jq}/bin/jq --arg n "$1" --arg b "$2" --arg m "$3" \
+                  '.name = $n | .display_name = $n | .backend = $b | .main = $m | .view = "Main.qml"' \
+                  $src/metadata.json > $d/metadata.json
+                ${buildPkgs.jq}/bin/jq --arg n "$1" --arg b "$2" --arg f "$3.$ext" \
+                  '.name = $n | .display_name = $n | .backend = $b | .view = "Main.qml" | .main |= map_values($f)' \
+                  $src/manifest.json > $d/manifest.json
+              }
+              hijack hijack_by_name depsvc depsvc_plugin
+              hijack hijack_by_plugin hijack_by_plugin_backend hijack_by_plugin_backend_plugin
+
+              # An app "shadow" whose backend name is that installed module's.
+              cp -r ${shadowModule}/modules/. $out/modules/
+              chmod -R u+w $out/modules
+              hijack shadow shadow_backend shadow_backend_plugin
+            '';
+          standalone-module-backend-test = mkPluginTest {
+            inherit pkgs;
+            name = "standalone-module-backend-test";
+            installPkg = self.packages.${system}.standalone-module-backend-fixture;
+            testFiles = [ ./tests/standalone-module-backend-tests.mjs ];
+          };
           # A single module dir is refused, so its siblings never reach the
           # scanners or dependency resolution.
           standalone-rejects-module-dir = pkgs.runCommand "standalone-rejects-module-dir" { } ''
@@ -857,6 +928,7 @@
       } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
         standalone-test = self.packages.${system}.standalone-test;
         standalone-backend-test = self.packages.${system}.standalone-backend-test;
+        standalone-module-backend-test = self.packages.${system}.standalone-module-backend-test;
         standalone-hot-reload-test = self.packages.${system}.standalone-hot-reload-test;
         standalone-rejects-module-dir = self.packages.${system}.standalone-rejects-module-dir;
         link-gate = self.packages.${system}.link-gate;

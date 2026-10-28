@@ -1,0 +1,6 @@
+class ModuleBackendFixture
+{
+    SLOT(int add(int a, int b))
+    SLOT(void crash())
+    PROP(QString status="Ready" READONLY)
+}

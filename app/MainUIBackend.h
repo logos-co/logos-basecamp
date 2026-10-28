@@ -99,6 +99,8 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(QVariantList recentlyClosedApps READ recentlyClosedApps NOTIFY recentlyClosedAppsChanged)
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
     Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
+    // Open apps whose backend module stopped on its own.
+    Q_PROPERTY(QStringList stoppedApps READ stoppedApps NOTIFY stoppedAppsChanged)
 
     // Build info (baked in at nix build time). See Dashboard view.
     //   * buildVersion: VERSION file contents (empty when not baked in).
@@ -166,6 +168,7 @@ public:
     QVariantList recentlyClosedApps() const;
     QString      currentVisibleApp() const;
     QStringList  loadingModules() const;
+    QStringList  stoppedApps() const;
 
     // Build info accessors (see Q_PROPERTY declarations above).
     QString buildVersion() const;
@@ -212,6 +215,7 @@ public slots:
     // UI Module operations — delegated to UIPluginManager.
     void loadUiModule(const QString& moduleName);
     void unloadUiModule(const QString& moduleName);
+    void restartUiModule(const QString& moduleName);
     void activateApp(const QString& appName);
 
     // Friendly module label, resolved from the catalog with fallback to `name`.
@@ -358,6 +362,7 @@ signals:
     void recentlyClosedAppsChanged();
     void currentVisibleAppChanged();
     void loadingModulesChanged();
+    void stoppedAppsChanged();
     void navigateToApps();
 
     // ── Intents ─────────────────────────────────────────────────────────
@@ -439,6 +444,7 @@ signals:
     void pluginWindowRemoveRequested(QWidget* widget);
     // Presentation seam — see IShellHost::onPresentAppRequested.
     void presentAppRequested(QWidget* widget);
+    void appStopped(QWidget* widget, const QString& name);
 
     // A `basecamp://` link could not be opened. Developer-facing text only —
     // never anything the URL supplied, since a browser is a requester with no

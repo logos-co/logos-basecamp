@@ -9,6 +9,8 @@ AbstractButton {
     implicitHeight: 38
     implicitWidth: 38
 
+    property bool stopped: false
+
     signal tooltipRequested(string text, real y)
 
     onHoveredChanged: {
@@ -43,6 +45,14 @@ AbstractButton {
             font.weight: Theme.typography.weightBold
             color: Theme.palette.textSecondary
             visible: !appIcon.visible
+        }
+        BrokenAppMarker {
+            objectName: "sidebar.marker.stopped"
+            visible: root.stopped
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.rightMargin: -2
+            anchors.topMargin: -2
         }
     }
 }

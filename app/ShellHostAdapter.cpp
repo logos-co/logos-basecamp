@@ -37,6 +37,12 @@ ShellHostAdapter::ShellHostAdapter(MainUIBackend* backend, QObject* parent)
         m_observer->onPluginWindowRemoveRequested(widget);
     });
 
+    connect(m_backend, &MainUIBackend::appStopped, this,
+            [this](QWidget* widget, const QString& name) {
+        if (!m_observer) return;
+        m_observer->onAppStopped(widget, name);
+    });
+
     connect(m_backend, &MainUIBackend::presentAppRequested, this,
             [this](QWidget* widget) {
         if (!m_observer) return;
@@ -69,6 +75,11 @@ void ShellHostAdapter::loadUiModule(const QString& name)
 void ShellHostAdapter::unloadUiModule(const QString& name)
 {
     if (m_backend) m_backend->unloadUiModule(name);
+}
+
+void ShellHostAdapter::restartUiModule(const QString& name)
+{
+    if (m_backend) m_backend->restartUiModule(name);
 }
 
 void ShellHostAdapter::setCurrentVisibleApp(const QString& name)

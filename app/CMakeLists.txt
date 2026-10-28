@@ -379,6 +379,8 @@ target_include_directories(LogosBasecamp PRIVATE
     ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include
     ${GENERATED_LOGOS_SDK_DIR}
 )
+# Basecamp still runs ui-host apps (deprecated) until the next breaking release.
+target_compile_definitions(LogosBasecamp PRIVATE LOGOS_UI_HOST_ALLOWED)
 
 if(LOGOS_PORTABLE_BUILD)
     target_compile_definitions(LogosBasecamp PRIVATE LOGOS_PORTABLE_BUILD)

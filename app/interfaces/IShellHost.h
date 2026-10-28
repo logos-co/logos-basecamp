@@ -34,7 +34,7 @@ class QWidget;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Bump on ANY vtable change to IShellHost or IShellObserver.
-constexpr int IShellHost_abi = 3;
+constexpr int IShellHost_abi = 4;
 
 // Host → shell notifications. Implemented shell-side by MainContainer.
 //
@@ -63,6 +63,11 @@ public:
     // weaker way to ask the same question, and the shell already knows where it
     // put each widget.
     virtual void onPresentAppRequested(QWidget* widget) = 0;
+
+    // The backend module behind `widget` (an open app) stopped on its own. The
+    // shell shows a "stopped" panel in that app's place; the widget stays the
+    // host's and will be removed by the normal onPluginWindowRemoveRequested.
+    virtual void onAppStopped(QWidget* widget, const QString& name) = 0;
 };
 
 // Shell → host operations. Implemented host-side by ShellHostAdapter.
@@ -80,6 +85,8 @@ public:
 
     virtual void loadUiModule(const QString& name) = 0;
     virtual void unloadUiModule(const QString& name) = 0;
+    // Close and reopen an app, in order (a stopped app's "Reopen").
+    virtual void restartUiModule(const QString& name) = 0;
     virtual void setCurrentVisibleApp(const QString& name) = 0;
 
     // Human-readable label for a module name, falling back to the name itself.

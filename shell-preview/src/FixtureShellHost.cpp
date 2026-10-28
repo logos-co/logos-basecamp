@@ -26,6 +26,11 @@ void FixtureShellHost::unloadUiModule(const QString& name)
     qInfo() << "FixtureShellHost: unloadUiModule" << name;
 }
 
+void FixtureShellHost::restartUiModule(const QString& name)
+{
+    qInfo() << "FixtureShellHost: restartUiModule" << name;
+}
+
 void FixtureShellHost::setCurrentVisibleApp(const QString& name)
 {
     m_backend.setCurrentVisibleApp(name);

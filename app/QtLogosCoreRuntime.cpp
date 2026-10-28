@@ -38,6 +38,12 @@ bool QtLogosCoreRuntime::loadModule(const QString& name, LoadPolicy policy)
     return m_core->loadModule(name, deps);
 }
 
+QString QtLogosCoreRuntime::registerModuleFile(const QString& path)
+{
+    const auto name = m_core->core().processModule(path.toStdString());
+    return name ? QString::fromStdString(*name) : QString();
+}
+
 bool QtLogosCoreRuntime::unloadModule(const QString& name, bool withDependents)
 {
     return m_core->unloadModule(name, withDependents);
