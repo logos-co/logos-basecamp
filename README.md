@@ -262,8 +262,10 @@ instead. Basecamp's own checks use it: `standalone-test` (a QML-only app
 calling a core dependency through the bridge), `standalone-backend-test` (the
 module builder's `ui-qml-backend` template, backend in ui-host),
 `standalone-module-backend-test` (the same `.rep` backend as a core module:
-module context, no core access for the view, another app refused, unloaded on
-close) and `standalone-rejects-module-dir`.
+module context, no core access for the view, closed to other apps before it
+starts, another app refused, left out of the Module Inspector, an app cannot
+take over or unload an installed module, the stopped panel and Reopen after a
+crash, unloaded on close) and `standalone-rejects-module-dir`.
 
 ##### Moving from `logos-standalone-app`
 
@@ -430,6 +432,10 @@ mysteriously empty result:
 > their own backend module get denied (e.g. `accounts_ui -> accounts_module`).
 > That is why this is off by default. Until the derivation accounts for
 > `ui_qml` callers, name them explicitly with a policy document.
+> The same applies to an app whose backend runs as a core module
+> (`"backend": "module"`): the derived rule for `<app>_backend` drops the
+> app's view. Basecamp restores the view-only rule when the view connects,
+> but a module declaring `<app>_backend` as a dependency is let in after that.
 
 `--access-policy` also accepts a path to a JSON policy file, or inline JSON,
 where a `restrictions` entry **replaces** the derived allow-list for that

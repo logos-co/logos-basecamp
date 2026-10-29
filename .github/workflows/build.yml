@@ -211,6 +211,7 @@ jobs:
           nix build .#standalone-rejects-module-dir --no-link -L
           nix build .#standalone-test --no-link -L
           nix build .#standalone-backend-test --no-link -L
+          nix build .#standalone-module-backend-test --no-link -L
           nix build .#standalone-hot-reload-test --no-link -L
 
       - name: Integration test (UI tests)
@@ -319,6 +320,7 @@ jobs:
           nix build .#standalone-rejects-module-dir --no-link -L
           nix build .#standalone-test --no-link -L
           nix build .#standalone-backend-test --no-link -L
+          nix build .#standalone-module-backend-test --no-link -L
           nix build .#standalone-hot-reload-test --no-link -L
 
       - name: Integration test (UI tests)
