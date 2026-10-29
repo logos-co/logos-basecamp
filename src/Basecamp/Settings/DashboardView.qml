@@ -57,6 +57,49 @@ Item {
                 }
             }
 
+            // Check for updates. Nothing goes to the network until it is pressed.
+            RowLayout {
+                id: updates
+                readonly property var updater: backend.updater ?? null
+                readonly property string phase: updater ? updater.state : ""
+                visible: updater !== null
+                Layout.fillWidth: true
+                spacing: 12
+
+                LogosButton {
+                    objectName: "dashboard.updateButton"
+                    implicitHeight: 36
+                    visible: updates.phase !== "ready" || updates.updater.canRestart
+                    enabled: updates.phase !== "checking" && updates.phase !== "downloading"
+                    text: {
+                        switch (updates.phase) {
+                        case "checking": return qsTr("Checking…")
+                        case "available": return qsTr("Update to %1").arg(updates.updater.latestVersion)
+                        case "downloading": return qsTr("Downloading… %1%").arg(Math.round(updates.updater.progress * 100))
+                        case "ready": return qsTr("Restart to update")
+                        default: return qsTr("Check for updates")
+                        }
+                    }
+                    onClicked: {
+                        if (updates.phase === "available") updates.updater.update()
+                        else if (updates.phase === "ready") updates.updater.restart()
+                        else updates.updater.check()
+                    }
+                }
+
+                LogosText {
+                    objectName: "dashboard.updateStatus"
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 14
+                    color: updates.phase === "error" ? "#ff8080" : "#a0a0a0"
+                    text: updates.phase === "upToDate" ? qsTr("Basecamp is up to date.")
+                        : updates.updater && updates.updater.message.length > 0 ? updates.updater.message
+                        : updates.phase === "available" ? qsTr("Version %1 is available.").arg(updates.updater.latestVersion)
+                        : ""
+                }
+            }
+
             // Commit hashes for basecamp + all flake dependencies.
             ColumnLayout {
                 Layout.fillWidth: true

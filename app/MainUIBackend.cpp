@@ -19,6 +19,7 @@
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
 #include "BuildInfo.h"
+#include "UpdateChecker.h"
 
 #include <QDebug>
 #include <QJSValue>
@@ -44,6 +45,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     , m_packageCoordinator(nullptr)
     , m_uiModulesModel(new ModuleInstanceModel(this))
     , m_coreModulesModel(new ModuleInstanceModel(this))
+    , m_updateChecker(new UpdateChecker(LogosBasecampBuildInfo::version(), this))
 {
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
@@ -1011,6 +1013,7 @@ bool         MainUIBackend::isMockBackend() const
     return qEnvironmentVariableIsSet("LOGOS_MOCK_FIXTURE");
 }
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
+QObject*     MainUIBackend::updater() const         { return m_updateChecker; }
 
 
 void MainUIBackend::setLinkRaiseHandler(std::function<void()> raise)

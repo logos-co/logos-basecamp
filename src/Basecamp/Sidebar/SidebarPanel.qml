@@ -196,6 +196,27 @@ Control {
             }
         }
 
+        // Shown once the updater finds a newer release; opens Settings, whose
+        // Dashboard holds the Update button.
+        LogosText {
+            objectName: "sidebar.updateAvailable"
+            readonly property var updater: backend.updater ?? null
+            visible: updater !== null
+                     && ["available", "downloading", "ready"].indexOf(updater.state) !== -1
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            text: qsTr("New version available")
+            color: Theme.palette.accentOrange
+            font.pixelSize: Theme.typography.badgeText
+            wrapMode: Text.WordWrap
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.updateLauncherIndex(3)
+            }
+        }
+
         // Version footer — always shows the build type ("Portable" / "Dev"),
         // prefixed with the version when one is set. Selectable so the release
         // tag can be copied out of the sidebar.
