@@ -4497,6 +4497,16 @@ test("ui load failure: shows the loadFailed dialog with app name and error text"
   });
 });
 
+// A valid app whose installed files were edited after install: refused before
+// any of it loads, with a reason the user can act on.
+test("ui load failure: an app modified since install is refused and says so", async (app) => {
+  await expectLoadFailedDialog(app, {
+    fixture: "tampered_view_fixture",
+    label: "Tampered View Fixture",
+    errorSnippet: "modified or damaged since it was installed",
+  });
+});
+
 test("ui load failure: a view that compiles but fails on creation shows the loadFailed dialog", async (app) => {
   await expectLoadFailedDialog(app, {
     fixture: "required_prop_fixture",

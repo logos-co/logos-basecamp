@@ -48,3 +48,8 @@ bool QtLogosCoreRuntime::unloadModule(const QString& name, bool withDependents)
 {
     return m_core->unloadModule(name, withDependents);
 }
+
+QString QtLogosCoreRuntime::modulesInfoJson() const
+{
+    return m_core->modulesInfoJson();
+}

@@ -69,6 +69,11 @@ public:
     // empty. Defaulted so runtimes that have no use for it need not say so.
     virtual QString registerModuleFile(const QString& path) { (void)path; return QString(); }
 
+    // Every known module as the core's JSON array: name, path, loaded,
+    // dependencies, optional_dependencies. What the launch-time integrity
+    // check walks before a load. A runtime with nothing installed answers "[]".
+    virtual QString modulesInfoJson() const { return QStringLiteral("[]"); }
+
     // Re-scan for modules that appeared since start(). Called after installs.
     virtual void refreshModules() = 0;
 
