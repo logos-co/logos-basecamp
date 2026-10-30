@@ -34,16 +34,16 @@ namespace {
 // How long an in-process UI plugin that answers Asynchronous from
 // aboutToUnload() gets before we tear its widget down anyway.
 //
-// Same 3000ms the out-of-process module host spends
-// (logos-module-loader-qt/src/host/logos_host.cpp:230) so a module author has
-// one number to reason about rather than two. It is not the same *kind* of
-// budget, though: there it is carved out of the container's 5s SIGKILL window,
-// and overrunning it gets the module killed. Nothing kills Basecamp at the end
-// of this one. The bound is here so a plugin that answers Asynchronous and
-// then never calls unloadFinished() cannot pin its widget on screen — and,
-// through the uninstall cascade that calls us, stall a package operation —
+// Same 10000ms the out-of-process module host spends (kUnloadGraceMs in
+// logos-module-loader-qt's logos_host.cpp) so a module author has one number
+// to reason about rather than two. It is not the same *kind* of budget,
+// though: there it is carved out of the container's 12s SIGKILL window, and
+// overrunning it gets the module killed. Nothing kills Basecamp at the end of
+// this one. The bound is here so a plugin that answers Asynchronous and then
+// never calls unloadFinished() cannot pin its widget on screen — and, through
+// the uninstall cascade that calls us, stall a package operation —
 // indefinitely.
-constexpr int kUnloadGraceMs = 3000;
+constexpr int kUnloadGraceMs = 10000;
 
 } // namespace
 
@@ -928,9 +928,10 @@ void UIPluginManager::cancelUnloadCascade(const QString& moduleName)
 // plugin — and a ViewModuleHost, which is a QProcess wrapper, not the plugin.
 // There is nothing here to ask, and asking the wrapper would be theatre. That
 // path's grace period belongs in ui-host, between its app.exec() returning and
-// `delete pluginObject`, which is the same seam logos_host.cpp:409 uses, and
-// the budget for it already exists: ViewModuleHost::stop() gives the child
-// 3000ms to exit before it resorts to kill(). That is where ui-host runs
+// `delete pluginObject`, which is the same seam logos_host uses once its own
+// exec() returns, and the budget for it already exists: ViewModuleHost::stop()
+// gives the child 12000ms to exit before it resorts to kill(). That is where
+// ui-host runs
 // logos::runPluginAboutToUnload — so a ui_qml backend DOES get the hook, just
 // not from this process.
 //
