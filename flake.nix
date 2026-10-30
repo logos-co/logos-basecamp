@@ -511,10 +511,13 @@
           # Hoisted so shutdown-test can read the elapsed time for the combined PR-gate budget.
           integrationTest = import ./nix/integration-test.nix {
             inherit pkgs src logosQtMcp; appPkg = app;
+            lgx = logos-package.packages.${buildPkgs.stdenv.hostPlatform.system}.lgx;
             seedModules = [ depsvcInstalledDev ];
           };
           integrationTestBundle = import ./nix/integration-test.nix {
             inherit pkgs src;
+            lgx = logos-package.packages.${buildPkgs.stdenv.hostPlatform.system}.lgx;
+            fixtureVariantSuffix = "";
             appPkg = macosAppTest;
             inherit logosQtMcp;
             appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";
@@ -600,8 +603,23 @@
 
           # Doc-test fixtures, as outputs so a spec's Windows leg can stage them
           # like the bundle. basecamp-intents: its QML-only apps, as files.
-          intents-fixtures = buildPkgs.runCommandLocal "basecamp-intents-fixtures" { } ''
+          # The apps already installed (installed/plugins/<app>, content hashes
+          # included), so stage.sh only copies -- on any platform. Installed for
+          # the TARGET's portable variant, which is what the bundle accepts.
+          intents-fixtures = buildPkgs.runCommandLocal "basecamp-intents-fixtures" {
+            nativeBuildInputs = [ buildPkgs.nodejs ];
+            LGX_VARIANT = {
+              "x86_64-linux" = "linux-x86_64";
+              "aarch64-linux" = "linux-arm64";
+              "x86_64-darwin" = "darwin-x86_64";
+              "aarch64-darwin" = "darwin-arm64";
+              "x86_64-windows" = "windows-x86_64";
+            }.${system};
+            LGX_CLI = "${logos-package.packages.${buildPkgs.stdenv.hostPlatform.system}.lgx}/bin/lgx";
+          } ''
             cp -r ${./tests/fixtures/intents} $out
+            chmod -R u+w $out
+            bash ${./tests/fixtures}/intents/build-installed.sh $out/installed
           '';
           # basecamp-dependency-gate: the module that spec writes out, as an .lgx
           # (same build as the UI suite's seeded depsvc, see depsvcModule).
@@ -778,7 +796,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders;
+            inherit pkgs src logosPackageHeaders logosPackageLib;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
@@ -859,6 +877,8 @@
           };
           integration-test-bundle = import ./nix/integration-test.nix {
             inherit pkgs src;
+            lgx = logos-package.packages.${buildPkgs.stdenv.hostPlatform.system}.lgx;
+            fixtureVariantSuffix = "";
             appPkg = macosAppTest;
             inherit logosQtMcp;
             appBin = "${macosAppTest}/LogosBasecamp.app/Contents/MacOS/LogosBasecamp";

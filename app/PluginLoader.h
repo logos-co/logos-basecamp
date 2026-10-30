@@ -68,6 +68,11 @@ public:
 
     void load(const PluginLoadRequest& request);
 
+    // Where user-installed apps live; empty (standalone mode) checks nothing.
+    // A load that opens files there is checked first, whatever the app's
+    // metadata says (utils/InstalledIntegrity.h).
+    void setInstalledAppsRoot(const QString& dir) { m_installedAppsRoot = dir; }
+
     bool isLoading(const QString& name) const;
     QStringList loadingPlugins() const;
 
@@ -85,6 +90,7 @@ signals:
 
 private:
     void startLoad(const PluginLoadRequest& request);
+    void startLoadVerified(const PluginLoadRequest& request);
     void loadCoreDependencies(const PluginLoadRequest& request);
     void continueLoad(const PluginLoadRequest& request);
 
@@ -141,6 +147,7 @@ private:
 
     IntentBridgeAdapter* m_intentAdapter = nullptr;
     CoreModuleManager* m_coreModuleManager;   // not owned
+    QString            m_installedAppsRoot;
 
     // Runs each plugin's core dependencies off the GUI thread. Owned, and its
     // worker holds only the CoreModuleManager pointer, never this.

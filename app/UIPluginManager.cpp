@@ -71,6 +71,8 @@ UIPluginManager::UIPluginManager(LogosAPI* logosAPI,
             this, &UIPluginManager::recentlyClosedAppsChanged);
 
     m_pluginLoader = new PluginLoader(m_logosAPI, m_coreModuleManager, this);
+    if (m_hostProfile.useUserModules)
+        m_pluginLoader->setInstalledAppsRoot(LogosBasecampPaths::pluginsDirectory());
     connect(m_pluginLoader, &PluginLoader::pluginLoaded,
             this, &UIPluginManager::onPluginLoaded);
     connect(m_pluginLoader, &PluginLoader::pluginLoadFailed,
@@ -657,17 +659,22 @@ void UIPluginManager::loadCoreModule(const QString& moduleName)
     // first; the nested loop is then harmless.
     QMetaObject::invokeMethod(this, [this, moduleName]{
         qDebug() << "Loading core module:" << moduleName;
-
-        bool success = m_coreModuleManager
-                     ? m_coreModuleManager->loadModule(moduleName)
-                     : false;
-
-        if (success) {
-            qDebug() << "Successfully loaded core module:" << moduleName;
-            emit coreModulesChanged();
-        } else {
+        if (!m_coreModuleManager) {
             qDebug() << "Failed to load core module:" << moduleName;
+            return;
         }
+        // The integrity check hashes on a worker, not on this (UI) thread.
+        QPointer<UIPluginManager> self(this);
+        m_coreModuleManager->loadModuleInBackground(moduleName, [self, moduleName](bool success) {
+            if (!self)
+                return;
+            if (success) {
+                qDebug() << "Successfully loaded core module:" << moduleName;
+                emit self->coreModulesChanged();
+            } else {
+                qDebug() << "Failed to load core module:" << moduleName;
+            }
+        });
     }, Qt::QueuedConnection);
 }
 
