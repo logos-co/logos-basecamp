@@ -136,8 +136,9 @@ sections:
           bash intents-fixtures/stage.sh testdata/intents-user
           ls testdata/intents-user/plugins
         code_block: |
-          # From inside a clone of logos-basecamp:
-          ./tests/fixtures/intents/stage.sh testdata/intents-user
+          # From inside a clone of logos-basecamp (needs node, and LGX_CLI
+          # pointing at the lgx CLI):
+          ./tests/fixtures/intents/build-installed.sh testdata/intents-user
         expect_contains:
           - "intent_requester_demo"
           - "intent_provider_a"

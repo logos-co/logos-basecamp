@@ -1,4 +1,5 @@
 #include "CoreModuleManager.h"
+#include "utils/InstalledIntegrity.h"
 
 
 #include <QDebug>
@@ -91,10 +92,61 @@ QStringList CoreModuleManager::loadedModules() const
 
 bool CoreModuleManager::loadModule(const QString& name)
 {
+    return loadPreflighted(name, logos::integrity::preflight(*m_core, name, m_installedModulesRoot));
+}
+
+void CoreModuleManager::loadModuleInBackground(const QString& name, std::function<void(bool)> done)
+{
+    if (m_installedModulesRoot.isEmpty()) {
+        const bool loaded = loadModule(name);
+        if (done)
+            done(loaded);
+        return;
+    }
+    logos::integrity::preflightInBackground(
+        m_core->modulesInfoJson(), name, m_installedModulesRoot, this,
+        [this, name, done](const logos::integrity::Preflight& check) {
+            const bool loaded = loadPreflighted(name, check);
+            if (done)
+                done(loaded);
+        });
+}
+
+bool CoreModuleManager::loadPreflighted(const QString& name,
+                                        const logos::integrity::Preflight& check)
+{
+    {
+        QMutexLocker lock(&m_refusalsMutex);
+        if (check.refusal.isEmpty())
+            m_refusals.remove(name);
+        else
+            m_refusals.insert(name, check);
+    }
+    if (!check.refusal.isEmpty()) {
+        qWarning().noquote() << "Refusing to load" << name << "-" << check.refusal;
+        return false;
+    }
     // Widened deliberately, and stated here rather than left to the interface
     // default: Basecamp wants the optional collaborators an operator installed,
-    // and none of them can fail this call.
+    // and none of them can fail this call. Narrowed again when one of them
+    // failed its integrity check: the module still loads, without them.
+    if (!check.withoutOptional.isEmpty()) {
+        qWarning().noquote() << "Loading" << name << "without its optional dependencies -"
+                             << check.withoutOptional;
+        return m_core->loadModule(name, LoadPolicy::RequiredDeps);
+    }
     return m_core->loadModule(name, LoadPolicy::RequiredAndOptional);
+}
+
+logos::integrity::Preflight CoreModuleManager::lastRefusal(const QString& name) const
+{
+    QMutexLocker lock(&m_refusalsMutex);
+    return m_refusals.value(name);
+}
+
+void CoreModuleManager::setInstalledModulesRoot(const QString& dir)
+{
+    m_installedModulesRoot = dir;
 }
 
 QString CoreModuleManager::registerModuleFile(const QString& path)

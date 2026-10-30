@@ -2,6 +2,7 @@
 #include "logos_api.h"
 #include "logos_mode.h"
 #include "LogosBasecampPaths.h"
+#include "utils/InstalledIntegrity.h"
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
@@ -430,8 +431,40 @@ int main(int argc, char *argv[])
     coreConfig.modulesDirs.push_back(embeddedModulesDir.toStdString());
 
     // 2. User-writable modules directory (for runtime installs via the package store).
-    if (hostProfile.useUserModules)
-        coreConfig.modulesDirs.push_back(LogosBasecampPaths::modulesDirectory().toStdString());
+    //    The core starts capability_module and modules_state itself, inside
+    //    start(), before any load this app could check -- so the copy of each
+    //    that will run is checked here when it is a user-installed one, and if
+    //    it fails the whole dir stays out for this session rather than let it
+    //    run. The user is told once the window is up.
+    if (hostProfile.useUserModules) {
+        const QString userModulesDir = LogosBasecampPaths::modulesDirectory();
+        QStringList searched{embeddedModulesDir, userModulesDir};
+        for (const QString& dir : hostProfile.coreModuleRoots)
+            searched << dir;
+        QString culprit;
+        logos::integrity::Problem problem;
+        for (const QString& name : {QStringLiteral("capability_module"),
+                                    QStringLiteral("modules_state")}) {
+            const QString runs = logos::integrity::copyThatRuns(name, searched);
+            if (!logos::integrity::placementUnder(runs + QStringLiteral("/manifest.json"),
+                                                  userModulesDir).inside)
+                continue;
+            problem = logos::integrity::examine(runs);
+            if (!problem.isEmpty()) {
+                culprit = name;
+                break;
+            }
+        }
+        if (culprit.isEmpty()) {
+            coreConfig.modulesDirs.push_back(userModulesDir.toStdString());
+        } else {
+            qWarning().noquote() << "Not using the installed modules in" << userModulesDir
+                                 << "this session -" << culprit + QStringLiteral(": ") + problem.what;
+            logos::integrity::addStartupNotice(
+                {QStringLiteral("Installed Modules Not Used"), culprit,
+                 logos::integrity::installedModulesSkippedMessage(culprit, problem)});
+        }
+    }
     // 3. The profile's own roots, last so they win a name clash.
     for (const QString& dir : hostProfile.coreModuleRoots)
         coreConfig.modulesDirs.push_back(dir.toStdString());
@@ -494,9 +527,29 @@ int main(int argc, char *argv[])
     std::cout << "Logos Core started successfully!" << std::endl;
 
     // Explicit, not the interface default: this path bypasses
-    // CoreModuleManager, so nothing else would widen it.
-    bool loaded = core->loadModule(QStringLiteral("package_manager"),
-                                   LoadPolicy::RequiredAndOptional);
+    // CoreModuleManager, so nothing else would widen it -- or run its
+    // launch-time integrity check, which a user-installed copy (it wins over
+    // the bundled one when newer) needs as much as any other module.
+    const QString installedModulesRoot = hostProfile.useUserModules
+        ? LogosBasecampPaths::modulesDirectory() : QString();
+    auto loadChecked = [&](const QString& name) {
+        const auto check = logos::integrity::preflight(*core, name, installedModulesRoot);
+        if (!check.refusal.isEmpty()) {
+            qWarning().noquote() << "Refusing to load" << name << "-" << check.refusal;
+            logos::integrity::addStartupNotice(
+                {QStringLiteral("Couldn't Load Module"), name,
+                 logos::integrity::refusalMessage(name, check.culprit, check.culpritDir,
+                                                  check.problem)});
+            return false;
+        }
+        if (!check.withoutOptional.isEmpty()) {
+            qWarning().noquote() << "Loading" << name << "without its optional dependencies -"
+                                 << check.withoutOptional;
+            return core->loadModule(name, LoadPolicy::RequiredDeps);
+        }
+        return core->loadModule(name, LoadPolicy::RequiredAndOptional);
+    };
+    bool loaded = loadChecked(QStringLiteral("package_manager"));
 
     if (loaded) {
         qInfo() << "package_manager module loaded by default.";
@@ -505,8 +558,7 @@ int main(int argc, char *argv[])
     }
 
     if (hostProfile.packageCatalog) {
-        bool downloaderLoaded = core->loadModule(QStringLiteral("package_downloader"),
-                                                 LoadPolicy::RequiredAndOptional);
+        bool downloaderLoaded = loadChecked(QStringLiteral("package_downloader"));
         if (downloaderLoaded) {
             qInfo() << "package_downloader module loaded by default.";
         } else {

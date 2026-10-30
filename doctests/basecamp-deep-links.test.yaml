@@ -99,6 +99,12 @@ sections:
           else nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp; fi
         code_block: "nix build 'github:logos-co/logos-basecamp{release}#logos-qt-mcp' -o logos-qt-mcp"
         check_file: "logos-qt-mcp/test-framework/framework.mjs"
+      - title: "Build the lgx packaging CLI"
+        text: |
+          [`lgx`](https://github.com/logos-co/logos-package) packs the fixture
+          app below and stamps its content hashes.
+        run: "nix build 'github:logos-co/logos-package#lgx' -o lgx"
+        check_file: "lgx/bin/lgx"
 
   - title: "Build the Basecamp bundle"
     step: true
@@ -121,7 +127,9 @@ sections:
     text: |
       `basecamp://app/<name>` only brings forward an app that is actually
       installed, so the run needs one on disk. A hand-written QML-only app is
-      enough — no build, no `.lgx`, no catalog.
+      enough — no build, no catalog. It is packed with `lgx` and laid out the
+      way an install leaves it, so its manifest carries the content hashes
+      Basecamp checks before loading a user-installed app.
 
       Two files matter, and different things read them: `manifest.json` is what
       the package scanner lists installed packages from, and `metadata.json` is
@@ -133,9 +141,11 @@ sections:
           chmod -R u+w testdata/links-user 2>/dev/null || true
           rm -rf testdata/links-user
           APP=testdata/links-user/plugins/link_target_demo
-          mkdir -p "$APP" testdata/links-user/modules
+          W=build/links/app
+          rm -rf "$W"
+          mkdir -p "$W/seed/variants" "$W/payload" testdata/links-user/plugins testdata/links-user/modules
 
-          cat > "$APP/metadata.json" <<'JSON'
+          cat > "$W/payload/metadata.json" <<'JSON'
           {
             "name": "link_target_demo",
             "display_name": "Link Target",
@@ -148,7 +158,7 @@ sections:
           }
           JSON
 
-          cat > "$APP/manifest.json" <<'JSON'
+          cat > "$W/seed/manifest.json" <<'JSON'
           {
             "author": "",
             "category": "testing",
@@ -165,7 +175,7 @@ sections:
           }
           JSON
 
-          cat > "$APP/Main.qml" <<'QML'
+          cat > "$W/payload/Main.qml" <<'QML'
           import QtQuick
 
           // Deliberately plain: this app exists to be NAVIGATED TO, so all the
@@ -182,9 +192,28 @@ sections:
           }
           QML
 
-          cat > "$APP/qmldir" <<'QMLDIR'
+          cat > "$W/payload/qmldir" <<'QMLDIR'
           module link_target_demo
           QMLDIR
+
+          # The platform variant the bundle's package manager accepts; an app
+          # installed for any other is listed as not loadable.
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")  V=linux-x86_64 ;;
+            "Linux aarch64") V=linux-arm64 ;;
+            "Darwin arm64")  V=darwin-arm64 ;;
+            "Darwin x86_64") V=darwin-x86_64 ;;
+            MINGW*|MSYS*|CYGWIN*) V=windows-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          # Laid out as lgpm installs it: the files, the manifest with the
+          # hashes `lgx add` stamps, and a `variant` file.
+          tar --format=ustar -C "$W/seed" -czf "$W/app.lgx" manifest.json variants
+          ./lgx/bin/lgx{exe} add "$W/app.lgx" --variant "$V" --files "$W/payload" -y >/dev/null
+          ./lgx/bin/lgx{exe} extract "$W/app.lgx" -v "$V" -o "$W/out" >/dev/null
+          mv "$W/out/$V" "$APP"
+          tar -xzOf "$W/app.lgx" manifest.json > "$APP/manifest.json"
+          printf '%s' "$V" > "$APP/variant"
 
           ls "$APP"
         expect_contains:
