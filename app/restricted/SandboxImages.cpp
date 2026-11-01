@@ -8,9 +8,9 @@
 #include <QImageIOHandler>
 #include <QImageReader>
 #include <QMetaObject>
+#include <QObject>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QPointer>
 #include <QQuickImageProvider>
 #include <QThread>
 #include <QQuickTextureFactory>
@@ -33,6 +33,16 @@ std::atomic<qint64> g_decodedBytes{0};
 
 QString imageUrl(const QString& id) {
     return QString::fromLatin1(kProviderPrefix) + id;
+}
+
+// Takes `cost` from an all-apps budget in one atomic step, or takes nothing.
+// A separate check and add could let two apps both pass at the same moment.
+bool tryReserve(std::atomic<qint64>& used, qint64 cost, qint64 limit) {
+    qint64 now = used.load();
+    do {
+        if (now + cost > limit) return false;
+    } while (!used.compare_exchange_weak(now, now + cost));
+    return true;
 }
 
 // Is this a data:image/jpeg|png;base64 URL? On success: how long the prefix is
@@ -99,11 +109,16 @@ struct SandboxImageStore {
     // compressed bytes stay in `entries`, so the picture is decoded again.
     QCache<QString, DecodedImage> decoded;
     qint64 compressedBytes = 0;
+    bool dead = false;       // the app is gone: nothing more is kept or charged
 };
 
 SandboxImages::Limits& SandboxImages::limits() {
     static Limits instance;
     return instance;
+}
+
+SandboxImages::Usage SandboxImages::usage() {
+    return {g_compressedBytes.load(), g_decodedBytes.load()};
 }
 
 namespace {
@@ -216,11 +231,18 @@ QThreadPool* decodePool() {
 }
 
 
-class DecodeJob final : public QRunnable {
+// One decode, on the worker pool. It never touches the response: it only emits
+// done(), which the response receives through a queued connection made before
+// the job starts. If the response is already gone, Qt drops the call safely.
+class DecodeJob final : public QObject, public QRunnable {
+    Q_OBJECT
 public:
     DecodeJob(QSharedPointer<SandboxImageStore> store, QString id, QSize requested,
-              QSharedPointer<std::atomic_bool> cancelled, QPointer<QQuickImageResponse> response);
+              QSharedPointer<std::atomic_bool> cancelled);
     void run() override;
+
+signals:
+    void done(const QImage& image, const QString& error);
 
 private:
     QImage work(QString* error);
@@ -229,7 +251,6 @@ private:
     QString m_id;
     QSize m_requested;
     QSharedPointer<std::atomic_bool> m_cancelled;
-    QPointer<QQuickImageResponse> m_response;
 };
 
 class SandboxImageResponse final : public QQuickImageResponse {
@@ -237,18 +258,26 @@ public:
     SandboxImageResponse(const QSharedPointer<SandboxImageStore>& store, const QString& id,
                   const QSize& requested)
         : m_cancelled(QSharedPointer<std::atomic_bool>::create(false)) {
-        auto* job = new DecodeJob(store, id, requested, m_cancelled, QPointer<QQuickImageResponse>(this));
+        auto* job = new DecodeJob(store, id, requested, m_cancelled);
         job->setAutoDelete(true);
+        connect(job, &DecodeJob::done, this, &SandboxImageResponse::finish, Qt::QueuedConnection);
         decodePool()->start(job);
     }
     QQuickTextureFactory* textureFactory() const override {
         return m_image.isNull() ? nullptr : QQuickTextureFactory::textureFactoryForImage(m_image);
     }
     QString errorString() const override { return m_error; }
-    void cancel() override { m_cancelled->store(true); }
+    // Qt deletes a response only after finished(). When the page (or the whole
+    // engine) goes away, the worker's answer may never be delivered, so cancel()
+    // ends the request itself instead of waiting for it.
+    void cancel() override {
+        m_cancelled->store(true);
+        finish(QImage(), QStringLiteral("cancelled"));
+    }
 
-    // Runs on the GUI thread (queued from the worker).
-    void deliver(const QImage& image, const QString& error) {
+    // The worker's answer (queued), or cancel(). Whichever comes first wins.
+    void finish(const QImage& image, const QString& error) {
+        if (m_finished.exchange(true)) return;
         m_image = image;
         m_error = error;
         emit finished();
@@ -258,24 +287,18 @@ private:
     QImage m_image;
     QString m_error;
     QSharedPointer<std::atomic_bool> m_cancelled;
+    std::atomic_bool m_finished{false};
 };
 
 DecodeJob::DecodeJob(QSharedPointer<SandboxImageStore> store, QString id, QSize requested,
-                     QSharedPointer<std::atomic_bool> cancelled, QPointer<QQuickImageResponse> response)
+                     QSharedPointer<std::atomic_bool> cancelled)
     : m_store(std::move(store)), m_id(std::move(id)), m_requested(requested),
-      m_cancelled(std::move(cancelled)), m_response(std::move(response)) {}
+      m_cancelled(std::move(cancelled)) {}
 
 void DecodeJob::run() {
     QString error;
     QImage image = work(&error);
-    QQuickImageResponse* response = m_response.data();
-    if (!response) return;  // the item went away while we worked
-    QMetaObject::invokeMethod(
-        response,
-        [response = m_response, image, error] {
-            if (auto* r = static_cast<SandboxImageResponse*>(response.data())) r->deliver(image, error);
-        },
-        Qt::QueuedConnection);
+    emit done(image, error);
 }
 
 QImage DecodeJob::work(QString* error) {
@@ -333,9 +356,8 @@ QImage DecodeJob::work(QString* error) {
     const qint64 cost = image.sizeInBytes();
     if (cost <= limits.appDecodedBytes) {
         QMutexLocker lock(&m_store->mutex);
-        if (m_store->entries.contains(m_id) && !m_store->decoded.contains(key) &&
-            g_decodedBytes.load() + cost <= limits.globalDecodedBytes) {
-            g_decodedBytes.fetch_add(cost);
+        if (!m_store->dead && m_store->entries.contains(m_id) && !m_store->decoded.contains(key) &&
+            tryReserve(g_decodedBytes, cost, limits.globalDecodedBytes)) {
             // If the cache refuses it, it deletes it, and the destructor gives the bytes back.
             m_store->decoded.insert(key, new DecodedImage(image, cost), int((cost + 1023) / 1024));
         }
@@ -361,6 +383,18 @@ private:
 SandboxImages::SandboxImages(QObject* parent)
     : QObject(parent), m_store(QSharedPointer<SandboxImageStore>::create()) {}
 
+// The app's engine is going away. Give everything back now, instead of when the
+// last queued job or response lets go of the store (which may be never), and
+// mark the store dead so a straggling job keeps and charges nothing.
+SandboxImages::~SandboxImages() {
+    QMutexLocker lock(&m_store->mutex);
+    m_store->dead = true;
+    g_compressedBytes.fetch_sub(m_store->compressedBytes);
+    m_store->compressedBytes = 0;
+    m_store->entries.clear();
+    m_store->decoded.clear();  // each decoded copy gives its bytes back as it is deleted
+}
+
 QQuickAsyncImageProvider* SandboxImages::createProvider() const {
     return new SandboxImageProvider(m_store);
 }
@@ -382,6 +416,7 @@ QString SandboxImages::sourceFor(const QString& dataUrl) {
     const qint64 cost = qint64(encodedLength) * 3 / 4;  // the compressed size, near enough
 
     QMutexLocker lock(&m_store->mutex);
+    if (m_store->dead) return {};
     const auto known = m_store->entries.constFind(id);
     if (known != m_store->entries.constEnd())
         return known->state == Entry::State::Invalid ? QString() : imageUrl(id);
@@ -389,10 +424,7 @@ QString SandboxImages::sourceFor(const QString& dataUrl) {
     // Over budget: say so by returning nothing. Nothing is decoded or kept.
     if (m_store->entries.size() >= lim.maxImagesPerApp) return {};
     if (m_store->compressedBytes + cost > lim.appCompressedBytes) return {};
-    qint64 all = g_compressedBytes.load();
-    do {
-        if (all + cost > lim.globalCompressedBytes) return {};
-    } while (!g_compressedBytes.compare_exchange_weak(all, all + cost));
+    if (!tryReserve(g_compressedBytes, cost, lim.globalCompressedBytes)) return {};
 
     m_store->compressedBytes += cost;
     Entry entry;
@@ -418,3 +450,5 @@ void SandboxImages::release(const QString& source) {
     for (const QString& key : keys)
         if (key.startsWith(decodedPrefix)) m_store->decoded.remove(key);
 }
+
+#include "SandboxImages.moc"

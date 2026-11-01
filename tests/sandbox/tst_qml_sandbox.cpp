@@ -55,6 +55,9 @@
 #include <QRegularExpression>
 #include <QElapsedTimer>
 #include <memory>
+#include <atomic>
+#include <vector>
+#include <thread>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -867,8 +870,138 @@ private slots:
             qDeleteAll(live);
             live.clear();
         }  // engine gone; queued results for deleted responses must be dropped quietly
-        QTest::qWait(300);
-        QVERIFY(true);
+        // Nothing may stay charged once every engine and every job is gone.
+        QTRY_COMPARE_WITH_TIMEOUT(SandboxImages::usage().compressedBytes, qint64(0), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(SandboxImages::usage().decodedBytes, qint64(0), 10000);
+    }
+
+    // Closing an app while its pictures are still being decoded must hand its whole
+    // budget back at once, even though the engine's reader thread never delivers
+    // the answers and the responses are never deleted. Before the fix, a few such
+    // closes left no room for any app to show an image until Basecamp restarted.
+    void sandboxReturnsBudgetWhenEngineIsDestroyedMidLoad()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        const QString a = dataUrlOf(encodeImage(testPicture(1600, 1000, 51), "PNG"), "image/png");
+        const QString b = dataUrlOf(encodeImage(testPicture(1500, 1000, 52), "PNG"), "image/png");
+        // Room for exactly one app's two pictures: any budget left behind by a
+        // closed app shows up as a refusal for the next one.
+        SandboxImages::limits().globalCompressedBytes = costOf(a) + costOf(b) + 16;
+
+        QList<QQuickImageResponse*> neverDelivered;
+        for (int round = 0; round < 6; ++round) {
+            auto engine = std::make_unique<QQmlEngine>();
+            QmlSandbox::configure(engine.get(), dir.path(), dir.path() + "/view.qml", QString());
+            SandboxImages* images = imagesOf(*engine);
+            QVERIFY(images);
+            auto* provider = dynamic_cast<QQuickAsyncImageProvider*>(
+                engine->imageProvider(QStringLiteral("sandbox-media")));
+            QVERIFY(provider);
+
+            for (const QString& picture : {a, b}) {
+                const QString url = images->sourceFor(picture);
+                QVERIFY2(!url.isEmpty(),
+                         qPrintable(QStringLiteral("round %1: an earlier app that was closed "
+                                                   "still holds the budget").arg(round)));
+                const QString id = QUrl(url).path().mid(1);
+                for (int i = 0; i < 12; ++i)  // enough queued work to keep both workers busy
+                    neverDelivered.append(provider->requestImageResponse(id, QSize(100 + i, 100 + i)));
+            }
+        }  // each engine is destroyed here with decodes still queued
+
+        // At once, without waiting for the workers: the closed apps hold nothing.
+        QCOMPARE(SandboxImages::usage().compressedBytes, qint64(0));
+        QTRY_COMPARE_WITH_TIMEOUT(SandboxImages::usage().decodedBytes, qint64(0), 10000);
+
+        QTest::qWait(100);
+        qDeleteAll(neverDelivered);  // the responses of a dead engine are cleaned up late
+        QTest::qWait(200);
+        QCOMPARE(SandboxImages::usage().compressedBytes, qint64(0));
+        QCOMPARE(SandboxImages::usage().decodedBytes, qint64(0));
+    }
+
+    // cancel() ends the request: finished() comes out exactly once, so Qt deletes
+    // the response, and an answer that arrives later changes nothing.
+    void sandboxCancelFinishesTheResponseOnce()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        auto* provider = dynamic_cast<QQuickAsyncImageProvider*>(
+            engine.imageProvider(QStringLiteral("sandbox-media")));
+        QVERIFY(images && provider);
+        const QString url = images->sourceFor(
+            dataUrlOf(encodeImage(testPicture(800, 600, 61), "PNG"), "image/png"));
+        QVERIFY(!url.isEmpty());
+
+        std::unique_ptr<QQuickImageResponse> response(
+            provider->requestImageResponse(QUrl(url).path().mid(1), QSize(50, 50)));
+        QSignalSpy spy(response.get(), &QQuickImageResponse::finished);
+        response->cancel();
+        QCOMPARE(spy.count(), 1);
+        response->cancel();                    // asking twice is harmless
+        QTest::qWait(300);                     // the worker's answer, if any, arrives
+        QCOMPARE(spy.count(), 1);
+        QVERIFY(!response->errorString().isEmpty());
+        QVERIFY(!std::unique_ptr<QQuickTextureFactory>(response->textureFactory()));
+    }
+
+    // Apps decoding at once can never hold more decoded bytes, together, than the
+    // all-apps limit allows, not even for an instant. A thread watches the
+    // counter the whole time, because a check followed by a separate add can
+    // let two apps both pass and overshoot briefly.
+    void sandboxDecodedBudgetIsNeverOverCommitted()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        const qint64 one = qint64(64) * 48 * 4;
+        const qint64 limit = one * 3 + one / 2;           // room for three pictures, not four
+        SandboxImages::limits().globalDecodedBytes = limit;
+
+        std::vector<std::unique_ptr<QQmlEngine>> engines;
+        for (int app = 0; app < 8; ++app) {
+            engines.push_back(std::make_unique<QQmlEngine>());
+            QmlSandbox::configure(engines.back().get(), dir.path(), dir.path() + "/view.qml", QString());
+        }
+
+        std::atomic_bool stop{false};
+        std::atomic<qint64> highest{0};
+        std::thread watcher([&] {
+            while (!stop.load()) {
+                const qint64 now = SandboxImages::usage().decodedBytes;
+                qint64 seen = highest.load();
+                while (now > seen && !highest.compare_exchange_weak(seen, now)) {}
+            }
+        });
+
+        QList<QQuickImageResponse*> responses;
+        int finished = 0;
+        for (int i = 0; i < 40; ++i) {
+            for (size_t app = 0; app < engines.size(); ++app) {
+                QQmlEngine& engine = *engines[app];
+                SandboxImages* images = imagesOf(engine);
+                auto* provider = dynamic_cast<QQuickAsyncImageProvider*>(
+                    engine.imageProvider(QStringLiteral("sandbox-media")));
+                const QString url = images->sourceFor(dataUrlOf(
+                    encodeImage(testPicture(64, 48, 1000 + i * 16 + int(app)), "PNG"), "image/png"));
+                QVERIFY(!url.isEmpty());
+                QQuickImageResponse* response =
+                    provider->requestImageResponse(QUrl(url).path().mid(1), QSize());
+                connect(response, &QQuickImageResponse::finished, this, [&finished] { ++finished; });
+                responses.append(response);
+            }
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(finished, int(responses.size()), 30000);
+        stop.store(true);
+        watcher.join();
+        QVERIFY2(highest.load() <= limit,
+                 qPrintable(QStringLiteral("decoded bytes peaked at %1, over the limit of %2")
+                                .arg(highest.load()).arg(limit)));
+        QVERIFY2(highest.load() > 0, "nothing was decoded, so the check proved nothing");
+        qDeleteAll(responses);
     }
 
     // ----------------------------------------------------------------------

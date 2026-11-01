@@ -34,7 +34,15 @@ public:
     };
     static Limits& limits();
 
+    // What every sandboxed app together holds right now (for tests and diagnostics).
+    struct Usage {
+        qint64 compressedBytes = 0;
+        qint64 decodedBytes = 0;
+    };
+    static Usage usage();
+
     explicit SandboxImages(QObject* parent = nullptr);
+    ~SandboxImages() override;
 
     // Returns the image:// URL for a data:image/jpeg|png;base64 URL, or an empty
     // string if it is not a JPEG/PNG data URL, is too big, or this app (or
