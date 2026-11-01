@@ -67,6 +67,13 @@ foreach(slot
     sandboxPassesThroughNonExistentProbe
     sandboxAllowsQrcScheme
     sandboxSupportsScopedInMemoryImages
+    sandboxClampsRequestedSize
+    sandboxDecodesAtDisplaySizeAndTurnsPhotosUpright
+    sandboxEnforcesBudgetsAndRelease
+    sandboxKeepsCompressedBytesAfterEviction
+    sandboxRejectsMalformedImages
+    sandboxImageItemLoadsThroughProvider
+    sandboxSurvivesCancelReleaseAndTeardownMidLoad
     evilApp_allProbesBlocked
     evilApp_qmldirPluginImportRejected)
   add_test(NAME qml_sandbox.${slot} COMMAND tst_qml_sandbox ${slot})

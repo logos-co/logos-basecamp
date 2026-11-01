@@ -51,6 +51,10 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickImageProvider>
+#include <QQuickTextureFactory>
+#include <QRegularExpression>
+#include <QElapsedTimer>
+#include <memory>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -125,6 +129,99 @@ QString workRoot()
     if (const QByteArray fromEnv = qgetenv("SANDBOX_TEST_TMPDIR"); !fromEnv.isEmpty())
         return QString::fromLocal8Bit(fromEnv);
     return QDir::tempPath();
+}
+
+// ---- Helpers for the in-memory image slots --------------------------------
+
+// A picture whose content differs with `seed`, so each one gives a new data URL.
+QImage testPicture(int w, int h, int seed)
+{
+    QImage img(w, h, QImage::Format_RGB32);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            img.setPixel(x, y, qRgb((x * 7 + seed * 31) & 255, (y * 5 + seed * 17) & 255,
+                                    (x + y + seed * 53) & 255));
+    return img;
+}
+
+// Blue, with a red block in the top-left corner: shows which way up it is.
+QImage markedPicture(int w, int h)
+{
+    QImage img(w, h, QImage::Format_RGB32);
+    img.fill(qRgb(0, 0, 255));
+    for (int y = 0; y < h / 3; ++y)
+        for (int x = 0; x < w / 3; ++x)
+            img.setPixel(x, y, qRgb(255, 0, 0));
+    return img;
+}
+
+bool isRed(QRgb c)  { return qRed(c) > 180 && qBlue(c) < 90; }
+bool isBlue(QRgb c) { return qBlue(c) > 180 && qRed(c) < 90; }
+
+QByteArray encodeImage(const QImage& img, const char* format)
+{
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    img.save(&buffer, format);
+    return bytes;
+}
+
+QString dataUrlOf(const QByteArray& bytes, const char* mime)
+{
+    return QStringLiteral("data:%1;base64,").arg(QLatin1String(mime))
+         + QString::fromLatin1(bytes.toBase64());
+}
+
+// The compressed bytes sourceFor() charges for a data URL.
+qint64 costOf(const QString& dataUrl)
+{
+    return qint64(dataUrl.size() - dataUrl.indexOf(QLatin1Char(',')) - 1) * 3 / 4;
+}
+
+// Inserts an EXIF "Orientation" tag right after the JPEG start marker, as a phone does.
+QByteArray withExifOrientation(const QByteArray& jpeg, quint16 orientation)
+{
+    QByteArray tiff;
+    tiff += "MM";
+    tiff += QByteArray::fromHex("002A00000008");  // big-endian, magic, IFD at byte 8
+    tiff += QByteArray::fromHex("0001");          // one entry
+    tiff += QByteArray::fromHex("011200030000000" "1");  // Orientation, SHORT, count 1
+    tiff += char(orientation >> 8);
+    tiff += char(orientation & 0xFF);
+    tiff += QByteArray(2, '\0');                  // value padding
+    tiff += QByteArray(4, '\0');                  // no next IFD
+    const QByteArray payload = QByteArray("Exif\0\0", 6) + tiff;
+    const quint16 length = quint16(payload.size() + 2);
+    QByteArray segment;
+    segment += char(0xFF);
+    segment += char(0xE1);
+    segment += char(length >> 8);
+    segment += char(length & 0xFF);
+    segment += payload;
+    return jpeg.left(2) + segment + jpeg.mid(2);
+}
+
+// Loads one image through the engine's provider the way an Image item does, and
+// waits for it. Returns a null image (and the reason) when it cannot be shown.
+QImage loadImage(QQmlEngine& engine, const QString& url, const QSize& requested = QSize(),
+                 QString* error = nullptr)
+{
+    auto* provider = dynamic_cast<QQuickAsyncImageProvider*>(engine.imageProvider(QStringLiteral("sandbox-media")));
+    if (!provider) return {};
+    std::unique_ptr<QQuickImageResponse> response(
+        provider->requestImageResponse(QUrl(url).path().mid(1), requested));
+    QSignalSpy spy(response.get(), &QQuickImageResponse::finished);
+    if (spy.isEmpty() && !spy.wait(10000)) return {};
+    if (error) *error = response->errorString();
+    std::unique_ptr<QQuickTextureFactory> factory(response->textureFactory());
+    return factory ? factory->image() : QImage();
+}
+
+SandboxImages* imagesOf(QQmlEngine& engine)
+{
+    return qobject_cast<SandboxImages*>(
+        engine.rootContext()->contextProperty(QStringLiteral("SandboxImages")).value<QObject*>());
 }
 
 } // namespace
@@ -473,51 +570,6 @@ private slots:
 
     // qrc: resources are engine builtins (the app's own bundled QML), never the
     // untrusted module's, and must always pass the interceptor untouched.
-    void sandboxSupportsScopedInMemoryImages()
-    {
-        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
-        QVERIFY(dir.isValid());
-        QQmlEngine engine;
-        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
-        QObject* imagesObject = engine.rootContext()->contextProperty("SandboxImages").value<QObject*>();
-        auto* images = qobject_cast<SandboxImages*>(imagesObject);
-        QVERIFY(images);
-
-        QImage input(2, 2, QImage::Format_RGB32);
-        input.fill(Qt::red);
-        QByteArray png;
-        QBuffer buffer(&png);
-        QVERIFY(buffer.open(QIODevice::WriteOnly));
-        QVERIFY(input.save(&buffer, "PNG"));
-        const QString dataUrl = QStringLiteral("data:image/png;base64,")
-                              + QString::fromLatin1(png.toBase64());
-        const QString url = images->sourceFor(dataUrl);
-        QVERIFY(url.startsWith(QStringLiteral("image://sandbox-media/")));
-        QCOMPARE(images->sourceFor(dataUrl), url);
-        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::UrlString), QUrl(url));
-        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::QmlFile), QUrl());
-        QCOMPARE(engine.interceptUrl(QUrl(QStringLiteral("image://other/123")),
-                                     QQmlAbstractUrlInterceptor::UrlString), QUrl());
-        QCOMPARE(engine.interceptUrl(QUrl(dataUrl), QQmlAbstractUrlInterceptor::UrlString), QUrl());
-        QVERIFY(images->sourceFor(QStringLiteral("data:text/html;base64,PHNjcmlwdD4=")).isEmpty());
-        QVERIFY(images->sourceFor(QStringLiteral("file:///etc/hosts")).isEmpty());
-
-        auto* provider = static_cast<QQuickImageProvider*>(engine.imageProvider("sandbox-media"));
-        QVERIFY(provider);
-        QSize actual;
-        QImage resolved = provider->requestImage(QUrl(url).path().mid(1), &actual, QSize());
-        QVERIFY(!resolved.isNull());
-        QCOMPARE(actual, QSize(2, 2));
-        QCOMPARE(resolved.pixelColor(0, 0), QColor(Qt::red));
-
-        // Another QML engine must not have access to this engine's images.
-        QQmlEngine second;
-        QmlSandbox::configure(&second, dir.path(), dir.path() + "/view.qml", QString());
-        auto* other = static_cast<QQuickImageProvider*>(second.imageProvider("sandbox-media"));
-        QVERIFY(other);
-        QVERIFY(other->requestImage(QUrl(url).path().mid(1), nullptr, QSize()).isNull());
-    }
-
     void sandboxAllowsQrcScheme()
     {
         QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
@@ -531,6 +583,292 @@ private slots:
         const QUrl out =
             engine.interceptUrl(qrc, QQmlAbstractUrlInterceptor::QmlFile);
         QCOMPARE(out, qrc);
+    }
+
+    // ----------------------------------------------------------------------
+    // In-memory images: the scoped provider that lets a sandboxed plugin show
+    // pictures it was handed as data: URLs, without opening data: to the sandbox.
+    // ----------------------------------------------------------------------
+
+    void sandboxSupportsScopedInMemoryImages()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QImage input(2, 2, QImage::Format_RGB32);
+        QImage red = input;
+        red.fill(Qt::red);
+        const QString dataUrl = dataUrlOf(encodeImage(red, "PNG"), "image/png");
+        const QString url = images->sourceFor(dataUrl);
+        QVERIFY(QRegularExpression(QStringLiteral("^image://sandbox-media/[0-9a-f]{24}$")).match(url).hasMatch());
+        QCOMPARE(images->sourceFor(dataUrl), url);
+        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::UrlString), QUrl(url));
+        QCOMPARE(engine.interceptUrl(QUrl(url), QQmlAbstractUrlInterceptor::QmlFile), QUrl());
+        QCOMPARE(engine.interceptUrl(QUrl(QStringLiteral("image://other/123")),
+                                     QQmlAbstractUrlInterceptor::UrlString), QUrl());
+        QCOMPARE(engine.interceptUrl(QUrl(dataUrl), QQmlAbstractUrlInterceptor::UrlString), QUrl());
+        QVERIFY(images->sourceFor(QStringLiteral("data:text/html;base64,PHNjcmlwdD4=")).isEmpty());
+        QVERIFY(images->sourceFor(QStringLiteral("data:image/svg+xml;base64,PHN2Zy8+")).isEmpty());
+        QVERIFY(images->sourceFor(QStringLiteral("file:///etc/hosts")).isEmpty());
+        QVERIFY(images->sourceFor(QString()).isEmpty());
+
+        const QImage resolved = loadImage(engine, url);
+        QVERIFY(!resolved.isNull());
+        QCOMPARE(resolved.size(), QSize(2, 2));
+        QCOMPARE(resolved.pixelColor(0, 0), QColor(Qt::red));
+
+        // Another QML engine must not have access to this engine's images.
+        QQmlEngine second;
+        QmlSandbox::configure(&second, dir.path(), dir.path() + "/view.qml", QString());
+        QString why;
+        QVERIFY(loadImage(second, url, QSize(), &why).isNull());
+        QVERIFY(!why.isEmpty());
+    }
+
+    // A request is never scaled UP, and never beyond the largest allowed image:
+    // asking for Qt.size(30000, 30000) used to allocate gigabytes.
+    void sandboxClampsRequestedSize()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QString tiny = images->sourceFor(dataUrlOf(encodeImage(testPicture(2, 2, 1), "PNG"), "image/png"));
+        QElapsedTimer timer;
+        timer.start();
+        QCOMPARE(loadImage(engine, tiny, QSize(30000, 30000)).size(), QSize(2, 2));
+        QCOMPARE(loadImage(engine, tiny, QSize(30000, 0)).size(), QSize(2, 2));
+        QCOMPARE(loadImage(engine, tiny, QSize(8000, 8000)).size(), QSize(2, 2));
+        QVERIFY2(timer.elapsed() < 5000, "oversized requests must stay cheap");
+
+        const QString wide = images->sourceFor(dataUrlOf(encodeImage(testPicture(64, 32, 2), "PNG"), "image/png"));
+        QCOMPARE(loadImage(engine, wide).size(), QSize(64, 32));            // no preference
+        QCOMPARE(loadImage(engine, wide, QSize(-1, -1)).size(), QSize(64, 32));
+        QCOMPARE(loadImage(engine, wide, QSize(16, 16)).size(), QSize(16, 8));   // shrinks, keeps the ratio
+        QCOMPARE(loadImage(engine, wide, QSize(1000, 16)).size(), QSize(32, 16)); // only the limit that bites
+        QCOMPARE(loadImage(engine, wide, QSize(20, 0)).size(), QSize(20, 10));   // one side given
+    }
+
+    // Decoding happens at the size shown, and a phone photo that is stored on
+    // its side (EXIF orientation) is shown upright.
+    void sandboxDecodesAtDisplaySizeAndTurnsPhotosUpright()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QByteArray plain = encodeImage(testPicture(400, 300, 3), "JPEG");
+        QVERIFY(!plain.isEmpty());
+        const QString big = images->sourceFor(dataUrlOf(plain, "image/jpeg"));
+        QCOMPARE(loadImage(engine, big).size(), QSize(400, 300));
+        QCOMPARE(loadImage(engine, big, QSize(100, 100)).size(), QSize(100, 75));
+
+        // Orientation 6 means "turn it a quarter turn clockwise to view it": stored
+        // as 100x50 with the red block top-left, shown as 50x100 with it top-right.
+        const QByteArray sideways = withExifOrientation(encodeImage(markedPicture(100, 50), "JPEG"), 6);
+        const QString turned = images->sourceFor(dataUrlOf(sideways, "image/jpeg"));
+        QVERIFY(!turned.isEmpty());
+        const QImage upright6 = loadImage(engine, turned);
+        QCOMPARE(upright6.size(), QSize(50, 100));
+        QVERIFY2(isRed(upright6.pixel(44, 10)), "the red block should be top-right");
+        QVERIFY2(isBlue(upright6.pixel(5, 10)), "top-left should be blue");
+        QVERIFY2(isBlue(upright6.pixel(25, 80)), "the rest should be blue");
+        const QImage small = loadImage(engine, turned, QSize(25, 25));
+        QCOMPARE(small.height(), 25);
+        QVERIFY2(qAbs(small.width() - 13) <= 1, qPrintable(QStringLiteral("width %1").arg(small.width())));
+        QVERIFY2(isRed(small.pixel(small.width() - 3, 3)), "still top-right when scaled down");
+        QVERIFY2(isBlue(small.pixel(2, 3)), "still blue top-left when scaled down");
+
+        // Orientation 1 (normal) leaves it alone.
+        const QByteArray upright = withExifOrientation(encodeImage(markedPicture(100, 50), "JPEG"), 1);
+        const QImage normal = loadImage(engine, images->sourceFor(dataUrlOf(upright, "image/jpeg")));
+        QCOMPARE(normal.size(), QSize(100, 50));
+        QVERIFY(isRed(normal.pixel(10, 5)));
+        QVERIFY(isBlue(normal.pixel(80, 40)));
+    }
+
+    // Per-app and all-apps budgets: over budget, sourceFor() returns nothing and
+    // keeps nothing; release() gives the room back.
+    void sandboxEnforcesBudgetsAndRelease()
+    {
+        const QString a = dataUrlOf(encodeImage(testPicture(32, 32, 11), "PNG"), "image/png");
+        const QString b = dataUrlOf(encodeImage(testPicture(32, 32, 12), "PNG"), "image/png");
+        const QString c = dataUrlOf(encodeImage(testPicture(32, 32, 13), "PNG"), "image/png");
+        SandboxImages::limits().appCompressedBytes = costOf(a) + costOf(b) + costOf(c) / 2;
+
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QString urlA = images->sourceFor(a);
+        QVERIFY(!urlA.isEmpty());
+        QVERIFY(!images->sourceFor(b).isEmpty());
+        QVERIFY2(images->sourceFor(c).isEmpty(), "a third picture is over this app's budget");
+        QCOMPARE(images->sourceFor(a), urlA);            // what is kept stays available
+        QVERIFY(!loadImage(engine, urlA).isNull());
+
+        images->release(urlA);
+        QVERIFY(loadImage(engine, urlA).isNull());       // released: gone
+        const QString urlC = images->sourceFor(c);
+        QVERIFY2(!urlC.isEmpty(), "release() gave the room back");
+        QVERIFY(!loadImage(engine, urlC).isNull());
+        images->release(QStringLiteral("image://sandbox-media/ffffffffffffffffffffffff"));  // unknown: ignored
+        images->release(QStringLiteral("http://example.invalid/x"));                       // not ours: ignored
+
+        // All apps together: a second app is refused while the first holds the room.
+        SandboxImages::limits().appCompressedBytes = 64LL * 1024 * 1024;
+        SandboxImages::limits().globalCompressedBytes = costOf(b) + costOf(c) + costOf(a) / 2;
+        QQmlEngine other;
+        QmlSandbox::configure(&other, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* otherImages = imagesOf(other);
+        QVERIFY(otherImages);
+        QVERIFY2(otherImages->sourceFor(a).isEmpty(), "Basecamp as a whole is over budget");
+        images->release(images->sourceFor(b));
+        QVERIFY(!otherImages->sourceFor(a).isEmpty());
+    }
+
+    // Decoded copies are a cache: when one is evicted, or too big to keep, the
+    // picture is decoded again from the compressed bytes and never goes blank.
+    void sandboxKeepsCompressedBytesAfterEviction()
+    {
+        SandboxImages::limits().appDecodedBytes = 100 * 1024;   // room for two 100x100 pictures
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QImage first = testPicture(100, 100, 21);
+        const QString urlA = images->sourceFor(dataUrlOf(encodeImage(first, "PNG"), "image/png"));
+        const QString urlB = images->sourceFor(dataUrlOf(encodeImage(testPicture(100, 100, 22), "PNG"), "image/png"));
+        const QString urlC = images->sourceFor(dataUrlOf(encodeImage(testPicture(100, 100, 23), "PNG"), "image/png"));
+        QVERIFY(!loadImage(engine, urlA).isNull());
+        QVERIFY(!loadImage(engine, urlB).isNull());
+        QVERIFY(!loadImage(engine, urlC).isNull());      // pushes the oldest out of the cache
+        const QImage again = loadImage(engine, urlA);
+        QVERIFY(!again.isNull());
+        QCOMPARE(again.size(), QSize(100, 100));
+        QCOMPARE(again.pixel(10, 10), first.pixel(10, 10));
+
+        // A picture bigger than the whole decoded budget is shown, just never cached.
+        const QString huge = images->sourceFor(dataUrlOf(encodeImage(testPicture(200, 200, 24), "PNG"), "image/png"));
+        QCOMPARE(loadImage(engine, huge).size(), QSize(200, 200));
+        QCOMPARE(loadImage(engine, huge).size(), QSize(200, 200));
+    }
+
+    // Anything that is not a plain, in-limits JPEG/PNG ends up as an error, is
+    // remembered as such, and costs nothing afterwards.
+    void sandboxRejectsMalformedImages()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const auto mustFail = [&](const QString& dataUrl, const char* what) {
+            const QString url = images->sourceFor(dataUrl);
+            QVERIFY2(!url.isEmpty(), what);               // checked when first shown, not before
+            QString why;
+            QVERIFY2(loadImage(engine, url, QSize(), &why).isNull(), what);
+            QVERIFY2(!why.isEmpty(), what);
+            QVERIFY2(images->sourceFor(dataUrl).isEmpty(), what);   // the verdict is remembered
+        };
+        mustFail(dataUrlOf(encodeImage(testPicture(8, 8, 31), "PNG"), "image/jpeg"), "PNG bytes labelled JPEG");
+        mustFail(dataUrlOf(encodeImage(testPicture(5000, 1, 32), "PNG"), "image/png"), "wider than the limit");
+        mustFail(QStringLiteral("data:image/png;base64,@@@@not-base64@@@@"), "not base64");
+        mustFail(dataUrlOf(QByteArray("hello, this is not a picture"), "image/png"), "not an image at all");
+
+        QString why;
+        QVERIFY(loadImage(engine, QStringLiteral("image://sandbox-media/000000000000000000000000"),
+                          QSize(), &why).isNull());       // an id nobody was given
+        QVERIFY(!why.isEmpty());
+    }
+
+    // The real thing: a Qt Quick Image item, with the engine's own provider,
+    // asks for the picture at the size it shows it, and gets it.
+    void sandboxImageItemLoadsThroughProvider()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml", QString());
+        SandboxImages* images = imagesOf(engine);
+        QVERIFY(images);
+
+        const QString url = images->sourceFor(dataUrlOf(encodeImage(testPicture(1200, 800, 41), "PNG"), "image/png"));
+        QVERIFY(!url.isEmpty());
+
+        QQmlComponent component(&engine);
+        component.setData(QByteArrayLiteral("import QtQuick\n"
+                                            "Image { asynchronous: true; sourceSize: Qt.size(300, 300) }"),
+                          QUrl::fromLocalFile(dir.path() + "/view.qml"));
+        QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> item(component.create());
+        QVERIFY(item);
+        item->setProperty("source", url);
+        QTRY_COMPARE_WITH_TIMEOUT(item->property("status").toInt(), 1 /* Image.Ready */, 10000);
+        QCOMPARE(item->property("implicitWidth").toInt(), 300);   // 1200x800 fitted into 300x300
+        QCOMPARE(item->property("implicitHeight").toInt(), 200);
+
+        // A picture it cannot show is an Image.Error, not a crash.
+        item->setProperty("source", QStringLiteral("image://sandbox-media/000000000000000000000000"));
+        QTRY_COMPARE_WITH_TIMEOUT(item->property("status").toInt(), 3 /* Image.Error */, 10000);
+    }
+
+    // What an Image item does when its page closes mid-load: ask, then cancel
+    // and delete the response, release the picture, even drop the whole engine,
+    // while workers are still decoding. Nothing may crash, hang or leak budget.
+    void sandboxSurvivesCancelReleaseAndTeardownMidLoad()
+    {
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_sandbox_images-XXXXXX"));
+        QVERIFY(dir.isValid());
+        {
+            auto engine = std::make_unique<QQmlEngine>();
+            QmlSandbox::configure(engine.get(), dir.path(), dir.path() + "/view.qml", QString());
+            SandboxImages* images = imagesOf(*engine);
+            QVERIFY(images);
+            auto* provider = dynamic_cast<QQuickAsyncImageProvider*>(engine->imageProvider(QStringLiteral("sandbox-media")));
+            QVERIFY(provider);
+
+            QList<QQuickImageResponse*> live;
+            for (int i = 0; i < 60; ++i) {
+                const QString url = images->sourceFor(
+                    dataUrlOf(encodeImage(testPicture(300 + i, 200, 100 + i), "PNG"), "image/png"));
+                QVERIFY(!url.isEmpty());
+                const QString id = QUrl(url).path().mid(1);
+                for (const QSize& size : {QSize(), QSize(40, 40), QSize(30000, 30000)}) {
+                    QQuickImageResponse* response = provider->requestImageResponse(id, size);
+                    switch (i % 4) {
+                    case 0: response->cancel(); delete response; break;          // page closed
+                    case 1: delete response; break;                                // deleted without cancel
+                    case 2: live.append(response); break;                          // stays to the end
+                    default: live.append(response); images->release(url); break;  // released mid-load
+                    }
+                }
+            }
+            // Let some finish, then drop the rest and the whole engine with jobs in flight.
+            QTest::qWait(50);
+            qDeleteAll(live);
+            live.clear();
+        }  // engine gone; queued results for deleted responses must be dropped quietly
+        QTest::qWait(300);
+        QVERIFY(true);
     }
 
     // ----------------------------------------------------------------------

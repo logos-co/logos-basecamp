@@ -138,7 +138,7 @@ QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType type)
         url.host() == QLatin1String("sandbox-media") &&
         url.userInfo().isEmpty() && url.port() == -1 &&
         !url.hasQuery() && !url.hasFragment() &&
-        QRegularExpression(QStringLiteral("^/[0-9a-f]{64}$")).match(url.path()).hasMatch()) {
+        QRegularExpression(QStringLiteral("^/[0-9a-f]{24}$")).match(url.path()).hasMatch()) {
         return url;
     }
 
