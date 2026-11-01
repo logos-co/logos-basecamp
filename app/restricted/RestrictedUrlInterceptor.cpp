@@ -132,6 +132,16 @@ QUrl RestrictedUrlInterceptor::intercept(const QUrl& url, DataType type)
         return url;
     }
 
+    // Only an opaque raster image ID, served by THIS engine's image provider.
+    // Reject image://other, query strings, non-hex IDs and every non-URL use.
+    if (type == UrlString && url.scheme() == QLatin1String("image") &&
+        url.host() == QLatin1String("sandbox-media") &&
+        url.userInfo().isEmpty() && url.port() == -1 &&
+        !url.hasQuery() && !url.hasFragment() &&
+        QRegularExpression(QStringLiteral("^/[0-9a-f]{64}$")).match(url.path()).hasMatch()) {
+        return url;
+    }
+
     if (url.isLocalFile()) {
         const QString raw   = url.toLocalFile();
 

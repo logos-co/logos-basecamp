@@ -3,10 +3,13 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QQmlContext>
 #include <QQmlEngine>
+#include <QQuickImageProvider>
 
 #include "restricted/DenyAllNAMFactory.h"
 #include "restricted/RestrictedUrlInterceptor.h"
+#include "restricted/SandboxImages.h"
 #include "restricted/SandboxLogging.h"
 #include "restricted/SharedLogosModules.h"
 
@@ -43,6 +46,13 @@ QStringList configure(QQmlEngine* engine,
     // was prepended here, which — together with the module dir being on the
     // import path — let a qmldir 'plugin' directive load arbitrary native code.)
     engine->setNetworkAccessManagerFactory(new DenyAllNAMFactory(pluginLabel));
+
+    // Every ui_qml engine has a private, bounded, in-memory image provider.
+    // It accepts only raster data supplied by this plugin and returns opaque
+    // image IDs; no arbitrary network or filesystem access is introduced.
+    auto* sandboxImages = new SandboxImages(engine);
+    engine->addImageProvider(QStringLiteral("sandbox-media"), sandboxImages->createProvider());
+    engine->rootContext()->setContextProperty(QStringLiteral("SandboxImages"), sandboxImages);
 
     // allowedRoots gate ALL local file/qmldir resolution. untrustedRoots is the
     // subset (the module's own dirs) where a qmldir may not declare a native
