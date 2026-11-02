@@ -268,8 +268,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
 
     // Started as soon as it is loaded, as before it had start(), unless
     // onboarding has yet to choose the download source. The storage node comes
-    // up with it unless that source is "http", and a stop in the Storage UI
-    // sticks.
+    // up with it unless that source is "http". After a stop in the Storage UI,
+    // the next download that needs the node starts it.
     withDownloaderStarted([this]() {
         refreshDownloadSource();
         refreshStorageState();
@@ -309,6 +309,8 @@ void PackageCoordinator::startDownloader()
             qWarning() << "PackageCoordinator: package_downloader.start did not succeed:"
                        << (r.ok() ? r.value.value("error").toString()
                                   : QString::fromStdString(r.error.message));
+        } else {
+            self->requestStorage();
         }
         const QList<std::function<void()>> waiting =
             std::exchange(self->m_waitingForDownloaderStart, {});
@@ -1592,6 +1594,7 @@ void PackageCoordinator::setDownloadSource(const QString& source)
                     error = QStringLiteral("package_downloader did not accept the download source");
                 emit self->repositoryOperationCompleted(QStringLiteral("setDownloadSource"),
                                                         source, ok, error);
+                if (ok && source != QStringLiteral("http")) self->requestStorage();
                 // Either way: a refused value must not stay selected.
                 self->refreshDownloadSource();
             });
@@ -1638,6 +1641,16 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
                 self->refreshStorageState();
             });
         });
+}
+
+// Not checked: under "http" it is refused, and a downloader that predates it
+// starts the node itself.
+void PackageCoordinator::requestStorage()
+{
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient) return;
+    dlClient->invokeRemoteMethodAsync("package_downloader", "startStorage", QVariantList{},
+                                      [](QVariant) {});
 }
 
 void PackageCoordinator::retryStorage()

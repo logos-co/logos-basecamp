@@ -97,8 +97,9 @@ public:
     // the storage node, until chooseOnboardingSource() has chosen the source.
     bool onboardingRequired() const { return m_onboardingRequired; }
 
-    // package_downloader's use of the storage node: "off", "waiting",
-    // "starting", "running" or "failed" (storageError says why). Empty until
+    // package_downloader's use of the storage node: "off", "waiting", "idle"
+    // (stopped; the next download starts it), "starting", "running" or
+    // "failed" (storageError says why). Empty until
     // it answers, and when it predates the setting.
     QString storageState() const { return m_storageState; }
     QString storageError() const { return m_storageError; }
@@ -419,6 +420,10 @@ private:
     // alive.
     void withDownloaderStarted(std::function<void()> then);
     void startDownloader();
+
+    // The downloader starts the storage node only for a download; Basecamp
+    // wants it up as soon as the source allows. Refused under "http".
+    void requestStorage();
 
     void refreshStorageState();
     void setStorageState(const QString& state, const QString& error);

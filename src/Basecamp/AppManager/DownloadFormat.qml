@@ -78,7 +78,8 @@ QtObject {
     // The notice at the top of a screen that downloads apps, or null for
     // none: why downloads may not work right now. `source` is the download
     // source ("any", "logos", "http"); `storageState` the downloader's
-    // ("off", "waiting", "starting", "running", "failed", or "" not known).
+    // ("off", "waiting", "idle", "starting", "running", "failed", or "" not
+    // known). "idle" says nothing: the next download starts the node.
     // `showsFallback`: also say when Logos Storage is down but GitHub covers
     // for it. Only where each download's source is shown (the Package
     // Manager); elsewhere downloads simply work and the notice is noise.
@@ -104,7 +105,7 @@ QtObject {
         if (source === "any" && storageDown && showsFallback)
             return { severity: "info", title: qsTr("Logos Storage isn't running"),
                      message: qsTr("Apps download from GitHub meanwhile. Basecamp tries Logos "
-                                   + "Storage again each time it starts.") }
+                                   + "Storage again with the next download.") }
 
         return null
     }

@@ -180,7 +180,7 @@ ColumnLayout {
         severity: LogosNotice.Warning
         title: qsTr("Logos Storage couldn't start")
         message: qsTr("Apps download from GitHub meanwhile. Basecamp tries Logos Storage again "
-                      + "each time it starts.")
+                      + "with the next download.")
         actions: [
             LogosCopyableText {
                 objectName: "onboardingStorageMeanwhileReason"
