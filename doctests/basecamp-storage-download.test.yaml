@@ -4,16 +4,18 @@ release: ""
 
 intro: |
   Basecamp can fetch packages over Logos Storage if the catalog's index
-  advertises a `logos:<network>:<cid>` URL. When the storage node is not
-  running, it falls back to the package's HTTPS URL. This tutorial proves both
-  paths end to end in the Basecamp UI.
+  advertises a `logos:<network>:<cid>` URL. The storage node stays off until
+  a download needs it. When the node cannot serve the package, the download
+  falls back to its HTTPS URL. This tutorial proves both paths end to end in
+  the Basecamp UI.
 
 what_you_build: "A release-like environment to install a package in Basecamp over Logos Storage and over HTTPS."
 
 what_you_learn:
   - How a release publishes a package to a storage node
-  - How the download falls back to HTTPS when the node is stopped from the Storage UI
-  - That a download never restarts a node the user stopped
+  - That the storage node stays off until a download needs it
+  - That a download starts again a node the user stopped from the Storage UI
+  - How the download falls back to HTTPS when the storage module is not loaded
   - That a node on another network than the catalog's is not used
 
 prerequisites:
@@ -250,7 +252,7 @@ sections:
     steps:
       - title: "Write the node configuration"
         text: |
-          The downloader starts the node from this file. The provider is its
+          A download starts the node from this file. The provider is its
           only bootstrap node, which overrides the ones the network preset
           would supply.
         run: |
@@ -296,6 +298,19 @@ sections:
           qt_mcp: "result-mcp"
           launch_timeout: 300
           tests:
+            - name: "First-run onboarding shows"
+              action: expect_property
+              find_value: "onboardingQuickSetupButton"
+              property: "visible"
+              value: true
+              timeout: 60000
+              text: "A new home opens on Basecamp's first-run onboarding."
+
+            - name: "Let's go"
+              action: click_object
+              find_value: "onboardingQuickSetupButton"
+              text: "**Let's go** downloads from GitHub and Logos Storage. It only saves that choice: the storage node stays off."
+
             - name: "App window opens"
               action: wait_for
               texts: ["Applications", "Settings"]
@@ -374,7 +389,21 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 20000
+              ms: 30000
+              text: "The download starts the node first, so it takes a little longer than the ones after it."
+
+      - title: "Check that the download started the node"
+        text: |
+          Nothing started the node before the install: not the launch, the
+          onboarding, the catalog or the App Manager. The count stops where
+          the installed Storage UI loads, since its view starts the node too.
+        run: |
+          awk '/Install plan for "storage_ui"/ { asked = 1 }
+               asked && /Loading UI module: "storage_ui"/ { exit }
+               /StorageModuleImpl::start called/ { if (asked) after++; else before++ }
+               END { print "starts before=" before + 0 " after=" after + 0 }' ui-test-app.log
+        expect_contains:
+          - "starts before=0 after=1"
 
       - title: "Check that the package came from the Storage network"
         run: |
@@ -386,10 +415,10 @@ sections:
   - title: "Stop the node from the Storage UI"
     step: true
     text: |
-      The Storage UI can stop the node. With the node stopped, the package
-      comes from HTTPS, and nothing but the Storage UI starts the node again.
+      The Storage UI can stop the node. A download that needs the node starts
+      it again, so the package still comes from the Storage network.
     steps:
-      - title: "Stop the node, reinstall, and start it again"
+      - title: "Stop the node and reinstall"
         ui_test:
           launch: "sh -c 'HOME=\"$(pwd)/home\" SSL_CERT_FILE=\"$(pwd)/localhost.crt\" exec ./result-bundle/bin/LogosBasecamp'"
           qt_mcp: "result-mcp"
@@ -409,6 +438,7 @@ sections:
               action: wait_for
               texts: ["Stop"]
               timeout: 60000
+              text: "The Storage UI starts the node when its view is created."
 
             - name: "Stop it"
               action: click
@@ -509,39 +539,29 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 20000
+              ms: 30000
 
-            - name: "Open the Storage UI"
-              action: click_object
-              find_by: "objectName"
-              find_value: "sidebar.app.storage_ui"
-
-            - name: "The node is running again"
-              action: wait_for
-              texts: ["Stop"]
-              timeout: 60000
-              text: "The reinstalled Storage UI starts the node when it opens, as it does whenever its view is created."
-
-      - title: "Check that nothing else started the node"
+      - title: "Check that the download started the node again"
         text: |
-          Between the stop and the reinstalled Storage UI, the node stayed
-          stopped: the App Manager's first use and the download left it alone.
+          After the stop, only the download started the node: the App Manager
+          and the reinstall dialog left it alone.
         run: |
           awk '/StorageModuleImpl::stop called/ { stopped = 1; next }
-               stopped && /Loading UI module: "storage_ui"/ { exit }
-               stopped && /StorageModuleImpl::start called/ { starts++ }
-               END { print "starts while stopped: " starts + 0 }' ui-test-app.log
+               stopped && /Install plan for "storage_ui"/ { asked = 1 }
+               asked && /Loading UI module: "storage_ui"/ { exit }
+               stopped && /StorageModuleImpl::start called/ { if (asked) after++; else before++ }
+               END { print "starts before=" before + 0 " after=" after + 0 }' ui-test-app.log
         expect_contains:
-          - "starts while stopped: 0"
+          - "starts before=0 after=1"
 
-      - title: "Check that the package came from HTTPS"
+      - title: "Check that the package came from the Storage network"
         text: |
           Each launch writes its own log, so the counts cover this run alone.
         run: |
           cid="$(cat cid.txt)"
           echo "logos=$(grep -cF "Downloaded \"storage_ui\" from \"logos:logos.dev:$cid\"" ui-test-app.log) https=$(grep -c 'Downloaded "storage_ui" from "https:' ui-test-app.log)"
         expect_contains:
-          - "logos=0 https=1"
+          - "logos=1 https=0"
 
   - title: "Unload the storage module"
     step: true
@@ -692,8 +712,7 @@ sections:
     step: true
     text: |
       A storage module that is loaded again starts with no node running. The
-      downloader starts one when the module reports `ready`, so the download
-      goes back to the Storage network.
+      download starts one, so it goes back to the Storage network.
     steps:
       - title: "Unload the storage module, load it again, and reinstall"
         ui_test:
