@@ -340,7 +340,6 @@ public slots:
     Q_INVOKABLE void setDownloadSource(const QString& source);
     Q_INVOKABLE void chooseOnboardingSource(const QString& source);
     Q_INVOKABLE void completeOnboarding();
-    Q_INVOKABLE void retryStorage();
 
 signals:
     void currentActiveSectionIndexChanged();

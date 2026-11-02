@@ -19,10 +19,7 @@ Rectangle {
         anchors.fill: parent
         backdrop: LogosIcons.onboardingBackdrop
         logo: BasecampIcons.logo
-        storageState: backend.storageState
-        storageError: backend.storageError
         onSourceChosen: (source) => backend.chooseOnboardingSource(source)
-        onRetryStorageRequested: backend.retryStorage()
         onFinished: {
             backend.completeOnboarding()
             root.finished()

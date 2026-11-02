@@ -169,7 +169,6 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/OnboardingWelcome.qml
         Basecamp/Shell/OnboardingChoiceCard.qml
         Basecamp/Shell/OnboardingDownloadsStep.qml
-        Basecamp/Shell/OnboardingStorageStep.qml
         Basecamp/Shell/OnboardingStepPage.qml
         Basecamp/Shell/AppStoppedPanel.qml
 )

@@ -93,13 +93,14 @@ public:
     // until it answers, and when it predates the setting.
     QString downloadSource() const { return m_downloadSource; }
 
-    // First-run onboarding is ahead: nothing starts the downloader, and with it
-    // the storage node, until chooseOnboardingSource() has chosen the source.
+    // First-run onboarding is ahead: nothing starts the downloader until
+    // chooseOnboardingSource() has chosen the source.
     bool onboardingRequired() const { return m_onboardingRequired; }
 
-    // package_downloader's use of the storage node: "off", "waiting",
-    // "starting", "running" or "failed" (storageError says why). Empty until
-    // it answers, and when it predates the setting.
+    // package_downloader's use of the storage node: "off", "waiting", "idle"
+    // (starts for the first download from a logos: url), "starting", "running"
+    // or "failed" (storageError says why). Empty until it answers, and when it
+    // predates the setting.
     QString storageState() const { return m_storageState; }
     QString storageError() const { return m_storageError; }
     QVariantMap repositorySource(const QString& repositoryUrl) const;
@@ -198,7 +199,7 @@ public slots:
     Q_INVOKABLE void remoteRefresh();
 
     // The catalog is fetched the first time something needs it, not at launch:
-    // fetching it starts package_downloader, and with it the storage node.
+    // fetching it starts package_downloader.
     // requestCatalog() fetches it (and the repository list) if nothing has yet;
     // every refresh after that fetches them again. whenCatalogLoaded() runs
     // `then` once a fetch has finished, at once if one already has, whether or
@@ -220,10 +221,6 @@ public slots:
     Q_INVOKABLE void chooseOnboardingSource(const QString& source);
     // Records onboarding as done.
     Q_INVOKABLE void completeOnboarding();
-
-    // Reloads storage_module and restarts the downloader, which starts the
-    // node again once it is ready. Cancels the downloads in flight.
-    Q_INVOKABLE void retryStorage();
 
     // Called by QML when the Add Application dialog closes so stale async
     // resolver callbacks for previously-opened apps don't mutate the shared

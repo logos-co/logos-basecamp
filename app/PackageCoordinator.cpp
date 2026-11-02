@@ -267,9 +267,8 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
     });
 
     // Started as soon as it is loaded, as before it had start(), unless
-    // onboarding has yet to choose the download source. The storage node comes
-    // up with it unless that source is "http", and a stop in the Storage UI
-    // sticks.
+    // onboarding has yet to choose the download source. The storage node stays
+    // off until a download from a logos: url needs it.
     withDownloaderStarted([this]() {
         refreshDownloadSource();
         refreshStorageState();
@@ -1572,7 +1571,7 @@ void PackageCoordinator::setDownloadSource(const QString& source)
         return;
     }
 
-    // Back from "http": the downloader starts the node once storage_module is
+    // Back from "http": the downloader can use the node once storage_module is
     // ready again.
     if (source != QStringLiteral("http") && m_coreModuleManager
         && !moduleIsLoaded(m_coreModuleManager, "storage_module")) {
@@ -1636,31 +1635,6 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
                 if (saved) self->refreshDownloadSource();
                 else self->setDownloadSource(source);
                 self->refreshStorageState();
-            });
-        });
-}
-
-void PackageCoordinator::retryStorage()
-{
-    if (!m_coreModuleManager) return;
-
-    if (moduleIsLoaded(m_coreModuleManager, "storage_module"))
-        m_coreModuleManager->unloadModule(QStringLiteral("storage_module"));
-    m_coreModuleManager->loadModule(QStringLiteral("storage_module"));
-
-    // A restart, not just the reload: a start that never answered holds the
-    // downloader in "starting", and it waits that out rather than start twice.
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
-
-    QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "stop", QVariantList{},
-        [self](QVariant) {
-            if (!self) return;
-            self->m_downloaderStarted = false;
-            self->withDownloaderStarted([self]() {
-                if (self) self->refreshStorageState();
             });
         });
 }
