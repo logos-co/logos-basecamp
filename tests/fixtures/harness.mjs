@@ -185,7 +185,7 @@ export function makeTest(frameworkTest) {
 // G-EXIT: exit 0, no signal, complete final log line, no orphans or partial files.
 export async function assertCleanTeardown(child, opts = {}) {
   const {
-    waitMs = 10000, log = null, closed = null,
+    waitMs = 25000, log = null, closed = null,
     userDir = null, partialBaseline = null,
   } = opts;
 

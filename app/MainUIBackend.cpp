@@ -19,6 +19,8 @@
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
 #include "BuildInfo.h"
+#include "utils/InstalledPlacement.h"
+#include "utils/LogosBasecampPaths.h"
 
 #include <QDebug>
 #include <QJSValue>
@@ -71,6 +73,10 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     m_intentAdapter  = new IntentBridgeAdapter(m_intentBroker, this);
 
     m_coreModuleManager = new CoreModuleManager(m_logosAPI, m_core, this);
+    // Only what the package manager installed is integrity-checked: the user
+    // modules dir, which standalone mode does not use.
+    if (m_hostProfile.useUserModules)
+        m_coreModuleManager->setInstalledModulesRoot(LogosBasecampPaths::modulesDirectory());
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
     m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
@@ -230,6 +236,26 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     QTimer::singleShot(0, this, [this]() {
         m_packageCoordinator->refresh();
     });
+
+    // What main() found before this window existed. After the event loop
+    // starts, so the QML is up to show it; several share one dialog.
+    const auto notices = logos::integrity::takeStartupNotices();
+    if (!notices.isEmpty()) {
+        QTimer::singleShot(0, this, [this, notices]() {
+            if (notices.size() == 1) {
+                emit startupNoticeRequested(notices.first().title, notices.first().module,
+                                            notices.first().message);
+                return;
+            }
+            QStringList names, messages;
+            for (const auto& notice : notices) {
+                names << notice.module;
+                messages << notice.module + QStringLiteral(": ") + notice.message;
+            }
+            emit startupNoticeRequested(notices.first().title, names.join(QStringLiteral(", ")),
+                                        messages.join(QStringLiteral("\n\n")));
+        });
+    }
 
     qDebug() << "MainUIBackend created";
 }

@@ -53,6 +53,24 @@ TestCase {
         dlg.destroy()
     }
 
+    // A startup notice is about a module, not an app: it brings its own title,
+    // and an app failure after it gets the app title back.
+    function test_a_startup_notice_carries_its_own_title() {
+        var dlg = dialogComp.createObject(testCase)
+        dlg.openWithLoadError("capability_module", "Basecamp started without the modules you installed.",
+                              "Installed Modules Not Used")
+        tryVerify(function() { return dlg.opened })
+        verify(findChildWithText(dlg.contentItem, "Installed Modules Not Used"), "notice title rendered")
+        verify(!findChildWithText(dlg.contentItem, "Couldn't Load App"), "app title replaced")
+        dlg.close()
+        tryVerify(function() { return !dlg.visible })
+
+        dlg.openWithLoadError("blockchain_ui", compileError)
+        tryVerify(function() { return dlg.opened })
+        verify(findChildWithText(dlg.contentItem, "Couldn't Load App"), "app title is back")
+        dlg.destroy()
+    }
+
     function test_falls_back_to_module_name_and_placeholder_error() {
         var dlg = dialogComp.createObject(testCase)
         dlg.openWithLoadError("unknown_ui", "")
@@ -76,6 +94,50 @@ TestCase {
         compare(ok.text, "OK")
         mouseClick(ok)
         tryVerify(function() { return !dlg.visible })
+        dlg.destroy()
+    }
+
+    readonly property string damagedMessage:
+        "Its files have been modified or damaged since it was installed, so it was not "
+        + "started. Reinstall or uninstall it in Package Manager.\n\n"
+        + "installed module has been modified or damaged since install: installed content "
+        + "does not match manifest hashes"
+
+    // Words are not broken across lines: "Reinstall" used to render as
+    // "Re" / "install" because the area wrapped at any character. Where a
+    // break lands depends on the width, so this checks a spread of them.
+    function test_prose_wraps_between_words() {
+        var dlg = dialogComp.createObject(testCase)
+        dlg.openWithLoadError("blockchain_ui", damagedMessage)
+        tryVerify(function() { return dlg.opened })
+        var err = findChild(dlg.contentItem, "confirmationDialog.loadFailed.error")
+        verify(err)
+
+        for (var w = 300; w <= 600; w += 7) {
+            err.width = w
+            verify(err.lineCount > 1, "the message wraps at width " + w)
+            var re = /\S+/g
+            var m
+            while ((m = re.exec(err.text)) !== null) {
+                var first = err.positionToRectangle(m.index).y
+                var last = err.positionToRectangle(m.index + m[0].length - 1).y
+                compare(last, first, "at width " + w + ", '" + m[0] + "' is split across lines")
+            }
+        }
+        dlg.destroy()
+    }
+
+    // ...while a token longer than a line still wraps instead of overflowing.
+    function test_a_token_longer_than_a_line_still_wraps() {
+        var path = "file:///plugins/blockchain_ui/" + new Array(40).join("very_long_directory_name/")
+                 + "BlockchainView.qml:521:9: Type OnboardingFlow unavailable"
+        var dlg = dialogComp.createObject(testCase)
+        dlg.openWithLoadError("blockchain_ui", path)
+        tryVerify(function() { return dlg.opened })
+        var err = findChild(dlg.contentItem, "confirmationDialog.loadFailed.error")
+        tryVerify(function() { return err.lineCount > 1 }, 5000, "the path wraps")
+        verify(err.contentWidth <= err.width + 1,
+               "content " + err.contentWidth + " fits the area " + err.width)
         dlg.destroy()
     }
 

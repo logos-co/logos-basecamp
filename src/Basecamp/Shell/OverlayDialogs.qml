@@ -318,6 +318,10 @@ Item {
             loadFailedDialog.openWithLoadError(name, errorMessage);
         }
 
+        function onStartupNoticeRequested(title, name, message) {
+            loadFailedDialog.openWithLoadError(name, message, title);
+        }
+
         function onLaunchAppRequested(name) {
             backend.onAppLauncherClicked(name);
         }

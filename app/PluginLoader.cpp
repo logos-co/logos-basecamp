@@ -21,14 +21,17 @@
 #include <QQuickWidget>
 #include <QScreen>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
 #include "CoreDependencyLoader.h"
 #include "CoreModuleManager.h"
+#include "utils/InstalledIntegrity.h"
 #include "IComponent.h"
 #include "IntentBridgeAdapter.h"
 #include "LogosQmlBridge.h"
@@ -140,7 +143,46 @@ logos::ConsumerIdentity PluginLoader::consumerFor(const QString& name)
     return consumer;
 }
 
-void PluginLoader::startLoad(const PluginLoadRequest& incoming)
+void PluginLoader::startLoad(const PluginLoadRequest& request)
+{
+    // Every file the load opens, judged by where it is: an app in the
+    // installed apps dir is checked whatever its metadata says, and a file
+    // loose in that dir is refused.
+    const QStringList opened{
+        request.pluginPath, request.qmlViewPath, request.mainFilePath,
+        request.installDir.isEmpty() ? QString() : request.installDir + QStringLiteral("/manifest.json")};
+    const QString root = m_installedAppsRoot;
+    const bool installed = std::any_of(opened.cbegin(), opened.cend(), [&root](const QString& path) {
+        return logos::integrity::placementUnder(path, root).inside;
+    });
+    if (!installed) {
+        startLoadVerified(request);
+        return;
+    }
+    // First, before anything in the package is loaded -- its backend included.
+    // Hashing a large app must not stall the UI, so it runs on the pool;
+    // the answer comes back through qApp, and `self` is only read here, on the
+    // thread that owns it.
+    QPointer<PluginLoader> self(this);
+    QThreadPool::globalInstance()->start([self, request, opened, root]() {
+        QString failedDir;
+        const auto problem = logos::integrity::problemWithAny(opened, root, &failedDir);
+        QMetaObject::invokeMethod(qApp, [self, request, problem, failedDir]() {
+            if (!self)
+                return;
+            if (problem.isEmpty()) {
+                self->startLoadVerified(request);
+                return;
+            }
+            qWarning().noquote() << "Refusing to load" << request.name << "-" << problem.what;
+            self->setLoading(request.name, false);
+            emit self->pluginLoadFailed(request.name, logos::integrity::refusalMessage(
+                request.name, request.name, failedDir, problem));
+        }, Qt::QueuedConnection);
+    });
+}
+
+void PluginLoader::startLoadVerified(const PluginLoadRequest& incoming)
 {
     PluginLoadRequest request = incoming;
     if (!request.backendModule.isEmpty()) {
@@ -279,8 +321,12 @@ void PluginLoader::loadCoreDependencies(const PluginLoadRequest& request)
             qWarning() << "Failed to load core dependency" << failedDependency
                        << "for" << request.name;
             setLoading(request.name, false);
-            emit pluginLoadFailed(request.name,
-                QStringLiteral("Failed to load core dependencies for ") + request.name);
+            const auto refused = m_coreModuleManager
+                ? m_coreModuleManager->lastRefusal(failedDependency) : logos::integrity::Preflight();
+            emit pluginLoadFailed(request.name, refused.refusal.isEmpty()
+                ? QStringLiteral("Failed to load core dependencies for ") + request.name
+                : logos::integrity::refusalMessage(request.name, refused.culprit,
+                                                   refused.culpritDir, refused.problem));
         });
 }
 

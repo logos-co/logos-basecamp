@@ -231,10 +231,12 @@ pkgs.stdenv.mkDerivation rec {
     fi
 
     # Shared semver headers (logos/semver.hpp + its <semver/semver.hpp>) so
-    # AppsModel can use logos::semver::compare. Headers only — nothing here
-    # links liblgx.
+    # AppsModel can use logos::semver::compare. Headers only.
     cp -r "${logosPackageHeaders}/include/logos"  ./app/generated/
     cp -r "${logosPackageHeaders}/include/semver" ./app/generated/
+    # lgx.h, for the launch-time integrity check (utils/InstalledIntegrity.cpp),
+    # which links the liblgx liblogos already ships -- see app/CMakeLists.txt.
+    cp "${logosPackageHeaders}/include/lgx.h" ./app/generated/
 
     # logos-cpp-generator's general wrappers (logos_sdk.h / logos_sdk.cpp).
     # --general-only: the per-module wrappers come from the module outputs

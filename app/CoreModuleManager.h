@@ -1,12 +1,17 @@
 #pragma once
 
-#include <QObject>
+#include <QHash>
 #include <QMap>
+#include <QMutex>
+#include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
 #include "ICoreRuntime.h"
 #include "logos_api.h"
+#include "utils/InstalledPlacement.h"
+
+#include <functional>
 
 class QTimer;
 
@@ -36,7 +41,20 @@ public:
     QStringList knownModules() const;
     QStringList loadedModules() const;
     // Loads with forward dependencies resolved. Returns true on success.
+    // Refused, without asking the core, when the module or anything it would
+    // bring up was installed into the user's modules dir and no longer matches
+    // what was installed (see utils/InstalledIntegrity.h).
     bool loadModule(const QString& name);
+    // loadModule() for a caller on the UI thread: the check, which reads and
+    // hashes files, runs on a worker; the load and then `done` run back on
+    // this object's thread.
+    void loadModuleInBackground(const QString& name, std::function<void(bool)> done);
+    // Why the last loadModule(name) was refused by that check; empty refusal
+    // if it was not. Thread-safe: dependency loads run on a worker.
+    logos::integrity::Preflight lastRefusal(const QString& name) const;
+    // The user modules dir the check covers. Empty (standalone mode, or not
+    // set) checks nothing.
+    void setInstalledModulesRoot(const QString& dir);
     // A module file outside the modules dirs (a UI app's in-package backend);
     // returns the name it registered under, or empty.
     QString registerModuleFile(const QString& path);
@@ -75,6 +93,10 @@ private slots:
     void updateModuleStats();
 
 private:
+    QString                 m_installedModulesRoot;  // set once, before any load
+    mutable QMutex          m_refusalsMutex;
+    QHash<QString, logos::integrity::Preflight> m_refusals;
+    bool loadPreflighted(const QString& name, const logos::integrity::Preflight& check);
     LogosAPI*               m_logosAPI;   // not owned
     ICoreRuntime* m_core;       // not owned; owned by main()
     QTimer*                 m_statsTimer; // owned (parent=this)

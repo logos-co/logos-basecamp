@@ -21,6 +21,7 @@ public:
     QStringList knownModules() const override;
     QStringList loadedModules() const override;
     bool        loadModule(const QString& name, LoadPolicy policy) override;
+    QString     modulesInfoJson() const override;
     bool        unloadModule(const QString& name, bool withDependents) override;
     QString     registerModuleFile(const QString& path) override;
     void        refreshModules() override;

@@ -398,6 +398,11 @@ signals:
     // for the QML overlay (wireIntents() still forwards it to the IntentBroker).
     void loadFailureNoticeRequested(const QString& name, const QString& errorMessage);
 
+    // Something found while Basecamp started -- a module refused, or the
+    // installed modules left out -- shown once the window is up.
+    void startupNoticeRequested(const QString& title, const QString& name,
+                                const QString& message);
+
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.

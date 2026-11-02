@@ -182,6 +182,16 @@ endif()
 
 endif() # LOGOS_USE_MOCK_BACKEND
 
+# liblgx, for the launch-time integrity check (utils/InstalledIntegrity.cpp;
+# lgx.h comes with the semver headers into generated/). The copy liblogos ships
+# beside liblogos_core -- the one the bundle already stages, from the same
+# logos-package -- so the app never carries a second liblgx.
+find_library(LOGOS_LGX_LIBRARY
+    NAMES lgx
+    PATHS "${LOGOS_LIBLOGOS_ROOT}/lib" "${LOGOS_LIBLOGOS_ROOT}/build/lib"
+    NO_DEFAULT_PATH
+    REQUIRED)
+
 # ── logos-view-module-runtime (provides ViewModuleHost.h + the ui-host lib) ───
 # Load-bearing: UIPluginManager/PluginLoader compile into the exe.
 if(NOT DEFINED LOGOS_VIEW_MODULE_RUNTIME_ROOT)
@@ -285,6 +295,8 @@ set(PROJECT_SOURCES
     utils/AccessPolicyOption.cpp
     utils/HostProfile.h
     utils/HostProfile.cpp
+    utils/InstalledIntegrity.cpp
+    utils/InstalledPlacement.cpp
     utils/StandaloneMode.h
     utils/StandaloneMode.cpp
     utils/DependencyBlocker.h
@@ -423,6 +435,7 @@ target_link_libraries(LogosBasecamp PRIVATE
     Qt6::QuickWidgets
     Qt6::QuickControls2
     Qt6::Network
+    ${LOGOS_LGX_LIBRARY}
     # LOGOS_VIEW_MODULE_RUNTIME_LIB comes BEFORE logos_qt_host_shared for the
     # same GNU ld reason spelled out for logos_core below, and it is load-bearing
     # on Windows for exactly the same mechanism. That archive references

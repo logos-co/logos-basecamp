@@ -49,7 +49,10 @@ if (!APP_BIN) {
 const HOST = process.env.QML_INSPECTOR_HOST || "localhost";
 const PORT = parseInt(process.env.QML_INSPECTOR_PORT || "3768", 10);
 const INSPECTOR_WAIT_MS = 15000;
-const SHUTDOWN_WAIT_MS = 10000;
+// Above the longest bounded teardown a single module can cost: the subprocess
+// container's 12s stop window plus its 2s SIGKILL wait (logos-container-subprocess,
+// syncKill), which is also longer than the 10s a UI plugin may spend in aboutToUnload().
+const SHUTDOWN_WAIT_MS = 25000;
 const APP_WARMUP_MS = 2000;
 
 function spawnApp() {

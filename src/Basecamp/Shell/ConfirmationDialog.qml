@@ -154,6 +154,8 @@ Dialog {
     property bool depChangesResolved: true
 
     property string errorMessage: ""
+    // "loadFailed" only: replaces "Couldn't Load App" (a startup notice about a module).
+    property string loadFailedTitle: ""
 
     // The app that asked, host-attested. Empty when the user acted through
     // the shell's own UI, where naming a requester would be noise.
@@ -260,10 +262,11 @@ Dialog {
 
     // Load-failure variant — informational only. `error_` is shown verbatim
     // (QML compile errors are multi-line).
-    function openWithLoadError(name_, error_) {
+    function openWithLoadError(name_, error_, title_) {
         root.mode = "loadFailed";
         root.moduleName = name_ || "";
         root.errorMessage = (error_ || "").trim();
+        root.loadFailedTitle = title_ || "";
         root.items = [];
         root.loadedItems = [];
         root.depChanges = [];
@@ -318,7 +321,7 @@ Dialog {
                     if (root.mode === "installError")
                         return "Install Failed";
                     if (root.mode === "loadFailed")
-                        return "Couldn't Load App";
+                        return root.loadFailedTitle || "Couldn't Load App";
                     return "";
                 }
                 font.pixelSize: Theme.typography.panelTitleText
@@ -483,7 +486,7 @@ Dialog {
                     selectByMouse: true
                     selectByKeyboard: true
                     selectionColor: Theme.palette.accentOrange
-                    wrapMode: TextEdit.WrapAnywhere
+                    wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
                     font.pixelSize: Theme.typography.secondaryText
                     font.family: Theme.typography.mono
                     color: Theme.palette.text

@@ -25,6 +25,18 @@ if(DEFINED LOGOS_PACKAGE_HEADERS)
     set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
 endif()
 
+# liblgx, as the `lgx` libdep: the integrity check's tests build and verify
+# real packages with it. Optional, like every libdep.
+if(DEFINED LGX_ROOT)
+    find_library(LGX_TEST_LIBRARY NAMES lgx PATHS "${LGX_ROOT}/lib" NO_DEFAULT_PATH)
+    if(LGX_TEST_LIBRARY)
+        add_library(lgx SHARED IMPORTED)
+        set_target_properties(lgx PROPERTIES
+            IMPORTED_LOCATION "${LGX_TEST_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${LGX_ROOT}/include")
+    endif()
+endif()
+
 # The intent classes include LogosIntent.h — the frozen vocabulary shared with
 # the view-module runtime. It is header-only and pulls in nothing but QtCore, so
 # adding the path costs the dependency-free harness nothing.

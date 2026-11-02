@@ -3,7 +3,11 @@
 # and runs UI tests (click buttons, verify text, etc.).
 #
 # Requires Node.js for the test runner and the Qt offscreen platform plugin.
-{ pkgs, src, appPkg, logosQtMcp, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
+{ pkgs, src, appPkg, logosQtMcp, lgx
+# Appended to the platform variant fixtures are installed for: a dev build
+# accepts only "<platform>-dev", a portable bundle only "<platform>".
+, fixtureVariantSuffix ? "-dev"
+, appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 120
 # Combined PR-gate budget; elapsed goes to $out/elapsed-seconds, combined check in shutdown-test.nix.
 , budgetSec ? 600
 # Installed core-module trees (modules/<name>/ layout — the same shape
@@ -25,6 +29,13 @@ pkgs.runCommand "logos-basecamp-integration-test" {
 } ''
 
   mkdir -p $out
+  # The fixtures below are installed the way lgpm installs a package, content
+  # hashes included: Basecamp refuses a user-installed package without them.
+  export LGX_CLI="${lgx}/bin/lgx"
+  export LGX_VARIANT="$(${pkgs.nodejs}/bin/node --input-type=module -e "
+    import { platformVariant } from '${src}/tests/fixtures/lgx.mjs';
+    console.log(platformVariant());
+  ")${fixtureVariantSuffix}"
   export LOGOS_USER_DIR="$out/app-data"
   mkdir -p "$LOGOS_USER_DIR"
 
@@ -60,7 +71,8 @@ pkgs.runCommand "logos-basecamp-integration-test" {
   #
   # Without this the intent cases in ui-tests.mjs find no requester and skip
   # themselves, which reads as a pass.
-  ${pkgs.bash}/bin/bash ${src}/tests/fixtures/intents/stage.sh "$LOGOS_USER_DIR"
+  PATH="${pkgs.nodejs}/bin:$PATH" \
+    ${pkgs.bash}/bin/bash ${src}/tests/fixtures/intents/build-installed.sh "$LOGOS_USER_DIR"
 
   # Pre-seed loadable core-module fixtures (depsvc) into <user-dir>/modules/.
   # Plain copy of installed trees, the same staging
@@ -90,16 +102,18 @@ pkgs.runCommand "logos-basecamp-integration-test" {
     done
   '') seedModules}
 
-  # Deliberately broken QML-only ui_qml apps, so ui-tests.mjs can assert that
-  # a view-load failure is surfaced to the user (loadFailed dialog) instead of
-  # a spinner that silently disappears. broken_view_fixture fails to compile
+  # QML-only ui_qml apps that fail to load, so ui-tests.mjs can assert that a
+  # load failure is surfaced to the user (loadFailed dialog) instead of a
+  # spinner that silently disappears. broken_view_fixture fails to compile
   # (async pre-compile); required_prop_fixture compiles but fails when it is
-  # created (finishUiQmlLoad / setSource).
-  mkdir -p "$LOGOS_USER_DIR/plugins"
-  for _fixture in broken_view_fixture required_prop_fixture; do
-    cp -r ${src}/tests/fixtures/plugins/$_fixture "$LOGOS_USER_DIR/plugins/"
-    chmod -R u+w "$LOGOS_USER_DIR/plugins/$_fixture"
+  # created (finishUiQmlLoad / setSource); tampered_view_fixture is valid but
+  # edited after install, so the integrity check refuses it before loading.
+  for _fixture in broken_view_fixture required_prop_fixture tampered_view_fixture; do
+    ${pkgs.nodejs}/bin/node ${src}/tests/fixtures/install-fixture.mjs \
+      "$LOGOS_USER_DIR" ${src}/tests/fixtures/plugins/$_fixture
   done
+  # Edited after install: the launch-time integrity check must refuse it.
+  echo "// edited after install" >> "$LOGOS_USER_DIR/plugins/tampered_view_fixture/qml/TamperedView.qml"
 
   # Point test framework at the nix-built logos-qt-mcp package
   export LOGOS_QT_MCP="${logosQtMcp}"

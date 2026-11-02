@@ -1,0 +1,14 @@
+{
+  "author": "",
+  "category": "testing",
+  "dependencies": [],
+  "description": "UI test fixture: a valid QML-only ui_qml app whose files are edited after install (test artifact, not a real app)",
+  "display_name": "Tampered View Fixture",
+  "icon": "",
+  "main": {},
+  "manifestVersion": "0.3.0",
+  "name": "tampered_view_fixture",
+  "type": "ui_qml",
+  "version": "0.0.1",
+  "view": "qml/TamperedView.qml"
+}

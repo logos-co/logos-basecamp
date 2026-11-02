@@ -3,8 +3,8 @@
 // hashes. Core-module fixtures are manifest-level only, not loadable binaries.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, cpSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 
@@ -22,6 +22,7 @@ export function platformVariant() {
     "linux arm64":  "linux-arm64",
     "darwin arm64": "darwin-arm64",
     "darwin x64":   "darwin-x86_64",
+    "win32 x64":    "windows-x86_64",
   };
   const variant = map[key];
   if (!variant) throw new Error(`unsupported platform: ${key}`);
@@ -190,7 +191,7 @@ export function seedPlugin(userDir, fixture) {
   return writeInstalledPlugin(userDir, fixture);
 }
 
-// Seed an installed package into a --user-dir; the scanner only reads manifest.json.
+// Seed an installed package into a --user-dir.
 export function writeInstalledPlugin(userDir, spec) {
   const full = {
     version: "0.1.0",
@@ -200,12 +201,71 @@ export function writeInstalledPlugin(userDir, spec) {
     description: `basecamp test fixture package (${spec.name})`,
     ...spec,
   };
-  const bucket = full.type === "core" ? "modules" : "plugins";
-  const dir = join(userDir, bucket, full.name);
-  writePayload(dir, full);
-  writeFileSync(join(dir, "manifest.json"),
-    JSON.stringify(manifestFor(full), null, 2) + "\n");
-  return dir;
+  const payload = mkdtempSync(join(tmpdir(), `lgx-payload-${full.name}-`));
+  try {
+    writePayload(payload, full);
+    return installFixture(userDir, manifestFor(full), payload);
+  } finally {
+    rmSync(payload, { recursive: true, force: true });
+  }
+}
+
+// Copies out of the nix store keep its read-only modes, which would stop both
+// cleanup and an install over them.
+function makeWritable(path) {
+  const st = statSync(path);
+  chmodSync(path, st.mode | 0o200);
+  if (st.isDirectory()) for (const e of readdirSync(path)) makeWritable(join(path, e));
+}
+
+// Install `payloadDir` into a --user-dir exactly as lgpm lays a package out:
+// the variant's files, plus the package's manifest.json -- content hashes
+// stamped by lgx -- and a `variant` file. The variant must be one the app's
+// package manager accepts (a dev build wants "<platform>-dev"), or it lists the
+// package as not loadable: LGX_VARIANT overrides the portable default. Basecamp re-hashes a user-installed
+// package before loading it, so a hand-written manifest without hashes is
+// refused. `manifest` is the root manifest; a manifest.json at the top of
+// `payloadDir` is not part of the payload.
+export function installFixture(userDir, manifest, payloadDir, opts = {}) {
+  const { lgx = LGX_CLI, variant = process.env.LGX_VARIANT || platformVariant() } = opts;
+  if (!existsSync(lgx)) {
+    throw new Error(`installFixture: lgx CLI not found at ${lgx} — set LGX_CLI`);
+  }
+  const work = mkdtempSync(join(tmpdir(), `lgx-install-${manifest.name}-`));
+  try {
+    const seed = join(work, "seed");
+    const payload = join(work, "payload");
+    const out = join(work, "out");
+    const pkg = join(work, "package.lgx");
+    mkdirSync(join(seed, "variants"), { recursive: true });
+    writeFileSync(join(seed, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+    const root = resolve(payloadDir);
+    cpSync(root, payload, {
+      recursive: true,
+      dereference: true,
+      filter: (src) => !(dirname(resolve(src)) === root && basename(src) === "manifest.json"),
+    });
+    makeWritable(payload);
+
+    // Plain ustar — the LGX reader doesn't speak pax extended headers.
+    execFileSync("tar", ["--format", "ustar", "-C", seed, "-czf", pkg, "manifest.json", "variants"]);
+    const add = ["add", pkg, "--variant", variant, "--files", payload, "-y"];
+    const main = Object.values(manifest.main || {})[0];
+    if (main) add.push("--main", main);
+    execFileSync(lgx, add);
+    execFileSync(lgx, ["extract", pkg, "-v", variant, "-o", out]);
+
+    const dest = join(userDir, manifest.type === "core" ? "modules" : "plugins", manifest.name);
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(join(out, variant), dest, { recursive: true });
+    makeWritable(dest);
+    writeFileSync(join(dest, "manifest.json"), execFileSync("tar", ["-xzOf", pkg, "manifest.json"]));
+    writeFileSync(join(dest, "variant"), variant);
+    return dest;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
 }
 
 // Local file:// repo: logos-repo.json + index listing the given .lgx files.

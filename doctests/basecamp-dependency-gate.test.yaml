@@ -342,7 +342,9 @@ sections:
     platform: [linux, macos, windows]
     text: |
       Each app is four files: the root `manifest.json` the scanner reads, the
-      module's own `metadata.json`, a QML view, and a `qmldir`. The view
+      module's own `metadata.json`, a QML view, and a `qmldir`. They are packed
+      with `lgx` and laid out as an install, so the manifest carries the content
+      hashes Basecamp checks before loading a user-installed app. The view
       renders a give-away line naming its own package — the load is asserted by
       that text appearing, and for the three blocked apps by it never
       appearing.
@@ -351,10 +353,24 @@ sections:
         run: |
           DID_A=$(cat build/depgate/keys/publisher-a.did)
           DID_B=$(cat build/depgate/keys/publisher-b.did)
+          # The platform variant the bundle's package manager accepts; an app
+          # installed for any other is listed as not loadable.
+          case "$(uname -s) $(uname -m)" in
+            "Linux x86_64")  V=linux-x86_64 ;;
+            "Linux aarch64") V=linux-arm64 ;;
+            "Darwin arm64")  V=darwin-arm64 ;;
+            "Darwin x86_64") V=darwin-x86_64 ;;
+            MINGW*|MSYS*|CYGWIN*) V=windows-x86_64 ;;
+            *) echo "unsupported platform: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          # Installed the way lgpm lays a package out: the files, the root
+          # manifest.json with the content hashes `lgx add` stamps, and a
+          # `variant` file. Basecamp refuses a user-installed package without
+          # hashes.
           seed() {
             name=$1; display=$2; deps=$3
-            d="testdata/depgate-user/plugins/$name"; mkdir -p "$d"
-            cat > "$d/manifest.json" <<EOF
+            w="build/depgate/apps/$name"; rm -rf "$w"; mkdir -p "$w/seed/variants" "$w/payload"
+            cat > "$w/seed/manifest.json" <<EOF
           {
             "author": "",
             "category": "testing",
@@ -370,7 +386,7 @@ sections:
             "view": "Main.qml"
           }
           EOF
-            cat > "$d/metadata.json" <<EOF
+            cat > "$w/payload/metadata.json" <<EOF
           {
             "name": "$name",
             "display_name": "$display",
@@ -382,7 +398,7 @@ sections:
             "dependencies": [$deps]
           }
           EOF
-            cat > "$d/Main.qml" <<EOF
+            cat > "$w/payload/Main.qml" <<EOF
           import QtQuick
           Rectangle {
               color: "#1e1e1e"
@@ -394,7 +410,14 @@ sections:
               }
           }
           EOF
-            printf 'module com.logos.module.%s\n' "$name" > "$d/qmldir"
+            printf 'module com.logos.module.%s\n' "$name" > "$w/payload/qmldir"
+            tar --format=ustar -C "$w/seed" -czf "$w/$name.lgx" manifest.json variants
+            ./lgx/bin/lgx{exe} add "$w/$name.lgx" --variant "$V" --files "$w/payload" -y >/dev/null
+            ./lgx/bin/lgx{exe} extract "$w/$name.lgx" -v "$V" -o "$w/out" >/dev/null
+            d="testdata/depgate-user/plugins/$name"; rm -rf "$d"; mkdir -p testdata/depgate-user/plugins
+            mv "$w/out/$V" "$d"
+            tar -xzOf "$w/$name.lgx" manifest.json > "$d/manifest.json"
+            printf '%s' "$V" > "$d/variant"
           }
 
           # ── the gate must ADMIT these four ─────────────────────────────────
