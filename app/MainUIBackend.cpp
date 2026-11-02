@@ -997,6 +997,7 @@ void MainUIBackend::refreshDownloadSource()                                { m_p
 void MainUIBackend::setDownloadSource(const QString& source)               { m_packageCoordinator->setDownloadSource(source); }
 void MainUIBackend::chooseOnboardingSource(const QString& source)          { m_packageCoordinator->chooseOnboardingSource(source); }
 void MainUIBackend::completeOnboarding()                                    { m_packageCoordinator->completeOnboarding(); }
+void MainUIBackend::retryStorage()                                         { m_packageCoordinator->retryStorage(); }
 
 // --- CoreModuleManager delegations ----------------------------------------
 

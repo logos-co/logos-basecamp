@@ -4,16 +4,14 @@ release: ""
 
 intro: |
   Basecamp can fetch packages over Logos Storage if the catalog's index
-  advertises a `logos:<network>:<cid>` URL. The storage node stays off until
-  a download needs it. When the node cannot serve the package, the download
-  falls back to its HTTPS URL. This tutorial proves both paths end to end in
-  the Basecamp UI.
+  advertises a `logos:<network>:<cid>` URL. When the storage node cannot
+  serve the package, it falls back to the package's HTTPS URL. This tutorial proves both
+  paths end to end in the Basecamp UI.
 
 what_you_build: "A release-like environment to install a package in Basecamp over Logos Storage and over HTTPS."
 
 what_you_learn:
   - How a release publishes a package to a storage node
-  - That the storage node stays off until a download needs it
   - That a download starts again a node the user stopped from the Storage UI
   - How the download falls back to HTTPS when the storage module is not loaded
   - That a node on another network than the catalog's is not used
@@ -252,7 +250,7 @@ sections:
     steps:
       - title: "Write the node configuration"
         text: |
-          A download starts the node from this file. The provider is its
+          The downloader starts the node from this file. The provider is its
           only bootstrap node, which overrides the ones the network preset
           would supply.
         run: |
@@ -309,7 +307,7 @@ sections:
             - name: "Let's go"
               action: click_object
               find_value: "onboardingQuickSetupButton"
-              text: "**Let's go** downloads from GitHub and Logos Storage. It only saves that choice: the storage node stays off."
+              text: "**Let's go** downloads from GitHub and Logos Storage, and starts the storage node."
 
             - name: "App window opens"
               action: wait_for
@@ -389,21 +387,7 @@ sections:
 
             - name: "Let the download finish"
               action: sleep
-              ms: 30000
-              text: "The download starts the node first, so it takes a little longer than the ones after it."
-
-      - title: "Check that the download started the node"
-        text: |
-          Nothing started the node before the install: not the launch, the
-          onboarding, the catalog or the App Manager. The count stops where
-          the installed Storage UI loads, since its view starts the node too.
-        run: |
-          awk '/Install plan for "storage_ui"/ { asked = 1 }
-               asked && /Loading UI module: "storage_ui"/ { exit }
-               /StorageModuleImpl::start called/ { if (asked) after++; else before++ }
-               END { print "starts before=" before + 0 " after=" after + 0 }' ui-test-app.log
-        expect_contains:
-          - "starts before=0 after=1"
+              ms: 20000
 
       - title: "Check that the package came from the Storage network"
         run: |
@@ -438,7 +422,6 @@ sections:
               action: wait_for
               texts: ["Stop"]
               timeout: 60000
-              text: "The Storage UI starts the node when its view is created."
 
             - name: "Stop it"
               action: click
@@ -540,11 +523,13 @@ sections:
             - name: "Let the download finish"
               action: sleep
               ms: 30000
+              text: "The download starts the node first, so it takes a little longer."
 
       - title: "Check that the download started the node again"
         text: |
           After the stop, only the download started the node: the App Manager
-          and the reinstall dialog left it alone.
+          and the reinstall dialog left it alone. The count stops where the
+          reinstalled Storage UI loads, since its view starts the node too.
         run: |
           awk '/StorageModuleImpl::stop called/ { stopped = 1; next }
                stopped && /Install plan for "storage_ui"/ { asked = 1 }
@@ -712,7 +697,8 @@ sections:
     step: true
     text: |
       A storage module that is loaded again starts with no node running. The
-      download starts one, so it goes back to the Storage network.
+      downloader starts one when the module reports `ready`, so the download
+      goes back to the Storage network.
     steps:
       - title: "Unload the storage module, load it again, and reinstall"
         ui_test:

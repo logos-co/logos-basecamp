@@ -33,14 +33,7 @@ TestCase {
 
     function test_storage_only_while_starting() {
         compare(notice(true, "logos", "starting", false).title, "Starting Logos Storage…")
-    }
-
-    // Nothing is starting yet: the next download starts the node.
-    function test_nothing_to_say_before_a_download_needs_storage() {
-        for (const source of ["any", "logos"]) {
-            compare(notice(true, source, "idle", true), null, source)
-            compare(notice(true, source, "waiting", true), null, source)
-        }
+        compare(notice(true, "logos", "waiting", false).title, "Starting Logos Storage…")
     }
 
     // GitHub covers for it: news only where each download's source is shown.

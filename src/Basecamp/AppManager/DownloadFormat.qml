@@ -79,7 +79,7 @@ QtObject {
     // none: why downloads may not work right now. `source` is the download
     // source ("any", "logos", "http"); `storageState` the downloader's
     // ("off", "waiting", "idle", "starting", "running", "failed", or "" not
-    // known). "idle" is no news: the node starts for the next download.
+    // known). "idle" says nothing: the next download starts the node.
     // `showsFallback`: also say when Logos Storage is down but GitHub covers
     // for it. Only where each download's source is shown (the Package
     // Manager); elsewhere downloads simply work and the notice is noise.
@@ -90,7 +90,7 @@ QtObject {
             return null
 
         const storageDown = storageState === "failed" || storageState === "off"
-        const storageStarting = storageState === "starting"
+        const storageStarting = storageState === "waiting" || storageState === "starting"
 
         if (source === "logos" && storageDown)
             return { severity: "error", title: qsTr("Logos Storage isn't running"),

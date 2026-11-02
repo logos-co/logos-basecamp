@@ -2,8 +2,7 @@
 // ---------------------------------------------------------------------------
 // Where apps download from, end to end: onboarding's choice, then what the
 // App Manager and the Package Manager say about it in each state. The two
-// views read the same downloader, and must agree. Nothing here downloads, so
-// the storage node never starts: it starts for a download from a logos: url.
+// views read the same downloader, and must agree.
 //
 // One fresh app and user dir per scenario, so onboarding runs each time.
 // Runs online whatever the network (BASECAMP_FORCE_OFFLINE=0): a build
@@ -121,12 +120,21 @@ class Basecamp {
     await this.onboardingGone();
   }
 
-  // Advanced setup with the sources given.
+  // Advanced setup with the sources given; on to the storage step if ticked.
   async advanced({ github, storage }) {
     await this.click("onboardingCustomSetupButton");
     if (!github) await this.click("onboardingGithubCard");
     if (!storage) await this.click("onboardingStorageCard");
     await this.click("onboardingDownloadsAdvanceButton");
+  }
+
+  async storageStepState() { return this.eval("onboardingStorageStep", "status"); }
+
+  async finishStorageStep() {
+    await waitUntil(async () => (await this.storageStepState()) === "running", 90000,
+                    "Logos Storage to start in onboarding");
+    await this.click("onboardingStorageAdvanceButton");
+    await this.onboardingGone();
   }
 
   async onboardingGone() {
@@ -156,10 +164,6 @@ class Basecamp {
       ...(await this.json("pmui.BackendStore", "({ source: downloadSource, storage: storageState })")),
       ...(await this.json("pmui.downloadNotice", "({ shown: shown, title: title })")),
     };
-  }
-
-  expectNodeNeverStarted() {
-    if (this.log().includes("Started Storage node")) throw new Error("the storage node started");
   }
 
   async waitForStorage(state, ms = 90000) {
@@ -199,17 +203,16 @@ function expectEqual(where, got, want) {
 const scenarios = [];
 const scenario = (name, body, env) => scenarios.push({ name, body, env });
 
-scenario("Let's go: both sources, storage idle, no notice anywhere", async (app) => {
+scenario("Let's go: both sources, storage running, no notice anywhere", async (app) => {
   await app.letsGo();
-  await app.waitForStorage("idle", 30000);
+  await app.waitForStorage("running");
   expectEqual("Basecamp's source", (await app.basecampState()).source, "any");
   expectNotice("App Manager", await app.appManager(), null);
   const pm = await app.packageManager();
   expectEqual("Package Manager's source", pm.source, "any");
-  await waitUntil(async () => (await app.packageManager()).storage === "idle", 20000,
-                  "the Package Manager to see Logos Storage idle");
+  await waitUntil(async () => (await app.packageManager()).storage === "running", 20000,
+                  "the Package Manager to see Logos Storage running");
   expectNotice("Package Manager", await app.packageManager(), null);
-  app.expectNodeNeverStarted();
 });
 
 scenario("GitHub only: storage never starts, no notice anywhere", async (app) => {
@@ -217,29 +220,26 @@ scenario("GitHub only: storage never starts, no notice anywhere", async (app) =>
   await app.onboardingGone();
   await sleep(3000);
   expectEqual("Basecamp's source", (await app.basecampState()).source, "http");
-  app.expectNodeNeverStarted();
+  if (app.log().includes("Started Storage node")) throw new Error("the storage node started");
   expectNotice("App Manager", await app.appManager(), null);
   const pm = await app.packageManager();
   expectEqual("Package Manager's source", pm.source, "http");
   expectNotice("Package Manager", pm, null);
 });
 
-scenario("Storage only: onboarding saves it, storage idle, no notice anywhere", async (app) => {
+scenario("Storage only: the storage step runs, then no notice anywhere", async (app) => {
   await app.advanced({ github: false, storage: true });
-  await app.onboardingGone();
-  await app.waitForStorage("idle", 30000);
+  await app.finishStorageStep();
   expectEqual("Basecamp's source", (await app.basecampState()).source, "logos");
   expectNotice("App Manager", await app.appManager(), null);
-  await waitUntil(async () => (await app.packageManager()).storage === "idle", 20000,
-                  "the Package Manager to see Logos Storage idle");
+  await waitUntil(async () => (await app.packageManager()).storage === "running", 20000,
+                  "the Package Manager to see Logos Storage running");
   expectNotice("Package Manager", await app.packageManager(), null);
-  app.expectNodeNeverStarted();
 });
 
 scenario("Storage only, storage unloaded: both views say so", async (app) => {
   await app.advanced({ github: false, storage: true });
-  await app.onboardingGone();
-  await app.waitForStorage("idle", 30000);
+  await app.finishStorageStep();
   await app.packageManager();  // loaded now: opening it later brings storage back
   await app.section(3);
   await app.unloadStorage();
@@ -250,26 +250,25 @@ scenario("Storage only, storage unloaded: both views say so", async (app) => {
 });
 
 // Opening the Package Manager loads package_downloader's dependencies, and with
-// them the storage_module the user unloaded; the downloader is back to idle.
-// Those changes go out while the view is still subscribing.
+// them the storage_module the user unloaded; the downloader starts the node
+// again. Those changes go out while the view is still subscribing.
 scenario("Storage only, storage unloaded, then the Package Manager opens: both clear", async (app) => {
   await app.advanced({ github: false, storage: true });
-  await app.onboardingGone();
-  await app.waitForStorage("idle", 30000);
+  await app.finishStorageStep();
   await app.section(3);
   await app.unloadStorage();
   await app.waitForStorage("failed", 15000);
   await app.packageManager();
-  await app.waitForStorage("idle");
+  await app.waitForStorage("running");
   await waitUntil(async () => !(await app.packageManager()).shown, 20000,
                   "the Package Manager's notice to clear");
-  expectEqual("Package Manager's storage state", (await app.packageManager()).storage, "idle");
+  expectEqual("Package Manager's storage state", (await app.packageManager()).storage, "running");
   expectNotice("App Manager", await app.appManager(), null);
 });
 
 scenario("Both sources, storage down: only the Package Manager mentions it", async (app) => {
   await app.letsGo();
-  await app.waitForStorage("idle", 30000);
+  await app.waitForStorage("running");
   await app.packageManager();
   await app.section(3);
   await app.unloadStorage();
@@ -277,6 +276,22 @@ scenario("Both sources, storage down: only the Package Manager mentions it", asy
   expectNotice("App Manager", await app.appManager(), null);
   await waitUntil(async () => (await app.packageManager()).title === STORAGE_DOWN, 15000,
                   "the Package Manager to say Logos Storage isn't running");
+});
+
+scenario("Back from the storage step to GitHub only: storage is let go", async (app) => {
+  await app.advanced({ github: true, storage: true });
+  await waitUntil(() => app.find("onboardingStorageStep"), 10000, "the storage step");
+  await app.click("onboardingStorageBackButton");
+  await app.click("onboardingStorageCard");
+  await app.click("onboardingDownloadsAdvanceButton");
+  await app.onboardingGone();
+  await waitUntil(async () => (await app.basecampState()).source === "http", 15000,
+                  "the source to become GitHub only");
+  await waitUntil(() => app.log().includes("Module unloaded: storage_module"), 15000,
+                  "storage_module to be let go");
+  const pm = await app.packageManager();
+  expectEqual("Package Manager's source", pm.source, "http");
+  expectNotice("Package Manager", pm, null);
 });
 
 scenario("Offline: the toast says so, the views stay quiet", async (app) => {

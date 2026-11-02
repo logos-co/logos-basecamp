@@ -11,14 +11,16 @@ Item {
 
     // --- Inputs from the host ---
 
+    property string storageState: ""
+    property string storageError: ""
     property url backdrop
     property url logo
 
     // --- Outputs ---
 
-    // The download source is chosen: "any", "logos" or "http". The storage node
-    // starts later, for the first download that needs it.
+    // The download source is chosen: "any", "logos" or "http".
     signal sourceChosen(string source)
+    signal retryStorageRequested()
     signal finished()
 
     QtObject {
@@ -27,7 +29,8 @@ Item {
         property string source: ""
         property int stepIndex: -1
 
-        readonly property var steps: ["downloads"]
+        readonly property var steps: downloadsStep.storage ? ["downloads", "storage"]
+                                                           : ["downloads"]
 
         readonly property string step: (stepIndex >= 0 && stepIndex < steps.length)
             ? steps[stepIndex]
@@ -36,6 +39,7 @@ Item {
         readonly property var stepNames: steps.map(function (name) {
             switch (name) {
             case "downloads": return qsTr("Downloads")
+            case "storage":   return qsTr("Logos Storage")
             default:          return name
             }
         })
@@ -46,6 +50,13 @@ Item {
             root.sourceChosen(source)
         }
 
+        function startStorageStep() {
+            storageStep.enter()
+            d.stepIndex = d.steps.indexOf("storage")
+        }
+
+        // Nothing is final until the last step: going back and choosing again
+        // just changes the source.
         readonly property bool canGoBack: step !== "welcome"
 
         function back() {
@@ -56,6 +67,12 @@ Item {
             switch (step) {
             case "downloads":
                 d.choose(downloadsStep.source)
+                if (downloadsStep.storage)
+                    d.startStorageStep()
+                else
+                    root.finished()
+                break
+            case "storage":
                 root.finished()
                 break
             }
@@ -64,14 +81,27 @@ Item {
         readonly property bool canAdvance: {
             switch (step) {
             case "downloads": return downloadsStep.valid
+            case "storage":   return storageStep.done
             default:          return true
             }
         }
 
         readonly property string advanceHint: step === "downloads" ? downloadsStep.hint : ""
 
-        readonly property string advanceText: step === "downloads" ? qsTr("Start Basecamp")
-                                                                   : qsTr("Continue")
+        readonly property string advanceText: {
+            switch (step) {
+            case "downloads":
+                return downloadsStep.storage ? qsTr("Continue") : qsTr("Start Basecamp")
+            case "storage":
+                if (!storageStep.done)
+                    return qsTr("Starting…")
+                return storageStep.failed && !storageStep.githubAllowed
+                    ? qsTr("Continue without downloads")
+                    : qsTr("Start Basecamp")
+            default:
+                return qsTr("Continue")
+            }
+        }
     }
 
     // One page at a time: the welcome screen, then each setup step.
@@ -81,6 +111,7 @@ Item {
         currentIndex: {
             switch (d.step) {
             case "downloads": return 1
+            case "storage":   return 2
             default:          return 0
             }
         }
@@ -111,6 +142,30 @@ Item {
                 id: downloadsStep
                 objectName: "onboardingDownloadsStep"
                 anchors.fill: parent
+            }
+        }
+
+        OnboardingStepPage {
+            objectPrefix: "onboardingStorage"
+            stepNames: d.stepNames
+            stepIndex: d.stepIndex
+            canGoBack: d.canGoBack
+            canAdvance: d.canAdvance
+            advanceText: d.advanceText
+            advanceHint: d.advanceHint
+            onBackRequested: d.back()
+            onAdvanceRequested: d.advance()
+            secondaryText: storageStep.failed ? qsTr("Retry") : ""
+            onSecondaryRequested: storageStep.retry()
+
+            OnboardingStorageStep {
+                id: storageStep
+                objectName: "onboardingStorageStep"
+                anchors.fill: parent
+                source: d.source
+                storageState: root.storageState
+                storageError: root.storageError
+                onRetryRequested: root.retryStorageRequested()
             }
         }
     }
