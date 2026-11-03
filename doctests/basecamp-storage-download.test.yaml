@@ -527,14 +527,14 @@ sections:
               timeout: 30000
               text: "`downloaded` is 0 (`NoSource`) once the Package Manager sees that storage_ui is not installed. Until then, the cell shows one icon: the source of the installed copy."
 
-            - name: "storage_ui can come from GitHub only"
+            - name: "storage_ui can still come from Storage and GitHub"
               action: expect_property
               find_by: "objectName"
               find_value: "pmui.sourceIcons.storage_ui"
               property: "count"
-              value: 1
+              value: 2
               timeout: 30000
-              text: "The node is stopped. The Package Manager shows only the GitHub icon."
+              text: "The node is stopped. Its config is still on `logos.dev`. The Package Manager shows two source icons: Storage and GitHub."
               screenshot: "storage-sources-node-stopped.png"
 
             - name: "Back to the App Manager"

@@ -15579,15 +15579,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1793717688,
-        "narHash": "sha256-j+Ss34QmOIJ/TSdCGAfth+0ad0W2iBTmvAnEpcW2e98=",
+        "lastModified": 1793692478,
+        "narHash": "sha256-fAggr+3dtGU4W+j4swvsaGWExMjIDjeGxw8+cRlGy9s=",
         "owner": "logos-co",
         "repo": "logos-package-downloader",
-        "rev": "5a4229266ad738c01e1554a101eb091013e1fa09",
+        "rev": "fcca2fe0fc3c2423ae61743f08b4b1087f3d92f0",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "fcca2fe0fc3c2423ae61743f08b4b1087f3d92f0",
         "repo": "logos-package-downloader",
         "type": "github"
       }
@@ -15602,15 +15603,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1793719673,
-        "narHash": "sha256-3Qp56TlBGBCorDPkXho9sUG4CSmt7AvSaTotiqjR/Z8=",
+        "lastModified": 1793699317,
+        "narHash": "sha256-Tb3w0RrOUp5huqC2aH4YASG/IJl5UZ1z6rxG4RtEVHk=",
         "owner": "logos-co",
         "repo": "logos-package-downloader-module",
-        "rev": "6dee7e93050d19682552ff5b15a5ceb0188bd3d6",
+        "rev": "9cae076b647019f5654fa127c805e5a4e1f53ee7",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "9cae076b647019f5654fa127c805e5a4e1f53ee7",
         "repo": "logos-package-downloader-module",
         "type": "github"
       }
@@ -15675,15 +15677,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1793693424,
-        "narHash": "sha256-FIJ5eInMytf72OrklSq+vphiDO9ZaA107RvV40tCCZE=",
+        "lastModified": 1793700434,
+        "narHash": "sha256-GI4nUa+r56TZ4HyZ1EZTpmx1necwUbShMJWcPVpgiUw=",
         "owner": "logos-co",
         "repo": "logos-package-manager-ui",
-        "rev": "ea0cddacb4160f8418e890a2f41ac51fc266da01",
+        "rev": "a47f4a846c017a22006302c4187c892f389135ee",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
+        "ref": "a47f4a846c017a22006302c4187c892f389135ee",
         "repo": "logos-package-manager-ui",
         "type": "github"
       }
