@@ -121,7 +121,6 @@ Item {
             // One row per theme: pick with the radio, remove the ones you added.
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 640
                 spacing: Theme.spacing.tiny
 
                 Repeater {
@@ -157,7 +156,6 @@ Item {
             LogosNotice {
                 objectName: "appearance.resultNotice"
                 Layout.fillWidth: true
-                Layout.maximumWidth: 560
                 shown: d.resultTitle.length > 0
                 closable: true
                 severity: d.resultSeverity
@@ -166,6 +164,35 @@ Item {
                 titleItem.textFormat: Text.PlainText
                 messageItem.textFormat: Text.PlainText
                 onDismissed: d.resultTitle = ""
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: Theme.palette.borderSubtle
+            }
+
+            // The shortcut is WorkspaceArea's Ctrl+Shift+L; Qt maps Ctrl to Cmd on macOS.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing.tiny
+
+                LogosText {
+                    objectName: "appearance.dockedLayout.title"
+                    text: qsTr("Docked layout (experimental)")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightMedium
+                    color: Theme.palette.text
+                }
+                LogosText {
+                    objectName: "appearance.dockedLayout.description"
+                    text: qsTr("With two or more apps open, press %1 to show them side by side, and again to go back to tabs. You can drag apps to rearrange them. This mode isn't feature complete yet and you may run into layout issues; your arrangement resets each time you switch.")
+                          .arg(Qt.platform.os === "osx" ? "⇧⌘L" : "Ctrl+Shift+L")
+                    font.pixelSize: Theme.typography.secondaryText
+                    color: Theme.palette.textSecondary
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
             }
         }
     }
