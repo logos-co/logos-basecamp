@@ -1,6 +1,7 @@
 #include "FixtureShellHost.h"
 
 #include <QDebug>
+#include <QDir>
 
 FixtureShellHost::FixtureShellHost(const QJsonObject& fixture)
     : m_backend(fixture) {}
@@ -39,6 +40,12 @@ void FixtureShellHost::setCurrentVisibleApp(const QString& name)
 QString FixtureShellHost::displayNameFor(const QString& name) const
 {
     return m_backend.displayNameFor(name);
+}
+
+// Throwaway: a preview never touches the user's real themes.
+QString FixtureShellHost::themesDirectory() const
+{
+    return QDir::tempPath() + QStringLiteral("/basecamp-shell-preview/themes");
 }
 
 void FixtureShellHost::setObserver(IShellObserver* observer) { m_observer = observer; }

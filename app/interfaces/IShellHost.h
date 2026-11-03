@@ -92,6 +92,10 @@ public:
     // Human-readable label for a module name, falling back to the name itself.
     virtual QString displayNameFor(const QString& name) const = 0;
 
+    // Absolute directory for installed themes and the theme choice. The host
+    // owns paths, so it follows --user-dir like the rest of the user's data.
+    virtual QString themesDirectory() const = 0;
+
     // nullptr detaches. The shell MUST call setObserver(nullptr) before it is
     // destroyed: host-side callbacks are dispatched from a
     // QTimer::singleShot(0, ...) and from a 30s ViewModuleHost timeout, so they

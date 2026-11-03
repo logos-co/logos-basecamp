@@ -4,6 +4,7 @@
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "ShortcutBridge.h"
+#include <ThemeManager.h>
 #include "WorkspaceArea.h"
 
 #include <QQuickWidget>
@@ -67,6 +68,9 @@ MainContainer::MainContainer(IShellHost* host, QWidget* parent)
 
     // Set QML style
     QQuickStyle::setStyle("Basic");
+
+    // Before any QML loads, so the saved theme applies from the first frame.
+    m_themeManager = new Logos::ThemeManager(m_host->themesDirectory(), this);
 
     setupUi();
 
@@ -257,6 +261,7 @@ void MainContainer::setupUi()
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
     m_contentWidget->setClearColor(bgColor);
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
+    m_contentWidget->rootContext()->setContextProperty("themeManager", m_themeManager);
     ShellDevQml::load(m_contentWidget,
         QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
     m_contentStack->addWidget(m_contentWidget);

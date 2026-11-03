@@ -158,6 +158,17 @@ Item {
             onAppUnloadRequested:         name => backend.unloadUiModule(name)
             onAppsInspectorBecameVisible: Qt.callLater(backend.refreshUiModules)
 
+            // themeManager is set on this view only (MainContainer).
+            onThemeInstallRequested: file => {
+                const result = themeManager.install(file)
+                if (result.ok)
+                    themeManager.select(result.id)
+                settingsView.showThemeInstallResult(result)
+            }
+            onThemeSelectRequested: themeId => themeManager.select(themeId)
+            onThemeRemoveRequested: themeId =>
+                settingsView.showThemeRemoveResult(themeManager.remove(themeId))
+
             // Module Inspector (core modules). View-only — uninstall lives in PMUI.
             onModulesRefreshRequested:      backend.refreshCoreModules()
             onModuleLoadRequested:          name => backend.loadCoreModule(name)

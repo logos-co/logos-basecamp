@@ -9,6 +9,7 @@
 
 class QQuickWidget;
 class QTimer;
+namespace Logos { class ThemeManager; }
 class WorkspaceArea;
 class ShortcutBridge;
 
@@ -121,5 +122,9 @@ private:
     IShellHost* m_host;
 
     ShortcutBridge* m_shortcutBridge = nullptr;
+
+    // Installs and switches themes. Given only to the content view, where
+    // Settings → Appearance lives: apps may read the theme, not change it.
+    Logos::ThemeManager* m_themeManager = nullptr;
 };
 

@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "test.sample",
+  "name": "Sample",
+  "author": "tests",
+  "mode": "dark",
+  "palette": { "background": "#FAFAFA", "text": "#171717" }
+}
