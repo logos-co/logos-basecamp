@@ -401,7 +401,13 @@ logging; see that tool's `docs/logosctl.md` for the daemon-side view.
 #### Inter-module access enforcement (`--access-policy`)
 
 **Default: off.** Without this flag, any loaded module may call any other —
-unchanged behaviour.
+unchanged behaviour — with one exception: Basecamp always restricts
+`package_manager` and `package_downloader`, which hold the trusted keys and
+install packages, to itself and the Package Manager's backend
+(`package_manager_ui_backend`), before they load. An app that calls them
+directly is refused (`access policy denies '<app>' -> 'package_manager'`). If
+capability_module won't take that rule, neither module is started. An enforce
+policy (below) gets the same rule for each of them it doesn't name itself.
 
 `--access-policy enforce` turns on **deny-by-default**: a module may only call
 the modules it declares as dependencies in its `metadata.json`, and any other
@@ -621,6 +627,13 @@ nix build .#logos-qt-mcp -o result-mcp
 ```
 
 The `.mcp.json` in this repo is pre-configured to use the MCP server from `result-mcp/mcp-server/`. Start the app (inspector is enabled by default in debug/dev builds), and the agent can use tools like `qml_find_and_click`, `qml_screenshot`, `qml_list_interactive`, etc. See the [logos-qt-mcp README](https://github.com/logos-co/logos-qt-mcp#readme) for the full list of available tools.
+
+## Cutting a release
+
+- **The Logos signing key.** Basecamp trusts Logos's packages by the keys in `logosKeys()` (`app/utils/InstallTrust.cpp`). Before every release, check that the first one is the key Logos signs with now: the "Official Logos signing key" in [logos-modules-release's README](https://github.com/logos-co/logos-modules-release#official-logos-signing-key). `lgx verify` on a freshly signed official package prints the same DID.
+  - **A new key:** put it first, and keep the old one while what it signed should still install without asking. The release must be out before Logos signs anything with the new key: logos-modules-release re-signs every current package in the same change as a rotation, and a Basecamp that doesn't know the key shows all of them as impostors. Agree the date with whoever runs that rotation.
+  - **A leaked key:** move it to `revoked`, and put its replacement first in the same change. Basecamp then installs nothing it signed.
+  - Never just delete a key from the list, and never leave it without a current key (the unit tests check). Users do nothing either way: a keyring holding any Logos key, old or revoked, stands for Logos and the keys it signs with now.
 
 ## Requirements
 

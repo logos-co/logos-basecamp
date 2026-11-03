@@ -108,8 +108,9 @@
     }
   ],
   "calls": {
-    "_comment_capability": "capability_module must appear here even though Basecamp never calls it directly. MockStore's seeder mints a TokenManager token for every module named by a key, and the host must hold a capability_module token to be admitted as the trusted channel when loading a ui_qml plugin.",
+    "_comment_capability": "MockStore's seeder mints a TokenManager token for every module named by a key, and the host must hold a capability_module token to be admitted as the trusted channel when loading a ui_qml plugin. registerRestriction must say true, or Basecamp refuses to start package_manager and package_downloader.",
     "capability_module.requestModule": "mock-token-capability_module",
+    "capability_module.registerRestriction": true,
     "package_manager.setEmbeddedModulesDirectory": true,
     "package_manager.setUserModulesDirectory": true,
     "package_manager.setEmbeddedUiPluginsDirectory": true,

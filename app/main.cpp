@@ -1,8 +1,11 @@
 #include "window.h"
 #include "logos_api.h"
+#include "logos_api_client.h"
 #include "logos_mode.h"
+#include "token_manager.h"
 #include "LogosBasecampPaths.h"
 #include "utils/InstalledIntegrity.h"
+#include "utils/InstallTrust.h"
 #include "LogSink.h"
 #include "LoggingConfig.h"
 #include "AccessPolicyOption.h"
@@ -89,6 +92,35 @@ static void installUnixSignalHandlers(QApplication& app)
     ::sigaction(SIGINT, &sa, nullptr);
 }
 #endif
+
+// package_manager holds the keyring and installs packages, and
+// package_downloader fetches them: only Basecamp and the Package Manager's
+// backend may call them, never a module installed later. One installed
+// "anyway" could otherwise trust its own key, or install with no dialog.
+static const QStringList kPackageModules{QStringLiteral("package_manager"),
+                                         QStringLiteral("package_downloader")};
+static const QStringList kPackageModuleCallers = logos::trust::packageModuleCallers();
+
+// capability_module takes rules only over this host's core channel, and
+// restricts nothing else: everything not named here stays open to every module.
+// Returns the package modules it could not restrict.
+static QStringList restrictPackageModules(LogosAPI& api)
+{
+    LogosAPIClient* cap = api.getClient(QStringLiteral("capability_module"));
+    const QString capToken = api.getTokenManager()->getToken(QStringLiteral("capability_module"));
+    QStringList open;
+    for (const QString& target : kPackageModules) {
+        const QVariant ok = cap
+            ? cap->invokeRemoteMethod(QStringLiteral("capability_module"), QStringLiteral("registerRestriction"),
+                                      QVariantList{capToken, target, kPackageModuleCallers})
+            : QVariant();
+        if (ok.toBool())
+            qInfo().noquote() << "Restricted" << target << "to" << kPackageModuleCallers.join(QStringLiteral(", "));
+        else
+            open << target;
+    }
+    return open;
+}
 
 int main(int argc, char *argv[])
 {
@@ -251,7 +283,8 @@ int main(int argc, char *argv[])
                 std::cerr << resolved.error.toStdString() << std::endl;
                 return 1;
             }
-            accessPolicyJson = resolved.policyJson.toUtf8();
+            accessPolicyJson = LogosBasecamp::withRestrictions(resolved.policyJson, kPackageModules,
+                                                               kPackageModuleCallers).toUtf8();
         }
 
         if (parser.isSet(userDirOption)) {
@@ -526,6 +559,11 @@ int main(int argc, char *argv[])
     core->start();
     std::cout << "Logos Core started successfully!" << std::endl;
 
+    LogosAPI logosAPI("core", nullptr);
+
+    // Before they load, so no other module holds a token for them first.
+    const QStringList unrestricted = restrictPackageModules(logosAPI);
+
     // Explicit, not the interface default: this path bypasses
     // CoreModuleManager, so nothing else would widen it -- or run its
     // launch-time integrity check, which a user-installed copy (it wins over
@@ -533,6 +571,14 @@ int main(int argc, char *argv[])
     const QString installedModulesRoot = hostProfile.useUserModules
         ? LogosBasecampPaths::modulesDirectory() : QString();
     auto loadChecked = [&](const QString& name) {
+        if (unrestricted.contains(name)) {
+            qWarning().noquote() << "Refusing to load" << name << "- could not restrict who may call it";
+            logos::integrity::addStartupNotice(
+                {QStringLiteral("Couldn't Load Module"), name,
+                 QStringLiteral("It was not started because Basecamp could not stop other modules "
+                                "from calling it.")});
+            return false;
+        }
         const auto check = logos::integrity::preflight(*core, name, installedModulesRoot);
         if (!check.refusal.isEmpty()) {
             qWarning().noquote() << "Refusing to load" << name << "-" << check.refusal;
@@ -578,8 +624,6 @@ int main(int argc, char *argv[])
         }
         qInfo() << "Total modules:" << modules.size();
     }
-
-    LogosAPI logosAPI("core", nullptr);
 
     // Set application icon.
 #ifdef Q_OS_LINUX

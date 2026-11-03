@@ -25,6 +25,10 @@ if(DEFINED LOGOS_PACKAGE_HEADERS)
     set(LOGOS_PACKAGE_HEADERS_INCLUDE "${LOGOS_PACKAGE_HEADERS}")
 endif()
 
+# ICU, as the `ICU::i18n ICU::uc` libdeps: install trust compares publisher
+# names by Unicode's lookalike skeletons.
+find_package(ICU QUIET COMPONENTS uc i18n)
+
 # liblgx, as the `lgx` libdep: the integrity check's tests build and verify
 # real packages with it. Optional, like every libdep.
 if(DEFINED LGX_ROOT)

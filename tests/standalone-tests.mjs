@@ -16,7 +16,16 @@ test("standalone: --module app opens as a tab", async (app) => {
 test("standalone: a bridge call reaches its dependency", async (app) => {
   await app.waitFor(
     async () => { await app.expectTexts(["Bridge call: ok"]); },
-    { timeout: 30000, interval: 500, description: "package_manager to answer through the bridge" }
+    { timeout: 30000, interval: 500, description: "modules_state to answer through the bridge" }
+  );
+});
+
+test("standalone: package_manager refuses an app that depends on it", async (app) => {
+  // Only Basecamp and the Package Manager's backend may call it: an app could
+  // otherwise trust its own key, or install with no dialog.
+  await app.waitFor(
+    async () => { await app.expectTexts(["Package manager: refused"]); },
+    { timeout: 30000, interval: 500, description: "package_manager to refuse the app" }
   );
 });
 

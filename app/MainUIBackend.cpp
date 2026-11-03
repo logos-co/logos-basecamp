@@ -205,6 +205,14 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     // Package repositories — pure re-emits so QML binding to backend.*
     connect(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
             this,             &MainUIBackend::repositoriesChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::installTrustUpdated,
+            this,             &MainUIBackend::installTrustUpdated);
+    connect(m_packageCoordinator, &PackageCoordinator::trustedPublishersChanged,
+            this,             &MainUIBackend::trustedPublishersChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::trustedPublisherChangeFailed,
+            this,             &MainUIBackend::trustedPublisherChangeFailed);
+    connect(m_packageCoordinator, &PackageCoordinator::installRefused,
+            this,             &MainUIBackend::installFailureNoticeRequested);
     connect(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
             this,             &MainUIBackend::repositoriesLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
@@ -727,29 +735,10 @@ QVariantMap MainUIBackend::providerDetailsFor(const QString& packageName) const
     out.insert(QStringLiteral("moduleName"), packageName);
     out.insert(QStringLiteral("displayName"), displayNameFor(packageName));
 
-    // Every package is unsigned today: the catalog carries no signatures and
-    // `trustedSigners` is empty. Stated outright rather than omitted, because a
-    // detail panel that lists a version and an origin and says nothing about
-    // provenance reads as reassurance it has not earned. When signing lands
-    // this becomes a real answer instead of a constant.
-    out.insert(QStringLiteral("verified"), false);
-
     if (m_packageCoordinator) {
+        out.insert(QStringLiteral("trust"), m_packageCoordinator->installedTrust(packageName));
         out.insert(QStringLiteral("installType"),
                    m_packageCoordinator->installType(packageName));
-
-        // DELIBERATELY NOT the content hash, though it is available
-        // (PackageCoordinator::installedRootHash). A hash is only evidence when
-        // the reader holds an independent, trusted value to compare it against,
-        // and with nothing signed the catalog that serves the package serves
-        // the hash too — so an attacker controlling one controls the other. A
-        // tampered copy does not keep the original digest, but it does not need
-        // to: it simply presents its own.
-        //
-        // Shown here it would be worse than absent. A 64-character digest beside
-        // the word "Unsigned" reads as rigour, and weakens the one honest
-        // statement on the panel. When signing lands it stops being decoration,
-        // because a signature is exactly the trusted reference it lacks today.
     }
 
     for (int row = 0; m_appsModel && row < m_appsModel->rowCount(); ++row) {
@@ -919,7 +908,7 @@ void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordin
 void MainUIBackend::uninstallApp(const QString& n, const QString& repositoryUrl)
                                                              { m_packageCoordinator->uninstallApp(n, repositoryUrl); }
 void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
-void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames, optionalVersionPins); }
+void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
 void MainUIBackend::cancelPendingUninstallApp(const QString& name)         { m_packageCoordinator->cancelPendingUninstallApp(name); }
@@ -927,12 +916,17 @@ void MainUIBackend::refreshOptionalPreview(const QString& n, const QString& repo
                                             const QVariantMap& pins, const QVariantMap& selection,
                                             const QVariantMap& optionalPins, bool gate)
 { m_packageCoordinator->refreshOptionalPreview(n, repo, pins, selection, optionalPins, gate); }
-void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins); }
+void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
 void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
 { m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
-void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl)
-{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl); }
+void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl,
+                                          bool trustPublishers)
+{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, trustPublishers); }
+void MainUIBackend::refreshTrustedPublishers()                  { m_packageCoordinator->refreshTrustedPublishers(); }
+void MainUIBackend::removeTrustedPublisher(const QString& keyName) { m_packageCoordinator->removeTrustedPublisher(keyName); }
+QStringList MainUIBackend::installedFromPublisher(const QString& did) const
+{ return m_packageCoordinator->installedFromPublisher(did); }
 void MainUIBackend::notifyAddApplicationDialogClosed()
 { m_packageCoordinator->notifyAddApplicationDialogClosed(); }
 
@@ -948,6 +942,7 @@ void MainUIBackend::cancelPendingAction(const QString& n) {
 
 // Package repositories — delegations + cache pass-through.
 QVariantList MainUIBackend::repositories() const        { return m_packageCoordinator->repositories(); }
+QVariantList MainUIBackend::trustedPublishers() const   { return m_packageCoordinator->trustedPublishers(); }
 bool         MainUIBackend::repositoriesLoading() const { return m_packageCoordinator->repositoriesLoading(); }
 QString      MainUIBackend::downloadSource() const      { return m_packageCoordinator->downloadSource(); }
 bool         MainUIBackend::onboardingRequired() const  { return m_packageCoordinator->onboardingRequired(); }

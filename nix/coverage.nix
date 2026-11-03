@@ -50,6 +50,7 @@ pkgs.stdenv.mkDerivation {
     # error naming the test, not a skip.
     pkgs.spdlog
     pkgs.yaml-cpp
+    pkgs.icu   # install_trust_test's `// libdeps:`
   ];
 
   dontUseCmakeConfigure = true;

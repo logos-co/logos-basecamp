@@ -18,6 +18,7 @@ pkgs.stdenv.mkDerivation {
     # log_sink_test / logging_config_test declare these as `// libdeps:`.
     pkgs.spdlog
     pkgs.yaml-cpp
+    pkgs.icu   # install_trust_test's `// libdeps:`
   ];
 
   dontUseCmakeConfigure = true;

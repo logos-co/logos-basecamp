@@ -6,7 +6,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 
-// Panel header shared by the two Settings inspectors. Same shape as
+// Panel header shared by the Settings panels. Same shape as
 // AppManagerPanelHeader: title block on the left, Reload plus the row count on
 // the right. The search bar lives on the SettingsView page header (right of the
 // page title, matching AppManagerView) — not inside the panel container.
@@ -17,6 +17,7 @@ Item {
     property string title: ""
     property string subtitle: ""
     property alias reloadObjectName: reloadBtn.objectName
+    property bool showReload: true
     property bool loading: false
     property int visibleCount: 0
     property int totalCount: 0
@@ -77,6 +78,7 @@ Item {
 
             LogosButton {
                 id: reloadBtn
+                visible: root.showReload
                 Layout.minimumWidth: 80
                 Layout.preferredWidth: 130
                 Layout.maximumWidth: 130

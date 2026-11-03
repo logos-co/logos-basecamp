@@ -18,6 +18,8 @@ Rectangle {
     property bool   modulesLoading:      false
     // False where the host manages no package repositories.
     property bool   repositoriesAvailable: true
+    property var    trustedPublishers:   []
+    property var    installedFromPublisher: function(did) { return [] }
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -25,6 +27,9 @@ Rectangle {
     signal repositoryEnabledRequested(string url, bool enabled)
     signal downloadSourceRequested(string source)
     signal repositoriesBecameVisible()
+
+    signal trustedPublisherRemoveRequested(string keyName)
+    signal trustedPublishersRefreshRequested()
 
     signal appsRefreshRequested()
     signal appLoadRequested(string name)
@@ -46,6 +51,9 @@ Rectangle {
 
     function showThemeInstallResult(result) { appearanceView.showInstallResult(result) }
     function showThemeRemoveResult(result)  { appearanceView.showRemoveResult(result) }
+    function reportPublisherFailure(message) {
+        trustedPublishersView.reportFailure(message)
+    }
 
     function showRepositories() { if (root.repositoriesAvailable) d.selectedIndex = d.sectionRepositories }
 
@@ -64,8 +72,9 @@ Rectangle {
             { label: qsTr("Apps Inspector") },
             { label: qsTr("Module Inspector") },
             { label: qsTr("Appearance") },
-            { label: qsTr("Package Repositories") }
-        ].slice(0, root.repositoriesAvailable ? 5 : 4)   // Repositories must stay last
+            { label: qsTr("Package Repositories") },
+            { label: qsTr("Trusted Publishers") }
+        ].slice(0, root.repositoriesAvailable ? 6 : 4)   // Repositories and Trusted Publishers must stay last
 
         property int selectedIndex: 0
 
@@ -251,6 +260,16 @@ Rectangle {
                         onDownloadSourceRequested: source => root.downloadSourceRequested(source)
                         onVisibleChanged:      if (visible)
                                                    root.repositoriesBecameVisible()
+                    }
+
+                    // 5 — Trusted Publishers.
+                    TrustedPublishersView {
+                        id: trustedPublishersView
+                        publishers:    root.trustedPublishers || []
+                        installedFrom: root.installedFromPublisher
+
+                        onRemoveRequested:  keyName => root.trustedPublisherRemoveRequested(keyName)
+                        onVisibleChanged:   if (visible) root.trustedPublishersRefreshRequested()
                     }
                 }
             }

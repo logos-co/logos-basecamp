@@ -3081,10 +3081,7 @@ test("repositories: refresh flips the button label", async (app) => {
 // (RepositoriesView.qml) opens the LogosWarningDialog `removeDefaultDialog`
 // instead of emitting removeRequested; its Cancel
 // (repositories.removeConfirm.cancel) clears the pending URL and closes the
-// dialog with no backend call. Confirm is never clicked. The row's button has
-// no objectName and every row — plus the dialog's confirm — is labelled
-// "Remove", so the candidate "Remove" LogosButtons are narrowed by walking
-// their parent chain up to the default row's objectName. A closed Popup's
+// dialog with no backend call. Confirm is never clicked. A closed Popup's
 // content may stay in the object tree, so "dialog gone" accepts the title and
 // the Cancel button being absent or visible === false. No network and no
 // state change: runs everywhere including offscreen CI, and must stay ahead
@@ -3104,29 +3101,9 @@ test("repositories: cancel on 'Remove default repository?' keeps it", async (app
   const rowName = `repositories.row.${defaultUrl}`;
   await requireObject(app, rowName);
 
-  // The default row's own Remove button: a "Remove" LogosButton whose parent
-  // chain reaches the row.
-  const underDefaultRow = (id) => evalOn(app, id, `(() => {
-    let node = this;
-    for (let up = 0; up < 20 && node; up += 1) {
-      if (node.objectName === ${JSON.stringify(rowName)}) return true;
-      node = node.parent;
-    }
-    return false;
-  })()`);
-  let removeButton = null;
-  await app.waitFor(async () => {
-    const hits = (await app.findByProperty("text", "Remove")).matches ?? [];
-    for (const m of hits) {
-      if (!(m.type ?? "").includes("LogosButton")) continue;
-      if (m.objectName === "repositories.removeConfirm.confirm") continue;
-      if ((await underDefaultRow(m.id)) !== true) continue;
-      assertEq(await evalOn(app, m.id, "visible"), true, `Remove button of ${rowName} visible`);
-      removeButton = m;
-      return;
-    }
-    throw new Error(`no "Remove" LogosButton under ${rowName}`);
-  }, { timeout: 10000, interval: 500, description: "the default row's Remove button" });
+  // The default row's own remove (trash) button.
+  const removeButton = await requireObject(app, `repositories.remove.${defaultUrl}`);
+  assertEq(await evalOn(app, removeButton.id, "visible"), true, `remove button of ${rowName} visible`);
 
   // Visible-or-not of the dialog's title text and Cancel button: null when
   // the item is not in the tree at all.

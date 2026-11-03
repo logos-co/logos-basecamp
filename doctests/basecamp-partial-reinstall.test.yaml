@@ -562,6 +562,14 @@ sections:
               value: true
               screenshot: "partial-reinstall-first-install.png"
 
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+
             - name: "Install it"
               action: click_object
               find_by: "objectName"
@@ -675,6 +683,14 @@ sections:
               texts: ["Reinstall"]
               timeout: 20000
               screenshot: "partial-reinstall-dialog.png"
+
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
 
             - name: "Confirm the reinstall"
               action: click_object

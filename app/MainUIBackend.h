@@ -128,6 +128,7 @@ class MainUIBackend : public QObject {
 
     // Package repositories
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
+    Q_PROPERTY(QVariantList trustedPublishers READ trustedPublishers NOTIFY trustedPublishersChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
     Q_PROPERTY(bool onboardingRequired READ onboardingRequired NOTIFY onboardingRequiredChanged)
@@ -181,6 +182,7 @@ public:
     QVariantList buildCommits() const;
 
     QVariantList repositories() const;
+    QVariantList trustedPublishers() const;
     bool repositoriesLoading() const;
     QString downloadSource() const;
     bool onboardingRequired() const;
@@ -274,7 +276,7 @@ public slots:
     // UIPluginManager; uninstall/upgrade cascade lives on PackageCoordinator.
     // cancelPendingAction fans out to both so the un-involved one no-ops.
     Q_INVOKABLE void confirmUnloadCascade(const QString& moduleName);
-    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {}, bool trustPublishers = false);
     Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
@@ -290,7 +292,7 @@ public slots:
     Q_INVOKABLE void refreshOptionalPreview(const QString& name, const QString& repositoryUrl,
                                            const QVariantMap& versionPins, const QVariantMap& selection,
                                            const QVariantMap& optionalPins, bool installGate = false);
-    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
+    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {}, bool trustPublishers = false);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
 
     // App-Manager catalog open — delegated to PackageCoordinator.
@@ -300,7 +302,13 @@ public slots:
                              bool allowFastLaunch = true);
     // Installs the dialog's last resolved preview, which already carries
     // the version pins and optional selection.
-    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl);
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl,
+                                           bool trustPublishers = false);
+
+    // Settings → Trusted Publishers (PackageCoordinator).
+    Q_INVOKABLE void refreshTrustedPublishers();
+    Q_INVOKABLE void removeTrustedPublisher(const QString& keyName);
+    Q_INVOKABLE QStringList installedFromPublisher(const QString& did) const;
     Q_INVOKABLE void notifyAddApplicationDialogClosed();
 
     // Core Module operations — routing rule: cascade-aware (load/unload)
@@ -403,6 +411,10 @@ signals:
     void startupNoticeRequested(const QString& title, const QString& name,
                                 const QString& message);
 
+    // Trust at install: what the `flow` ("gate" or "app") install dialog for
+    // `name` shows about who signed its plan. See PackageCoordinator.
+    void installTrustUpdated(const QString& flow, const QString& name, const QVariantMap& trust);
+
     // Dependency-aware UX. missingDepsPopup + unloadCascade come from
     // UIPluginManager; installGate + uninstallPlan come from
     // PackageCoordinator.
@@ -464,6 +476,9 @@ public:
 signals:
 
     void repositoriesChanged();
+    void trustedPublishersChanged();
+    // A change to a trusted publisher that failed; it is as it was.
+    void trustedPublisherChangeFailed(const QString& keyName, const QString& message);
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
     void onboardingRequiredChanged();

@@ -28,6 +28,8 @@ find_package(Qt6 COMPONENTS Widgets RemoteObjects Quick Qml QuickWidgets QuickCo
 # app/utils/LoggingConfig.*). spdlog supplies the rotating file sink — the same
 # one liblogos already logs through, so this adds no second copy to the closure.
 find_package(spdlog REQUIRED)
+# Unicode's lookalike skeletons (utils/InstallTrust.cpp): the ICU Qt itself links.
+find_package(ICU REQUIRED COMPONENTS uc i18n)
 find_package(yaml-cpp REQUIRED)
 
 # QML Inspector (Qt DevTools-like inspection over TCP)
@@ -297,6 +299,9 @@ set(PROJECT_SOURCES
     utils/HostProfile.cpp
     utils/InstalledIntegrity.cpp
     utils/InstalledPlacement.cpp
+    utils/InstallTrust.cpp
+    utils/PublisherKeyring.h
+    utils/PublisherKeyring.cpp
     utils/StandaloneMode.h
     utils/StandaloneMode.cpp
     utils/DependencyBlocker.h
@@ -430,6 +435,8 @@ endif()
 target_link_libraries(LogosBasecamp PRIVATE
     spdlog::spdlog
     yaml-cpp::yaml-cpp
+    ICU::i18n
+    ICU::uc
     Qt6::Widgets
     Qt6::RemoteObjects
     Qt6::Quick

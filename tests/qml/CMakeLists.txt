@@ -97,6 +97,31 @@ if(LogosDesignSystem_FOUND)
         basecamp_appmanager_test_qml
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_test_qmlplugin>
     )
+
+    # Basecamp.Common, for the install dialogs' trust notice and badges: the
+    # same reasoning as Basecamp.AppManager above.
+    set(COMMON_QML_FILES
+        ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustNotice.qml
+        ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustLine.qml
+        ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustMark.qml
+    )
+    foreach(qml_file IN LISTS COMMON_QML_FILES)
+        get_filename_component(qml_name "${qml_file}" NAME)
+        set_source_files_properties("${qml_file}" PROPERTIES QT_RESOURCE_ALIAS "${qml_name}")
+    endforeach()
+    qt_add_qml_module(basecamp_common_test_qml
+        URI Basecamp.Common
+        VERSION 1.0
+        STATIC
+        RESOURCE_PREFIX /qt/qml
+        OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Common
+        QML_FILES ${COMMON_QML_FILES}
+    )
+    target_link_libraries(basecamp_common_test_qml PRIVATE Logos::DesignSystem)
+    target_link_libraries(qml_tests PRIVATE
+        basecamp_common_test_qml
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_test_qmlplugin>
+    )
     qt_import_qml_plugins(qml_tests)
 else()
     message(STATUS "qml_tests: no design system — shell component tests skipped")

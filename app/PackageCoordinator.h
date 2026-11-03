@@ -2,6 +2,7 @@
 #include <memory>
 
 namespace logos { class OptionalDependencyPreview; }
+namespace logos::trust { struct Package; class PublisherKeyring; }
 
 #include "InstallEnums.h"
 #include "utils/HostProfile.h"
@@ -139,7 +140,10 @@ public slots:
     // confirm_install intent; PMU then runs the install itself. Basecamp owns
     // no install flow of its own here — every install in the app is initiated
     // by package_manager_ui and confirmed through this gate.
-    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
+    // `trustPublishers` (here, confirmCatalogInstall and confirmUninstallCascade)
+    // is "Trust & install": the plan's publishers not trusted yet are
+    // trusted first. A plan holding anything invalid is refused either way.
+    Q_INVOKABLE void confirmInstallGate(const QString& name, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {}, bool trustPublishers = false);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
     Q_INVOKABLE void refreshOptionalPreview(const QString& name, const QString& repositoryUrl,
                                            const QVariantMap& versionPins,
@@ -153,7 +157,8 @@ public slots:
                              bool allowFastLaunch = true);
     // Installs the dialog's last resolved preview, which already carries
     // the version pins and optional selection.
-    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl);
+    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl,
+                                           bool trustPublishers = false);
 
     // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
     // confirm dialog directly — the shell is both asker and decider here, so
@@ -167,7 +172,13 @@ public slots:
     // Cascade confirmation — called from QML once the user OKs the uninstall
     // or upgrade dialog. Unloads, then answers the intent recorded on the
     // pending action (or removes locally when there is none).
-    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {});
+    Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {}, bool trustPublishers = false);
+
+    // Settings → Trusted Publishers. Deleting one, Logos too, changes future
+    // installs only: what is installed keeps working.
+    Q_INVOKABLE void refreshTrustedPublishers();
+    Q_INVOKABLE void removeTrustedPublisher(const QString& keyName);
+    Q_INVOKABLE QStringList installedFromPublisher(const QString& did) const;
 
     // Multi-uninstall counterparts. confirm runs the cascade-unload for every
     // name in the batch, then answers the requester; cancel just answers.
@@ -207,6 +218,12 @@ public slots:
     Q_INVOKABLE void requestCatalog();
     void whenCatalogLoaded(std::function<void()> then);
     bool catalogFetched() const { return m_catalogFetched; }
+    // PublisherKeyring::publishers().
+    QVariantList trustedPublishers() const;
+    // Who signed the installed copy of `name`, as summary()'s byName says it
+    // ({status, publisher, impersonates}): unknown until the installed
+    // packages and the keyring are loaded.
+    QVariantMap installedTrust(const QString& name) const;
 
     // Package-repository management — thin wrappers around the
     // package_downloader IPC surface
@@ -312,6 +329,16 @@ signals:
                                       bool success,
                                       const QString& error);
 
+    // Trust at install (utils/InstallTrust.h): what an install dialog shows
+    // about who signed its plan -- {pending: true} while that is checked --
+    // for `flow` "gate" (package_manager_ui's install or upgrade) or "app"
+    // (App Manager); and the trusted publishers changing.
+    void installTrustUpdated(const QString& flow, const QString& name, const QVariantMap& trust);
+    void trustedPublishersChanged();
+    void trustedPublisherChangeFailed(const QString& keyName, const QString& message);
+    // A confirmed package_manager_ui install or upgrade that did not go ahead.
+    void installRefused(const QString& name, const QString& reason);
+
 private:
     // The confirm_install intent on screen, and the package it names. Install
     // has no cascade and so no PendingAction to hang the id off; uninstall and
@@ -373,12 +400,14 @@ private:
     //
     // `then(resolved, changes)`. `resolved` says whether the resolver actually
     // ran: an empty `changes` means "nothing needs to change" ONLY when it is
-    // true. With no repository to resolve against, or a failed call, the gate
-    // has established nothing — and a consent dialog must not report an
-    // absence of knowledge as an absence of consequences.
+    // true. For a local file (nothing to resolve against), or a failed call,
+    // the gate has established nothing — and a consent dialog must not report
+    // an absence of knowledge as an absence of consequences. An empty
+    // `repositoryUrl` lets the resolver pick the repository.
     void resolveDepChangesThen(const QString& name,
                                const QString& repositoryUrl,
                                const QString& version,
+                               bool localFile,
                                std::function<void(bool, const QVariantList&)> then);
 
     // The cascade pending slot. UnloadCascade (local, no IPC) lives on
@@ -403,6 +432,8 @@ private:
         // while the dialog is up. Non-empty means confirming resumes an install
         // rather than answering a requester — nobody is waiting on an intent.
         QVariantList catalogPlan;
+        // What catalogPlan's packages are held to: approvedPlan().
+        QVariantList approvedPlan;
     };
 
     // Subscribe to corePluginFileInstalled/uiPluginFileInstalled/
@@ -568,18 +599,29 @@ private:
     void refreshOverlayAfterInstall(const QString& topLevelName);
     // Second half of confirmCatalogInstall, once the resolver has answered:
     // register what needs fetching as the download plan, settle the rest.
-    void startResolvedInstall(const QString& name, const QVariantList& resolved);
+    // `approved` (approvedPlan()) is what the fetched packages are held to.
+    void startResolvedInstall(const QString& name, const QVariantList& resolved,
+                              const QVariantList& approved);
     QStringList replacedPackagesOf(const QVariantList& needed) const;
     QStringList replaceImpactOf(const QVariantList& needed,
                                 QStringList* installedDependents,
                                 QStringList* loadedDependents) const;
-    // Fetch the planned entries one at a time, accumulating what the install
-    // loop consumes. Stops at the first failure — the install loop does too, so
-    // the rest would never be installed.
+    // Fetch the planned entries one at a time, then install them as approved
+    // (installAsApproved()). A required one that fails stops it: nothing is
+    // installed. An optional one that fails is left out.
     void downloadResolvedSequential(const QVariantList& planned,
                                     const QString& topLevelName,
+                                    const QVariantList& approved,
                                     int index,
-                                    QVariantList downloaded);
+                                    QVariantList fetched);
+    // Installs what was fetched only if it is all there, all in `approved`,
+    // and each file signed as approved; otherwise nothing, and says why. As
+    // package_manager_ui holds its own installs. The downloader holds each
+    // file to the name, version and root hash asked for.
+    void installAsApproved(const QVariantList& fetched, const QVariantList& planned,
+                           const QVariantList& approved, const QString& topLevelName);
+    void checkFetchedSigners(const QVariantList& fetched, const QVariantList& approved,
+                             std::function<void(const QString& refused)> then, int index = 0);
     // Failure before the install loop: the resolver did not answer, or answered
     // with nothing.
     void failCatalogInstall(const QString& name, const QString& error);
@@ -666,6 +708,10 @@ private:
 
     QHash<QString, QString> m_repoByName;
     QVariantList m_installedPackagesCache;
+    // package_manager's record of the installed `name`, or empty.
+    QVariantMap installedRecord(const QString& name) const;
+    // The names only Logos may install under (reservedNames()).
+    QStringList m_bundledNames;
     QSet<QString>            m_installedNameSet;
     QHash<QString, QString>  m_installedVersionByName;
     QHash<QString, QString>  m_installedHashByName;   // name → rootHash of
@@ -702,6 +748,58 @@ private:
     bool m_catalogFetched       = false;
     bool m_catalogFetchInFlight = false;
     QList<std::function<void()>> m_waitingForCatalog;
+
+    // Trust at install, one verdict per install dialog: the gate's
+    // (package_manager_ui's install or upgrade, named by its dispatch id) and
+    // App Manager's (about the plan it resolved). A confirm acts only on its
+    // own dialog's verdict, and only while that is about what is confirmed.
+    enum class TrustFlow { Gate, AppManager };
+    struct TrustVerdict {
+        QString name;
+        QString about;      // the gate's dispatch id; App Manager's planIdentity()
+        int epoch = 0;
+        QVariantMap trust;  // {pending: true} while checking, then summary()
+        // What confirming it holds package_manager_ui to: {plan:
+        // approvedPlan()} or {file: fileIdentity()}.
+        QVariantMap approval;
+    };
+    TrustVerdict m_gateTrust;
+    TrustVerdict m_appTrust;
+    logos::trust::PublisherKeyring* m_publisherKeyring = nullptr;
+    void configureTrust();
+    TrustVerdict& trustVerdict(TrustFlow flow);
+    // The dispatch id of the confirmation on screen for `name`, or empty.
+    QString gateDispatchId(const QString& name) const;
+    int  beginTrust(TrustFlow flow, const QString& name);
+    void publishTrust(TrustFlow flow, int epoch, const QString& plan, const QVariantMap& trust,
+                      const QVariantMap& approval = {});
+    void emitTrust(TrustFlow flow);
+    void assessPlanTrust(TrustFlow flow, const QString& name, const QVariantList& resolved);
+    void assessLocalFileTrust(const QString& name, const QString& version, const QString& path);
+    // A confirm_install / confirm_upgrade's assessment, started before its
+    // dialog opens.
+    void beginConfirmationTrust(const QString& name, const QString& version, bool localFile,
+                                const QVariantMap& params, const QString& requesterName);
+    // summary() of `packages` against the keyring, for a dialog about `about`.
+    QVariantMap trustSummary(const QString& about, const QList<logos::trust::Package>& packages) const;
+    void withTrustedKeys(std::function<void()> then);
+    // The same, once the installed packages are known (dependencyDataReady()):
+    // what an install replaces is judged by the copy it replaces.
+    void withInstalledAndTrustedKeys(std::function<void()> then);
+    // Calls `then` with why the install may not go ahead -- the verdict is not
+    // about `about` (a dispatch id, or a planIdentity()) yet, holds something
+    // invalid, or a publisher could not be trusted -- or with an empty string
+    // once every publisher asked for is in the keyring.
+    void admitTrust(TrustFlow flow, const QString& name, const QString& about,
+                    bool trustPublishers, std::function<void(const QString& refused)> then);
+    // The answer to a package_manager_ui confirmation: the optional packages
+    // chosen, and what the gate's verdict holds the install to.
+    QVariantMap gateAnswer(const QString& name, const QStringList& optionalNames,
+                           const QVariantMap& optionalVersionPins) const;
+    // Unloads, then answers the pending uninstall or upgrade with `answer`.
+    void runUninstallCascade(const QString& moduleName, const QVariantMap& answer);
+    // Answers a confirmed package_manager_ui request that may not go ahead.
+    void refuseConfirmed(const QString& requestId, const QString& name, const QString& reason);
 
     // Fetch the repository list and the catalog now, showing appsLoading.
     void fetchCatalogNow();

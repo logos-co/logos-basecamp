@@ -133,6 +133,8 @@ pkgs.stdenv.mkDerivation rec {
       pkgs.spdlog
       pkgs.yaml-cpp
       pkgs.fmt
+      # Install trust's lookalike check (utils/InstallTrust.cpp) links ICU itself.
+      pkgs.icu
     ]
     # See common.buildInputs: krb5 carries a host-platform bash and does not
     # cross-evaluate to mingw. makeLibraryPath is an ELF/Mach-O notion anyway.

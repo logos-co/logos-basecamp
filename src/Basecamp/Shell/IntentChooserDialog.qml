@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Logos.Controls
 import Logos.Icons
 import Logos.Theme
+import Basecamp.Common
 
 // Which app should handle this request?
 //
@@ -339,15 +340,10 @@ IntentDialog {
                             color: Theme.palette.border
                         }
 
-                        LogosText {
+                        InstallTrustLine {
+                            objectName: "intentProviderTrust_" + modelData.moduleName
                             Layout.fillWidth: true
-                            text: row.facts.verified
-                                ? qsTr("Signed by a trusted publisher")
-                                : qsTr("Unsigned — the shell cannot confirm who published this")
-                            font.pixelSize: Theme.typography.secondaryText
-                            color: row.facts.verified ? Theme.palette.text
-                                                      : Theme.palette.textSecondary
-                            wrapMode: Text.Wrap
+                            verdict: row.facts.trust
                         }
 
                         Repeater {

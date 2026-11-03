@@ -136,6 +136,10 @@ TestCase {
         compare(unavailable.enabled, false)
         previewSpy.target = dlg
         previewSpy.clear()
+        // The optional rows exist before the dialog is first laid out; a click
+        // before that lands where the list will be, not where it is.
+        var list = findChild(dlg.contentItem, "addApplicationDialog.requiredPackages")
+        tryVerify(function() { return list.height > 0 })
         mouseClick(available)
         compare(primary.enabled, false)
         compare(previewSpy.count, 1)

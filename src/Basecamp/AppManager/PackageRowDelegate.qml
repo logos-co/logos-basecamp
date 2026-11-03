@@ -6,6 +6,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import Basecamp.Backend 1.0
+import Basecamp.Common
 
 ItemDelegate {
     id: root
@@ -17,6 +18,7 @@ ItemDelegate {
     property bool selected: false
     property string selectedVersion: ""
     property string selectionObjectName: ""
+    property var trustVerdict
     signal versionPicked(string name, string newVersion)
     signal selectionToggled(bool checked)
 
@@ -118,8 +120,10 @@ ItemDelegate {
 
             LogosText {
                 id: nameLabel
+                objectName: "packageRow.name." + d.rowName
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
+                Layout.maximumWidth: Math.ceil(implicitWidth)
                 text: d.rowDisplayName
                 font.weight: Theme.typography.weightMedium
                 font.pixelSize: Theme.typography.primaryText
@@ -133,6 +137,13 @@ ItemDelegate {
                     visible: nameHover.hovered && nameLabel.truncated
                 }
             }
+
+            InstallTrustMark {
+                objectName: "packageRow.trust." + d.rowName
+                verdict: root.trustVerdict
+            }
+
+            Item { Layout.fillWidth: true }
         }
 
         // Per-row version picker. Same combo as before; emits a
