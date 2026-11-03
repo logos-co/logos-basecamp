@@ -905,9 +905,9 @@ sections:
   - title: "Put the node on another network"
     step: true
     text: |
-      A running node only serves the packages of its own network. The
-      downloader compares the node's network with the repository's and falls
-      back to HTTPS when they differ.
+      A node only serves the packages of its own network. The downloader
+      compares the network of the storage config with the repository's. It
+      falls back to HTTPS when they differ.
     steps:
       - title: "Move the node to logos.test"
         text: |
