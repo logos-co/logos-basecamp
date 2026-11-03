@@ -66,6 +66,12 @@ int tabIndexFor(QTabBar* bar, const QString& text)
     return -1;
 }
 
+void toggleLayoutMode(WorkspaceArea& ws)
+{
+    QTest::keyClick(&ws, Qt::Key_L, Qt::ControlModifier | Qt::ShiftModifier);
+    for (int i = 0; i < 20; ++i) QCoreApplication::processEvents();
+}
+
 } // namespace
 
 class WorkspaceAreaTest : public QObject {
@@ -1211,6 +1217,187 @@ private slots:
         processDeferred();
         QVERIFY2(ws.welcomePageWidget()->isVisibleTo(&ws),
             "Welcome page must reappear once all docks are closed");
+    }
+
+    // --- Side-by-side vs the welcome tab ------------------------------------
+    //
+    // Ctrl+Shift+L (Cmd+Shift+L on macOS) used to relayout only the app docks.
+    // The welcome dock stayed in the dock area, so side-by-side put the
+    // welcome page in the grid next to the apps, and going back to tabbed
+    // left it as a separate pane beside the app tabs.
+
+    void sideBySideLeavesTheWelcomePageOut()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("sideBySide"));
+
+        auto* welcome = ws.findChild<QDockWidget*>(QStringLiteral("__welcome_tab__"));
+        QVERIFY(welcome != nullptr);
+        QVERIFY2(!welcome->isVisibleTo(&ws),
+                 "the welcome dock must not take a cell in the side-by-side grid");
+        QVERIFY2(!ws.welcomePageWidget()->isVisibleTo(&ws),
+                 "the welcome page must not show in side-by-side");
+        for (const char* name : {"A", "B"}) {
+            QDockWidget* d = ws.dockFor(name);
+            QVERIFY2(d && d->isVisibleTo(&ws), name);
+            QVERIFY2(ws.tabifiedDockWidgets(d).isEmpty(),
+                     qPrintable(QString("dock '%1' is still tabbed in side-by-side")
+                                    .arg(name)));
+        }
+    }
+
+    void tabbedAgainPutsEveryAppBackBehindTheWelcomeTab()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+
+        toggleLayoutMode(ws);
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("tabbed"));
+
+        auto* welcome = ws.findChild<QDockWidget*>(QStringLiteral("__welcome_tab__"));
+        QVERIFY(welcome != nullptr);
+        const auto group = ws.tabifiedDockWidgets(welcome);
+        QVERIFY2(group.contains(ws.dockFor("A")) && group.contains(ws.dockFor("B")),
+                 "both apps must be tabs in the welcome tab's group, not a "
+                 "separate pane beside it");
+
+        QTabBar* bar = nullptr;
+        for (QTabBar* b : ws.findChildren<QTabBar*>())
+            if (tabIndexFor(b, "App A") >= 0) bar = b;
+        QVERIFY(bar != nullptr);
+        QVERIFY2(bar->tabText(0).isEmpty(), "the welcome tab must be first again");
+        QVERIFY(tabIndexFor(bar, "App B") >= 0);
+
+        bar->setCurrentIndex(0);
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        QVERIFY2(ws.welcomePageWidget()->isVisible(),
+                 "the welcome tab must still bring the welcome page back");
+    }
+
+    void closingTheLastAppInSideBySideBringsTheWelcomePageBack()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("sideBySide"));
+
+        ws.removePluginDock("A");
+        ws.removePluginDock("B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+
+        QCOMPARE(ws.layoutMode(), QStringLiteral("tabbed"));
+        QVERIFY2(ws.welcomePageWidget()->isVisible(),
+                 "the welcome page must return when the last app closes");
+
+        // A fresh app goes back into the welcome tab's group.
+        ws.addPluginDock(makePluginWidget("C"), "C", "App C");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        auto* welcome = ws.findChild<QDockWidget*>(QStringLiteral("__welcome_tab__"));
+        QVERIFY(ws.tabifiedDockWidgets(welcome).contains(ws.dockFor("C")));
+    }
+
+    // One app left in side-by-side: the shortcut must still get you out.
+    // Apps can be rearranged in side-by-side, but never floated, and tabbed
+    // mode locks them again.
+    void docksAreMovableOnlyInSideBySide()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("sideBySide"));
+        ws.addPluginDock(makePluginWidget("C"), "C", "App C");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        for (const char* name : {"A", "B", "C"}) {
+            const auto f = ws.dockFor(name)->features();
+            QVERIFY2(f.testFlag(QDockWidget::DockWidgetMovable),
+                     qPrintable(QString("dock '%1' can't be moved in side-by-side").arg(name)));
+            QVERIFY2(!f.testFlag(QDockWidget::DockWidgetFloatable), name);
+            QVERIFY2(f.testFlag(QDockWidget::DockWidgetClosable), name);
+        }
+
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("tabbed"));
+        for (const char* name : {"A", "B", "C"}) {
+            QVERIFY2(!ws.dockFor(name)->features().testFlag(QDockWidget::DockWidgetMovable),
+                     qPrintable(QString("dock '%1' is still movable in tabbed mode").arg(name)));
+        }
+    }
+
+    // Dragging the divider between two panes resizes them.
+    void sideBySidePanesResizeByDraggingTheDivider()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("sideBySide"));
+
+        QDockWidget* a = ws.dockFor("A");
+        QDockWidget* b = ws.dockFor("B");
+        const int before = a->width();
+        const QPoint divider((a->geometry().right() + b->geometry().left()) / 2 + 1,
+                             a->geometry().center().y());
+        QTest::mousePress(&ws, Qt::LeftButton, {}, divider);
+        for (int dx = 10; dx <= 200; dx += 10) {
+            QTest::mouseMove(&ws, divider + QPoint(dx, 0));
+            QCoreApplication::processEvents();  // Qt applies each step on a 0 ms timer
+        }
+        QTest::mouseRelease(&ws, Qt::LeftButton, {}, divider + QPoint(200, 0));
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+
+        QVERIFY2(a->width() > before + 100,
+                 qPrintable(QString("pane A stayed %1 px wide (was %2) after "
+                                    "dragging the divider 200 px")
+                                .arg(a->width()).arg(before)));
+    }
+
+    void sideBySideWithOneAppCanStillReturnToTabbed()
+    {
+        QObject stubBackend;
+        WorkspaceArea ws(&stubBackend);
+        ws.resize(1200, 700);
+        ws.show();
+        ws.addPluginDock(makePluginWidget("A"), "A", "App A");
+        ws.addPluginDock(makePluginWidget("B"), "B", "App B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        toggleLayoutMode(ws);
+        ws.removePluginDock("B");
+        for (int i = 0; i < 10; ++i) QCoreApplication::processEvents();
+        QCOMPARE(ws.layoutMode(), QStringLiteral("sideBySide"));
+
+        toggleLayoutMode(ws);
+        QCOMPARE(ws.layoutMode(), QStringLiteral("tabbed"));
+        auto* welcome = ws.findChild<QDockWidget*>(QStringLiteral("__welcome_tab__"));
+        QVERIFY(ws.tabifiedDockWidgets(welcome).contains(ws.dockFor("A")));
     }
 
     // --- Widget ownership — plugin dies with dock (Qt cascade) ------------

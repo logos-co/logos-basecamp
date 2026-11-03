@@ -85,8 +85,9 @@ private:
 
     void placeDockInGrid(QDockWidget* dock, int gridIndex);
 
-    // DEV: Ctrl+Shift+L toggles between tabbed and side-by-side.
+    // Ctrl+Shift+L toggles between tabbed and side-by-side (experimental).
     void toggleLayoutModeForTesting();
+    void applyLayoutMode(bool sideBySide);
 
     static constexpr int kColsPerRow = 3;
 
