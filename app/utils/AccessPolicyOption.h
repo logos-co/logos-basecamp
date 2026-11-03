@@ -2,6 +2,7 @@
 #define LOGOS_BASECAMP_ACCESS_POLICY_OPTION_H
 
 #include <QString>
+#include <QStringList>
 
 namespace LogosBasecamp {
 
@@ -38,6 +39,13 @@ struct AccessPolicyResolution {
 //
 // The result is parse-checked here; schema enforcement is the runtime's job.
 AccessPolicyResolution resolveAccessPolicy(const QString& arg);
+
+// `policyJson` with a restriction letting only `callers` call each of
+// `targets` it does not restrict itself. Enforce mode otherwise lets whatever
+// declares a target as a dependency call it, which any installed module can,
+// and that replaces the host's own rule. Unchanged when not in enforce mode.
+QString withRestrictions(const QString& policyJson, const QStringList& targets,
+                         const QStringList& callers);
 
 } // namespace LogosBasecamp
 

@@ -128,11 +128,14 @@ Invariants:
 
 - **`package_manager` must be `"loaded": true`.** `PackageCoordinator.cpp:100`
   gates its directory setup and every event subscription on it.
-- **`capability_module` must appear under `calls`,** even though Basecamp never
-  calls it directly. `MockStore`'s seeder mints a `TokenManager` token for every
-  module named by a key, and the host must hold a `capability_module` token to be
-  admitted as the trusted channel when loading a ui_qml plugin. Without it:
-  `logos::admitConsumer: the host holds no capability_module token`.
+- **`capability_module` must appear under `calls`.** `MockStore`'s seeder mints
+  a `TokenManager` token for every module named by a key, and the host must hold
+  a `capability_module` token to be admitted as the trusted channel when loading
+  a ui_qml plugin. Without it:
+  `logos::admitConsumer: the host holds no capability_module token`. And
+  `registerRestriction` must answer `true`, or Basecamp refuses to start
+  `package_manager` and `package_downloader` (`main.cpp`'s
+  `restrictPackageModules()`).
 - **`calls` keys use the wire method name** — the generated wrapper's name minus
   any `Async` suffix.
 

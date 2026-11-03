@@ -312,14 +312,13 @@ sections:
               find_value: "pmui.BackendStore"
               method: "installLocalPackage"
               args: ["file:///tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"]
-              text: "PMU asks the `package_manager` module to inspect the file — the step that would normally read the manifest and route to the install gate. The archive dies mid-decompression instead, the module reports the load failure, and PMU broadcasts it as a failed installation. Basecamp picks that report up and raises the failure notice."
+              text: "PMU copies the file somewhere only it can write and asks the `package_manager` module to inspect the copy — the step that would normally read the manifest and route to the install gate. The archive dies mid-decompression instead, the module reports the load failure, and PMU broadcasts it as a failed installation. Basecamp picks that report up and raises the failure notice."
 
-            - name: "Basecamp surfaces the failure — by name, with the error"
+            - name: "Basecamp surfaces the failure — by name"
               action: wait_for
               texts:
                 - "Install Failed"
                 - "'test_failpath_qml-truncated.lgx' could not be installed. The package manager reported:"
-                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
               timeout: 30000
 
             # Dialog identity, not just text: the per-mode instances keep
@@ -332,13 +331,23 @@ sections:
               property: "visible"
               value: true
 
-            # Pin the bound property too, not just its rendered text.
-            - name: "…and it carries the package manager's error"
+            # Pin the bound property too, not just its rendered text. Texts
+            # match whole, and the error names the private copy PMU installs
+            # from, at a path of its own: the file is pinned by the name the
+            # notice is about, the error by being shown.
+            - name: "…and it is about this file"
               action: expect_property
               find_by: "objectName"
               find_value: "confirmationDialog.installError"
-              property: "errorMessage"
-              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/test_failpath_qml-truncated.lgx"
+              property: "moduleName"
+              value: "test_failpath_qml-truncated.lgx"
+
+            - name: "…with the package manager's error under it"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError.message"
+              property: "visible"
+              value: true
 
             # Keep the screenshot on its own settle step: these failures are
             # near-instant, so a text match can land before the overlay
@@ -387,7 +396,6 @@ sections:
               texts:
                 - "Install Failed"
                 - "'not-a-package.lgx' could not be installed. The package manager reported:"
-                - "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
               timeout: 30000
 
             - name: "It is the Install Failed notice that is open"
@@ -397,13 +405,20 @@ sections:
               property: "visible"
               value: true
 
-            - name: "…and it carries this file's error, not a stale one"
+            - name: "…and it is about this file, not a stale one"
               action: expect_property
               find_by: "objectName"
               find_value: "confirmationDialog.installError"
-              property: "errorMessage"
-              value: "Failed to load LGX package: Failed to load package: /tmp/basecamp-failpath/not-a-package.lgx"
-              text: "The property assertion also rules out a leftover from the first failure: the notice was re-opened with *this* file's message, not merely re-shown with the previous one."
+              property: "moduleName"
+              value: "not-a-package.lgx"
+              text: "The property assertion also rules out a leftover from the first failure: the notice was re-opened for *this* file, not merely re-shown with the previous one."
+
+            - name: "…with the package manager's error under it"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installError.message"
+              property: "visible"
+              value: true
 
             - name: "Let the notice paint"
               action: sleep
@@ -432,7 +447,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_failpath_qml' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
+                - "Install 'test_failpath_qml' v0.1.1, which isn't signed. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
 
             - name: "It is the install gate — and the error notice stayed closed"

@@ -141,6 +141,29 @@ TestCase {
         dlg.destroy()
     }
 
+    Component {
+        id: installErrorComp
+        ConfirmationDialog {
+            objectName: "confirmationDialog.installError"
+            mode: "installError"
+        }
+    }
+
+    // basecamp-failure-paths finds the install error by this name: the error
+    // names the private copy the Package Manager made of the file, at a path
+    // of its own, so the doctest can't wait for its text.
+    function test_an_install_error_is_shown_under_its_own_name() {
+        var error = "Failed to load LGX package: Failed to load package: /tmp/pmui-x/1.lgx"
+        var dlg = installErrorComp.createObject(testCase)
+        dlg.openWithInstallError("broken.lgx", error)
+        tryVerify(function() { return dlg.opened })
+        var message = findChild(dlg.contentItem, "confirmationDialog.installError.message")
+        verify(message, "error block present")
+        verify(message.visible, "error block shown")
+        verify(findChildWithText(message, error), "error text inside it")
+        dlg.destroy()
+    }
+
     // Depth-first search for a visible Text-like item whose text matches.
     function findChildWithText(item, text) {
         if (!item) return null

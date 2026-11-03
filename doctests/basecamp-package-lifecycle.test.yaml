@@ -405,10 +405,18 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
+                - "Install 'test_qml_only' v0.1.1, which isn't signed. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
-              text: "The gate presents what would be installed: `test_qml_only` v0.1.1. It says the dependencies could not be determined rather than claiming there are none — this package came from a local file, so there is no repository for the gate to resolve against, and a consent dialog must not report an absence of knowledge as an absence of consequences. Until this dialog is confirmed, no files have been written."
+              text: "The gate presents what would be installed: `test_qml_only` v0.1.1, and that nobody signed it. It says the dependencies could not be determined rather than claiming there are none — this package came from a local file, so there is no repository for the gate to resolve against, and a consent dialog must not report an absence of knowledge as an absence of consequences. Until this dialog is confirmed, no files have been written."
               screenshot: "pkglife-install-dialog.png"
+
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              property: "enabled"
+              value: true
+              timeout: 30000
 
             - name: "Confirm the install"
               action: click_object
@@ -470,10 +478,18 @@ sections:
               action: wait_for
               texts:
                 - "Upgrade Package?"
-                - "Upgrade 'Lifecycle Demo' to v0.2.1. The current version will be removed first, then the new one downloaded and installed."
+                - "Upgrade 'Lifecycle Demo' to v0.2.1, which isn't signed. The current version will be removed first, then the new one downloaded and installed."
               timeout: 30000
-              text: "The dialog now greets the package by its installed `display_name` and spells out the swap: the old version is removed first, then the new one installed. Nothing is running on top of it, so no unload list appears."
+              text: "The dialog now greets the package by its installed `display_name`, says once its checks are done who signed the new version (nobody, for this test package), and spells out the swap: the old version is removed first, then the new one installed. Nothing is running on top of it, so no unload list appears."
               screenshot: "pkglife-upgrade-dialog.png"
+
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.upgradeCascade.confirm"
+              property: "enabled"
+              value: true
+              timeout: 30000
 
             - name: "Confirm the upgrade"
               action: click_object
@@ -619,7 +635,7 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_qml_only' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
+                - "Install 'test_qml_only' v0.1.1, which isn't signed. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               text: "The package manager no longer knows `test_qml_only` — the same LGX that would have been a *reinstall* a minute ago gates as a *fresh install* again, greeted by its raw name because the display-name cache forgot it too. That's positive proof the uninstall removed both the files and the package record."
               screenshot: "pkglife-reinspect.png"

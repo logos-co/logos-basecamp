@@ -1,7 +1,9 @@
 #include "AccessPolicyOption.h"
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonParseError>
 
 namespace LogosBasecamp {
@@ -51,6 +53,22 @@ AccessPolicyResolution resolveAccessPolicy(const QString& arg)
 
     out.policyJson = content;
     return out;
+}
+
+QString withRestrictions(const QString& policyJson, const QStringList& targets,
+                         const QStringList& callers)
+{
+    QJsonObject policy = QJsonDocument::fromJson(policyJson.toUtf8()).object();
+    if (policy.value(QStringLiteral("mode")).toString() != QLatin1String("enforce"))
+        return policyJson;
+    // liblogos ignores `restrictions` that are not an object.
+    QJsonObject restrictions = policy.value(QStringLiteral("restrictions")).toObject();
+    for (const QString& target : targets)
+        if (!restrictions.contains(target))
+            restrictions.insert(target, QJsonObject{
+                {QStringLiteral("allowedCallers"), QJsonArray::fromStringList(callers)}});
+    policy.insert(QStringLiteral("restrictions"), restrictions);
+    return QString::fromUtf8(QJsonDocument(policy).toJson(QJsonDocument::Compact));
 }
 
 } // namespace LogosBasecamp

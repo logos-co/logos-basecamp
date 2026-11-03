@@ -57,6 +57,11 @@ int main(int argc, char** argv)
     }
     CHECK(pmLoaded, "package_manager marked loaded (PackageCoordinator gate)");
 
+    // main.cpp starts neither package_manager nor package_downloader unless
+    // capability_module takes the rule restricting who may call them.
+    CHECK(calls.value("capability_module.registerRestriction").toBool(),
+          "capability_module.registerRestriction answers true (restrictPackageModules gate)");
+
     // NO placeholder may survive into the written file. Plugin images read it
     // with no idea where this application installed anything, so an unexpanded
     // {PLUGINS_DIR} reaches them as a literal and fails far from here.

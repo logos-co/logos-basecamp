@@ -14,6 +14,7 @@ Rectangle {
     property string action: "pending"
     property string replica: "pending"
     property string control: "pending"
+    property string packages: "pending"
 
     function outcome(payload) {
         let parsed = null
@@ -30,8 +31,15 @@ Rectangle {
         logos.callModuleAsync(target, "add", [2, 3],
                               function(p) { root.action = outcome(p) }, 10000)
         root.replica = logos.module("module_backend_fixture") === null ? "refused" : "REACHED"
-        logos.callModuleAsync("package_manager", "getInstalledPackages", [],
+        logos.callModuleAsync("modules_state", "list_modules", [],
                               function(p) { root.control = outcome(p) }, 10000)
+    }
+
+    // Declared as a dependency, and still Basecamp's and the Package
+    // Manager's alone (main.cpp's restrictPackageModules()).
+    function callPackageManager() {
+        logos.callModuleAsync("package_manager", "getInstalledPackages", [],
+                              function(p) { root.packages = outcome(p) }, 10000)
     }
 
     Column {
@@ -41,5 +49,6 @@ Rectangle {
         Text { text: "Intruder call: " + root.action }
         Text { text: "Intruder replica: " + root.replica }
         Text { text: "Intruder control: " + root.control }
+        Text { text: "Intruder package_manager: " + root.packages }
     }
 }

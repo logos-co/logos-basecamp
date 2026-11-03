@@ -404,9 +404,17 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_persist_qml' v0.1.1. Its dependencies could not be determined, so other packages may be installed as well."
+                - "Install 'test_persist_qml' v0.1.1, which isn't signed. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               screenshot: "persist-install-dialog.png"
+
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              property: "enabled"
+              value: true
+              timeout: 30000
 
             - name: "Confirm the install"
               action: click_object
@@ -473,9 +481,17 @@ sections:
               action: wait_for
               texts:
                 - "Install Package?"
-                - "Install 'test_fullapi_cpp' v0.0.1. Its dependencies could not be determined, so other packages may be installed as well."
+                - "Install 'test_fullapi_cpp' v0.0.1, which isn't signed. Its dependencies could not be determined, so other packages may be installed as well."
               timeout: 30000
               screenshot: "persist-module-install-dialog.png"
+
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate.confirm"
+              property: "enabled"
+              value: true
+              timeout: 30000
 
             - name: "Confirm the module install"
               action: click_object

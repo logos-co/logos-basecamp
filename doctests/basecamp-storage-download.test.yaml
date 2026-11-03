@@ -380,6 +380,14 @@ sections:
               value: true
               screenshot: "storage-install.png"
 
+            - name: "The checks have finished"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "addApplicationDialog.primaryButton"
+              property: "enabled"
+              value: true
+              timeout: 30000
+
             - name: "Install it"
               action: click_object
               find_by: "objectName"

@@ -31,6 +31,14 @@ function findMarker(name) {
   return userDir ? walk(join(userDir, "module_data")) : null;
 }
 
+// This session's log: Basecamp's and the core's lines in one stream, in order.
+function sessionLog() {
+  const logs = join(userDir, "logs");
+  const file = readdirSync(logs).filter((f) => /^basecamp_.*\.log$/.test(f)).sort().pop();
+  if (!file) throw new Error(`no session log in ${logs}`);
+  return readFileSync(join(logs, file), "utf8");
+}
+
 // Waits for a string property on a fixture root to leave "pending".
 async function waitForAnswer(app, objectId, property, description, timeout = 30000) {
   let value = "pending";
@@ -76,12 +84,8 @@ test("module backend: the view has no core access", async (app) => {
 
 test("module backend: it is closed to other apps before it starts", async () => {
   // capability_module lets anyone call a module it has no rule for, so the
-  // rule must be in place before the core starts the backend. The session log
-  // has Basecamp's and the core's lines in one stream, in order.
-  const logs = join(userDir, "logs");
-  const file = readdirSync(logs).filter((f) => /^basecamp_.*\.log$/.test(f)).sort().pop();
-  if (!file) throw new Error(`no session log in ${logs}`);
-  const log = readFileSync(join(logs, file), "utf8");
+  // rule must be in place before the core starts the backend.
+  const log = sessionLog();
   const restricted = log.indexOf("Restricted module_backend_fixture_backend to module_backend_fixture");
   const loaded = log.indexOf("Module loaded: module_backend_fixture_backend");
   if (restricted < 0) throw new Error("no restriction line in the session log");
@@ -99,6 +103,21 @@ test("module backend: another app cannot reach it", async (app) => {
     const outcome = await waitForAnswer(app, intruder.id, attempt, `the intruder's ${attempt} attempt`);
     if (outcome.startsWith("REACHED")) throw new Error(`the intruder got through (${attempt}): ${outcome}`);
   }
+});
+
+test("package_manager: another app cannot call it", async (app) => {
+  // Basecamp's and the Package Manager's alone, though the app declares it:
+  // one installed "anyway" could otherwise trust its own key, or install with
+  // no dialog. The control call above shows the bridge works for this app.
+  const intruder = await requireObject(app, "intruder.root");
+  await evalOn(app, intruder.id, "callPackageManager()");
+  const outcome = await waitForAnswer(app, intruder.id, "packages", "the intruder's package_manager call");
+  if (outcome.startsWith("REACHED")) throw new Error(`an app called package_manager: ${outcome}`);
+  if (!sessionLog().includes("access policy denies 'backend_intruder' -> 'package_manager'"))
+    throw new Error(`package_manager's refusal was not the access rule's: ${outcome}`);
+  const control = await waitForAnswer(app, intruder.id, "control", "the intruder's control call");
+  if (!control.startsWith("REACHED"))
+    throw new Error(`the intruder's control call failed, so the refusal proves nothing: ${control}`);
 });
 
 // Every sidebar app has its own marker; true if any of them is showing.

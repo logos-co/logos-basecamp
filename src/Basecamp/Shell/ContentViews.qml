@@ -44,6 +44,9 @@ Item {
         function onRepositoryOperationCompleted(operation, url, success, error) {
             settingsView.reportRepositoryResult(operation, url, success, error)
         }
+        function onTrustedPublisherChangeFailed(keyName, message) {
+            settingsView.reportPublisherFailure(message)
+        }
         // Capabilities the shell itself provides *that are pure navigation* —
         // no state, no IPC, answerable on the spot. Adding the next one of
         // those is one more `case`. Anything unrecognised must still be
@@ -141,6 +144,8 @@ Item {
             coreModulesModel:    backend.coreModulesModel
             modulesLoading:      backend.modulesLoading
             repositoriesAvailable: backend.repositoryManagement !== false
+            trustedPublishers:   backend.trustedPublishers
+            installedFromPublisher: did => backend.installedFromPublisher(did)
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)
@@ -151,6 +156,9 @@ Item {
                 Qt.callLater(backend.refreshRepositories)
                 Qt.callLater(backend.refreshDownloadSource)
             }
+
+            onTrustedPublisherRemoveRequested:   keyName => backend.removeTrustedPublisher(keyName)
+            onTrustedPublishersRefreshRequested: Qt.callLater(backend.refreshTrustedPublishers)
 
             // Apps Inspector (UI plugins). View-only — uninstall lives in PMUI.
             onAppsRefreshRequested:       backend.refreshUiModules()

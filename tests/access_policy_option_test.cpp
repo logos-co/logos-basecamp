@@ -18,6 +18,7 @@
 #include "../app/utils/AccessPolicyOption.h"
 
 #include <QtTest/QtTest>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -170,6 +171,48 @@ private slots:
         const auto r = resolveAccessPolicy(path);
         QVERIFY(!r.ok);
         QVERIFY(r.error.contains(QStringLiteral("not valid JSON")));
+    }
+
+    // ── The host's own rules survive enforce mode ────────────────────────────
+
+    // Enforce mode derived package_manager's callers from whatever declared it
+    // a dependency, replacing Basecamp's rule: any installed module could
+    // declare it and be let in.
+    void enforceModeKeepsTheHostsRestrictions()
+    {
+        const QStringList targets{QStringLiteral("package_manager"), QStringLiteral("package_downloader")};
+        const QStringList callers{QStringLiteral("core"), QStringLiteral("package_manager_ui_backend")};
+        const auto restrictionsOf = [](const QString& json) {
+            return QJsonDocument::fromJson(json.toUtf8()).object()
+                .value(QStringLiteral("restrictions")).toObject();
+        };
+        const auto callersOf = [&](const QString& json, const QString& target) {
+            QStringList out;
+            for (const QJsonValue& v : restrictionsOf(json).value(target).toObject()
+                                           .value(QStringLiteral("allowedCallers")).toArray())
+                out << v.toString();
+            return out;
+        };
+
+        const QString armed = LogosBasecamp::withRestrictions(
+            QString::fromUtf8(LogosBasecamp::kAccessPolicyEnforceEnvelope), targets, callers);
+        QCOMPARE(QJsonDocument::fromJson(armed.toUtf8()).object().value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("enforce"));
+        QCOMPARE(callersOf(armed, QStringLiteral("package_manager")), callers);
+        QCOMPARE(callersOf(armed, QStringLiteral("package_downloader")), callers);
+
+        // The operator's own rules stand, theirs for a target included.
+        const QString own = LogosBasecamp::withRestrictions(
+            QStringLiteral(R"({"mode":"enforce","restrictions":{"accounts_module":{"allowedCallers":["accounts_ui"]},)"
+                           R"("package_manager":{"allowedCallers":["my_tool"]}}})"),
+            targets, callers);
+        QCOMPARE(callersOf(own, QStringLiteral("accounts_module")), QStringList{QStringLiteral("accounts_ui")});
+        QCOMPARE(callersOf(own, QStringLiteral("package_manager")), QStringList{QStringLiteral("my_tool")});
+        QCOMPARE(callersOf(own, QStringLiteral("package_downloader")), callers);
+
+        // Not enforcing: nothing derives a rule over the host's, so nothing to add.
+        const QString audit = QStringLiteral(R"({"version":1,"mode":"audit"})");
+        QCOMPARE(LogosBasecamp::withRestrictions(audit, targets, callers), audit);
     }
 };
 

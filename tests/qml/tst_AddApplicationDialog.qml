@@ -281,7 +281,9 @@ TestCase {
         cleanupHost(host);
     }
 
-    function test_optional_rows_match_required_layout_and_scroll_in_a_short_window() {
+    // The optional rows are the end of the same list, not a list of their own:
+    // one scrollbar for both, and scrolling it reaches the last optional row.
+    function test_optional_rows_scroll_with_the_required_ones() {
         var host = openWithDeps(20, testCase.crampedWindow);
         var optionals = [];
         for (var i = 0; i < 8; ++i)
@@ -289,22 +291,32 @@ TestCase {
                 version: "1.0.0", action: "install", description: "an optional package",
                 versions: [{manifest: {version: "1.0.0"}}]});
         host.dialog.metadata = Object.assign({}, host.dialog.metadata, {optionalPackages: optionals});
-        var required = listOf(host);
+        var list = listOf(host);
         var optional = find(host, "addApplicationDialog.optionalPackages");
-        compare(optional.width, required.width);
-        compare(optional.itemAtIndex(0).height, required.itemAtIndex(0).height);
-        compare(optional.itemAtIndex(0).leftPadding, required.itemAtIndex(0).leftPadding);
-        compare(optional.itemAtIndex(0).rightPadding, required.itemAtIndex(0).rightPadding);
-        verify(optional.height >= testCase.rowHeight);
-        verify(required.height >= testCase.rowHeight);
-        verify(optional.interactive);
+        verify(optional.parent === list.contentItem, "inside the list it scrolls with");
+        compare(optional.width, list.width);
+
+        var firstOptional = find(host, "addApplicationDialog.optionalRow.optional_0");
+        var firstRequired = list.itemAtIndex(0);
+        compare(firstOptional.height, firstRequired.height);
+        compare(firstOptional.leftPadding, firstRequired.leftPadding);
+        compare(firstOptional.rightPadding, firstRequired.rightPadding);
+
+        compare(list.contentHeight, 20 * testCase.rowHeight + optional.height,
+                "the required rows, then the optional section, in one content");
+        verify(list.interactive, "scrolled as one");
+        verify(list.height >= testCase.rowHeight);
         verify(host.dialog.height <= host.height);
         compare(find(host, "addApplicationDialog.showcase").height, testCase.showcaseHeight);
         var footer = find(host, "addApplicationDialog.footerText");
         compare(footer.height, footer.implicitHeight);
-        optional.positionViewAtEnd();
+
+        list.positionViewAtEnd();
         waitForRendering(testCase);
-        verify(optional.itemAtIndex(7) !== null);
+        var last = find(host, "addApplicationDialog.optionalRow.optional_7");
+        var top = last.mapToItem(list, 0, 0).y;
+        verify(top >= 0 && top + last.height <= list.height + 0.5,
+               "the last optional row is in view at the end, at " + top + " of " + list.height);
         cleanupHost(host);
     }
 

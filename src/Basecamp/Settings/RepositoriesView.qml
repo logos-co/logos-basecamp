@@ -297,7 +297,7 @@ Item {
 
                     objectName: "repositories.row." + url
                     Layout.fillWidth: true
-                    implicitHeight: rowCol.implicitHeight + Theme.spacing.large * 2
+                    implicitHeight: rowCol.implicitHeight + Theme.spacing.medium * 2
                     radius: Theme.spacing.radiusLarge
                     color: Theme.palette.background
                     border.color: Theme.palette.borderSubtle
@@ -306,8 +306,8 @@ Item {
                     ColumnLayout {
                         id: rowCol
                         anchors.fill: parent
-                        anchors.margins: Theme.spacing.large
-                        spacing: Theme.spacing.small
+                        anchors.margins: Theme.spacing.medium
+                        spacing: Theme.spacing.tiny
 
                         RowLayout {
                             Layout.fillWidth: true
@@ -342,6 +342,27 @@ Item {
                                 text: qsTr("Unreachable")
                                 color: Theme.palette.error
                             }
+                            LogosSwitch {
+                                objectName: "repositories.enableSwitch." + url
+                                checked: isEnabled
+                                onToggled: root.setEnabledRequested(url, checked)
+                            }
+                            LogosIconButton {
+                                objectName: "repositories.remove." + url
+                                size: 32
+                                iconSize: 18
+                                iconSource: LogosIcons.trash
+                                flat: true
+                                Accessible.name: qsTr("Remove")
+                                onClicked: {
+                                    if (isDefault) {
+                                        d.pendingRemoveUrl = url
+                                        removeDefaultDialog.open()
+                                    } else {
+                                        root.removeRequested(url)
+                                    }
+                                }
+                            }
                         }
 
                         LogosSelectableText {
@@ -370,40 +391,6 @@ Item {
                             font.pixelSize: Theme.typography.secondaryText
                             color: Theme.palette.error
                             wrapMode: Text.WordWrap
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.topMargin: Theme.spacing.small
-                            spacing: Theme.spacing.medium
-
-                            RowLayout {
-                                spacing: Theme.spacing.small
-                                LogosSwitch {
-                                    objectName: "repositories.enableSwitch." + url
-                                    checked: isEnabled
-                                    onToggled: root.setEnabledRequested(url, checked)
-                                }
-                                LogosText {
-                                    text: isEnabled ? qsTr("Enabled") : qsTr("Disabled")
-                                    color: Theme.palette.textSecondary
-                                    font.pixelSize: Theme.typography.secondaryText
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            LogosButton {
-                                text: qsTr("Remove")
-                                onClicked: {
-                                    if (isDefault) {
-                                        d.pendingRemoveUrl = url
-                                        removeDefaultDialog.open()
-                                    } else {
-                                        root.removeRequested(url)
-                                    }
-                                }
-                            }
                         }
                     }
                 }

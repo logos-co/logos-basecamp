@@ -566,7 +566,8 @@ void PluginLoader::loadUiQmlModule(const PluginLoadRequest& request)
 bool PluginLoader::restrictBackendToView(const QString& backendModule, const QString& viewName)
 {
     // capability_module takes rules only over the trusted core channel, which
-    // is this host's. Same trusted callers liblogos adds to its own rules.
+    // is this host's. Not liblogos's `core_service`: that is logoscore's
+    // daemon, never this host, and an app could go by that name.
     LogosAPIClient* cap = m_logosAPI
         ? m_logosAPI->getClient(QStringLiteral("capability_module")) : nullptr;
     if (!cap) return false;
@@ -575,7 +576,7 @@ bool PluginLoader::restrictBackendToView(const QString& backendModule, const QSt
     const QVariant ok = cap->invokeRemoteMethod(
         QStringLiteral("capability_module"), QStringLiteral("registerRestriction"),
         QVariantList{ capToken, backendModule,
-                      QStringList{ viewName, QStringLiteral("core"), QStringLiteral("core_service") } });
+                      QStringList{ viewName, QStringLiteral("core") } });
     if (ok.toBool()) qInfo().noquote() << "Restricted" << backendModule << "to" << viewName;
     return ok.toBool();
 }

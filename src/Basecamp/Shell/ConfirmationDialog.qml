@@ -5,6 +5,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import Basecamp.AppManager
+import Basecamp.Common
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
 //
@@ -173,8 +174,60 @@ Dialog {
     // true in continue/cancel onClicked before we call close().
     property bool _explicitClose: false
 
+    // installGate / upgradeCascade: who signed what this would install
+    // (PackageCoordinator::installTrustUpdated). Empty means nothing to say.
+    property var trust: ({})
+
     signal continueClicked(string name)
     signal cancelClicked(string name)
+    signal trustAndContinueClicked(string name)
+
+    QtObject {
+        id: d
+
+        readonly property bool trustApplies: root.mode === "installGate" || root.mode === "upgradeCascade"
+        readonly property bool trustHolds: d.trustApplies
+                                           && (root.trust.pending === true || root.trust.blocked === true)
+        readonly property bool trustAsks: d.trustApplies && !d.trustHolds && root.trust.needsPrompt === true
+        readonly property bool canTrustPublishers: d.trustAsks && root.trust.canTrust === true
+        readonly property string anyway: d.trustAsks && root.trust.trustCoversAll !== true ? " anyway" : ""
+
+        // One pass, unlike chained arg(): a name that reads "%2" stays as it is.
+        function fill(template, values) {
+            return template.replace(/%([1-9])/g, (match, n) => n <= values.length ? values[n - 1] : match);
+        }
+
+        // A package's verdict (an InstallTrustMark on its row), once checked.
+        function verdictFor(name) {
+            return d.trustApplies && root.trust.byName ? root.trust.byName[name] : undefined;
+        }
+        // Who signed the package this asks about, said in the sentence that
+        // names it ("Install 'x' v1, signed by Logos.") rather than on a line
+        // of its own that reads as if it were about the list under it.
+        function trustClause() {
+            const v = d.verdictFor(root.moduleName);
+            if (!v) return "";
+            if (v.reserved)
+                return ", which comes with Basecamp, so only Logos can update it";
+            if (v.replaces)
+                return ", which isn't signed by " + v.replaces + ", who signed the version you have";
+            if (v.replacesUnverified)
+                return ", which may not be from the same publisher as the version you have";
+            switch (v.status) {
+            case "trusted":
+                return ", signed by " + (v.publisher || "a publisher you trust");
+            case "untrusted":
+                return v.impersonates
+                       ? ", which claims to be " + v.impersonates + " but isn't signed with its key"
+                       : ", signed by a publisher you don't trust yet";
+            case "unsigned":
+                return ", which isn't signed";
+            case "invalid":
+                return ", which is damaged or wrongly signed";
+            }
+            return " (couldn't check who signed it)";
+        }
+    }
 
     modal: true
     anchors.centerIn: parent
@@ -215,6 +268,7 @@ Dialog {
     // "Uninstall and Unload Dependents?".
     function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_, requester_, requesterBundled_) {
         root.mode = "upgradeCascade";
+        root.trust = ({});
         root.moduleName = name_ || "";
         root.upgradeTargetVersion = version_ || "";
         root.upgradeModeKind = upgradeMode_ | 0;
@@ -235,6 +289,7 @@ Dialog {
     function openWithInstallGate(name_, version_, depChanges_, requester_, requesterBundled_,
                                 depChangesResolved_) {
         root.mode = "installGate";
+        root.trust = ({});
         // Defaults to true so existing callers keep today's meaning.
         root.depChangesResolved = depChangesResolved_ === undefined
                                   ? true : !!depChangesResolved_;
@@ -333,9 +388,9 @@ Dialog {
 
         // Who asked. Shown for requests that crossed an app boundary — the
         // package name, never the self-declared display name, so an app cannot
-        // dress itself up as another. Nothing is signed, so this is provenance
-        // for the channel, not proof of a publisher.
+        // dress itself up as another. Which app asked, not who published it.
         LogosText {
+            objectName: "confirmationDialog.requester"
             Layout.fillWidth: true
             visible: root.requesterName.length > 0
             wrapMode: Text.Wrap
@@ -354,15 +409,15 @@ Dialog {
             readonly property string _who: root.displayNameLookup(root.requesterName)
                                            || root.requesterName
             text: root.requesterBundled
-                  ? qsTr("Requested by %1, which ships with Logos.").arg(_who)
+                  ? d.fill(qsTr("Requested by %1, which ships with Logos."), [_who])
                   : (_who === root.requesterName
-                     ? qsTr("Requested by %1 — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
-                         .arg(_who)
-                     : qsTr("Requested by %1 (%2) — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
-                         .arg(_who).arg(root.requesterName))
+                     ? d.fill(qsTr("Requested by %1, which is not part of Logos."), [_who])
+                     : d.fill(qsTr("Requested by %1 (%2), which is not part of Logos."),
+                              [_who, root.requesterName]))
         }
 
         LogosText {
+            objectName: "confirmationDialog.body"
             Layout.fillWidth: true
             wrapMode: Text.Wrap
             color: Theme.palette.textSecondary
@@ -410,7 +465,7 @@ Dialog {
                     else if (root.upgradeModeKind === 2) verb = "Reinstall";
                     var verPhrase = root.upgradeTargetVersion.length > 0
                                     ? " to v" + root.upgradeTargetVersion : "";
-                    var head = verb + " '" + _label + "'" + verPhrase
+                    var head = verb + " '" + _label + "'" + verPhrase + d.trustClause()
                              + ". The current version will be removed first, "
                              + "then the new one downloaded and installed.";
                     // We only surface the *loaded* dependents here — the
@@ -430,7 +485,7 @@ Dialog {
                 if (root.mode === "installGate") {
                     var ivPhrase = root.upgradeTargetVersion.length > 0
                                    ? " v" + root.upgradeTargetVersion : "";
-                    var iHead = "Install '" + _label + "'" + ivPhrase + ".";
+                    var iHead = "Install '" + _label + "'" + ivPhrase + d.trustClause() + ".";
                     // The dep-change list below spells out the transitive set.
                     // When it's empty, say so plainly so a bare install still
                     // reads as a deliberate, complete confirmation.
@@ -497,6 +552,7 @@ Dialog {
         }
 
         Rectangle {
+            objectName: "confirmationDialog." + root.mode + ".message"
             Layout.fillWidth: true
             color: "#1e1e1e"
             radius: 4
@@ -681,7 +737,16 @@ Dialog {
                             color: "#e0e0e0"
                             font.pixelSize: 13
                             elide: Text.ElideMiddle
+                            objectName: "confirmationDialog.change." + (modelData.name || "")
+                            Layout.maximumWidth: Math.ceil(implicitWidth)
                         }
+
+                        InstallTrustMark {
+                            objectName: "confirmationDialog.trust." + modelData.name
+                            verdict: d.verdictFor(modelData.name)
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
                 }
             }
@@ -716,6 +781,7 @@ Dialog {
                     selectionObjectName: "confirmationDialog.optional." + modelData.name
                     selected: root.isOptionalSelected(modelData)
                     selectedVersion: root.optionalPickedVersions[modelData.name] || ""
+                    trustVerdict: d.verdictFor(modelData.name)
                     onSelectionToggled: function(checked) {
                         var selected = Object.assign({}, root.optionalSelection);
                         selected[modelData.name] = checked;
@@ -730,6 +796,12 @@ Dialog {
                     }
                 }
             }
+        }
+
+        InstallTrustNotice {
+            Layout.fillWidth: true
+            Layout.topMargin: 8
+            trust: d.trustApplies ? root.trust : ({})
         }
 
         RowLayout {
@@ -770,18 +842,41 @@ Dialog {
                     if (root.mode === "missingDeps") return "OK";
                     if (root.mode === "unloadCascade") return "Unload All";
                     if (root.mode === "upgradeCascade") {
-                        if (root.upgradeModeKind === 1) return "Downgrade";
-                        if (root.upgradeModeKind === 2) return "Reinstall";
-                        return "Upgrade";
+                        if (root.upgradeModeKind === 1) return "Downgrade" + d.anyway;
+                        if (root.upgradeModeKind === 2) return "Reinstall" + d.anyway;
+                        return "Upgrade" + d.anyway;
                     }
-                    if (root.mode === "installGate") return "Install";
+                    if (root.mode === "installGate") return "Install" + d.anyway;
                     return "OK";
+                }
+                variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
+                                                  : LogosButton.Variant.Primary
+                enabled: !root.resolutionPending && !d.trustHolds
+                         && !root.mandatoryChanges.some(function(c) { return !!c.error; })
+                onClicked: {
+                    root._explicitClose = true;
+                    root.continueClicked(root.moduleName);
+                    root.close();
+                }
+            }
+
+            LogosButton {
+                objectName: "confirmationDialog." + root.mode + ".trustAndConfirm"
+                visible: d.canTrustPublishers
+                // "anyway" too when trusting leaves something unsigned or unchecked.
+                text: {
+                    if (root.mode === "upgradeCascade") {
+                        if (root.upgradeModeKind === 1) return "Trust & downgrade" + d.anyway;
+                        if (root.upgradeModeKind === 2) return "Trust & reinstall" + d.anyway;
+                        return "Trust & upgrade" + d.anyway;
+                    }
+                    return "Trust & install" + d.anyway;
                 }
                 variant: LogosButton.Variant.Primary
                 enabled: !root.resolutionPending && !root.mandatoryChanges.some(function(c) { return !!c.error; })
                 onClicked: {
                     root._explicitClose = true;
-                    root.continueClicked(root.moduleName);
+                    root.trustAndContinueClicked(root.moduleName);
                     root.close();
                 }
             }

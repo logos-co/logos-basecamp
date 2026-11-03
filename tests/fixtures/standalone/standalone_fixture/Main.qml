@@ -1,25 +1,36 @@
 import QtQuick
 
-// Renders, then makes one call through the bridge to a core module it depends
-// on. tests/standalone-tests.mjs asserts both texts.
+// Renders, then calls two core modules it depends on through the bridge:
+// modules_state answers, and package_manager, which only Basecamp and the
+// Package Manager may call, refuses. tests/standalone-tests.mjs asserts all
+// three texts.
 Rectangle {
     color: "white"
 
     property string callResult: "Bridge call: pending"
+    property string packageManagerResult: "Package manager: pending"
+
+    function failed(payload) {
+        let parsed = null
+        try { parsed = JSON.parse(payload) } catch (e) {}
+        return parsed === null || (typeof parsed === "object" && "error" in parsed && !("result" in parsed))
+    }
 
     Column {
         anchors.centerIn: parent
         spacing: 8
         Text { text: "Standalone fixture loaded" }
         Text { text: callResult }
+        Text { text: packageManagerResult }
     }
 
     Component.onCompleted: {
+        logos.callModuleAsync("modules_state", "list_modules", [], function(payload) {
+            callResult = failed(payload) ? "Bridge call: failed " + payload : "Bridge call: ok"
+        }, 20000)
         logos.callModuleAsync("package_manager", "getInstalledPackages", [], function(payload) {
-            let parsed = null
-            try { parsed = JSON.parse(payload) } catch (e) {}
-            const failed = !parsed || ("error" in parsed && !("result" in parsed))
-            callResult = failed ? "Bridge call: failed " + payload : "Bridge call: ok"
+            packageManagerResult = failed(payload) ? "Package manager: refused"
+                                                   : "Package manager: REACHED " + payload
         }, 20000)
     }
 }

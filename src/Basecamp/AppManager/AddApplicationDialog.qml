@@ -5,6 +5,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import Basecamp.Backend 1.0
+import Basecamp.Common
 
 Dialog {
     id: root
@@ -12,11 +13,11 @@ Dialog {
     property var metadata: ({})
     property var requiredPackagesModel: null
     property int installStage: InstallStage.None
-    // Reason for a failed install, shown in the footer. Set by OverlayDialogs'
-    // onCatalogInstallFailed; cleared on each (re)open.
     property string installError: ""
+    property var trust: ({})
 
     signal installRequested(string name, string repositoryUrl)
+    signal trustAndInstallRequested(string name, string repositoryUrl)
     signal launchRequested(string name)
     signal versionChangeRequested(string name, string repositoryUrl, var versionPins, var optionalSelection, var optionalVersionPins)
     signal uninstallRequested(string name, string repositoryUrl)
@@ -28,6 +29,7 @@ Dialog {
         d.optionalPickedVersions = ({})
         root.installStage = root.metadata.installStage || InstallStage.None
         root.installError = ""   // clear any stale error from a prior open
+        root.trust = root.metadata.trust || ({})
         open()
     }
 
@@ -124,15 +126,37 @@ Dialog {
             }
             return "install"
         }
+        readonly property bool trustApplies: d.actionMode === "install" || d.actionMode === "update"
+                                             || d.actionMode === "downgrade" || d.actionMode === "reinstall"
+        readonly property bool trustPending: d.trustApplies && root.trust.pending === true
+        readonly property bool trustBlocked: d.trustApplies && root.trust.blocked === true
+        readonly property bool trustAsks: d.trustApplies && !d.trustPending && !d.trustBlocked
+                                          && root.trust.needsPrompt === true
+        readonly property bool canTrustPublishers: d.trustAsks && root.trust.canTrust === true
+        // Going on without trusting is going on "anyway", unless trusting
+        // would settle everything that asks.
+        readonly property bool anyway: d.trustAsks && root.trust.trustCoversAll !== true
+        // A package's verdict (its InstallTrustLine or InstallTrustMark):
+        // only for the plan on screen, once checked.
+        function verdictFor(name) {
+            return d.trustApplies && !d.trustPending && !root.metadata.resolutionPending
+                   && root.trust.byName ? root.trust.byName[name] : undefined
+        }
+        // About the plan on screen, not one being resolved; while checking,
+        // the button says so.
+        readonly property bool showTrust: (d.trustAsks || d.trustBlocked)
+                                          && !root.metadata.resolutionPending
+
         readonly property string actionText: {
-            if (root.metadata.resolutionPending && !d.installing && d.actionMode !== "launch")
+            if ((root.metadata.resolutionPending || d.trustPending) && !d.installing
+                && d.actionMode !== "launch")
                 return qsTr("Checking packages…")
             switch (d.actionMode) {
             case "installing": return d.stageLabel
-            case "install":    return qsTr("Install")
-            case "update":     return qsTr("Update")
-            case "downgrade":  return qsTr("Downgrade")
-            case "reinstall":  return qsTr("Reinstall")
+            case "install":    return d.anyway ? qsTr("Install anyway") : qsTr("Install")
+            case "update":     return d.anyway ? qsTr("Update anyway") : qsTr("Update")
+            case "downgrade":  return d.anyway ? qsTr("Downgrade anyway") : qsTr("Downgrade")
+            case "reinstall":  return d.anyway ? qsTr("Reinstall anyway") : qsTr("Reinstall")
             case "launch":     return qsTr("Launch")
             }
             return ""
@@ -154,7 +178,8 @@ Dialog {
             && !d.installing
             && d.installingBuckets === 0
             && (d.actionMode === "launch"
-                || (!root.metadata.resolutionPending && !d.hasResolutionErrors))
+                || (!root.metadata.resolutionPending && !d.hasResolutionErrors
+                    && !d.trustPending && !d.trustBlocked))
 
         readonly property int totalDeps:
             root.requiredPackagesModel ? root.requiredPackagesModel.visibleCount : 0
@@ -169,10 +194,16 @@ Dialog {
         readonly property int showcaseHeight:   200
         readonly property int versionRowHeight: 52
 
-        // ── Required-packages list ──
+        // ── Package list: the required rows, then the optional ones ──
         readonly property int depsRowHeight: 56
         readonly property int depsMaxRows:   6
         readonly property int depsWantedHeight: d.depsRowHeight * d.totalDeps
+        readonly property int optionalHeadingHeight: 40
+        readonly property int optionalWantedHeight: d.optionalPackages.length > 0
+            ? d.optionalHeadingHeight + d.depsRowHeight * d.optionalPackages.length : 0
+        readonly property int listWantedHeight: d.depsWantedHeight + d.optionalWantedHeight
+        readonly property int listCapHeight: d.depsRowHeight * d.depsMaxRows
+            + (d.optionalPackages.length > 0 ? d.optionalHeadingHeight + 3 * d.depsRowHeight : 0)
 
         readonly property int installFreshBuckets:
             root.requiredPackagesModel ? root.requiredPackagesModel.installFreshCount : 0
@@ -378,11 +409,18 @@ Dialog {
                 }
 
                 LogosText {
+                    objectName: "addApplicationDialog.name"
                     Layout.alignment: Qt.AlignHCenter
                     text: d.targetDisplayName
                     font.pixelSize: Theme.typography.primaryText
                     font.weight: Theme.typography.weightMedium
                     color: Theme.palette.text
+                }
+
+                InstallTrustLine {
+                    objectName: "addApplicationDialog.trust." + d.targetName
+                    Layout.alignment: Qt.AlignHCenter
+                    verdict: d.verdictFor(d.targetName)
                 }
             }
         }
@@ -410,90 +448,131 @@ Dialog {
             }
         }
 
-        // ─── Version row: picker | date | size | Install | overflow ───
+        // ─── Version row: version | date | size | Install (| Trust & install) ───
+        // The answers go under the version when they don't fit beside it.
         Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
-            Layout.preferredHeight: d.versionRowHeight
-            Layout.minimumHeight: d.versionRowHeight
+            Layout.preferredHeight: Math.max(d.versionRowHeight,
+                                             versionGrid.implicitHeight + Theme.spacing.medium)
+            Layout.minimumHeight: Layout.preferredHeight
             color: Theme.palette.background
             radius: Theme.spacing.radiusMedium
 
-            RowLayout {
-                anchors.fill: parent
+            GridLayout {
+                id: versionGrid
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Theme.spacing.medium
                 anchors.rightMargin: Theme.spacing.small
-                spacing: Theme.spacing.large
+                columns: versionLabel.implicitWidth + answers.implicitWidth + columnSpacing <= width ? 2 : 1
+                columnSpacing: Theme.spacing.large
+                rowSpacing: Theme.spacing.small
 
-                LogosText {
-                    Layout.alignment: Qt.AlignVCenter
-                    text: d.targetVersion ? ("Version " + d.targetVersion) : ""
-                    color: Theme.palette.text
-                    font.pixelSize: Theme.typography.secondaryText
-                    font.weight: Theme.typography.weightMedium
-                }
-                LogosText {
-                    objectName: "addApplicationDialog.releasedText"
-                    Layout.alignment: Qt.AlignVCenter
-                    text: d.releasedText
-                    color: Theme.palette.textTertiary
-                    font.pixelSize: Theme.typography.secondaryText
-                }
-                LogosText {
-                    Layout.alignment: Qt.AlignVCenter
-                    text: d.sizeText
-                    color: Theme.palette.textTertiary
-                    font.pixelSize: Theme.typography.secondaryText
-                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.large
 
-                Item { Layout.fillWidth: true }
-
-                LogosButton {
-                    id: uninstallButton
-                    objectName: "addApplicationDialog.uninstallButton"
-                    Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredHeight: 40
-                    Layout.leftMargin: Theme.spacing.small
-                    Layout.rightMargin: Theme.spacing.small
-                    visible: d.canUninstall
-                    text: qsTr("Uninstall")
-                    onClicked: {
-                        root.uninstallRequested(d.targetName, d.targetRepoUrl)
-                        root.close()
+                    LogosText {
+                        id: versionLabel
+                        Layout.alignment: Qt.AlignVCenter
+                        text: d.targetVersion ? ("Version " + d.targetVersion) : ""
+                        color: Theme.palette.text
+                        font.pixelSize: Theme.typography.secondaryText
+                        font.weight: Theme.typography.weightMedium
                     }
-                    contentItem: LogosText {
-                        text: uninstallButton.text
-                        color: Theme.palette.error
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                    // Where the buttons need the room, these give it up first.
+                    LogosText {
+                        objectName: "addApplicationDialog.releasedText"
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.minimumWidth: 0
+                        text: d.releasedText
+                        color: Theme.palette.textTertiary
+                        font.pixelSize: Theme.typography.secondaryText
+                        elide: Text.ElideRight
                     }
-                    background: Item {}
+                    LogosText {
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.minimumWidth: 0
+                        text: d.sizeText
+                        color: Theme.palette.textTertiary
+                        font.pixelSize: Theme.typography.secondaryText
+                        elide: Text.ElideRight
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
 
-                LogosButton {
-                    id: actionButton
-                    objectName: "addApplicationDialog.primaryButton"
-                    Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: 110
-                    Layout.preferredHeight: 40
-                    enabled: d.actionEnabled
-                    text: d.actionText
-                    onClicked: {
-                        if (d.actionMode === "launch") {
-                            root.launchRequested(d.targetName)
+                RowLayout {
+                    id: answers
+                    objectName: "addApplicationDialog.answers"
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    spacing: Theme.spacing.large
+
+                    LogosButton {
+                        id: uninstallButton
+                        objectName: "addApplicationDialog.uninstallButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.preferredHeight: 40
+                        Layout.leftMargin: Theme.spacing.small
+                        Layout.rightMargin: Theme.spacing.small
+                        visible: d.canUninstall
+                        text: qsTr("Uninstall")
+                        onClicked: {
+                            root.uninstallRequested(d.targetName, d.targetRepoUrl)
                             root.close()
-                            return
                         }
-                        root.installRequested(d.targetName, d.targetRepoUrl)
+                        contentItem: LogosText {
+                            text: uninstallButton.text
+                            color: Theme.palette.error
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Item {}
                     }
-                    background: Rectangle {
-                        radius: Theme.spacing.radiusXlarge
-                        color: !actionButton.enabled
-                                   ? Theme.palette.backgroundMuted
-                                   : (actionButton.isActive
-                                          ? Theme.palette.accentOrangeMid
-                                          : Theme.palette.accentOrange)
+
+                    LogosButton {
+                        id: actionButton
+                        objectName: "addApplicationDialog.primaryButton"
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.preferredWidth: Math.max(110, implicitWidth)
+                        Layout.minimumWidth: Layout.preferredWidth
+                        Layout.preferredHeight: 40
+                        enabled: d.actionEnabled
+                        text: d.actionText
+                        onClicked: {
+                            if (d.actionMode === "launch") {
+                                root.launchRequested(d.targetName)
+                                root.close()
+                                return
+                            }
+                            root.installRequested(d.targetName, d.targetRepoUrl)
+                        }
+                        variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
+                                                      : LogosButton.Variant.Primary
+                    }
+
+                    LogosButton {
+                        objectName: "addApplicationDialog.trustAndInstallButton"
+                        visible: d.canTrustPublishers
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.preferredWidth: Math.max(110, implicitWidth)
+                        Layout.minimumWidth: Layout.preferredWidth
+                        Layout.preferredHeight: 40
+                        enabled: d.actionEnabled
+                        // "anyway" too when trusting leaves something unsigned or unchecked.
+                        text: {
+                            switch (d.actionMode) {
+                            case "update":    return d.anyway ? qsTr("Trust & update anyway") : qsTr("Trust & update")
+                            case "downgrade": return d.anyway ? qsTr("Trust & downgrade anyway") : qsTr("Trust & downgrade")
+                            case "reinstall": return d.anyway ? qsTr("Trust & reinstall anyway") : qsTr("Trust & reinstall")
+                            }
+                            return d.anyway ? qsTr("Trust & install anyway") : qsTr("Trust & install")
+                        }
+                        onClicked: root.trustAndInstallRequested(d.targetName, d.targetRepoUrl)
+                        variant: LogosButton.Variant.Primary
                     }
                 }
             }
@@ -523,6 +602,7 @@ Dialog {
         }
 
         LogosListView {
+            id: packageList
             objectName: "addApplicationDialog.requiredPackages"
 
             // Full-bleed, unlike every other section: the scrollbar is an
@@ -532,12 +612,11 @@ Dialog {
             // bar hugging the dialog edge and the content clear of it.
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.preferredHeight: Math.min(d.depsWantedHeight,
-                                             d.depsRowHeight * d.depsMaxRows)
+            Layout.preferredHeight: Math.min(d.listWantedHeight, d.listCapHeight)
             Layout.maximumHeight: Layout.preferredHeight
             Layout.minimumHeight: d.depsRowHeight
 
-            interactive: d.depsWantedHeight > height
+            interactive: d.listWantedHeight > height
             spacing: 0
             model: root.requiredPackagesModel
 
@@ -553,6 +632,7 @@ Dialog {
 
                 appRow: model
                 installing: d.installing
+                trustVerdict: d.verdictFor(model.name)
 
                 onVersionPicked: function(rowName, newVersion) {
                     var nextPicks = Object.assign({}, d.pickedVersions)
@@ -562,61 +642,75 @@ Dialog {
                     root.refreshPreview()
                 }
             }
-        }
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: optionalHeading.implicitHeight + d.depsRowHeight + spacing
-            visible: d.optionalPackages.length > 0
-            LogosText {
-                id: optionalHeading
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.spacing.large
-                Layout.rightMargin: Theme.spacing.large
-                text: qsTr("Optional Packages")
-                font.pixelSize: Theme.typography.panelTitleText
-                font.weight: Theme.typography.weightMedium
-                color: Theme.palette.text
-            }
-            LogosListView {
+            footer: Item {
                 objectName: "addApplicationDialog.optionalPackages"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredHeight: Math.min(d.optionalPackages.length * d.depsRowHeight,
-                                                 3 * d.depsRowHeight)
-                Layout.maximumHeight: Layout.preferredHeight
-                Layout.minimumHeight: d.depsRowHeight
-                interactive: contentHeight > height
-                clip: true
-                spacing: 0
-                model: d.optionalPackages
-                delegate: PackageRowDelegate {
-                    required property var modelData
-                    width: ListView.view ? ListView.view.width : 0
-                    height: d.depsRowHeight
-                    // A package that comes only with an optional sits under it, without a checkbox.
-                    leftPadding: Theme.spacing.large + (modelData.requiredFor ? 24 + Theme.spacing.small : 0)
-                    rightPadding: Theme.spacing.large
-                    appRow: modelData
-                    installing: d.installing
-                    selectable: !modelData.requiredFor
-                    selectionObjectName: "addApplicationDialog.optional." + modelData.name
-                    selected: d.isOptionalSelected(modelData)
-                    selectedVersion: d.optionalPickedVersions[modelData.name] || ""
-                    onSelectionToggled: function(checked) {
-                        var selected = Object.assign({}, d.optionalSelection)
-                        selected[modelData.name] = checked
-                        d.optionalSelection = selected
-                        root.refreshPreview()
-                    }
-                    onVersionPicked: function(name, version) {
-                        var picks = Object.assign({}, d.optionalPickedVersions)
-                        picks[name] = version
-                        d.optionalPickedVersions = picks
-                        root.refreshPreview()
+                width: packageList.width
+                visible: d.optionalPackages.length > 0
+                height: d.optionalWantedHeight
+
+                LogosText {
+                    x: Theme.spacing.large
+                    width: parent.width - 2 * Theme.spacing.large
+                    height: d.optionalHeadingHeight
+                    verticalAlignment: Text.AlignBottom
+                    bottomPadding: Theme.spacing.small
+                    text: qsTr("Optional Packages")
+                    font.pixelSize: Theme.typography.panelTitleText
+                    font.weight: Theme.typography.weightMedium
+                    color: Theme.palette.text
+                }
+
+                Repeater {
+                    model: d.optionalPackages
+                    delegate: PackageRowDelegate {
+                        required property var modelData
+                        required property int index
+                        objectName: "addApplicationDialog.optionalRow." + modelData.name
+                        y: d.optionalHeadingHeight + index * d.depsRowHeight
+                        width: packageList.width
+                        height: d.depsRowHeight
+                        // A package that comes only with an optional sits under it, without a checkbox.
+                        leftPadding: Theme.spacing.large + (modelData.requiredFor ? 24 + Theme.spacing.small : 0)
+                        rightPadding: Theme.spacing.large
+                        appRow: modelData
+                        installing: d.installing
+                        selectable: !modelData.requiredFor
+                        selectionObjectName: "addApplicationDialog.optional." + modelData.name
+                        selected: d.isOptionalSelected(modelData)
+                        selectedVersion: d.optionalPickedVersions[modelData.name] || ""
+                        trustVerdict: d.verdictFor(modelData.name)
+                        onSelectionToggled: function(checked) {
+                            var selected = Object.assign({}, d.optionalSelection)
+                            selected[modelData.name] = checked
+                            d.optionalSelection = selected
+                            root.refreshPreview()
+                        }
+                        onVersionPicked: function(name, version) {
+                            var picks = Object.assign({}, d.optionalPickedVersions)
+                            picks[name] = version
+                            d.optionalPickedVersions = picks
+                            root.refreshPreview()
+                        }
                     }
                 }
+            }
+        }
+
+        // ─── Who signed it: the summary under the rows ───
+        ColumnLayout {
+            objectName: "addApplicationDialog.trust"
+            visible: d.showTrust
+            Layout.fillWidth: true
+            Layout.fillHeight: false
+            Layout.leftMargin: Theme.spacing.large
+            Layout.rightMargin: Theme.spacing.large
+            Layout.topMargin: Theme.spacing.medium
+            spacing: Theme.spacing.small
+
+            InstallTrustNotice {
+                Layout.fillWidth: true
+                trust: d.showTrust ? root.trust : ({})
             }
         }
 

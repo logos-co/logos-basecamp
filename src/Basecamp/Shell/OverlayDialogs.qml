@@ -111,6 +111,7 @@ Item {
         mode: "upgradeCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames(), upgradeCascadeDialog.optionalPickedVersions)
+        onTrustAndContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames(), upgradeCascadeDialog.optionalPickedVersions, true)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
         onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
     }
@@ -125,6 +126,7 @@ Item {
         mode: "installGate"
         displayNameLookup: _dialogDeps.displayNameLookup
         onContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames(), installGateDialog.optionalPickedVersions)
+        onTrustAndContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames(), installGateDialog.optionalPickedVersions, true)
         onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
@@ -201,6 +203,10 @@ Item {
         onInstallRequested: function(name, repositoryUrl) {
             addApplicationDialog.installStage = InstallStage.Downloading
             backend.confirmCatalogInstall(name, repositoryUrl)
+        }
+        onTrustAndInstallRequested: function(name, repositoryUrl) {
+            addApplicationDialog.installStage = InstallStage.Downloading
+            backend.confirmCatalogInstall(name, repositoryUrl, true)
         }
         onLaunchRequested: function(name) {
             backend.onAppLauncherClicked(name)
@@ -302,6 +308,20 @@ Item {
                                                   depChangesResolved);
         }
 
+        // Each dialog hears only its own flow's verdict: another install of
+        // the same package is not about the plan this one shows.
+        function onInstallTrustUpdated(flow, name, trust) {
+            if (flow === "app") {
+                if (addApplicationDialog.visible && addApplicationDialog.metadata.name === name)
+                    addApplicationDialog.trust = trust;
+                return;
+            }
+            if (installGateDialog.visible && installGateDialog.moduleName === name)
+                installGateDialog.trust = trust;
+            if (upgradeCascadeDialog.visible && upgradeCascadeDialog.moduleName === name)
+                upgradeCascadeDialog.trust = trust;
+        }
+
         function onOptionalGatePreviewUpdated(name, changes, pending) {
             const dialog = installGateDialog.visible && installGateDialog.moduleName === name
                 ? installGateDialog : upgradeCascadeDialog;
@@ -332,6 +352,7 @@ Item {
             } else if (addApplicationDialog.metadata.name === metadata.name) {
                 // Version re-resolve while the same app's dialog is already open.
                 addApplicationDialog.metadata = metadata;
+                addApplicationDialog.trust = metadata.trust || ({});
                 addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
             }
         }
@@ -340,6 +361,7 @@ Item {
             if (!addApplicationDialog.visible) return;
             if (addApplicationDialog.metadata.name !== metadata.name) return;
             addApplicationDialog.metadata = metadata;
+            addApplicationDialog.trust = metadata.trust || ({});
             addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
         }
 

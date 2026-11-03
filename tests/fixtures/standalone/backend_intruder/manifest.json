@@ -1,7 +1,7 @@
 {
   "author": "",
   "category": "testing",
-  "dependencies": ["package_manager"],
+  "dependencies": ["modules_state", "package_manager"],
   "description": "Standalone-mode test fixture: another app trying module_backend_fixture's backend (test artifact, not a real app)",
   "display_name": "Backend Intruder",
   "icon": "",

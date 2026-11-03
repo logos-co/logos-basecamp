@@ -276,7 +276,7 @@ TestCase {
         dlg.detailsLookup = function (name) {
             return { moduleName: name, version: "1.2.3",
                      repositoryUrl: "https://packages.example.org/logos-repo.json",
-                     verified: false };
+                     trust: { status: "unsigned" } };
         };
         dlg.openWith({ dispatchId: "d-2", intent: "wallet.send", requesterName: "chat_ui", providers: testCase.twoProviders });
 
@@ -305,6 +305,38 @@ TestCase {
         dlg.destroy();
     }
 
+    // The panel says who signed the installed copy, as the install dialogs do.
+    // It used to say "Unsigned" of every provider, Logos-signed ones included:
+    // a constant from before anything was signed.
+    function test_details_say_who_signed_the_provider() {
+        var dlg = dialogComp.createObject(testCase);
+        var signers = { wallet_a: { status: "trusted", publisher: "Logos" },
+                        wallet_b: { status: "unsigned" } };
+        dlg.detailsLookup = function (name) {
+            return { moduleName: name, version: "1.2.3", trust: signers[name] };
+        };
+        dlg.openWith({ dispatchId: "d-5", intent: "wallet.send", requesterName: "chat_ui", providers: testCase.twoProviders });
+        waitForRendering(testCase);
+
+        var said = {};
+        for (var name in signers) {
+            var btn = null;
+            tryVerify(function () {
+                btn = deepFind(dlg.contentItem, "intentProviderDetails_" + name);
+                return btn !== null && btn.width > 0;
+            }, 5000, name + "'s Details button exists");
+            mouseClick(btn);
+            var line = deepFind(dlg.contentItem, "intentProviderTrust_" + name);
+            tryVerify(function () { return line !== null && line.visible; }, 5000, name + "'s signer line");
+            said[name] = deepFind(line, "installTrust.lineWords").text;
+            mouseClick(btn);
+        }
+        compare(said.wallet_a, "Signed by Logos");
+        compare(said.wallet_b, "Not signed: nobody vouches for it");
+
+        dlg.destroy();
+    }
+
     // The Details panel's "From" row. It used to print the catalog URL into an
     // elided LogosText, so on GitHub it read as a truncated
     // "https://raw.githubusercontent.com/logos-co/logos-mod…" — unreadable,
@@ -317,7 +349,7 @@ TestCase {
     function test_details_shows_the_resolved_link_and_lets_it_be_copied() {
         var dlg = dialogComp.createObject(testCase);
         dlg.detailsLookup = function (name) {
-            return { moduleName: name, version: "1.2.3", verified: false,
+            return { moduleName: name, version: "1.2.3", trust: { status: "unsigned" },
                      repositoryUrl: "https://raw.githubusercontent.com/logos-co/"
                                   + "logos-modules-release/refs/heads/main/logos-repo.json",
                      repositoryLabel: "Logos Official Modules",
@@ -357,7 +389,7 @@ TestCase {
         var dlg = dialogComp.createObject(testCase);
         dlg.detailsLookup = function (name) {
             return { moduleName: name, version: "1.0.0", installType: "embedded",
-                     verified: false };
+                     trust: { status: "unsigned" } };
         };
         dlg.openWith({ dispatchId: "d-4", intent: "wallet.send", requesterName: "chat_ui",
                        providers: testCase.twoProviders });

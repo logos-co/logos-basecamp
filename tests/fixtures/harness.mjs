@@ -312,6 +312,18 @@ export async function installViaPmu(app, lgxPath, opts = {}) {
     : "confirmationDialog.installGate.cancel";
   const button = await findByObjectName(inspector, buttonName);
   if (!button) throw new Error(`installViaPmu: ${buttonName} not found`);
+  // Confirm waits for the check of who signed the package; Basecamp refuses
+  // a confirmation that comes before it.
+  while (confirm) {
+    const res = await inspector.send("evaluate", {
+      objectId: button.id, expression: "enabled",
+    });
+    if (res.result === true) break;
+    if (Date.now() >= deadline) {
+      throw new Error(`installViaPmu: ${buttonName} still disabled after ${timeoutMs}ms`);
+    }
+    await sleep(intervalMs);
+  }
   const clicked = await inspector.send("callMethod", {
     objectId: button.id, method: "clicked",
   });
