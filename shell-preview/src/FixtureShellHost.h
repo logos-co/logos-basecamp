@@ -25,6 +25,7 @@ public:
     void     restartUiModule(const QString& name) override;
     void     setCurrentVisibleApp(const QString& name) override;
     QString  displayNameFor(const QString& name) const override;
+    QString  themesDirectory() const override;
     void     setObserver(IShellObserver* observer) override;
 
 private:

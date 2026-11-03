@@ -59,6 +59,12 @@ inline QString modulesDirectory()
     return baseDirectory() + "/modules";
 }
 
+// Installed themes and the theme choice (Settings → Appearance).
+inline QString themesDirectory()
+{
+    return baseDirectory() + "/themes";
+}
+
 // Persistence directories for module instance state.
 // Core modules (process-isolated) persist under module_data/.
 inline QString moduleDataDirectory()

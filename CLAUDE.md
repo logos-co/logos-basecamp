@@ -158,6 +158,7 @@ CoreModuleManager is constructed first, UIPluginManager second (receives CoreMod
 | `src/Basecamp/Sidebar/SidebarPanel.qml` | App icons + system nav buttons |
 | `src/Basecamp/Settings/AppsInspectorView.qml` | Apps Inspector (UI plugins) — view-only, load/unload; uninstall lives in PMUI |
 | `src/Basecamp/Settings/ModuleInspectorView.qml` | Module Inspector (core modules) — view-only, load/unload + stats; uninstall lives in PMUI |
+| `src/Basecamp/Settings/AppearanceView.qml` | Appearance: theme picker, "Add custom theme…" and Remove; installs and switches via the `themeManager` context property (the design system's `Logos::ThemeManager`, set on the content view only in `MainContainer.cpp`); the view only emits signals |
 | `src/Basecamp/Shell/ContentViews.qml` | StackLayout switching between Dashboard, Repositories, Apps/Module Inspector |
 
 ## QML Inspector (MCP)

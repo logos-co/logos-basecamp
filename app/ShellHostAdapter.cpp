@@ -1,6 +1,7 @@
 #include "ShellHostAdapter.h"
 
 #include "MainUIBackend.h"
+#include "utils/LogosBasecampPaths.h"
 
 #include <QWidget>
 
@@ -90,6 +91,11 @@ void ShellHostAdapter::setCurrentVisibleApp(const QString& name)
 QString ShellHostAdapter::displayNameFor(const QString& name) const
 {
     return m_backend ? m_backend->displayNameFor(name) : name;
+}
+
+QString ShellHostAdapter::themesDirectory() const
+{
+    return LogosBasecampPaths::themesDirectory();
 }
 
 void ShellHostAdapter::setObserver(IShellObserver* observer)
