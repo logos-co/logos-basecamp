@@ -273,4 +273,38 @@ TestCase {
         verify(button)
         verify(button.enabled)
     }
+
+    // The page fills the width like the other Settings views, with the
+    // Built-in badge and Remove at the right edge of each row.
+    function test_wide_page_fills_the_width_with_actions_on_the_right() {
+        const view = createTemporaryObject(viewComp, testCase.Window.window.contentItem,
+                                           { width: 1600 })
+        verify(view)
+        waitForRendering(view)
+        const checks = [["test.sample", "appearance.remove.test.sample"],
+                        ["dark", "appearance.builtin.dark"]]
+        for (let i = 0; i < checks.length; ++i) {
+            const r = row(view, checks[i][0])
+            verify(r.width > 1400, checks[i][0] + " row is only " + r.width + " px wide")
+            const action = findChild(view, checks[i][1])
+            verify(action.visible, checks[i][1])
+            const gap = r.width - action.mapToItem(r, action.width, 0).x
+            verify(gap >= 0 && gap < 40, checks[i][1] + " is " + gap + " px from the right edge")
+        }
+    }
+
+    // The section is the only place the docked-layout shortcut is written down.
+    function test_docked_layout_section_names_the_platform_shortcut() {
+        const view = makeView()
+        const title = findChild(view, "appearance.dockedLayout.title")
+        const text = findChild(view, "appearance.dockedLayout.description")
+        verify(title && title.visible)
+        verify(text && text.visible)
+        compare(title.text, "Docked layout (experimental)")
+        const shortcut = Qt.platform.os === "osx" ? "⇧⌘L" : "Ctrl+Shift+L"
+        verify(text.text.indexOf(shortcut) >= 0, text.text)
+        verify(text.text.indexOf("two or more apps") >= 0, text.text)
+        verify(text.text.indexOf("%1") < 0, "shortcut placeholder left unfilled")
+        verify(text.lineCount > 1, "description should wrap, not run off the page")
+    }
 }

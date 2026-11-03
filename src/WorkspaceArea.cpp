@@ -161,6 +161,15 @@ private:
     CornerCutOverlay* m_cornerOverlay = nullptr;
 };
 
+// Movable only in side-by-side: a drop there can only split. In tabbed mode a
+// drag would pull the app out of the tab bar into a split.
+QDockWidget::DockWidgetFeatures appDockFeatures(bool sideBySide)
+{
+    QDockWidget::DockWidgetFeatures f = QDockWidget::DockWidgetClosable;
+    if (sideBySide) f |= QDockWidget::DockWidgetMovable;
+    return f;
+}
+
 constexpr int kTabBarInsetPx = 24;
 const QString kTabBarSpacerName = QStringLiteral("__tabbar_spacer__");
 
@@ -290,9 +299,8 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
     }
     installEventFilter(this);
 
-    // DEV: Ctrl+Shift+L flips between tabbed and side-by-side. Hidden
-    // toggle, no UI surface — wire a button to toggleLayoutModeForTesting()
-    // once we're happy with the behavior.
+    // Ctrl+Shift+L (Cmd on macOS) flips between tabbed and side-by-side.
+    // Experimental; Settings → Appearance documents it.
     auto* sc = new QShortcut(QKeySequence("Ctrl+Shift+L"), this);
     connect(sc, &QShortcut::activated, this,
             &WorkspaceArea::toggleLayoutModeForTesting);
@@ -301,76 +309,97 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
 void WorkspaceArea::toggleLayoutModeForTesting()
 {
     QTimer::singleShot(0, this, [this]() {
-        if (m_dockOrder.size() < 2) return;
-        m_sideBySide = !m_sideBySide;
-
-        QMainWindow::DockOptions opts = QMainWindow::AllowNestedDocks
-                                      | QMainWindow::AnimatedDocks;
-        if (!m_sideBySide) opts |= QMainWindow::AllowTabbedDocks;
-        setDockOptions(opts);
-
-        for (const QString& n : m_dockOrder)
-            if (auto* d = m_docks.value(n)) removeDockWidget(d);
-
-        QDockWidget* prev = nullptr;
-        for (int i = 0; i < m_dockOrder.size(); ++i) {
-            auto* d = m_docks.value(m_dockOrder.at(i));
-            if (!d) continue;
-
-            // Swap the title bar to match the new mode: Qt's default in
-            // grid (built-in drag + close ×), ZeroTitleWidget in tabbed.
-            if (auto* prevBar = d->titleBarWidget()) prevBar->deleteLater();
-            d->setTitleBarWidget(m_sideBySide
-                ? nullptr
-                : static_cast<QWidget*>(new ZeroTitleWidget(d)));
-
-            if (!prev) {
-                addDockWidget(Qt::LeftDockWidgetArea, d);
-            } else if (m_sideBySide) {
-                placeDockInGrid(d, i);
-            } else {
-                tabifyDockWidget(prev, d);
-            }
-            d->setVisible(true);  // removeDockWidget hides as a side effect
-            if (auto* w = d->widget()) w->show();
-            prev = d;
-        }
-        m_firstDock = m_docks.value(m_dockOrder.first());
-
-        if (m_sideBySide) {
-            // Equalize row widths + row heights so each cell is roughly the
-            // same size. Rows aren't uniform on remove (Qt collapses splits),
-            // but on toggle we get a clean grid.
-            const int rows = (m_dockOrder.size() + kColsPerRow - 1) / kColsPerRow;
-            QList<QDockWidget*> firstOfEachRow;
-            for (int r = 0; r < rows; ++r) {
-                if (auto* d = m_docks.value(m_dockOrder.at(r * kColsPerRow)))
-                    firstOfEachRow.append(d);
-            }
-            if (rows > 1) {
-                const int rowH = qMax(1, height() / rows);
-                QList<int> rowHeights(firstOfEachRow.size(), rowH);
-                resizeDocks(firstOfEachRow, rowHeights, Qt::Vertical);
-            }
-            // Equalize columns within each row.
-            for (int r = 0; r < rows; ++r) {
-                QList<QDockWidget*> row;
-                const int start = r * kColsPerRow;
-                const int end   = qMin(start + kColsPerRow, int(m_dockOrder.size()));
-                for (int i = start; i < end; ++i)
-                    if (auto* d = m_docks.value(m_dockOrder.at(i)))
-                        row.append(d);
-                if (row.size() > 1) {
-                    const int colW = qMax(1, width() / row.size());
-                    QList<int> colWidths(row.size(), colW);
-                    resizeDocks(row, colWidths, Qt::Horizontal);
-                }
-            }
-        }
-
-        QTimer::singleShot(0, this, [this]() { styleAllTabBars(); });
-        emit dockLayoutChanged();
+        if (m_sideBySide) applyLayoutMode(false);
+        else if (m_dockOrder.size() >= 2) applyLayoutMode(true);
     });
+}
+
+void WorkspaceArea::applyLayoutMode(bool sideBySide)
+{
+    m_sideBySide = sideBySide;
+
+    QMainWindow::DockOptions opts = QMainWindow::AllowNestedDocks
+                                  | QMainWindow::AnimatedDocks;
+    if (!m_sideBySide) opts |= QMainWindow::AllowTabbedDocks;
+    setDockOptions(opts);
+
+    for (const QString& n : m_dockOrder)
+        if (auto* d = m_docks.value(n)) removeDockWidget(d);
+    if (m_welcomeDock) {
+        removeDockWidget(m_welcomeDock);
+        removeDockWidget(m_tabBarSpacer);
+    }
+
+    QDockWidget* prev = nullptr;
+    if (m_welcomeDock && !m_sideBySide) {
+        addDockWidget(Qt::LeftDockWidgetArea, m_welcomeDock);
+        tabifyDockWidget(m_welcomeDock, m_tabBarSpacer);
+        m_welcomeDock->setVisible(true);
+        m_tabBarSpacer->setVisible(true);
+        prev = m_welcomeDock;
+    }
+    for (int i = 0; i < m_dockOrder.size(); ++i) {
+        auto* d = m_docks.value(m_dockOrder.at(i));
+        if (!d) continue;
+
+        if (auto* prevBar = d->titleBarWidget()) prevBar->deleteLater();
+        d->setTitleBarWidget(m_sideBySide
+            ? nullptr
+            : static_cast<QWidget*>(new ZeroTitleWidget(d)));
+        d->setFeatures(appDockFeatures(m_sideBySide));
+
+        if (!prev) {
+            addDockWidget(Qt::LeftDockWidgetArea, d);
+        } else if (m_sideBySide) {
+            placeDockInGrid(d, i);
+        } else {
+            tabifyDockWidget(prev, d);
+        }
+        d->setVisible(true);  // removeDockWidget hides as a side effect
+        if (auto* w = d->widget()) w->show();
+        prev = d;
+    }
+    m_firstDock = (m_welcomeDock && !m_sideBySide)
+        ? m_welcomeDock
+        : (m_dockOrder.isEmpty() ? nullptr : m_docks.value(m_dockOrder.first()));
+    if (!m_sideBySide && !m_dockOrder.isEmpty())
+        if (auto* d = m_docks.value(m_dockOrder.last())) d->raise();
+
+    if (m_sideBySide) {
+        // Equalize row widths + row heights so each cell is roughly the
+        // same size. Rows aren't uniform on remove (Qt collapses splits),
+        // but on toggle we get a clean grid.
+        const int rows = (m_dockOrder.size() + kColsPerRow - 1) / kColsPerRow;
+        QList<QDockWidget*> firstOfEachRow;
+        for (int r = 0; r < rows; ++r) {
+            if (auto* d = m_docks.value(m_dockOrder.at(r * kColsPerRow)))
+                firstOfEachRow.append(d);
+        }
+        if (rows > 1) {
+            const int rowH = qMax(1, height() / rows);
+            QList<int> rowHeights(firstOfEachRow.size(), rowH);
+            resizeDocks(firstOfEachRow, rowHeights, Qt::Vertical);
+        }
+        // Equalize columns within each row.
+        for (int r = 0; r < rows; ++r) {
+            QList<QDockWidget*> row;
+            const int start = r * kColsPerRow;
+            const int end   = qMin(start + kColsPerRow, int(m_dockOrder.size()));
+            for (int i = start; i < end; ++i)
+                if (auto* d = m_docks.value(m_dockOrder.at(i)))
+                    row.append(d);
+            if (row.size() > 1) {
+                const int colW = qMax(1, width() / row.size());
+                QList<int> colWidths(row.size(), colW);
+                resizeDocks(row, colWidths, Qt::Horizontal);
+            }
+        }
+    }
+
+    QTimer::singleShot(0, this, [this]() { styleAllTabBars(); });
+    syncWelcomeVisibility();
+    updateQmlPluginActiveStates();
+    emit dockLayoutChanged();
 }
 
 WorkspaceArea::~WorkspaceArea() = default;
@@ -428,12 +457,7 @@ void WorkspaceArea::addPluginDock(QWidget* pluginWidget,
     dock->setObjectName(moduleName);
     dock->setWidget(new DockCard(pluginWidget, dock));
     dock->setAllowedAreas(Qt::AllDockWidgetAreas);
-    // Closable but NOT movable: dragging a tab out of the bar is Qt's dock-drag,
-    // and it re-docks the plugin into side-by-side behind the app's back. The
-    // tabbed/side-by-side choice belongs to Ctrl+Shift+L and nothing else.
-    // Reordering tabs within the bar is separate (QTabBar::setMovable) and
-    // still works.
-    dock->setFeatures(QDockWidget::DockWidgetClosable);
+    dock->setFeatures(appDockFeatures(m_sideBySide));
     if (m_sideBySide) {
         dock->setTitleBarWidget(nullptr);
     } else {
@@ -480,11 +504,13 @@ void WorkspaceArea::removePluginDock(const QString& name)
     dock->deleteLater();
 
     if (m_firstDock == dock) {
-        m_firstDock = m_welcomeDock
+        m_firstDock = (m_welcomeDock && !m_sideBySide)
             ? m_welcomeDock
             : (m_dockOrder.isEmpty() ? nullptr : m_docks.value(m_dockOrder.first()));
     }
 
+    if (m_sideBySide && m_dockOrder.isEmpty() && m_welcomeDock)
+        applyLayoutMode(false);
 
     QTimer::singleShot(0, this, [this]() { styleAllTabBars(); });
     updateQmlPluginActiveStates();
@@ -772,8 +798,9 @@ void WorkspaceArea::syncWelcomeVisibility()
 {
     if (!m_welcomeWidget) return;
 
-    bool welcomeIsCurrent = true;
-    for (QTabBar* bar : findChildren<QTabBar*>()) {
+    // Side-by-side has no welcome tab; the page stays hidden.
+    bool welcomeIsCurrent = !m_sideBySide;
+    for (QTabBar* bar : m_sideBySide ? QList<QTabBar*>{} : findChildren<QTabBar*>()) {
         const int idx = bar->currentIndex();
         if (idx < 0) continue;
         const QString current = bar->tabText(idx);
