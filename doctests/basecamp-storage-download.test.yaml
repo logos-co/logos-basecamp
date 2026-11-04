@@ -51,9 +51,24 @@ sections:
           - "storage_module"
           - "package_downloader"
 
-      - title: "Build the Storage node"
-        text: "Pinned: later revisions pin a nim-libp2p commit that nix cannot fetch from its default branch."
-        run: "nix build 'git+https://github.com/logos-storage/logos-storage-nim?submodules=1&rev=e0f4c062c76cb61d88b05dd8fbc999d4d342684c#logos-storage-nim' -o storage-node"
+      - title: "Download the Storage node"
+        text: "The binary of the v0.5.3 release."
+        run: |
+          set -eu
+          version=v0.5.3
+          case "$(uname -s)" in
+            Linux) os=linux ;;
+            Darwin) os=darwin ;;
+          esac
+          case "$(uname -m)" in
+            x86_64) cpu=amd64 ;;
+            aarch64|arm64) cpu=arm64 ;;
+          esac
+          name="logos-storage-${os}-${cpu}-${version}"
+          curl -fsSLO "https://github.com/logos-storage/logos-storage-nim/releases/download/${version}/${name}.zip"
+          python3 -m zipfile -e "${name}.zip" storage-node/bin
+          mv "storage-node/bin/${name}" storage-node/bin/storage
+          chmod +x storage-node/bin/storage
         check_file: "storage-node/bin/storage"
 
       - title: "Build caddy"
