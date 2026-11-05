@@ -50,14 +50,9 @@ Item {
         readonly property var themes: Theme.themeNames.map(id => Theme.themeInfo[id])
 
         // A theme's own colour for `token`, Dark's where the theme leaves it out.
-        // Read per row for the swatch; Theme builds a full palette only for
-        // the current theme.
+        // Read per row for the swatch, so any theme, not only the current one.
         function themeColour(id, token) {
-            const installed = ThemeRegistry.themes
-            for (let i = 0; i < installed.length; ++i)
-                if (installed[i].id === id && installed[i].palette[token] !== undefined)
-                    return installed[i].palette[token]
-            return Theme.darkTheme[token]
+            return ThemeRegistry.paletteOf(id)[token]
         }
 
         // The theme the remove dialog asks about.
