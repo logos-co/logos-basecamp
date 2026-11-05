@@ -6,6 +6,7 @@ import Logos.Theme
 // Directory imports: see tst_IntentInstallDialog.qml.
 import "../../src/Basecamp/Settings"
 import "../../src/Basecamp/Shell"
+import "../../src/Basecamp/Sidebar"
 import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
@@ -28,6 +29,19 @@ TestCase {
     Component {
         id: dialogComp
         ConfirmationDialog {}
+    }
+
+    Component {
+        id: welcomeComp
+        OnboardingWelcome {
+            width: testCase.width; height: testCase.height
+            logo: Qt.resolvedUrl("../../src/Basecamp/Icons/logos-lambda.svg")
+        }
+    }
+
+    Component {
+        id: circleComp
+        SidebarCircleButton { text: "Wallet" }
     }
 
     function init() { themeManager.select("dark") }
@@ -77,6 +91,28 @@ TestCase {
         view.events = []
         waitForRendering(view)
         verifyThemedTexts(view, "inspector, no methods")
+    }
+
+    // The λ asset is white, and was drawn as is: invisible on a light theme.
+    function test_logo_follows_the_theme() {
+        verify(themeManager.select("test.sample"))
+        const view = createTemporaryObject(welcomeComp, testCase)
+        const logo = findChild(view, "onboardingLogo")
+        verify(logo)
+        verify(logo.color !== undefined, "the logo isn't tinted")
+        verify(sameColor(logo.color, Theme.palette.text), "logo is " + logo.color)
+    }
+
+    // An app without an icon shows its initials; on the accent hover fill they
+    // were textSecondary, about 1:1.
+    function test_sidebar_initials_use_the_icon_ink_on_the_accent() {
+        const button = createTemporaryObject(circleComp, testCase.Window.window.contentItem)
+        const initials = visibleTexts(button, []).find(t => t.text === "Wall")
+        verify(initials, "no initials")
+        verify(sameColor(initials.color, Theme.palette.textSecondary))
+        button.checked = true
+        verify(sameColor(initials.color, Theme.palette.backgroundBlack),
+               "initials are " + initials.color)
     }
 
     function luminance(c) {
