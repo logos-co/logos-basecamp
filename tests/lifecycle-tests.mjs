@@ -1181,6 +1181,203 @@ results.push(await runTest("install: downgrade gate leads with warning wording",
     if (late) throw new Error(`a failure was reported via ${late.via} after the downgrade: ${late.text}`);
   }));
 
+// B6. Cancelling the upgrade gate, with the old version open. PMUI finds the
+// package installed at 0.1.1, sees the file carries 0.2.1, and raises
+// confirm_upgrade with mode 0 (PackageTypes/UpgradeMode: Upgrade): the shell
+// draws upgradeCascade in its upgrade wording ("Upgrade Package?"). Cancel
+// routes to PackageCoordinator::cancelPendingAction (OverlayDialogs.qml),
+// which clears the pending slot and answers PMUI errCancelled — and nothing
+// else: no unload (the dock stays), no removal (manifest.json keeps its
+// version AND its mtime: PMUI removes the installed copy only once the
+// answer is a yes), no second dialog of any mode afterwards (a cancellation
+// is not a failure to report), and the slot is free again, so asking once
+// more opens a fresh upgrade gate.
+results.push(await runTest("install: cancelling the upgrade gate keeps the old version",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    const cascade = await app.requireObject(UPGRADE_CASCADE);
+    const installError = await app.requireObject(INSTALL_ERROR);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible before any install`);
+    const TILE = "sidebar.app.test_qml_only";
+    const manifestPath = join(userDir, "plugins", "test_qml_only", "manifest.json");
+    const TEXT_0_1_1 = "Test QML Only (test_qml_only) v0.1.1";
+    const countLines = (needle) => log().split("\n").filter((l) => l.includes(needle)).length;
+    const manifestVersion = () => {
+      if (!existsSync(manifestPath)) return null;
+      try { return JSON.parse(readFileSync(manifestPath, "utf-8")).version ?? null; }
+      catch { return null; }
+    };
+    const workspace = await app.requireObject("workspace");
+    // The evaluate anchor with `backend` in scope that survives dock churn
+    // (ui-tests.mjs, waitForVisibleApp).
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const visibleApp = () => app.evalOn(greeting, "backend.currentVisibleApp");
+    const dockCount = () => app.evalOn(workspace, "dockCount");
+    // The three dialogs a cancelled upgrade must not raise, by name, for the
+    // watches below.
+    const DIALOGS = [
+      [INSTALL_GATE, gate], [UPGRADE_CASCADE, cascade], [INSTALL_ERROR, installError],
+    ];
+    const visibleDialogs = async () => {
+      const open = [];
+      for (const [name, obj] of DIALOGS) {
+        if ((await app.evalOn(obj, "visible")) === true) open.push(name);
+      }
+      return open;
+    };
+    // Whether `text` renders anywhere: the inverse of expectTexts, the same
+    // two probes (a whole `text` property, a substring of the tree dump).
+    const textRendered = async (text) => {
+      if ((await app.findByProperty("text", text)).length > 0) return true;
+      const treeStr = JSON.stringify(await app.getTree({ depth: 60 }));
+      return treeStr.includes(JSON.stringify(text).slice(1, -1));
+    };
+    // Raw installLocalPackage(0.2.1), then whichever dialog opens first
+    // decides: the install gate showing up for a package already installed
+    // is a failure, the upgrade gate is what is wanted. Returns the moment
+    // of the request.
+    const requestUpgradeGate = async (what) => {
+      const requested = await installLocalPackage(app, store, FIXTURES.A_0_2_1);
+      const openDeadline = Date.now() + 30000;
+      for (;;) {
+        if ((await app.evalOn(gate, "visible")) === true) {
+          const { title, body } = await gateTexts(app, gate);
+          throw new Error(`${INSTALL_GATE} opened for ${what} (title=${JSON.stringify(title)} ` +
+                          `body=${JSON.stringify(body)}); want ${UPGRADE_CASCADE} in upgrade mode`);
+        }
+        if ((await app.evalOn(cascade, "visible")) === true) break;
+        if (Date.now() >= openDeadline) {
+          throw new Error(`${UPGRADE_CASCADE} did not open within 30 s of installLocalPackage(0.2.1) for ${what}`);
+        }
+        await sleep(200);
+      }
+      note(`upgradeCascade opened ${Date.now() - requested} ms after installLocalPackage(0.2.1) for ${what}`);
+      // Read while open: a closed instance keeps stale text.
+      assertEq(await app.evalOn(cascade, "moduleName"), "test_qml_only", `${UPGRADE_CASCADE} moduleName for ${what}`);
+      assertEq(await app.evalOn(cascade, "upgradeModeKind"), 0, `${UPGRADE_CASCADE} upgradeModeKind for ${what} (0 = upgrade)`);
+      assertEq(await app.evalOn(cascade, "upgradeTargetVersion"), "0.2.1", `${UPGRADE_CASCADE} upgradeTargetVersion for ${what}`);
+      const { title, body, texts } = await gateTexts(app, cascade);
+      if (!texts.includes("Upgrade Package?")) {
+        throw new Error(`open upgradeCascade renders no "Upgrade Package?" for ${what} (texts: ${JSON.stringify(texts)})`);
+      }
+      assertEq(title, "Upgrade Package?", `upgradeCascade title for ${what}`);
+      note(`dialog body for ${what}: ${body}`);
+      return requested;
+    };
+    // Cancel, and the dialog is gone within 5 s.
+    const cancelUpgradeGate = async (what) => {
+      await app.click(`${UPGRADE_CASCADE}.cancel`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible`);
+      }, { timeout: 5000, interval: 100, description: `the upgrade dialog to close after cancelling ${what}` });
+    };
+
+    // 0.1.1 first: the plain gate, confirmed; the app installed, opened and
+    // rendering its 0.1.1 payload.
+    await installViaPmu(app, FIXTURES.A_0_1_1, { confirm: true });
+    await waitGateHidden(app, 5000);
+    await app.requireObject(TILE, 60000);
+    await app.waitFor(async () => {
+      assertEq(manifestVersion(), "0.1.1", "installed manifest.json version");
+    }, { timeout: 10000, interval: 250, description: "the installed manifest.json at 0.1.1" });
+    // The install's own event line (the metadata rescan follows it); a run
+    // with debug logging off never logs it: bounded, not fatal.
+    await app.waitFor(async () => {
+      if (countLines(UI_PLUGIN_INSTALLED_LOG) < 1) throw new Error(`no "${UI_PLUGIN_INSTALLED_LOG}" yet`);
+    }, { timeout: 10000, interval: 250, description: "the install's event line" }).catch(() => {});
+    assertEq(await dockCount(), 0, "workspace.dockCount before opening the app");
+    // The metadata rescans that follow an install rebuild the sidebar's
+    // tiles (same name, new object), so a click whose tile was rebuilt
+    // between the find and the invoke fails without firing and is made again.
+    await app.waitFor(async () => { await app.click(TILE); },
+      { timeout: 10000, interval: 250, description: `${TILE} to take the click` });
+    const dockDeadline = Date.now() + 30000;
+    for (;;) {
+      const loadFailed = await app.findByObjectName(LOAD_FAILED);
+      if (loadFailed && (await app.evalOn(loadFailed, "visible")) === true) {
+        throw new Error(`the 0.1.1 app failed to load: ${await app.evalOn(loadFailed, "errorMessage")}`);
+      }
+      if ((await dockCount()) === 1) break;
+      if (Date.now() >= dockDeadline) {
+        throw new Error(`workspace.dockCount did not reach 1 within 30 s of clicking ${TILE} ` +
+                        `(currentVisibleApp=${JSON.stringify(await visibleApp())})`);
+      }
+      await sleep(250);
+    }
+    await app.waitFor(async () => {
+      assertEq(await visibleApp(), "test_qml_only", "backend.currentVisibleApp");
+    }, { timeout: 10000, interval: 500, description: "the 0.1.1 app to become front-most" });
+    await app.waitFor(async () => { await app.expectTexts([TEXT_0_1_1]); },
+      { timeout: 20000, interval: 500, description: `the 0.1.1 app to render ${JSON.stringify(TEXT_0_1_1)}` });
+    note(`0.1.1 open and rendering ${JSON.stringify(TEXT_0_1_1)}`);
+    // The manifest as installed: what a cancel must leave untouched, down to
+    // the mtime and the inode (a removal and re-extraction would move both).
+    const before = statSync(manifestPath);
+    note(`manifest.json before the upgrade request: mtime ${before.mtime.toISOString()}, inode ${before.ino}`);
+    const assertManifestUntouched = async (when) => {
+      assertEq(manifestVersion(), "0.1.1", `installed manifest.json version ${when}`);
+      const now = statSync(manifestPath);
+      if (now.mtimeMs !== before.mtimeMs || now.ino !== before.ino) {
+        throw new Error(`manifest.json was rewritten ${when}: mtime ${before.mtime.toISOString()} → ` +
+                        `${now.mtime.toISOString()}, inode ${before.ino} → ${now.ino}`);
+      }
+    };
+
+    // The upgrade request, and the cancel.
+    await requestUpgradeGate("the first request");
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible while the upgrade dialog is open`);
+    await cancelUpgradeGate("the first request");
+
+    // Nothing moved: the dock is still the one 0.1.1 app, still rendering
+    // its payload; the manifest is as installed.
+    assertEq(await dockCount(), 1, "workspace.dockCount after the cancel");
+    assertEq(await visibleApp(), "test_qml_only", "backend.currentVisibleApp after the cancel");
+    if (!(await textRendered(TEXT_0_1_1))) {
+      throw new Error(`${JSON.stringify(TEXT_0_1_1)} no longer renders after cancelling the upgrade`);
+    }
+    await assertManifestUntouched("after the cancel");
+
+    // And nothing follows: 10 s in which no dialog of any mode opens — the
+    // install gate, the upgrade gate again, or an "Install Failed" notice
+    // for a cancellation — the dock stays, and the manifest stays.
+    const QUIET_MS = 10000;
+    const quietEnd = Date.now() + QUIET_MS;
+    while (Date.now() < quietEnd) {
+      const open = await visibleDialogs();
+      if (open.length > 0) {
+        const details = [];
+        for (const name of open) {
+          const obj = DIALOGS.find(([n]) => n === name)[1];
+          const { title, body } = await gateTexts(app, obj);
+          details.push(`${name} (moduleName=${JSON.stringify(await app.evalOn(obj, "moduleName"))} ` +
+                       `title=${JSON.stringify(title)} body=${JSON.stringify(body)})`);
+        }
+        throw new Error(`a dialog opened after the upgrade was cancelled: ${details.join(", ")}`);
+      }
+      assertEq(await dockCount(), 1, "workspace.dockCount while watching after the cancel");
+      await assertManifestUntouched("while watching after the cancel");
+      await sleep(400);
+    }
+    const failure = await installFailureWitness(app, log);
+    if (failure) throw new Error(`the cancelled upgrade was reported as failed via ${failure.via}: ${failure.text}`);
+    if (!(await textRendered(TEXT_0_1_1))) {
+      throw new Error(`${JSON.stringify(TEXT_0_1_1)} no longer renders ${QUIET_MS / 1000} s after the cancel`);
+    }
+    note(`no dialog, no unload, no rewrite within ${QUIET_MS / 1000} s of the cancel`);
+
+    // The slot was released with the answer: asking again opens a fresh
+    // upgrade gate. Cancelled too, so the epilogue finds a quiet app.
+    await requestUpgradeGate("the second request");
+    await cancelUpgradeGate("the second request");
+    assertEq(await dockCount(), 1, "workspace.dockCount after the second cancel");
+    await assertManifestUntouched("after the second cancel");
+    const late = await installFailureWitness(app, log);
+    if (late) throw new Error(`a failure was reported via ${late.via} after the second cancel: ${late.text}`);
+  }));
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;
