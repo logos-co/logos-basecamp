@@ -1,9 +1,10 @@
 // Shared suite helpers — the framework itself lives in logos-qt-mcp (not editable here).
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, statSync,
 } from "node:fs";
+import net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -270,10 +271,59 @@ export function makeUserDir(prefix = "basecamp-test-user") {
   return dir;
 }
 
+// A fresh Basecamp on its own user dir, headless, with the inspector
+// reachable: `--new-instance` keeps it clear of any running Basecamp, and the
+// scheme registration that would write into $HOME is off. stdout and stderr
+// are piped so the caller can capture the log; extra `args` and `env` are
+// appended to the defaults.
+export function spawnBasecamp(appBin, userDir, opts = {}) {
+  const { args = [], env = {} } = opts;
+  return spawn(appBin,
+    ["-platform", "offscreen", "--user-dir", userDir, "--new-instance", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        QT_QPA_PLATFORM: "offscreen",
+        QT_FORCE_STDERR_LOGGING: "1",
+        LOGOS_NO_SCHEME_REGISTER: "1",
+        ...env,
+      },
+    });
+}
+
+// Waits until a TCP connection to host:port is accepted (the inspector
+// server listening). Stops early when `child` has already exited, so a crash
+// at startup reports as one instead of as a timeout.
+export async function waitForPort(host, port, ms, child = null) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error(
+        `app exited (code=${child.exitCode}, signal=${child.signalCode}) ` +
+        `before the inspector came up on ${host}:${port}`);
+    }
+    try {
+      await new Promise((resolveConnect, reject) => {
+        const sock = net.createConnection({ host, port });
+        sock.once("connect", () => { sock.destroy(); resolveConnect(); });
+        sock.once("error", reject);
+      });
+      return;
+    } catch {
+      await sleep(300);
+    }
+  }
+  throw new Error(`inspector never came up on ${host}:${port} within ${ms}ms`);
+}
+
 // Install a local .lgx via PMU's installLocalPackage + Basecamp's install gate.
 // Requires the Package Manager view opened once (pmui.BackendStore is lazy).
+// `whileOpen(gate)` runs once the gate is visible and before it is answered,
+// for assertions on what the open dialog says.
 export async function installViaPmu(app, lgxPath, opts = {}) {
-  const { confirm = true, timeoutMs = 30000, intervalMs = 300 } = opts;
+  const {
+    confirm = true, timeoutMs = 30000, intervalMs = 300, whileOpen = null,
+  } = opts;
   const inspector = app.inspector;
 
   const store = await findByObjectName(inspector, "pmui.BackendStore");
@@ -306,6 +356,7 @@ export async function installViaPmu(app, lgxPath, opts = {}) {
     }
     await sleep(intervalMs);
   }
+  if (whileOpen) await whileOpen(gate);
 
   const buttonName = confirm
     ? "confirmationDialog.installGate.confirm"
