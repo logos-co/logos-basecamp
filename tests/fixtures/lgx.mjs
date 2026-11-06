@@ -196,6 +196,14 @@ export const LIFECYCLE_FIXTURES = {
     type: "ui_qml",
     dependencies: [],
   },
+  // Fixture A with a dependency no repository carries: the UI-app analogue
+  // of makeFixtureSet's mod_z, for the unresolvable-dependency test. Its
+  // own file, so the plain A fixtures stay dependency-free.
+  A_0_1_1_NO_SUCH_DEP: {
+    ...FIXTURE_A,
+    dependencies: ["no_such_module"],
+    fileName: "test_qml_only-0.1.1-no_such_module.lgx",
+  },
 };
 
 // Builds every lifecycle fixture into `outDir` and returns its path by key.
@@ -205,10 +213,13 @@ export function makeLifecycleFixtures(outDir, opts = {}) {
   mkdirSync(outDir, { recursive: true });
   const paths = {};
   for (const [key, spec] of Object.entries(LIFECYCLE_FIXTURES)) {
+    // `fileName` names the file when "<name>-<version>.lgx" would collide
+    // with another fixture of the same package and version.
+    const { fileName = `${spec.name}-${spec.version}.lgx`, ...lgxSpec } = spec;
     paths[key] = makeLgx({
-      outFile: join(outDir, `${spec.name}-${spec.version}.lgx`),
+      outFile: join(outDir, fileName),
       variant: process.env.LGX_VARIANT,
-      ...spec,
+      ...lgxSpec,
       ...opts,
     });
   }
