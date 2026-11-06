@@ -366,6 +366,14 @@ async function openPackageManager(app) {
 // The dialog instances are always in the tree (OverlayDialogs.qml) and only
 // `visible` flips; a closed one keeps the texts it last rendered.
 const INSTALL_GATE = "confirmationDialog.installGate";
+const INSTALL_ERROR = "confirmationDialog.installError";
+
+// What PackageCoordinator::beginPackageConfirmation logs when a confirm_*
+// intent arrives while a dialog already owns the screen.
+const REFUSAL_LOG = "confirmation in flight, refusing";
+// What UIPluginManager::onPmuiInstallProgress logs when PMUI reports a failed
+// install over its progress signal (the same report opens INSTALL_ERROR).
+const PMUI_FAILURE_LOG = "package_manager_ui install failure for";
 
 async function waitGateHidden(app, timeout = 5000) {
   const gate = await app.requireObject(INSTALL_GATE);
@@ -394,6 +402,62 @@ async function gateTexts(app, gate) {
   const body = nodes.find((n) => n.objectName === "confirmationDialog.body");
   const title = nodes.find((n) => n.text.length > 0 && n !== body);
   return { title: title ? title.text : "", body: body ? body.text : "", texts: nodes.map((n) => n.text) };
+}
+
+// PMU's installLocalPackage with nothing waited on: for a test that expects
+// the gate to stay open, or another dialog, or a refusal. Returns the moment
+// the call had been made on the Qt side.
+async function installLocalPackage(app, store, lgxPath) {
+  await app.send("callMethod", {
+    objectId: store.id, method: "installLocalPackage", args: [`file://${resolve(lgxPath)}`],
+  });
+  return Date.now();
+}
+
+// Where PMUI's refusal of a request can be read from here, best first. The
+// plan names PMUI's own notice `pmui.messageNotice`; package_manager_ui is a
+// flake input (not in this tree), so whether its notice carries that
+// objectName could not be checked at the pinned revision from this checkout.
+// It is probed at run time instead: a shown message there wins; otherwise
+// the next two witnesses stand in — Basecamp's own "Install Failed" notice,
+// raised when PMUI reports the failed install over its progress signal
+// (UIPluginManager::onPmuiInstallProgress), and the log line that same
+// report leaves. Returns null when none has anything yet; `hook: true` when
+// the PMUI object exists but shows nothing and no other witness has anything
+// either (the hook exists, so a silent refusal is a failure, not a gap).
+async function pmuiErrorReport(app, log) {
+  const notice = await app.findByObjectName("pmui.messageNotice");
+  if (notice) {
+    const state = JSON.parse(await app.evalOn(notice, `JSON.stringify({
+      visible: typeof visible === "boolean" ? visible : null,
+      shown: typeof shown === "boolean" ? shown : null,
+      title: typeof title === "string" ? title : "",
+      text: typeof text === "string" ? text : "",
+      message: typeof message === "string" ? message : "",
+    })`));
+    const words = [state.title, state.text, state.message].filter((s) => s.length > 0);
+    const hidden = state.visible === false || state.shown === false;
+    if (words.length > 0 && !hidden) return { via: "pmui.messageNotice", text: words.join(" — ") };
+  }
+  const dialog = await app.findByObjectName(INSTALL_ERROR);
+  if (dialog && (await app.evalOn(dialog, "visible")) === true) {
+    const name = await app.evalOn(dialog, "moduleName");
+    const message = await app.evalOn(dialog, "errorMessage");
+    return { via: INSTALL_ERROR, text: `${name}: ${message}` };
+  }
+  const line = log().split("\n").find((l) => l.includes(PMUI_FAILURE_LOG));
+  if (line) return { via: "app log", text: line.trim() };
+  return notice ? { via: "pmui.messageNotice", text: "", hook: true } : null;
+}
+
+// Closes Basecamp's "Install Failed" notice if it is open.
+async function dismissInstallError(app) {
+  const dialog = await app.findByObjectName(INSTALL_ERROR);
+  if (!dialog || (await app.evalOn(dialog, "visible")) !== true) return;
+  await app.click(`${INSTALL_ERROR}.confirm`);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(dialog, "visible"), false, `${INSTALL_ERROR} visible`);
+  }, { timeout: 5000, interval: 100, description: "the Install Failed notice to close" });
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +523,154 @@ results.push(await runTest("install: cancelling the install gate leaves nothing 
     await expectAbsent(app, "sidebar.app.test_qml_only", 3000);
     if (existsSync(pluginDir)) throw new Error(`${pluginDir} exists after the second cancel`);
     assertEq(await rowCount(), rowsBefore, "uiModulesModel.rowCount() after the second cancel");
+  }));
+
+// B2. Two confirm_install requests back-to-back. Only one dialog may own the
+// screen, so PackageCoordinator::beginPackageConfirmation refuses the second
+// — with an answer (errFailed, logged as "confirmation in flight, refusing"),
+// never by repointing the open gate at the newcomer (the user would be
+// consenting to a package they never read about) and never by dropping the
+// dispatch (the requester would wait out the broker's full deadline). The
+// refusal releases nothing it did not take: the first gate still answers for
+// its own package, and a later request for the refused one opens a fresh gate.
+results.push(await runTest("install: two confirmations in flight — the second is refused with an answer, never clobbered or dropped",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    const pluginDirA = join(userDir, "plugins", "test_qml_only");
+    const pluginDirB = join(userDir, "plugins", "test_qml_only_b");
+    const gateNames = async () => ({
+      name: await app.evalOn(gate, "moduleName"),
+      ...(await gateTexts(app, gate)),
+    });
+
+    // Two raw requests, A then B, back-to-back: installViaPmu cannot fire the
+    // second, it blocks on the gate the first one opens.
+    const firstDone = await installLocalPackage(app, store, FIXTURES.A_0_1_1);
+    const secondDone = await installLocalPackage(app, store, FIXTURES.B_0_1_1);
+    const gapMs = secondDone - firstDone;
+    note(`second installLocalPackage made ${gapMs} ms after the first`);
+    if (gapMs > 200) {
+      throw new Error(`the two installLocalPackage calls were ${gapMs} ms apart, want under 200 ms`);
+    }
+
+    // Exactly one gate, and it is A's: moduleName (what confirm answers for)
+    // and the body (what the user reads) agree on test_qml_only.
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 200, description: "the install gate to open" });
+    const A_BODY_RE = /^Install '(Test QML Only|test_qml_only)' v0\.1\.1\b/;
+    const assertGateIsA = async (when) => {
+      const { name, title, body } = await gateNames();
+      assertEq(title, "Install Package?", `install gate title ${when}`);
+      assertEq(name, "test_qml_only", `install gate moduleName ${when}`);
+      if (!A_BODY_RE.test(body) || /test_qml_only_b|Test QML Only B/.test(body)) {
+        throw new Error(`install gate body ${when} does not name A alone: ${JSON.stringify(body)}`);
+      }
+      return body;
+    };
+    note(`gate body: ${await assertGateIsA("on open")}`);
+    const visibleGates = [];
+    for (const m of await app.findByProperty("objectName", INSTALL_GATE)) {
+      if ((await app.evalOn(m, "visible")) === true) visibleGates.push(m);
+    }
+    assertEq(visibleGates.length, 1, "visible install gates");
+    const upgradeGate = await app.requireObject("confirmationDialog.upgradeCascade");
+    assertEq(await app.evalOn(upgradeGate, "visible"), false, "confirmationDialog.upgradeCascade visible");
+
+    // Before the gate is answered: B is refused, and refused with an answer.
+    await app.waitFor(async () => {
+      if (!log().includes(REFUSAL_LOG)) throw new Error(`app log has no "${REFUSAL_LOG}"`);
+    }, { timeout: 5000, interval: 100, description: "the second confirmation to be refused" });
+    let report = null;
+    await app.waitFor(async () => {
+      report = await pmuiErrorReport(app, log);
+      if (!report || report.text.length === 0) {
+        throw new Error("no error reported for B yet" + (report?.hook ? " (pmui.messageNotice is empty)" : ""));
+      }
+    }, { timeout: 5000, interval: 200, description: "PMUI to report an error for B" }).catch((e) => {
+      // The hook exists and stays empty: the refusal went unreported, a
+      // failure. No hook at all: the refusal is still proven by the log line
+      // above and by no second gate ever opening (below); the missing
+      // automation hook is a finding, not something to paper over here.
+      if (report?.hook) throw e;
+      note("PMUI's error for B is not readable from the shell (no pmui.messageNotice, " +
+           "no Install Failed notice, no install-failure log line); the refusal is " +
+           "asserted through Basecamp's log line and the no-second-gate watch");
+    });
+    if (report && report.text.length > 0) {
+      note(`B refused, reported via ${report.via}: ${report.text}`);
+      // By its raw name or its display name (the fixture's "Test QML Only B"),
+      // whichever the witness renders — but it has to be about B.
+      if (!/test_qml_only_b|Test QML Only B/.test(report.text)) {
+        throw new Error(`the error reported via ${report.via} does not name test_qml_only_b: ${report.text}`);
+      }
+    }
+    // The refusal must not have touched A's gate.
+    assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible after the refusal`);
+    await assertGateIsA("after the refusal");
+    // Basecamp's own notice, if the refusal surfaced there, must not sit over
+    // the gate when it is answered.
+    await dismissInstallError(app);
+
+    // Confirm A's gate — once the signer check has enabled the button — and
+    // look one last time at what is being answered.
+    const confirmButton = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirmButton, "enabled"), true, `${INSTALL_GATE}.confirm enabled`);
+    }, { timeout: 30000, interval: 300, description: "the install gate's confirm to enable" });
+    await assertGateIsA("when confirmed");
+    await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    // A installs. B does not, and no gate reopens for it: 10 s in which the
+    // install gate stays hidden and B's tile never appears.
+    await app.requireObject("sidebar.app.test_qml_only", 60000);
+    if (!existsSync(join(pluginDirA, "manifest.json"))) {
+      throw new Error(`${pluginDirA}/manifest.json missing after confirming A`);
+    }
+    const watchEnd = Date.now() + 10000;
+    while (Date.now() < watchEnd) {
+      if ((await app.evalOn(gate, "visible")) === true) {
+        const { name, body } = await gateNames();
+        throw new Error(`a second install gate opened after A's was answered: ` +
+                        `moduleName=${JSON.stringify(name)} body=${JSON.stringify(body)}`);
+      }
+      if (await app.findByObjectName("sidebar.app.test_qml_only_b")) {
+        throw new Error("sidebar.app.test_qml_only_b appeared: the refused request installed B");
+      }
+      await sleep(400);
+    }
+    if (existsSync(pluginDirB)) throw new Error(`${pluginDirB} exists: the refused request installed B`);
+    // A late "Install Failed" notice for B is PMUI's report, not a gate.
+    await dismissInstallError(app);
+
+    // The slot was released with the answer: asking for B again opens a fresh
+    // gate that names B, and confirming it installs B.
+    const B_BODY_RE = /^Install '(Test QML Only B|test_qml_only_b)' v0\.1\.1\b/;
+    await installViaPmu(app, FIXTURES.B_0_1_1, {
+      confirm: true,
+      whileOpen: async (open) => {
+        const { title, body } = await gateTexts(app, open);
+        assertEq(title, "Install Package?", "install gate title for B");
+        assertEq(await app.evalOn(open, "moduleName"), "test_qml_only_b", "install gate moduleName for B");
+        if (!B_BODY_RE.test(body)) {
+          throw new Error(`install gate body for B ${JSON.stringify(body)} does not start ` +
+                          `"Install 'test_qml_only_b' v0.1.1"`);
+        }
+        note(`fresh gate body: ${body}`);
+      },
+    });
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.test_qml_only_b", 60000);
+    if (!existsSync(join(pluginDirB, "manifest.json"))) {
+      throw new Error(`${pluginDirB}/manifest.json missing after confirming B`);
+    }
+    if (!(await app.findByObjectName("sidebar.app.test_qml_only"))) {
+      throw new Error("sidebar.app.test_qml_only vanished while B installed");
+    }
   }));
 
 const ran = results.filter((r) => r !== null);
