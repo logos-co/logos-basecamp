@@ -216,11 +216,13 @@ ItemDelegate {
                 : implicitWidth
             iconSource: d.badgeIcon
 
-            HoverHandler { id: badgeHover }
+            // Control's own hover: see AppGridDelegate's badge.
+            hoverEnabled: true
             LogosToolTip {
+                objectName: "appListStateBadge.toolTip"
                 text: d.installStage === InstallStage.Downloading ? d.downloadToolTip : ""
                 placement: LogosToolTip.Top
-                visible: badgeHover.hovered && text.length > 0
+                visible: stateBadge.hovered && text.length > 0
             }
             Behavior on pillWidth {
                 NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
