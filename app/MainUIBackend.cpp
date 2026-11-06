@@ -24,9 +24,14 @@
 
 #include <QDebug>
 #include <QJSValue>
+#include <QLoggingCategory>
 #include <QMap>
 #include <QNetworkInformation>
 #include <QTimer>
+
+// Off below warnings by default:
+//   QT_LOGGING_RULES="logos.basecamp.intents.debug=true"
+Q_LOGGING_CATEGORY(lcBasecampIntents, "logos.basecamp.intents", QtInfoMsg)
 
 // The shell's own capability tables and their registration live in
 // ShellIntents so a unit test can reach them; this file cannot be linked into
@@ -636,15 +641,15 @@ void MainUIBackend::rebuildInstallableProviders()
         const QStringList web = idx.data(AppsModelRoles::WebProvidesRole).toStringList();
         if (!web.isEmpty()) webByModule.insert(name, web);
     }
-    m_intentRegistry->setInstallableProviders(byModule, webByModule);
-
-    // One line per rebuild, and only when something is actually offerable —
-    // silence here is what an empty catalog looks like, which is exactly the
-    // state that made an install offer never appear.
-    if (!byModule.isEmpty()) {
-        qWarning().noquote() << "IntentRegistry: installable providers ="
-                             << QStringList(byModule.keys()).join(QStringLiteral(", "));
-    }
+    // Runs on every apps-model change, download progress included; only a
+    // changed list does anything.
+    if (!m_intentRegistry->setInstallableProviders(byModule, webByModule))
+        return;
+    // An empty list is what made an install offer never appear, so say so.
+    qCDebug(lcBasecampIntents).noquote()
+        << "installable providers ="
+        << (byModule.isEmpty() ? QStringLiteral("(none)")
+                               : QStringList(byModule.keys()).join(QStringLiteral(", ")));
 }
 
 // ── Intent surface for QML — all delegating one-liners ──────────────────────

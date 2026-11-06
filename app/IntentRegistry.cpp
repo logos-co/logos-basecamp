@@ -128,6 +128,7 @@ void IntentRegistry::reset()
     m_entries.clear();
     m_diagnostics.clear();
     m_webReachable.clear();
+    m_installableInput.reset();
 }
 
 void IntentRegistry::rebuild(const QMap<QString, QVariantMap>& plugins,
@@ -359,10 +360,16 @@ void IntentRegistry::ingestRecord(const QString& moduleName,
     m_entries.insert(moduleName, entry);
 }
 
-void IntentRegistry::setInstallableProviders(
+bool IntentRegistry::setInstallableProviders(
     const QMap<QString, QStringList>& byModuleName,
     const QMap<QString, QStringList>& webByModuleName)
 {
+    if (m_installableInput
+        && m_installableInput->first == byModuleName
+        && m_installableInput->second == webByModuleName)
+        return false;
+    m_installableInput.emplace(byModuleName, webByModuleName);
+
     // Clear-and-refill, like rebuild(). A half-updated index is worse than a
     // slightly late one.
     m_installable.clear();
@@ -404,6 +411,7 @@ void IntentRegistry::setInstallableProviders(
 
     deriveLinkUses();
     emit changed();
+    return true;
 }
 
 QStringList IntentRegistry::installableProvidersFor(const QString& intent) const

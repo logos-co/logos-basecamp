@@ -34,16 +34,19 @@ AbstractButton {
             height: 24
             source: root.icon.source
             color: root.hovered || root.checked ? Theme.palette.backgroundBlack: "transparent"
-            visible: !!root.icon.source &&
-                     !(appIcon.status === Image.Null ||
-                       appIcon.status === Image.Error)
+            // Null when there is no source; the initials stand in then.
+            visible: appIcon.imageItem.status !== Image.Null
+                     && appIcon.imageItem.status !== Image.Error
         }
         LogosText {
+            objectName: "sidebar.initials"
             anchors.centerIn: parent
             text: root.text.substring(0, 4)
             font.pixelSize: Theme.typography.secondaryText
             font.weight: Theme.typography.weightBold
-            color: Theme.palette.textSecondary
+            // On the accent fill, the icon's ink: textSecondary was ~1:1 on it.
+            color: root.hovered || root.checked ? Theme.palette.backgroundBlack
+                                                : Theme.palette.textSecondary
             visible: !appIcon.visible
         }
         BrokenAppMarker {
