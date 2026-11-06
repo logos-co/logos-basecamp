@@ -13,6 +13,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Network Qml Test Widgets Quick QuickWi
 # below, never a silent skip.
 find_package(spdlog QUIET)
 find_package(yaml-cpp QUIET)
+# Logos::DesignSystem, for the shell's theme colours (Logos::ThemeStore).
+find_package(LogosDesignSystem CONFIG QUIET)
 
 enable_testing()
 

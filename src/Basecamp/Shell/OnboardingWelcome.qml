@@ -32,13 +32,14 @@ Item {
         width: Math.min(root.width - 96, 520)
         spacing: Theme.spacing.medium
 
-        Image {
+        // In the theme's text colour: the asset is white.
+        LogosIcon {
             objectName: "onboardingLogo"
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: Theme.spacing.medium
+            Layout.preferredWidth: 37   // the λ's 20 × 26 at 48 high
+            Layout.preferredHeight: 48
             source: root.logo
-            sourceSize.height: 48
-            fillMode: Image.PreserveAspectFit
         }
 
         LogosText {
