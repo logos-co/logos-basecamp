@@ -34,7 +34,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
   assertResponsive,
@@ -772,6 +772,215 @@ results.push(await runTest("install: gate left unanswered stays open and still w
     if (late) {
       throw new Error(`a failure was reported via ${late.via} although A installed: ${late.text}`);
     }
+  }));
+
+// B4. The same file a second time. PMUI inspects it, finds the package
+// installed at that very version, and raises confirm_upgrade with mode 2
+// (PackageTypes/UpgradeMode: Sidegrade), never confirm_install — so the shell
+// draws the upgradeCascade dialog in its reinstall wording
+// (ConfirmationDialog.qml: "Reinstall Package?", the body leading "Reinstall
+// '<label>' to v…", the button "Reinstall"), and the install gate stays
+// closed. Confirming hands PMUI the go-ahead: it removes the installed copy
+// and extracts the file again (the body says so), which is why the
+// manifest's mtime is recorded and reported but not held still. "No-op" is
+// the end state: one plugins/test_qml_only directory, one sidebar tile, and
+// the app opens and renders its v0.1.1 payload.
+const UPGRADE_CASCADE = "confirmationDialog.upgradeCascade";
+const LOAD_FAILED = "confirmationDialog.loadFailed";
+// What PackageCoordinator logs on package_manager's uiPluginUninstalled /
+// uiPluginFileInstalled events: the two halves of a reinstall, in that order.
+const UI_PLUGIN_UNINSTALLED_LOG = "UI plugin uninstalled:";
+const UI_PLUGIN_INSTALLED_LOG = "UI plugin file installed:";
+
+results.push(await runTest("install: reinstalling the same version — wording and no-op on disk",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    const cascade = await app.requireObject(UPGRADE_CASCADE);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible before any install`);
+    const TILE = "sidebar.app.test_qml_only";
+    const pluginsDir = join(userDir, "plugins");
+    const pluginDir = join(pluginsDir, "test_qml_only");
+    const manifestPath = join(pluginDir, "manifest.json");
+    const countLines = (needle) => log().split("\n").filter((l) => l.includes(needle)).length;
+    const fixtureDirs = () => readdirSync(pluginsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith("test_qml_only"))
+      .map((e) => e.name).sort();
+    const tileCount = async () => (await app.findByProperty("objectName", TILE)).length;
+
+    // The first install: the plain gate, confirmed.
+    await installViaPmu(app, FIXTURES.A_0_1_1, { confirm: true });
+    await waitGateHidden(app, 5000);
+    await app.requireObject(TILE, 60000);
+    await app.waitFor(async () => {
+      if (!existsSync(manifestPath)) throw new Error(`${manifestPath} missing`);
+    }, { timeout: 10000, interval: 250, description: "the installed manifest.json" });
+    const before = statSync(manifestPath);
+    note(`manifest.json after the first install: mtime ${before.mtime.toISOString()}, inode ${before.ino}`);
+    // The first install's own event line, so the baseline below is taken
+    // after it (a run with debug logging off never logs it: bounded, not fatal).
+    await app.waitFor(async () => {
+      if (countLines(UI_PLUGIN_INSTALLED_LOG) < 1) throw new Error(`no "${UI_PLUGIN_INSTALLED_LOG}" yet`);
+    }, { timeout: 10000, interval: 250, description: "the first install's event line" }).catch(() => {});
+    const uninstalledBefore = countLines(UI_PLUGIN_UNINSTALLED_LOG);
+    const installedBefore = countLines(UI_PLUGIN_INSTALLED_LOG);
+
+    // The same file again. Whichever dialog opens first decides: the install
+    // gate showing up for a package already installed at this version is the
+    // failure this test exists to catch, so it is sampled on every turn.
+    const requested = await installLocalPackage(app, store, FIXTURES.A_0_1_1);
+    const openDeadline = Date.now() + 30000;
+    for (;;) {
+      if ((await app.evalOn(gate, "visible")) === true) {
+        const { title, body } = await gateTexts(app, gate);
+        throw new Error(`${INSTALL_GATE} opened for the second request (title=${JSON.stringify(title)} ` +
+                        `body=${JSON.stringify(body)}); want ${UPGRADE_CASCADE} in reinstall mode`);
+      }
+      if ((await app.evalOn(cascade, "visible")) === true) break;
+      if (Date.now() >= openDeadline) {
+        throw new Error(`${UPGRADE_CASCADE} did not open within 30 s of the second installLocalPackage`);
+      }
+      await sleep(200);
+    }
+    note(`upgradeCascade opened ${Date.now() - requested} ms after the second installLocalPackage`);
+
+    // The wording, read while the dialog is open (a closed instance keeps
+    // stale text). The label is the display name once the package is
+    // installed, the raw name otherwise; either is accepted and the one seen
+    // is noted. The clause after the version says who signed the file (this
+    // fixture: nobody), as on the install gate.
+    assertEq(await app.evalOn(cascade, "moduleName"), "test_qml_only", `${UPGRADE_CASCADE} moduleName`);
+    assertEq(await app.evalOn(cascade, "upgradeModeKind"), 2, `${UPGRADE_CASCADE} upgradeModeKind (2 = reinstall)`);
+    assertEq(await app.evalOn(cascade, "upgradeTargetVersion"), "0.1.1", `${UPGRADE_CASCADE} upgradeTargetVersion`);
+    const { title, body, texts } = await gateTexts(app, cascade);
+    if (!texts.includes("Reinstall Package?")) {
+      throw new Error(`open upgradeCascade renders no "Reinstall Package?" (texts: ${JSON.stringify(texts)})`);
+    }
+    assertEq(title, "Reinstall Package?", "upgradeCascade title");
+    const BODY_RE = /^Reinstall '(Test QML Only|test_qml_only)' to v0\.1\.1([^.]*)\. The current version will be removed first, then the new one downloaded and installed\./;
+    const bodyMatch = BODY_RE.exec(body);
+    if (!bodyMatch) {
+      throw new Error(`upgradeCascade body ${JSON.stringify(body)} does not start ` +
+                      `"Reinstall 'Test QML Only' to v0.1.1. The current version will be removed first, …"`);
+    }
+    note(`dialog body: ${body}`);
+    note(`label rendered as ${JSON.stringify(bodyMatch[1])} (${bodyMatch[1] === "Test QML Only" ? "display name" : "raw name"})`);
+
+    // The button says "Reinstall" — with " anyway" appended when the signer
+    // check asks the user to go ahead with an unsigned package, the same
+    // suffix the install gate's "Install" carries. Never "Upgrade",
+    // "Downgrade" or "Install". Enabled once the signer check has run.
+    const confirmButton = await app.requireObject(`${UPGRADE_CASCADE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirmButton, "enabled"), true, `${UPGRADE_CASCADE}.confirm enabled`);
+    }, { timeout: 30000, interval: 300, description: "the reinstall dialog's confirm to enable" });
+    const buttonText = await app.evalOn(confirmButton, "text");
+    if (!/^Reinstall( anyway)?$/.test(buttonText)) {
+      throw new Error(`${UPGRADE_CASCADE}.confirm reads ${JSON.stringify(buttonText)}, want "Reinstall"`);
+    }
+    note(`confirm button: ${JSON.stringify(buttonText)}`);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible while the reinstall dialog is open`);
+    await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible`);
+    }, { timeout: 5000, interval: 100, description: "the reinstall dialog to close" });
+
+    // PMUI now removes the installed copy and extracts the file again. Wait
+    // for the install half to be reported (package_manager's
+    // uiPluginFileInstalled event, which also triggers the metadata rescan),
+    // watching for a failure report meanwhile; then let the end state settle
+    // — manifest, directory listing and tile count unchanged for 3 s — before
+    // judging it. A run without the event line (debug logging off) falls
+    // through to the settle alone and says so.
+    const SETTLE_MS = 60000;
+    const settleDeadline = Date.now() + SETTLE_MS;
+    let witnessed = false;
+    while (Date.now() < settleDeadline) {
+      const failure = await installFailureWitness(app, log);
+      if (failure) throw new Error(`the reinstall was reported as failed via ${failure.via}: ${failure.text}`);
+      if (countLines(UI_PLUGIN_INSTALLED_LOG) > installedBefore) { witnessed = true; break; }
+      await sleep(300);
+    }
+    if (witnessed) {
+      note(`reinstall witnessed in the log ${Date.now() - requested} ms after the request ` +
+           `(uninstall event: ${countLines(UI_PLUGIN_UNINSTALLED_LOG) > uninstalledBefore ? "yes" : "no"})`);
+    } else {
+      note(`no "${UI_PLUGIN_INSTALLED_LOG}" line within ${SETTLE_MS / 1000} s; judging the settled end state`);
+    }
+    const snapshot = async () => {
+      const st = existsSync(manifestPath) ? statSync(manifestPath) : null;
+      return JSON.stringify({
+        manifest: st ? [st.mtimeMs, st.ino, st.size] : null,
+        dirs: fixtureDirs(),
+        tiles: await tileCount(),
+      });
+    };
+    let last = await snapshot();
+    let stableSince = Date.now();
+    for (;;) {
+      const failure = await installFailureWitness(app, log);
+      if (failure) throw new Error(`the reinstall was reported as failed via ${failure.via}: ${failure.text}`);
+      const now = await snapshot();
+      if (now !== last) { last = now; stableSince = Date.now(); }
+      const state = JSON.parse(now);
+      const settled = state.manifest !== null && state.tiles >= 1 && Date.now() - stableSince >= 3000;
+      if (settled) break;
+      if (Date.now() >= settleDeadline) {
+        throw new Error(`the reinstalled package did not settle within ${SETTLE_MS / 1000} s ` +
+                        `of the request (last state: ${now})`);
+      }
+      await sleep(500);
+    }
+
+    // On disk: exactly one directory for the package, carrying v0.1.1.
+    const dirs = fixtureDirs();
+    if (dirs.length !== 1 || dirs[0] !== "test_qml_only") {
+      throw new Error(`plugins/test_qml_only* after the reinstall: ${JSON.stringify(dirs)}, want ["test_qml_only"]`);
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    assertEq(manifest.name, "test_qml_only", "installed manifest.json name");
+    assertEq(manifest.version, "0.1.1", "installed manifest.json version");
+    const after = statSync(manifestPath);
+    const moved = after.mtimeMs !== before.mtimeMs || after.ino !== before.ino;
+    note(`manifest.json after the reinstall: mtime ${after.mtime.toISOString()}, inode ${after.ino} ` +
+         `— ${moved ? "rewritten (removed and extracted again)" : "unchanged"}`);
+    // A failure reported late is still a failure.
+    const late = await installFailureWitness(app, log);
+    if (late) throw new Error(`a failure was reported via ${late.via} after the reinstall: ${late.text}`);
+
+    // In the sidebar: exactly one tile, and it opens the app.
+    assertEq(await tileCount(), 1, `${TILE} instances after the reinstall`);
+    const workspace = await app.requireObject("workspace");
+    // The evaluate anchor with `backend` in scope that survives dock churn
+    // (ui-tests.mjs, waitForVisibleApp); the workspace itself is a C++ widget
+    // and only its scalar dockCount is read there.
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const visibleApp = () => app.evalOn(greeting, "backend.currentVisibleApp");
+    assertEq(await app.evalOn(workspace, "dockCount"), 0, "workspace.dockCount before opening the app");
+    await app.click(TILE);
+    const dockDeadline = Date.now() + 30000;
+    for (;;) {
+      const loadFailed = await app.findByObjectName(LOAD_FAILED);
+      if (loadFailed && (await app.evalOn(loadFailed, "visible")) === true) {
+        throw new Error(`the reinstalled app failed to load: ${await app.evalOn(loadFailed, "errorMessage")}`);
+      }
+      if ((await app.evalOn(workspace, "dockCount")) === 1) break;
+      if (Date.now() >= dockDeadline) {
+        throw new Error(`workspace.dockCount did not reach 1 within 30 s of clicking ${TILE} ` +
+                        `(currentVisibleApp=${JSON.stringify(await visibleApp())})`);
+      }
+      await sleep(250);
+    }
+    await app.waitFor(async () => {
+      assertEq(await visibleApp(), "test_qml_only", "backend.currentVisibleApp");
+    }, { timeout: 10000, interval: 500, description: "the reinstalled app to become front-most" });
+    const PAYLOAD_TEXT = "Test QML Only (test_qml_only) v0.1.1";
+    await app.waitFor(async () => { await app.expectTexts([PAYLOAD_TEXT]); },
+      { timeout: 20000, interval: 500, description: "the reinstalled app's payload text to render" });
+    // Launching moves the tile between Repeaters (same name, new object): still one.
+    assertEq(await tileCount(), 1, `${TILE} instances with the app open`);
   }));
 
 const ran = results.filter((r) => r !== null);
