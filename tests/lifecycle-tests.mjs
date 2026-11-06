@@ -42,6 +42,7 @@ import {
   findByObjectName,
   installViaPmu,
   makeUserDir,
+  pollProperty,
   scanForQmlErrors,
   sleep,
   spawnBasecamp,
@@ -450,6 +451,22 @@ async function pmuiErrorReport(app, log) {
   return notice ? { via: "pmui.messageNotice", text: "", hook: true } : null;
 }
 
+// The witnesses that only a FAILED install leaves: Basecamp's "Install Failed"
+// notice and the log line behind it. Not pmui.messageNotice, whose text could
+// as well be a status ("Installing…") or a success as an error. For a test
+// that must not mistake a successful install for a reported failure.
+async function installFailureWitness(app, log) {
+  const dialog = await app.findByObjectName(INSTALL_ERROR);
+  if (dialog && (await app.evalOn(dialog, "visible")) === true) {
+    const name = await app.evalOn(dialog, "moduleName");
+    const message = await app.evalOn(dialog, "errorMessage");
+    return { via: INSTALL_ERROR, text: `${name}: ${message}` };
+  }
+  const line = log().split("\n").find((l) => l.includes(PMUI_FAILURE_LOG));
+  if (line) return { via: "app log", text: line.trim() };
+  return null;
+}
+
 // Closes Basecamp's "Install Failed" notice if it is open.
 async function dismissInstallError(app) {
   const dialog = await app.findByObjectName(INSTALL_ERROR);
@@ -670,6 +687,90 @@ results.push(await runTest("install: two confirmations in flight — the second 
     }
     if (!(await app.findByObjectName("sidebar.app.test_qml_only"))) {
       throw new Error("sidebar.app.test_qml_only vanished while B installed");
+    }
+  }));
+
+// B3. An install gate nobody answers. PMUI's confirm_install is an intent the
+// shell itself provides, dispatched with no chooser, so the broker's
+// Dispatched phase bounds it: 20 s (m_responseTimeoutMs) when the provider
+// had no handler, the 10-minute leak backstop (kChooserBackstopMs) when it
+// had one. MainUIBackend's shell endpoint reports one receiver whenever
+// PackageCoordinator::beginPackageConfirmation takes the request, so a gate
+// that opened is under the backstop: 30 s of silence — past the 20 s deadline
+// on purpose — must leave it open, and the late answer still installs. Were
+// the gate gone at 30 s, the message says whether PMUI was told (the 20 s
+// deadline applied: a product finding, and this test would then assert that)
+// or nothing was (a silent drop, a failure either way). A gate still open
+// over a request the broker has already ended would fail the same way: PMUI
+// reports the failure before the gate is answered, and that is checked at
+// the 30 s mark too, so it does not surface as a bare "A never installed".
+results.push(await runTest("install: gate left unanswered stays open and still works when answered",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    const pluginDir = join(userDir, "plugins", "test_qml_only");
+
+    const requested = await installLocalPackage(app, store, FIXTURES.A_0_1_1);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 200, description: "the install gate to open" });
+    const openedAfterMs = Date.now() - requested;
+    assertEq(await app.evalOn(gate, "moduleName"), "test_qml_only", "install gate moduleName");
+    note(`gate opened ${openedAfterMs} ms after installLocalPackage`);
+
+    // The observation window: a fixed 30 s with no click, `visible` sampled
+    // throughout so a gate that closed and reopened would show as well.
+    const UNANSWERED_MS = 30000;
+    const samples = await pollProperty(app, gate.id, "visible", UNANSWERED_MS, { intervalMs: 500 });
+    const stillOpen = await app.evalOn(gate, "visible");
+    const flips = samples.slice(1);
+    if (stillOpen !== true || flips.length > 0) {
+      const report = await pmuiErrorReport(app, log);
+      const told = report && report.text.length > 0;
+      const timedOut = told && /timed?[ _-]?out/i.test(report.text);
+      const history = samples.map((s) => `${s.t}ms:${s.value}`).join(" ");
+      throw new Error(
+        `${INSTALL_GATE} did not stay open for ${UNANSWERED_MS} ms unanswered ` +
+        `(visible=${JSON.stringify(stillOpen)} at the end, samples: ${history}); ` +
+        (told
+          ? `PMUI reported via ${report.via}: ${report.text}` +
+            (timedOut ? " — the 20 s response deadline applied to the shell's own gate"
+                      : "")
+          : "no error reached PMUI (no pmui.messageNotice text, no Install Failed " +
+            "notice, no install-failure log line): a silent drop"));
+    }
+    // Open, and still a live request: the broker ending the dispatch under
+    // the gate (PMUI told of a failure before anyone answered) would make the
+    // confirm below answer nothing.
+    const early = await installFailureWitness(app, log);
+    if (early) {
+      throw new Error(`${INSTALL_GATE} is still open after ${UNANSWERED_MS} ms but PMUI ` +
+                      `was already told the install failed, via ${early.via}: ${early.text} ` +
+                      "— the request ended under the open gate (the 20 s response deadline)");
+    }
+    note(`gate still visible ${UNANSWERED_MS / 1000} s in with no click (${samples.length} distinct sample(s))`);
+
+    // The late answer. Confirm is enabled once the signer check has run —
+    // long since, after 30 s.
+    const confirmButton = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirmButton, "enabled"), true, `${INSTALL_GATE}.confirm enabled`);
+    }, { timeout: 5000, interval: 200, description: "the install gate's confirm to be enabled" });
+    await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    // The answer was delivered and acted on: A installs within 60 s.
+    await app.requireObject("sidebar.app.test_qml_only", 60000);
+    if (!existsSync(join(pluginDir, "manifest.json"))) {
+      throw new Error(`${pluginDir}/manifest.json missing after confirming the late gate`);
+    }
+    note(`A installed ${Date.now() - requested} ms after the request`);
+    // And nothing reported it as failed along the way.
+    const late = await installFailureWitness(app, log);
+    if (late) {
+      throw new Error(`a failure was reported via ${late.via} although A installed: ${late.text}`);
     }
   }));
 
