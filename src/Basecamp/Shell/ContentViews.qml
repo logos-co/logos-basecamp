@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Logos.Theme
 
 import Basecamp.AppManager
 import Basecamp.Settings
@@ -88,7 +89,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#1e1e1e"
+        color: Theme.palette.background
     }
 
     // Content views stack — only App Manager and Settings live here.

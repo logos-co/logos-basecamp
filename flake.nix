@@ -796,7 +796,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib;
+            inherit pkgs src logosPackageHeaders logosPackageLib logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
@@ -811,7 +811,7 @@
           # the test plan phases land to make it a gate.
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
-            inherit pkgs src logosPackageHeaders;
+            inherit pkgs src logosPackageHeaders logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };

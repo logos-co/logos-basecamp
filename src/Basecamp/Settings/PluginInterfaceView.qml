@@ -54,24 +54,10 @@ Item {
             Layout.fillWidth: true
             spacing: 16
 
-            Button {
+            LogosButton {
                 objectName: "pluginInterface.back"
                 text: "← Back"
-
-                contentItem: LogosText {
-                    text: parent.text
-                    color: "#ffffff"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 80
-                    implicitHeight: 32
-                    color: parent.pressed ? "#3d3d3d" : "#4b4b4b"
-                    radius: 4
-                }
-
+                compact: true
                 onClicked: root.backClicked()
             }
 
@@ -79,7 +65,7 @@ Item {
                 text: "Interface: " + root.pluginName
                 font.pixelSize: 20
                 font.weight: Font.Bold
-                color: "#ffffff"
+                color: Theme.palette.text
             }
 
             Item { Layout.fillWidth: true }
@@ -89,9 +75,9 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "#2d2d2d"
+            color: Theme.palette.backgroundSecondary
             radius: 8
-            border.color: "#3d3d3d"
+            border.color: Theme.palette.border
             border.width: 1
 
             ColumnLayout {
@@ -121,7 +107,7 @@ Item {
                             text: "Methods"
                             font.pixelSize: Theme.typography.secondaryText
                             font.weight: Font.Bold
-                            color: "#a0a0a0"
+                            color: Theme.palette.textSecondary
                             visible: root.methods.length > 0
                         }
 
@@ -131,7 +117,7 @@ Item {
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: methodColumn.implicitHeight + 24
-                                color: "#363636"
+                                color: Theme.palette.surface
                                 radius: 6
 
                                 ColumnLayout {
@@ -147,36 +133,24 @@ Item {
                                         LogosText {
                                             text: modelData.name || modelData
                                             font.weight: Font.Bold
-                                            color: "#4A90E2"
+                                            color: Theme.palette.info
                                         }
 
                                         LogosText {
                                             text: modelData.signature || ""
                                             font.pixelSize: Theme.typography.secondaryText
-                                            color: "#808080"
+                                            // textTertiary is under 4.5:1 on the surface card.
+                                            color: Theme.palette.textSecondary
                                             visible: modelData.signature !== undefined
                                         }
 
                                         Item { Layout.fillWidth: true }
 
-                                        Button {
+                                        LogosButton {
                                             objectName: "pluginInterface.call." + (modelData.name || modelData)
                                             text: "Call"
-
-                                            contentItem: LogosText {
-                                                text: parent.text
-                                                font.pixelSize: Theme.typography.secondaryText
-                                                color: "#ffffff"
-                                                horizontalAlignment: Text.AlignHCenter
-                                                verticalAlignment: Text.AlignVCenter
-                                            }
-
-                                            background: Rectangle {
-                                                implicitWidth: 60
-                                                implicitHeight: 26
-                                                color: parent.pressed ? "#45a049" : "#4CAF50"
-                                                radius: 4
-                                            }
+                                            compact: true
+                                            variant: LogosButton.Variant.Primary
 
                                             onClicked: {
                                                 let methodName = modelData.name || modelData
@@ -188,7 +162,7 @@ Item {
                                     LogosText {
                                         text: modelData.description || ""
                                         font.pixelSize: Theme.typography.secondaryText
-                                        color: "#a0a0a0"
+                                        color: Theme.palette.textSecondary
                                         wrapMode: Text.Wrap
                                         Layout.fillWidth: true
                                         visible: modelData.description !== undefined && modelData.description.length > 0
@@ -200,7 +174,7 @@ Item {
                         // Empty state
                         LogosText {
                             text: "No methods available for this plugin."
-                            color: "#606060"
+                            color: Theme.palette.textTertiary
                             Layout.alignment: Qt.AlignHCenter
                             Layout.topMargin: 40
                             visible: root.methods.length === 0
@@ -211,7 +185,7 @@ Item {
                             text: "Events"
                             font.pixelSize: Theme.typography.secondaryText
                             font.weight: Font.Bold
-                            color: "#a0a0a0"
+                            color: Theme.palette.textSecondary
                             Layout.topMargin: 12
                             visible: root.events.length > 0
                         }
@@ -222,7 +196,7 @@ Item {
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: eventColumn.implicitHeight + 24
-                                color: "#363636"
+                                color: Theme.palette.surface
                                 radius: 6
 
                                 ColumnLayout {
@@ -239,13 +213,14 @@ Item {
                                             text: modelData.name || modelData
                                             font.weight: Font.Bold
                                             // Amber to distinguish events from the blue methods.
-                                            color: "#E2A04A"
+                                            color: Theme.palette.warning
                                         }
 
                                         LogosText {
                                             text: modelData.signature || ""
                                             font.pixelSize: Theme.typography.secondaryText
-                                            color: "#808080"
+                                            // textTertiary is under 4.5:1 on the surface card.
+                                            color: Theme.palette.textSecondary
                                             visible: modelData.signature !== undefined
                                         }
 
@@ -255,7 +230,7 @@ Item {
                                     LogosText {
                                         text: modelData.description || ""
                                         font.pixelSize: Theme.typography.secondaryText
-                                        color: "#a0a0a0"
+                                        color: Theme.palette.textSecondary
                                         wrapMode: Text.Wrap
                                         Layout.fillWidth: true
                                         visible: modelData.description !== undefined && modelData.description.length > 0
@@ -270,9 +245,9 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 150
-                    color: "#1e1e1e"
+                    color: Theme.palette.surfaceRecessed
                     radius: 4
-                    border.color: "#4d4d4d"
+                    border.color: Theme.palette.border
                     border.width: 1
                     visible: root.resultText.length > 0
 
@@ -285,7 +260,7 @@ Item {
                             text: "Result:"
                             font.pixelSize: Theme.typography.secondaryText
                             font.weight: Font.Bold
-                            color: "#a0a0a0"
+                            color: Theme.palette.textSecondary
                         }
 
                         LogosScrollView {
@@ -298,7 +273,7 @@ Item {
                                 text: root.resultText
                                 font.pixelSize: 12
                                 font.family: Theme.typography.publicSans
-                                color: "#4CAF50"
+                                color: Theme.palette.success
                                 readOnly: true
                                 wrapMode: Text.Wrap
                                 background: Rectangle {

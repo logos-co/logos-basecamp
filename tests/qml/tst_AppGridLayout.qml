@@ -244,4 +244,101 @@ TestCase {
         compare(badge.text, "Finding peers…");
         verify(String(badge.iconSource).indexOf("logos-storage.svg") >= 0);
     }
+
+    // ── A click on the state badge is a click on the app ─────────────────────
+    // The badge ("Update", "Install", …) sits on top of the tile. A
+    // HoverHandler on it made it take the press: clicking the word did
+    // nothing, only the icon around it opened the dialog.
+    SignalSpy { id: appClickedSpy; signalName: "appClicked" }
+
+    function updatable() {
+        var data = appData("wallet", "Wallet");
+        data.hasUpdate = true;
+        data.installStatus = InstallStatus.UpgradeAvailable;
+        return data;
+    }
+
+    function clickBadge(delegate, badgeName) {
+        var badge = findByObjectName(delegate, badgeName);
+        verify(badge && badge.visible, badgeName + " is shown");
+        compare(badge.text, "Update");
+        appClickedSpy.target = delegate;
+        appClickedSpy.clear();
+        mouseClick(badge);
+        compare(appClickedSpy.count, 1, "clicking the badge opens the app");
+        compare(appClickedSpy.signalArguments[0][0], "wallet");
+
+        // …and a right-click on it opens the app's menu, as on the icon.
+        mouseClick(badge, badge.width / 2, badge.height / 2, Qt.RightButton);
+        tryVerify(function() { return contextMenuOpen(delegate) }, 1000,
+                  "right-clicking the badge opens the context menu");
+    }
+
+    function contextMenuOpen(delegate) {
+        for (var i = 0; i < delegate.data.length; ++i) {
+            var o = delegate.data[i];
+            if (typeof o.openFor === "function")
+                return o.opened;
+        }
+        return false;
+    }
+
+    // The badge's download tooltip, now on the Control's own hover.
+    function hoverShowsDownloadTip(delegate, badgeName) {
+        var badge = findByObjectName(delegate, badgeName);
+        verify(badge && badge.visible, badgeName + " is shown");
+        mouseMove(badge, badge.width / 2, badge.height / 2);
+        // A tooltip is a popup: in the badge's data, not its children.
+        var tip = null;
+        for (var i = 0; i < badge.data.length; ++i)
+            if (badge.data[i].objectName === badgeName + ".toolTip")
+                tip = badge.data[i];
+        verify(tip, "found the badge tooltip");
+        verify(tip.text.length > 0, "the tooltip has something to say");
+        tryVerify(function() { return tip.visible }, 1000, "hovering the badge shows its tooltip");
+    }
+
+    function downloading() {
+        var data = appData("wallet", "Wallet");
+        data.isInstalled = false;
+        data.installStatus = InstallStatus.NotInstalled;
+        data.planInstallStage = InstallStage.Downloading;
+        data.planDownloadReceived = 1024;
+        data.planDownloadTotal = 4096;
+        data.planDownloadTransport = "logos";   // has a caption; http only on fallback
+        return data;
+    }
+
+    function test_the_tile_badge_tooltip_still_shows_on_hover() {
+        var tile = createTemporaryObject(gridDelegateComp, testCase.Window.window.contentItem, {
+            width: 200, height: 162, appData: downloading(),
+        });
+        waitForRendering(tile);
+        hoverShowsDownloadTip(tile, "appGridStateBadge");
+    }
+
+    function test_the_list_badge_tooltip_still_shows_on_hover() {
+        var row = createTemporaryObject(listDelegateComp, testCase.Window.window.contentItem, {
+            width: 200, height: 56, appData: downloading(),
+        });
+        waitForRendering(row);
+        hoverShowsDownloadTip(row, "appListStateBadge");
+    }
+
+    function test_clicking_the_tile_badge_opens_the_app() {
+        var tile = createTemporaryObject(gridDelegateComp, testCase.Window.window.contentItem, {
+            width: 200, height: 162, appData: updatable(),
+        });
+        waitForRendering(tile);
+        clickBadge(tile, "appGridStateBadge");
+    }
+
+    function test_clicking_the_list_badge_opens_the_app() {
+        // Inside the 200 px test window: a click outside it is never delivered.
+        var row = createTemporaryObject(listDelegateComp, testCase.Window.window.contentItem, {
+            width: 200, height: 56, appData: updatable(),
+        });
+        waitForRendering(row);
+        clickBadge(row, "appListStateBadge");
+    }
 }
