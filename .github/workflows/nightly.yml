@@ -2,7 +2,8 @@ name: Nightly
 
 # The lifecycle suite (tests/lifecycle-tests.mjs, nix/lifecycle-test.nix): a
 # fresh app per test, too slow for the PR gate's budget, so it runs here —
-# every night, on every push to a release branch, and on demand.
+# every night, on every push to a release branch or to a test/mcp-lifecycle*
+# branch (the branches the suite itself is developed on), and on demand.
 
 on:
   schedule:
@@ -10,6 +11,7 @@ on:
   push:
     branches:
       - 'release/**'
+      - 'test/mcp-lifecycle**'
   workflow_dispatch:
 
 jobs:
