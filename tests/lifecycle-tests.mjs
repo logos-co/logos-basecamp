@@ -215,8 +215,8 @@ class App {
 async function passOnboarding(app) {
   let onboarding = false;
   await app.waitFor(async () => {
-    if (await app.findByObjectName("welcomePage.greeting")) return;
     if (await app.findByObjectName("onboardingView")) { onboarding = true; return; }
+    if (await app.findByObjectName("welcomePage.greeting")) return;
     throw new Error("neither onboardingView nor welcomePage.greeting is in the QML tree");
   }, { timeout: FIRST_RUN_WAIT_MS, interval: 500, description: "onboarding or the welcome page" });
   if (!onboarding) return;
