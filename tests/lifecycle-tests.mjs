@@ -917,6 +917,7 @@ results.push(await runTest("install: reinstalling the same version — wording a
         tiles: await tileCount(),
       });
     };
+    const snapshotDeadline = Date.now() + SETTLE_MS;
     let last = await snapshot();
     let stableSince = Date.now();
     for (;;) {
@@ -927,9 +928,9 @@ results.push(await runTest("install: reinstalling the same version — wording a
       const state = JSON.parse(now);
       const settled = state.manifest !== null && state.tiles >= 1 && Date.now() - stableSince >= 3000;
       if (settled) break;
-      if (Date.now() >= settleDeadline) {
+      if (Date.now() >= snapshotDeadline) {
         throw new Error(`the reinstalled package did not settle within ${SETTLE_MS / 1000} s ` +
-                        `of the request (last state: ${now})`);
+                        `of starting the end-state check (last state: ${now})`);
       }
       await sleep(500);
     }
