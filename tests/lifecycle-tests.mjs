@@ -758,6 +758,10 @@ results.push(await runTest("install: gate left unanswered stays open and still w
     await app.waitFor(async () => {
       assertEq(await app.evalOn(confirmButton, "enabled"), true, `${INSTALL_GATE}.confirm enabled`);
     }, { timeout: 5000, interval: 200, description: "the install gate's confirm to be enabled" });
+    if (existsSync(join(pluginDir, "manifest.json")) ||
+        (await app.findByObjectName("sidebar.app.test_qml_only"))) {
+      throw new Error("A installed before the unanswered gate was confirmed");
+    }
     await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
     await waitGateHidden(app, 5000);
 
