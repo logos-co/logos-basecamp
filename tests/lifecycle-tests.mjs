@@ -1617,8 +1617,8 @@ results.push(await runTest("install: unresolvable dependency is surfaced",
         throw new Error(`${INSTALL_ERROR} does not name the package: moduleName=${JSON.stringify(name)} ` +
                         `body=${JSON.stringify(body)} errorMessage=${JSON.stringify(message)}`);
       }
-      if (typeof message !== "string" || message.length === 0) {
-        throw new Error(`${INSTALL_ERROR} carries no error message: the refusal gives no reason`);
+      if (typeof message !== "string" || !message.includes(MISSING_DEP_NAME)) {
+        throw new Error(`${INSTALL_ERROR} does not surface the unresolved dependency ${MISSING_DEP_NAME}: ${JSON.stringify(message)}`);
       }
       await dismissInstallError(app);
       // Nothing installed: no tile within 5 s, no directory, no row.
