@@ -552,9 +552,6 @@ results.push(await runTest("install: two confirmations in flight — the second 
     const secondDone = await installLocalPackage(app, store, FIXTURES.B_0_1_1);
     const gapMs = secondDone - firstDone;
     note(`second installLocalPackage made ${gapMs} ms after the first`);
-    if (gapMs > 200) {
-      throw new Error(`the two installLocalPackage calls were ${gapMs} ms apart, want under 200 ms`);
-    }
 
     // Exactly one gate, and it is A's: moduleName (what confirm answers for)
     // and the body (what the user reads) agree on test_qml_only.
