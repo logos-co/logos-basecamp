@@ -587,16 +587,7 @@ results.push(await runTest("install: two confirmations in flight — the second 
       if (!report || report.text.length === 0) {
         throw new Error("no error reported for B yet" + (report?.hook ? " (pmui.messageNotice is empty)" : ""));
       }
-    }, { timeout: 5000, interval: 200, description: "PMUI to report an error for B" }).catch((e) => {
-      // The hook exists and stays empty: the refusal went unreported, a
-      // failure. No hook at all: the refusal is still proven by the log line
-      // above and by no second gate ever opening (below); the missing
-      // automation hook is a finding, not something to paper over here.
-      if (report?.hook) throw e;
-      note("PMUI's error for B is not readable from the shell (no pmui.messageNotice, " +
-           "no Install Failed notice, no install-failure log line); the refusal is " +
-           "asserted through Basecamp's log line and the no-second-gate watch");
-    });
+    }, { timeout: 5000, interval: 200, description: "PMUI to report an error for B" });
     if (report && report.text.length > 0) {
       note(`B refused, reported via ${report.via}: ${report.text}`);
       // By its raw name or its display name (the fixture's "Test QML Only B"),
