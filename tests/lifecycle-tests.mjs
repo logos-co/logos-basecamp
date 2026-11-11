@@ -984,6 +984,204 @@ results.push(await runTest("install: reinstalling the same version — wording a
     assertEq(await tileCount(), 1, `${TILE} instances with the app open`);
   }));
 
+// B5. A lower version over a higher one, with the app open. PMUI finds the
+// package installed at 0.2.1, sees the file carries 0.1.1, and raises
+// confirm_upgrade with mode 1 (PackageTypes/UpgradeMode: Downgrade), never
+// confirm_install — so the shell draws the upgradeCascade dialog in its
+// downgrade wording (ConfirmationDialog.qml: "Downgrade Package?", the body
+// leading "Downgrade '<label>' to v0.1.1.", the button "Downgrade"), and the
+// install gate stays closed. The "downgrade" chip in the warning colour sits
+// only on dependency-change rows, which this plan has none of, so it is not
+// looked for. Confirming is the go-ahead: the running app is unloaded for the
+// swap, the installed copy removed, the file extracted, and the package is
+// then 0.1.1 on disk — and, reopened, renders its 0.1.1 payload, not the
+// 0.2.1 one it rendered before.
+results.push(await runTest("install: downgrade gate leads with warning wording",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    const cascade = await app.requireObject(UPGRADE_CASCADE);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible before any install`);
+    const TILE = "sidebar.app.test_qml_only";
+    const manifestPath = join(userDir, "plugins", "test_qml_only", "manifest.json");
+    const TEXT_0_2_1 = "Test QML Only (test_qml_only) v0.2.1";
+    const TEXT_0_1_1 = "Test QML Only (test_qml_only) v0.1.1";
+    const countLines = (needle) => log().split("\n").filter((l) => l.includes(needle)).length;
+    // The manifest is removed and extracted again during the swap: absent or
+    // half-written reads as "not there yet", never as a failure.
+    const manifestVersion = () => {
+      if (!existsSync(manifestPath)) return null;
+      try { return JSON.parse(readFileSync(manifestPath, "utf-8")).version ?? null; }
+      catch { return null; }
+    };
+    const workspace = await app.requireObject("workspace");
+    // The evaluate anchor with `backend` in scope that survives dock churn
+    // (ui-tests.mjs, waitForVisibleApp).
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const visibleApp = () => app.evalOn(greeting, "backend.currentVisibleApp");
+    const dockCount = () => app.evalOn(workspace, "dockCount");
+    // Clicks the tile and waits for the app's dock to be front-most and its
+    // payload text to render. A load failure is reported as one. The
+    // metadata rescans that follow an install rebuild the sidebar's tiles
+    // (launcherApps is a plain list: same name, new object), so a click
+    // whose tile was rebuilt between the find and the invoke fails without
+    // firing and is simply made again.
+    const openApp = async (payloadText, what) => {
+      await app.requireObject(TILE, 60000);
+      await app.waitFor(async () => { await app.click(TILE); },
+        { timeout: 10000, interval: 250, description: `${TILE} to take the click for ${what}` });
+      const dockDeadline = Date.now() + 30000;
+      for (;;) {
+        const loadFailed = await app.findByObjectName(LOAD_FAILED);
+        if (loadFailed && (await app.evalOn(loadFailed, "visible")) === true) {
+          throw new Error(`${what} failed to load: ${await app.evalOn(loadFailed, "errorMessage")}`);
+        }
+        if ((await dockCount()) === 1) break;
+        if (Date.now() >= dockDeadline) {
+          throw new Error(`workspace.dockCount did not reach 1 within 30 s of clicking ${TILE} for ${what} ` +
+                          `(currentVisibleApp=${JSON.stringify(await visibleApp())})`);
+        }
+        await sleep(250);
+      }
+      await app.waitFor(async () => {
+        assertEq(await visibleApp(), "test_qml_only", "backend.currentVisibleApp");
+      }, { timeout: 10000, interval: 500, description: `${what} to become front-most` });
+      await app.waitFor(async () => { await app.expectTexts([payloadText]); },
+        { timeout: 20000, interval: 500, description: `${what} to render ${JSON.stringify(payloadText)}` });
+    };
+    // Whether `text` renders anywhere: the inverse of expectTexts, the same
+    // two probes (a whole `text` property, a substring of the tree dump).
+    const textRendered = async (text) => {
+      if ((await app.findByProperty("text", text)).length > 0) return true;
+      const treeStr = JSON.stringify(await app.getTree({ depth: 60 }));
+      return treeStr.includes(JSON.stringify(text).slice(1, -1));
+    };
+
+    // The higher version first: the plain gate, confirmed; the app installed,
+    // opened and rendering its 0.2.1 payload.
+    await installViaPmu(app, FIXTURES.A_0_2_1, { confirm: true });
+    await waitGateHidden(app, 5000);
+    await app.requireObject(TILE, 60000);
+    await app.waitFor(async () => {
+      assertEq(manifestVersion(), "0.2.1", "installed manifest.json version");
+    }, { timeout: 10000, interval: 250, description: "the installed manifest.json at 0.2.1" });
+    await app.waitFor(async () => {
+      if (countLines(UI_PLUGIN_INSTALLED_LOG) < 1) throw new Error(`no "${UI_PLUGIN_INSTALLED_LOG}" yet`);
+    }, { timeout: 10000, interval: 250, description: "the first install's event line" }).catch(() => {});
+    const installedBefore = countLines(UI_PLUGIN_INSTALLED_LOG);
+    assertEq(await dockCount(), 0, "workspace.dockCount before opening the app");
+    await openApp(TEXT_0_2_1, "the 0.2.1 app");
+    note(`0.2.1 open and rendering ${JSON.stringify(TEXT_0_2_1)}`);
+
+    // The lower version. Whichever dialog opens first decides: the install
+    // gate showing up for a package already installed is the failure this
+    // test exists to catch, so it is sampled on every turn.
+    const requested = await installLocalPackage(app, store, FIXTURES.A_0_1_1);
+    const openDeadline = Date.now() + 30000;
+    for (;;) {
+      if ((await app.evalOn(gate, "visible")) === true) {
+        const { title, body } = await gateTexts(app, gate);
+        throw new Error(`${INSTALL_GATE} opened for the downgrade (title=${JSON.stringify(title)} ` +
+                        `body=${JSON.stringify(body)}); want ${UPGRADE_CASCADE} in downgrade mode`);
+      }
+      if ((await app.evalOn(cascade, "visible")) === true) break;
+      if (Date.now() >= openDeadline) {
+        throw new Error(`${UPGRADE_CASCADE} did not open within 30 s of installLocalPackage(0.1.1)`);
+      }
+      await sleep(200);
+    }
+    note(`upgradeCascade opened ${Date.now() - requested} ms after installLocalPackage(0.1.1)`);
+
+    // The wording, read while the dialog is open (a closed instance keeps
+    // stale text). The label is the display name once the package is
+    // installed, the raw name otherwise; either is accepted and the one seen
+    // is noted. The clause after the version says who signed the file (this
+    // fixture: nobody). The sentence about running modules follows only when
+    // a loaded DEPENDENT is named (loadedItems); A has none, so the head
+    // sentence pair may stand alone.
+    assertEq(await app.evalOn(cascade, "moduleName"), "test_qml_only", `${UPGRADE_CASCADE} moduleName`);
+    assertEq(await app.evalOn(cascade, "upgradeModeKind"), 1, `${UPGRADE_CASCADE} upgradeModeKind (1 = downgrade)`);
+    assertEq(await app.evalOn(cascade, "upgradeTargetVersion"), "0.1.1", `${UPGRADE_CASCADE} upgradeTargetVersion`);
+    const { title, body, texts } = await gateTexts(app, cascade);
+    if (!texts.includes("Downgrade Package?")) {
+      throw new Error(`open upgradeCascade renders no "Downgrade Package?" (texts: ${JSON.stringify(texts)})`);
+    }
+    assertEq(title, "Downgrade Package?", "upgradeCascade title");
+    const BODY_RE = /^Downgrade '(Test QML Only|test_qml_only)' to v0\.1\.1([^.]*)\. The current version will be removed first, then the new one downloaded and installed\./;
+    const bodyMatch = BODY_RE.exec(body);
+    if (!bodyMatch) {
+      throw new Error(`upgradeCascade body ${JSON.stringify(body)} does not start ` +
+                      `"Downgrade 'Test QML Only' to v0.1.1. The current version will be removed first, …"`);
+    }
+    note(`dialog body: ${body}`);
+    note(`label rendered as ${JSON.stringify(bodyMatch[1])} (${bodyMatch[1] === "Test QML Only" ? "display name" : "raw name"})`);
+
+    // The button says "Downgrade" — with " anyway" appended when the signer
+    // check asks the user to go ahead with an unsigned package, the same
+    // suffix the install gate's "Install" carries. Never "Upgrade",
+    // "Reinstall" or "Install". Enabled once the signer check has run.
+    const confirmButton = await app.requireObject(`${UPGRADE_CASCADE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirmButton, "enabled"), true, `${UPGRADE_CASCADE}.confirm enabled`);
+    }, { timeout: 30000, interval: 300, description: "the downgrade dialog's confirm to enable" });
+    const buttonText = await app.evalOn(confirmButton, "text");
+    if (!/^Downgrade( anyway)?$/.test(buttonText)) {
+      throw new Error(`${UPGRADE_CASCADE}.confirm reads ${JSON.stringify(buttonText)}, want "Downgrade"`);
+    }
+    note(`confirm button: ${JSON.stringify(buttonText)}`);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible while the downgrade dialog is open`);
+    await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(cascade, "visible"), false, `${UPGRADE_CASCADE} visible`);
+    }, { timeout: 5000, interval: 100, description: "the downgrade dialog to close" });
+
+    // The swap: within 60 s the manifest on disk says 0.1.1, with no failure
+    // reported meanwhile.
+    const SWAP_MS = 60000;
+    const swapDeadline = Date.now() + SWAP_MS;
+    for (;;) {
+      const failure = await installFailureWitness(app, log);
+      if (failure) throw new Error(`the downgrade was reported as failed via ${failure.via}: ${failure.text}`);
+      const version = manifestVersion();
+      if (version === "0.1.1") break;
+      if (Date.now() >= swapDeadline) {
+        throw new Error(`${manifestPath} does not say 0.1.1 within ${SWAP_MS / 1000} s of confirming ` +
+                        `(version=${JSON.stringify(version)})`);
+      }
+      await sleep(300);
+    }
+    note(`manifest.json at 0.1.1 ${Date.now() - requested} ms after the request`);
+    // The install half's event line (the metadata rescan follows it); a run
+    // with debug logging off never logs it: bounded, not fatal.
+    await app.waitFor(async () => {
+      if (countLines(UI_PLUGIN_INSTALLED_LOG) <= installedBefore) throw new Error(`no new "${UI_PLUGIN_INSTALLED_LOG}" yet`);
+    }, { timeout: 10000, interval: 250, description: "the downgrade's install event line" }).catch(() => {});
+
+    // Reopen. The cascade unloads the running app for the swap, so its dock
+    // is normally gone by now; one still there is closed by hand (closeDock
+    // takes a string, so it goes through evaluate), as a fresh load is what
+    // is being judged.
+    if ((await dockCount()) > 0) {
+      note(`dock still open after the swap (dockOrder=${JSON.stringify(await app.evalOn(workspace, "dockOrder"))}); closing it`);
+      await app.evalOn(workspace, `closeDock(${JSON.stringify("test_qml_only")})`);
+      await app.waitFor(async () => {
+        assertEq(await dockCount(), 0, "workspace.dockCount");
+      }, { timeout: 10000, interval: 250, description: "the 0.2.1 dock to close" });
+    } else {
+      note("dock unloaded by the swap");
+    }
+    await openApp(TEXT_0_1_1, "the 0.1.1 app");
+    if (await textRendered(TEXT_0_2_1)) {
+      throw new Error(`${JSON.stringify(TEXT_0_2_1)} still renders after the downgrade to 0.1.1`);
+    }
+    assertEq(manifestVersion(), "0.1.1", "installed manifest.json version with the app open");
+    // A failure reported late is still a failure.
+    const late = await installFailureWitness(app, log);
+    if (late) throw new Error(`a failure was reported via ${late.via} after the downgrade: ${late.text}`);
+  }));
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;
