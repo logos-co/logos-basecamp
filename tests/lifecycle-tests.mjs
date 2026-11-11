@@ -1378,6 +1378,271 @@ results.push(await runTest("install: cancelling the upgrade gate keeps the old v
     if (late) throw new Error(`a failure was reported via ${late.via} after the second cancel: ${late.text}`);
   }));
 
+// B7. A package whose dependency no repository carries: fixture A declaring
+// `no_such_module`. The problem must end up in front of the user, one of
+// three ways, and whichever the product takes is asserted in full:
+//   (a) the catalog path — AddApplicationDialog's resolution banner ("Some
+//       required packages could not be resolved.") with a Required Packages
+//       row for no_such_module. The Add Application dialog is the catalog's,
+//       so a local file is not expected to land here.
+//   (b) the local-file path — the install gate (whose body says the
+//       dependencies could not be determined: there is no repository to
+//       resolve a local file against) confirmed, the package installed, and
+//       the dependency resolver (PackageCoordinator::refreshDependencyInfo,
+//       one resolveFlatDependencies round trip per installed package) then
+//       flags the tile: sidebar.app.test_qml_only carries hasMissingDeps, and
+//       a click on it raises the Missing Dependencies dialog naming
+//       no_such_module (UIPluginManager::loadUiModule's gate) instead of a
+//       load.
+//   (c) the product refuses the package before installing it: Basecamp's
+//       "Install Failed" notice names it, OK closes it, and nothing is on
+//       disk. The plan's gate does not list this outcome, so a run that takes
+//       it reports a finding; it is still asserted as a surfaced refusal,
+//       never a silent drop.
+// On every branch the app is never loaded: the uiModulesModel row (when
+// there is one) reads isLoaded false and the workspace has no dock. The
+// resolver's warnings about the missing dependency are expected; a QML
+// error is not (G-ERR).
+const MISSING_DEPS = "confirmationDialog.missingDeps";
+const RESOLUTION_BANNER = "addApplicationDialog.resolutionBanner";
+const RESOLUTION_BANNER_TEXT = "Some required packages could not be resolved.";
+const MISSING_DEP_NAME = "no_such_module";
+// backend.uiModulesModel's roles (ModuleInstanceRoles in
+// app/interfaces/BasecampModelRoles.h; ui-tests.mjs reads them the same way).
+const UI_MODULE_ROLE = { name: "Qt.UserRole + 1", isLoaded: "Qt.UserRole + 9" };
+
+results.push(await runTest("install: unresolvable dependency is surfaced",
+  async ({ app, userDir, log, note }) => {
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore");
+    const gate = await app.requireObject(INSTALL_GATE);
+    const installError = await app.requireObject(INSTALL_ERROR);
+    const missingDeps = await app.requireObject(MISSING_DEPS);
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible before any install`);
+    assertEq(await app.evalOn(installError, "visible"), false, `${INSTALL_ERROR} visible before any install`);
+    assertEq(await app.evalOn(missingDeps, "visible"), false, `${MISSING_DEPS} visible before any install`);
+    const TILE = "sidebar.app.test_qml_only";
+    const pluginDir = join(userDir, "plugins", "test_qml_only");
+    const workspace = await app.requireObject("workspace");
+    // The evaluate anchor with `backend` in scope (ui-tests.mjs, moduleModelRow).
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const dockCount = () => app.evalOn(workspace, "dockCount");
+    const uiModuleRow = async () => JSON.parse(await app.evalOn(greeting, `JSON.stringify((() => {
+      const m = backend.uiModulesModel;
+      for (let i = 0; i < m.rowCount(); i += 1) {
+        const idx = m.index(i, 0);
+        if (String(m.data(idx, ${UI_MODULE_ROLE.name})) === "test_qml_only")
+          return { isLoaded: m.data(idx, ${UI_MODULE_ROLE.isLoaded}) };
+      }
+      return null;
+    })())`));
+    const visible = async (obj) => (await app.evalOn(obj, "visible")) === true;
+    // The banner belongs to the Add Application dialog, which is in the tree
+    // only while that dialog is open: absent reads as not shown.
+    const bannerShown = async () => {
+      const banner = await app.findByObjectName(RESOLUTION_BANNER);
+      return banner !== null && (await visible(banner));
+    };
+    // The tile, with its marker read in the same breath: the metadata
+    // rescans rebuild the launcher's tiles (same name, new object), so a
+    // tile found and then read may be gone in between — that reads as "not
+    // yet", never as a failure.
+    const tileState = async () => {
+      const tile = await app.findByObjectName(TILE);
+      if (!tile) return null;
+      try {
+        return {
+          tile,
+          hasMissingDeps: await app.evalOn(tile, "hasMissingDeps"),
+          depBlockKind: await app.evalOn(tile, "depBlockKind"),
+          loaded: await app.evalOn(tile, "loaded"),
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    // The request, and whichever dialog surfaces first within 30 s.
+    const requested = await installLocalPackage(app, store, FIXTURES.A_0_1_1_NO_SUCH_DEP);
+    let first = null;
+    const openDeadline = Date.now() + 30000;
+    for (;;) {
+      if (await visible(gate)) { first = "gate"; break; }
+      if (await visible(installError)) { first = "error"; break; }
+      if (Date.now() >= openDeadline) {
+        throw new Error(`neither ${INSTALL_GATE} nor ${INSTALL_ERROR} opened within 30 s of ` +
+                        `installLocalPackage (a package with an unresolvable dependency went unanswered)`);
+      }
+      await sleep(200);
+    }
+    note(`${first === "gate" ? INSTALL_GATE : INSTALL_ERROR} opened ${Date.now() - requested} ms after the request`);
+
+    if (first === "gate") {
+      // Read while open: a closed instance keeps stale text. The body leads
+      // with the package and the version; whether it admits the dependencies
+      // could not be determined is noted, as that is the sentence that tells
+      // the user something unseen may follow.
+      assertEq(await app.evalOn(gate, "moduleName"), "test_qml_only", `${INSTALL_GATE} moduleName`);
+      const { title, body } = await gateTexts(app, gate);
+      assertEq(title, "Install Package?", "install gate title");
+      if (!/^Install '(Test QML Only|test_qml_only)' v0\.1\.1\b/.test(body)) {
+        throw new Error(`install gate body ${JSON.stringify(body)} does not start "Install 'test_qml_only' v0.1.1"`);
+      }
+      note(`gate body: ${body}`);
+      note(body.includes("could not be determined")
+        ? "the gate says the dependencies could not be determined"
+        : "the gate does NOT say the dependencies could not be determined");
+      const confirmButton = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(confirmButton, "enabled"), true, `${INSTALL_GATE}.confirm enabled`);
+      }, { timeout: 30000, interval: 300, description: "the install gate's confirm to enable" });
+      await app.send("callMethod", { objectId: confirmButton.id, method: "clicked" });
+      await waitGateHidden(app, 5000);
+    }
+
+    // Dependency resolution: up to 30 s for the first of the three witnesses.
+    // The flagged tile is what the local-file path produces; the banner is
+    // the catalog's; an "Install Failed" notice is the refusal.
+    let outcome = null;
+    const resolveDeadline = Date.now() + 30000;
+    for (;;) {
+      const tile = await tileState();
+      if (tile && tile.hasMissingDeps === true) { outcome = "tile"; break; }
+      if (await bannerShown()) { outcome = "banner"; break; }
+      if (await visible(installError)) { outcome = "error"; break; }
+      if (Date.now() >= resolveDeadline) {
+        throw new Error(`30 s after the ${first === "gate" ? "gate was confirmed" : "request"}: no ` +
+                        `${TILE} with hasMissingDeps, no ${RESOLUTION_BANNER}, no ${INSTALL_ERROR} ` +
+                        `(tile: ${tile ? JSON.stringify({ hasMissingDeps: tile.hasMissingDeps, loaded: tile.loaded }) : "absent"}, ` +
+                        `plugins/test_qml_only ${existsSync(pluginDir) ? "exists" : "absent"}): ` +
+                        "the unresolvable dependency was dropped silently");
+      }
+      await sleep(300);
+    }
+    note(`surfaced as ${outcome} ${Date.now() - requested} ms after the request`);
+
+    if (outcome === "banner") {
+      // (a) The catalog's banner — not expected for a local file, but a
+      // product that routes there must then name the package it could not
+      // resolve.
+      const banner = await app.findByObjectName(RESOLUTION_BANNER);
+      const text = await app.evalOn(banner, "text");
+      if (typeof text !== "string" || !text.startsWith(RESOLUTION_BANNER_TEXT)) {
+        throw new Error(`${RESOLUTION_BANNER} reads ${JSON.stringify(text)}, want it to start ` +
+                        `${JSON.stringify(RESOLUTION_BANNER_TEXT)}`);
+      }
+      note(`banner: ${text}`);
+      const row = await app.findByObjectName(`packageRow.name.${MISSING_DEP_NAME}`);
+      if (!row) throw new Error(`no Required Packages row (packageRow.name.${MISSING_DEP_NAME}) under the banner`);
+      assertEq(await visible(installError), false, `${INSTALL_ERROR} visible alongside the banner`);
+      const tile = await tileState();
+      if (tile && tile.hasMissingDeps === true) {
+        throw new Error(`${TILE} is flagged hasMissingDeps as well as the banner: two outcomes, want exactly one`);
+      }
+      note("outcome (a): the catalog resolution banner — not the local-file path the plan expects");
+    } else if (outcome === "tile") {
+      // (b) The flagged tile. A click on it opens the Missing Dependencies
+      // dialog naming no_such_module and loads nothing. The tile may be
+      // rebuilt by a rescan between the find and the click: made again.
+      const flagged = await app.waitFor(async () => {
+        const t = await tileState();
+        if (!t) throw new Error(`${TILE} not in the QML tree`);
+        return t;
+      }, { timeout: 5000, interval: 250, description: `${TILE} to settle after the rescan` });
+      note(`tile flagged: hasMissingDeps=${flagged.hasMissingDeps} depBlockKind=${JSON.stringify(flagged.depBlockKind)} loaded=${flagged.loaded}`);
+      assertEq(flagged.loaded, false, `${TILE} loaded while flagged`);
+      if (!existsSync(join(pluginDir, "manifest.json"))) {
+        throw new Error(`${pluginDir}/manifest.json missing although ${TILE} is flagged`);
+      }
+      await app.waitFor(async () => { await app.click(TILE); },
+        { timeout: 10000, interval: 250, description: `${TILE} to take the click` });
+      await app.waitFor(async () => {
+        assertEq(await visible(missingDeps), true, `${MISSING_DEPS} visible`);
+      }, { timeout: 10000, interval: 200, description: "the Missing Dependencies dialog to open" });
+      // Read while open. The items are blocker maps ({ name, kind, detail });
+      // the rows render as "• <name>" and the body says what the set is.
+      assertEq(await app.evalOn(missingDeps, "moduleName"), "test_qml_only", `${MISSING_DEPS} moduleName`);
+      const items = JSON.parse(await app.evalOn(missingDeps, "JSON.stringify(items)"));
+      const names = items.map((it) => (typeof it === "string" ? it : (it && it.name) || ""));
+      if (!names.includes(MISSING_DEP_NAME)) {
+        throw new Error(`${MISSING_DEPS} items ${JSON.stringify(items)} do not name ${MISSING_DEP_NAME}`);
+      }
+      const summary = await app.evalOn(missingDeps, "blockSummary");
+      const { title, body, texts } = await gateTexts(app, missingDeps);
+      note(`dialog: title=${JSON.stringify(title)} blockSummary=${JSON.stringify(summary)} body=${JSON.stringify(body)}`);
+      assertEq(title, "Missing Dependencies", `${MISSING_DEPS} title`);
+      if (!/^'(Test QML Only|test_qml_only)' cannot be loaded because the following modules are not installed:$/.test(body)) {
+        throw new Error(`${MISSING_DEPS} body ${JSON.stringify(body)} does not read ` +
+                        `"'Test QML Only' cannot be loaded because the following modules are not installed:"`);
+      }
+      // The row as rendered: in the dialog's own subtree, or — the list's
+      // delegates may sit under a view item the walk does not descend into —
+      // anywhere in the scene (this dialog is open for the first time, so no
+      // stale copy of the row can stand in).
+      if (!texts.some((t) => t.startsWith(`• ${MISSING_DEP_NAME}`))) {
+        await app.expectTexts([`• ${MISSING_DEP_NAME}`]).catch((e) => {
+          throw new Error(`${MISSING_DEPS} renders no "• ${MISSING_DEP_NAME}" row (${e.message}; ` +
+                          `dialog texts: ${JSON.stringify(texts)})`);
+        });
+      }
+      // OK closes it, and the click loaded nothing.
+      await app.click(`${MISSING_DEPS}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await visible(missingDeps), false, `${MISSING_DEPS} visible`);
+      }, { timeout: 5000, interval: 100, description: "the Missing Dependencies dialog to close" });
+      const after = await app.waitFor(async () => {
+        const t = await tileState();
+        if (!t) throw new Error(`${TILE} not in the QML tree`);
+        return t;
+      }, { timeout: 5000, interval: 250, description: `${TILE} after the dialog` });
+      assertEq(after.hasMissingDeps, true, `${TILE} hasMissingDeps after the dialog`);
+      assertEq(after.loaded, false, `${TILE} loaded after the dialog`);
+      // Exactly one outcome: no refusal notice, no catalog banner.
+      assertEq(await visible(installError), false, `${INSTALL_ERROR} visible alongside the flagged tile`);
+      assertEq(await bannerShown(), false, `${RESOLUTION_BANNER} visible alongside the flagged tile`);
+      const failure = await installFailureWitness(app, log);
+      if (failure) throw new Error(`the install was reported as failed via ${failure.via} although the package is installed and flagged: ${failure.text}`);
+      note("outcome (b): installed, tile flagged, Missing Dependencies dialog names no_such_module");
+    } else {
+      // (c) Refused before anything installed. The plan does not list this
+      // outcome: asserted as a refusal the user can see, and reported.
+      const name = await app.evalOn(installError, "moduleName");
+      const message = await app.evalOn(installError, "errorMessage");
+      const { title, body } = await gateTexts(app, installError);
+      note(`Install Failed notice: moduleName=${JSON.stringify(name)} title=${JSON.stringify(title)} ` +
+           `body=${JSON.stringify(body)} errorMessage=${JSON.stringify(message)}`);
+      assertEq(title, "Install Failed", `${INSTALL_ERROR} title`);
+      const named = [name, body, message].some((s) => typeof s === "string" && /test_qml_only|Test QML Only/.test(s));
+      if (!named) {
+        throw new Error(`${INSTALL_ERROR} does not name the package: moduleName=${JSON.stringify(name)} ` +
+                        `body=${JSON.stringify(body)} errorMessage=${JSON.stringify(message)}`);
+      }
+      if (typeof message !== "string" || !message.includes(MISSING_DEP_NAME)) {
+        throw new Error(`${INSTALL_ERROR} does not surface the unresolved dependency ${MISSING_DEP_NAME}: ${JSON.stringify(message)}`);
+      }
+      await dismissInstallError(app);
+      // Nothing installed: no tile within 5 s, no directory, no row.
+      await expectAbsent(app, TILE, 5000);
+      if (existsSync(pluginDir)) throw new Error(`${pluginDir} exists after the package was refused`);
+      assertEq(await bannerShown(), false, `${RESOLUTION_BANNER} visible alongside the refusal`);
+      note("outcome (c): refused before installing — an outcome the plan's gate does not list (finding)");
+    }
+
+    // On every branch: the app is not loaded and nothing is docked.
+    const row = await uiModuleRow();
+    if (outcome === "error") {
+      if (row !== null) throw new Error(`backend.uiModulesModel has a test_qml_only row after the refusal: ${JSON.stringify(row)}`);
+    } else {
+      if (row === null) throw new Error("test_qml_only not in backend.uiModulesModel");
+      assertEq(row.isLoaded, false, "uiModulesModel isLoaded for test_qml_only");
+    }
+    assertEq(await dockCount(), 0, "workspace.dockCount");
+    const loadFailed = await app.findByObjectName(LOAD_FAILED);
+    if (loadFailed && (await visible(loadFailed))) {
+      throw new Error(`a load was attempted and failed: ${await app.evalOn(loadFailed, "errorMessage")}`);
+    }
+  }));
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;
