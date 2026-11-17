@@ -838,6 +838,15 @@
             uiTestRun = if pkgs.stdenv.isDarwin then integrationTestBundle else integrationTest;
           };
 
+          # Lifecycle tests (install gates, failure paths, uninstall cascades,
+          # module IPC, restart): a fresh app and user dir per test. Nightly
+          # (.github/workflows/nightly.yml), deliberately not in `checks`: it
+          # has no place inside the PR gate's budget.
+          lifecycle-test = import ./nix/lifecycle-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+            lgx = logos-package.packages.${buildPkgs.stdenv.hostPlatform.system}.lgx;
+          };
+
           # Where apps download from, end to end: onboarding's choice, then
           # the App Manager and the Package Manager in each state.
           download-source-test = import ./nix/download-source-test.nix {

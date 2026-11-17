@@ -183,6 +183,38 @@ export const FIXTURE_A = {
   dependencies: [],
 };
 
+// The lifecycle suite's packages (tests/lifecycle-tests.mjs): fixture A at
+// two versions, plus a second app so cascade and chooser tests have a
+// neighbour. One builder, so every test names them the same way.
+export const LIFECYCLE_FIXTURES = {
+  A_0_1_1: { ...FIXTURE_A },
+  A_0_2_1: { ...FIXTURE_A, version: "0.2.1" },
+  B_0_1_1: {
+    name: "test_qml_only_b",
+    version: "0.1.1",
+    displayName: "Test QML Only B",
+    type: "ui_qml",
+    dependencies: [],
+  },
+};
+
+// Builds every lifecycle fixture into `outDir` and returns its path by key.
+// The variant is LGX_VARIANT when set (a dev build accepts only
+// "<platform>-dev"; nix/lifecycle-test.nix exports it), else the portable one.
+export function makeLifecycleFixtures(outDir, opts = {}) {
+  mkdirSync(outDir, { recursive: true });
+  const paths = {};
+  for (const [key, spec] of Object.entries(LIFECYCLE_FIXTURES)) {
+    paths[key] = makeLgx({
+      outFile: join(outDir, `${spec.name}-${spec.version}.lgx`),
+      variant: process.env.LGX_VARIANT,
+      ...spec,
+      ...opts,
+    });
+  }
+  return paths;
+}
+
 // Pre-boot seeding (spec §4.7): getInstalledUiPlugins/getInstalledPackages are
 // live directory scans for <name>/manifest.json — no install registry — so a
 // fixture extracted into <user-dir>/plugins/ is indistinguishable from an
