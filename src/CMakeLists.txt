@@ -48,6 +48,7 @@ set(SOURCES
     ShortcutBridge.cpp
     ShellDevQml.h
     ShellDevQml.cpp
+    ThemeColours.h
     ${BASECAMP_INTERFACES}/IShellHost.h
     ${BASECAMP_INTERFACES}/IShellView.h
     ${BASECAMP_INTERFACES}/BasecampModelRoles.h

@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -65,6 +66,8 @@ private slots:
     void testInstallableNeverOverlapsAnInstalledPackage();
     void testInstallableRefusesReservedAndInvalidNames();
     void testInstallableIsSortedAndDeduplicated();
+    void testRepeatedInstallableInputChangesNothing();
+    void testRebuildRecomputesInstallable();
 };
 
 void TestIntentRegistry::testResolvesSingleProvider()
@@ -561,4 +564,50 @@ void TestIntentRegistry::testInstallableIsSortedAndDeduplicated()
 }
 
 QTEST_MAIN(TestIntentRegistry)
+// MainUIBackend calls this on every apps-model change, and a download
+// reports progress many times a second; it logged the whole list each time.
+void TestIntentRegistry::testRepeatedInstallableInputChangesNothing()
+{
+    IntentRegistry registry;
+    QSignalSpy changed(&registry, &IntentRegistry::changed);
+    const QMap<QString, QStringList> offer{
+        { QStringLiteral("wallet_ui"), { QStringLiteral("wallet.send") } },
+        { QStringLiteral("evil_ui"), { QStringLiteral("basecamp.settings.open") } },
+    };
+
+    QVERIFY(registry.setInstallableProviders(offer));
+    const int diagnostics = registry.diagnostics().size();
+    QCOMPARE(diagnostics, 1);   // the reserved intent
+
+    QVERIFY(!registry.setInstallableProviders(offer));
+    QVERIFY(!registry.setInstallableProviders(offer));
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(registry.diagnostics().size(), diagnostics);
+
+    QVERIFY(registry.setInstallableProviders({}));
+    QVERIFY(registry.installableProvidersFor(QStringLiteral("wallet.send")).isEmpty());
+    QCOMPARE(changed.count(), 2);
+}
+
+// What is installed decides what is installable, so the same catalog after
+// a rebuild is not a repeat.
+void TestIntentRegistry::testRebuildRecomputesInstallable()
+{
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("wallet"),
+        R"({"name":"wallet_ui","provides":[{"intent":"wallet.send"}]})");
+    const QMap<QString, QStringList> offer{
+        { QStringLiteral("wallet_ui"), { QStringLiteral("wallet.send") } },
+    };
+
+    IntentRegistry registry;
+    QVERIFY(registry.setInstallableProviders(offer));
+    QCOMPARE(registry.installableProvidersFor(QStringLiteral("wallet.send")),
+             QStringList{ QStringLiteral("wallet_ui") });
+
+    registry.rebuild({ { QStringLiteral("wallet_ui"), plugin(dir) } }, nullptr, nullptr);
+    QVERIFY(registry.setInstallableProviders(offer));
+    QVERIFY(registry.installableProvidersFor(QStringLiteral("wallet.send")).isEmpty());
+}
+
 #include "intent_registry_test.moc"

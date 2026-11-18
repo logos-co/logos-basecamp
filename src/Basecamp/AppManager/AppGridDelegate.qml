@@ -191,11 +191,14 @@ ItemDelegate {
                     backgroundColor: Theme.palette.surfaceRaised
                     radius: Theme.spacing.radiusXlarge
 
-                    HoverHandler { id: badgeHover }
+                    // Control's own hover, not a HoverHandler: one on the badge
+                    // made it take the press, so clicking the label did nothing.
+                    hoverEnabled: true
                     LogosToolTip {
+                        objectName: "appGridStateBadge.toolTip"
                         text: d.installStage === InstallStage.Downloading ? d.downloadToolTip : ""
                         placement: LogosToolTip.Top
-                        visible: badgeHover.hovered && text.length > 0
+                        visible: stateBadge.hovered && text.length > 0
                     }
 
                     Component.onCompleted: if (labelItem) labelItem.font.pixelSize = Theme.typography.badgeText

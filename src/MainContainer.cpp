@@ -1,6 +1,7 @@
 #include "MainContainer.h"
 #include "ShellSections.h"
 #include "ShellDevQml.h"
+#include "ThemeColours.h"
 #include "AppsFilterProxy.h"
 #include "InstallEnums.h"
 #include "ShortcutBridge.h"
@@ -43,7 +44,10 @@ QWidget* makePmuiPlaceholder(QWidget* parent)
     phLayout->setAlignment(Qt::AlignCenter);
     QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"), ph);
     loadingLabel->setAlignment(Qt::AlignCenter);
-    loadingLabel->setStyleSheet(QStringLiteral("color: #a0a0a0; font-size: 14px;"));
+    ThemeColours::bind(loadingLabel, [loadingLabel] {
+        loadingLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 14px;")
+            .arg(ThemeColours::css("textSecondary")));
+    });
     phLayout->addWidget(loadingLabel);
     return ph;
 }
@@ -215,13 +219,7 @@ void MainContainer::detachFromHost()
 
 void MainContainer::setupUi()
 {
-    // We would likely move this to qml and use Logos.Theme instead
-    QColor bgColor("#171717");
-    // set background color
-    setAutoFillBackground(true);
-    QPalette p = palette();
-    p.setColor(QPalette::Window, bgColor);
-    setPalette(p);
+    ThemeColours::fillWithBackground(this);
 
     // Create main horizontal layout
     m_mainLayout = new QHBoxLayout(this);
@@ -239,7 +237,7 @@ void MainContainer::setupUi()
     m_sidebarWidget->setMinimumWidth(80);
     m_sidebarWidget->setMaximumWidth(80);
     // set clear color to sidebar so that rounded corners don't show white
-    m_sidebarWidget->setClearColor(bgColor);
+    ThemeColours::clearToBackground(m_sidebarWidget);
 
     // === CONTENT AREA (vertical layout with stack + app launcher) ===
     QWidget* contentArea = new QWidget(this);
@@ -259,7 +257,7 @@ void MainContainer::setupUi()
     // Index 1: QML content views (Dashboard, Modules, PackageManager, Settings)
     m_contentWidget = new QQuickWidget(m_contentStack);
     m_contentWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    m_contentWidget->setClearColor(bgColor);
+    ThemeColours::clearToBackground(m_contentWidget);
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
     m_contentWidget->rootContext()->setContextProperty("themeManager", m_themeManager);
     ShellDevQml::load(m_contentWidget,
@@ -341,7 +339,7 @@ void MainContainer::setupUi()
     if (m_host->backendObject()->property("onboardingRequired").toBool()) {
         m_onboardingWidget = new QQuickWidget(this);
         m_onboardingWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-        m_onboardingWidget->setClearColor(bgColor);
+        ThemeColours::clearToBackground(m_onboardingWidget);
         m_onboardingWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
         ShellDevQml::load(m_onboardingWidget,
             QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OnboardingShell.qml")),
@@ -615,7 +613,7 @@ QQuickWidget* MainContainer::makeAppStoppedPanel(const QString& name)
 {
     auto* panel = new QQuickWidget;
     panel->setResizeMode(QQuickWidget::SizeRootObjectToView);
-    panel->setClearColor(QColor("#171717"));
+    ThemeColours::clearToBackground(panel);
     panel->setSource(QUrl(QStringLiteral(
         "qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/AppStoppedPanel.qml")));
     QObject* root = panel->rootObject();

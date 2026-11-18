@@ -554,9 +554,9 @@ Dialog {
         Rectangle {
             objectName: "confirmationDialog." + root.mode + ".message"
             Layout.fillWidth: true
-            color: "#1e1e1e"
+            color: Theme.palette.surfaceRecessed
             radius: 4
-            border.color: "#3d3d3d"
+            border.color: Theme.palette.border
             border.width: 1
             implicitHeight: errorMessageText.implicitHeight + 16
             visible: root.mode === "installError" && root.errorMessage.length > 0
@@ -566,7 +566,7 @@ Dialog {
                 anchors.fill: parent
                 anchors.margins: 8
                 text: root.errorMessage
-                color: "#e0e0e0"
+                color: Theme.palette.text
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
             }
@@ -576,9 +576,9 @@ Dialog {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(150, Math.max(30, root.items.length * 24))
-            color: "#1e1e1e"
+            color: Theme.palette.surfaceRecessed
             radius: 4
-            border.color: "#3d3d3d"
+            border.color: Theme.palette.border
             border.width: 1
             visible: root.mode !== "upgradeCascade"
                      && root.mode !== "installGate"
@@ -598,7 +598,7 @@ Dialog {
                     // whose package, to go and get.
                     text: "• " + (root.displayNameLookup(_name) || _name)
                           + (_detail.length > 0 ? " — " + _detail : "")
-                    color: "#e0e0e0"
+                    color: Theme.palette.text
                     font.pixelSize: 13
                 }
             }
@@ -618,7 +618,7 @@ Dialog {
             LogosText {
                 Layout.fillWidth: true
                 text: "Currently running (will be temporarily unloaded):"
-                color: "#c0c0c0"
+                color: Theme.palette.textSecondary
                 font.pixelSize: 13
                 font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
@@ -627,9 +627,9 @@ Dialog {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.min(120, Math.max(30, root.loadedItems.length * 24))
-                color: "#1e1e1e"
+                color: Theme.palette.surfaceRecessed
                 radius: 4
-                border.color: "#3d3d3d"
+                border.color: Theme.palette.border
                 border.width: 1
 
                 LogosListView {
@@ -639,7 +639,7 @@ Dialog {
                     clip: true
                     delegate: LogosText {
                         text: "• " + (root.displayNameLookup(modelData) || modelData)
-                        color: "#e0e0e0"
+                        color: Theme.palette.text
                         font.pixelSize: 13
                     }
                 }
@@ -661,7 +661,7 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.topMargin: 4
                 text: "Dependency changes:"
-                color: "#c0c0c0"
+                color: Theme.palette.textSecondary
                 font.pixelSize: 13
                 font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
@@ -669,9 +669,9 @@ Dialog {
 
             Rectangle {
                 Layout.fillWidth: true
-                color: "#1e1e1e"
+                color: Theme.palette.surfaceRecessed
                 radius: 4
-                border.color: "#3d3d3d"
+                border.color: Theme.palette.border
                 border.width: 1
                 implicitHeight: depChangeList.implicitHeight + 16
 
@@ -734,7 +734,7 @@ Dialog {
                                 var head = repo ? (name + " (" + repo + ")") : name;
                                 return ver ? (head + "  " + ver) : head;
                             }
-                            color: "#e0e0e0"
+                            color: Theme.palette.text
                             font.pixelSize: 13
                             elide: Text.ElideMiddle
                             objectName: "confirmationDialog.change." + (modelData.name || "")

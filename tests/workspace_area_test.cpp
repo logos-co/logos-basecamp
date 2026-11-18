@@ -1,4 +1,5 @@
 // srcdeps: WorkspaceArea.cpp ShellDevQml.cpp
+// libdeps: Logos::DesignSystem
 //
 // Unit tests for WorkspaceArea.
 // Verifies dock lifecycle, widget ownership, tab bar state, and
@@ -6,6 +7,8 @@
 //
 //   nix build .#unit-tests -L
 #include "WorkspaceArea.h"
+
+#include <ThemeStore.h>
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -20,6 +23,8 @@
 #include <QTabBar>
 #include <QToolButton>
 #include <QWheelEvent>
+#include <QScopeGuard>
+#include <QTemporaryDir>
 
 namespace {
 
@@ -1423,6 +1428,44 @@ private slots:
             "Plugin widget should be destroyed with the dock via Qt "
             "parent-child cascade — consumers rely on this to trigger "
             "the plugin's own destructor.");
+    }
+
+    // --- Theme ---------------------------------------------------------------
+
+    // logos-basecamp#546: the workspace background and tab bars were
+    // hardcoded #171717, so a custom theme left them dark.
+    void chromeFollowsTheTheme()
+    {
+        QTemporaryDir dir;
+        QVERIFY(QDir(dir.path()).mkpath("test.chrome"));
+        QFile f(dir.filePath("test.chrome/theme.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"formatVersion\": 1, \"id\": \"test.chrome\", \"name\": \"Chrome\","
+                " \"author\": \"tests\", \"mode\": \"dark\", \"palette\":"
+                " {\"background\": \"#204060\", \"backgroundSecondary\": \"#305070\"}}");
+        f.close();
+        auto* store = Logos::ThemeStore::instance();
+        store->addDirectory(dir.path());
+        const auto restore = qScopeGuard([store] { store->setCurrent("dark"); });
+
+        WorkspaceArea ws;
+        ws.addPluginDock(makePluginWidget("A"), "A");
+        ws.addPluginDock(makePluginWidget("B"), "B");
+        processDeferred();
+        QTabBar* bar = tabBarOf(ws);
+        QVERIFY(bar);
+        QCOMPARE(ws.palette().color(QPalette::Window), QColor("#171717"));
+        QVERIFY(bar->styleSheet().contains("rgba(23, 23, 23, 1.000)"));
+
+        QVERIFY(store->setCurrent("test.chrome"));
+        QCOMPARE(ws.palette().color(QPalette::Window), QColor("#204060"));
+        QVERIFY2(bar->styleSheet().contains("background: rgba(32, 64, 96, 1.000)"),
+                 qPrintable(bar->styleSheet()));
+        QVERIFY(bar->styleSheet().contains("background: rgba(48, 80, 112, 0.600)"));
+        QVERIFY(!bar->styleSheet().contains("rgba(23, 23, 23"));
+
+        QVERIFY(store->setCurrent("dark"));
+        QCOMPARE(ws.palette().color(QPalette::Window), QColor("#171717"));
     }
 };
 

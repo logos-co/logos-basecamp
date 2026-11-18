@@ -1,5 +1,6 @@
 #include "WorkspaceArea.h"
 #include "ShellDevQml.h"
+#include "ThemeColours.h"
 
 #include <QApplication>
 #include <QBoxLayout>
@@ -63,14 +64,13 @@ public:
 // Transparent-for-mouse so clicks pass through to the plugin.
 class CornerCutOverlay : public QWidget {
 public:
-    explicit CornerCutOverlay(QWidget* parent = nullptr,
-                              QColor cutColor = QColor("#171717"),
-                              qreal radius = 16.0)
-        : QWidget(parent), m_cutColor(cutColor), m_radius(radius)
+    explicit CornerCutOverlay(QWidget* parent = nullptr, qreal radius = 16.0)
+        : QWidget(parent), m_radius(radius)
     {
         setAttribute(Qt::WA_TransparentForMouseEvents);
         setAttribute(Qt::WA_TranslucentBackground);
         setAutoFillBackground(false);
+        connect(Logos::ThemeStore::instance(), &Logos::ThemeStore::paletteChanged, this, [this] { update(); });
     }
 
 protected:
@@ -84,11 +84,11 @@ protected:
         QPainterPath inner;
         inner.addRoundedRect(rect(), m_radius, m_radius);
 
-        p.fillPath(outer.subtracted(inner), m_cutColor);
+        p.fillPath(outer.subtracted(inner),
+                   ThemeColours::color("background"));
     }
 
 private:
-    QColor m_cutColor;
     qreal  m_radius;
 };
 
@@ -237,18 +237,13 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
                    | QMainWindow::AnimatedDocks);
     setTabPosition(Qt::AllDockWidgetAreas, QTabWidget::North);
 
-    setAutoFillBackground(true);
-    {
-        QPalette pal = palette();
-        pal.setColor(QPalette::Window, QColor("#171717"));
-        setPalette(pal);
-    }
+    ThemeColours::fillWithBackground(this);
     setContentsMargins(0, 0, 0, 0);
 
     if (backend) {
         m_welcomeWidget = new QQuickWidget(this);
         m_welcomeWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-        m_welcomeWidget->setClearColor(QColor("#171717"));
+        ThemeColours::clearToBackground(m_welcomeWidget);
         m_welcomeWidget->setMinimumSize(300, 200);
         m_welcomeWidget->rootContext()->setContextProperty("backend", backend);
         ShellDevQml::load(m_welcomeWidget,
@@ -618,49 +613,55 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
     props.setScrollMetric(QScrollerProperties::ScrollingCurve, QEasingCurve::OutCubic);
     QScroller::scroller(tabBar)->setScrollerProperties(props);
 
-    tabBar->setStyleSheet(QStringLiteral(R"(
-        QTabBar {
-            background: #171717;
-            border: none;
-            qproperty-drawBase: false;
-        }
+    ThemeColours::bind(tabBar, [tabBar] {
+        tabBar->setStyleSheet(QStringLiteral(R"(
+            QTabBar {
+                background: %1;
+                border: none;
+                qproperty-drawBase: false;
+            }
 
-        QTabBar::tab {
-            background: #262626;
-            color: #A4A4A4;
+            QTabBar::tab {
+                background: %2;
+                color: %3;
 
-            padding: 0px 8px 0px 4px;
-            margin-right: 10px;
+                padding: 0px 8px 0px 4px;
+                margin-right: 10px;
 
-            border-top-left-radius: 10px;
-            border-top-right-radius: 10px;
-            height: 20px;
-            min-width: 120px;
-        }
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                height: 20px;
+                min-width: 120px;
+            }
 
-        /* Welcome tab: icon only, same height as the app tabs.
-           The CONTENT box is exactly the icon (15px, see setIconSize below),
-           because Qt left-aligns an icon inside a content box wider than it —
-           any slack here lands entirely on the right and the icon looks
-           left-hugging. Symmetric padding does the centring instead, and sets
-           the visible plate at 5+15+5 = 25px, which is the design's ~1.2x of
-           the 20px tab height. */
-        QTabBar::tab:first, QTabBar::tab:only-one {
-            min-width: 15px;
-            max-width: 15px;
-            height: 20px;
-            padding: 0px 5px 0px 5px;
-        }
+            /* Welcome tab: icon only, same height as the app tabs.
+               The CONTENT box is exactly the icon (15px, see setIconSize below),
+               because Qt left-aligns an icon inside a content box wider than it —
+               any slack here lands entirely on the right and the icon looks
+               left-hugging. Symmetric padding does the centring instead, and sets
+               the visible plate at 5+15+5 = 25px, which is the design's ~1.2x of
+               the 20px tab height. */
+            QTabBar::tab:first, QTabBar::tab:only-one {
+                min-width: 15px;
+                max-width: 15px;
+                height: 20px;
+                padding: 0px 5px 0px 5px;
+            }
 
-        QTabBar::tab:!selected {
-            background: rgba(38, 38, 38, 0.6);
-            color: #626262;
-        }
+            QTabBar::tab:!selected {
+                background: %4;
+                color: %5;
+            }
 
-        QTabBar::tab:hover {
-            background: #262626;
-        }
-    )"));
+            QTabBar::tab:hover {
+                background: %2;
+            }
+        )").arg(ThemeColours::css("background"),
+                ThemeColours::css("backgroundSecondary"),
+                ThemeColours::css("textSecondary"),
+                ThemeColours::css("backgroundSecondary", 0.6),
+                ThemeColours::css("textTertiary")));
+    });
 
     connect(tabBar, &QTabBar::tabMoved, this, [this, tabBar](int from, int to) {
         Q_UNUSED(from)
@@ -717,10 +718,12 @@ void WorkspaceArea::installTabBarCloseButtons(QTabBar* tabBar)
         btn->setIconSize(QSize(12, 12));
         btn->setFixedSize(12, 12);
         btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(QStringLiteral(R"(
-            QToolButton { background: transparent; border: none; }
-            QToolButton:hover { background: rgba(255,255,255,0.1); border-radius: 6px; }
-        )"));
+        ThemeColours::bind(btn, [btn] {
+            btn->setStyleSheet(QStringLiteral(R"(
+                QToolButton { background: transparent; border: none; }
+                QToolButton:hover { background: %1; border-radius: 6px; }
+            )").arg(ThemeColours::css("text", 0.1)));
+        });
         connect(btn, &QToolButton::clicked, this, [tabBar, btn, closeSide]() {
             for (int j = 0; j < tabBar->count(); ++j) {
                 if (tabBar->tabButton(j, closeSide) == btn) {

@@ -8,6 +8,8 @@
 #include <QVariantMap>
 
 #include <functional>
+#include <optional>
+#include <utility>
 
 // ── IntentRegistry ───────────────────────────────────────────────────────────
 //
@@ -148,7 +150,11 @@ public:
     // (`"web": true` in its catalog manifest). Those intents join the link
     // requester's derived `uses`, so a link to an app that is not installed
     // reaches the install offer instead of failing `not_declared`.
-    void setInstallableProviders(const QMap<QString, QStringList>& byModuleName,
+    //
+    // Returns false, changing nothing, when the input equals the previous
+    // call's and nothing was rebuilt since: callers run this on every apps-model
+    // change, download progress included.
+    bool setInstallableProviders(const QMap<QString, QStringList>& byModuleName,
                                  const QMap<QString, QStringList>& webByModuleName = {});
 
     // Packages the catalog says provide `intent` and that are not installed.
@@ -208,4 +214,6 @@ private:
     QStringList m_shellWebIntents;   // code-declared, survives rebuild()
     QSet<QString> m_webReachable;    // from disk records, rebuilt each time
     QSet<QString> m_installableWeb;  // "moduleName/intent" from the catalog
+    std::optional<std::pair<QMap<QString, QStringList>, QMap<QString, QStringList>>>
+        m_installableInput;
 };
