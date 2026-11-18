@@ -15,6 +15,7 @@ Rectangle {
     property string replica: "pending"
     property string control: "pending"
     property string packages: "pending"
+    property string downloader: "pending"
 
     function outcome(payload) {
         let parsed = null
@@ -41,6 +42,10 @@ Rectangle {
         logos.callModuleAsync("package_manager", "getInstalledPackages", [],
                               function(p) { root.packages = outcome(p) }, 10000)
     }
+    function callPackageDownloader() {
+        logos.callModuleAsync("package_downloader", "listRepositories", [],
+                              function(p) { root.downloader = outcome(p) }, 10000)
+    }
 
     Column {
         anchors.centerIn: parent
@@ -50,5 +55,6 @@ Rectangle {
         Text { text: "Intruder replica: " + root.replica }
         Text { text: "Intruder control: " + root.control }
         Text { text: "Intruder package_manager: " + root.packages }
+        Text { text: "Intruder package_downloader: " + root.downloader }
     }
 }

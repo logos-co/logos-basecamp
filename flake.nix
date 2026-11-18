@@ -707,6 +707,10 @@
               # <app>_backend but ships a plugin that calls itself depsvc.
               cp -r ${depsvcInstalledDev}/modules/. $out/modules/
               chmod -R u+w $out/modules
+              # The intruder's dependency, so the access rule, not a missing
+              # module, is what refuses its package_downloader call.
+              cp -r ${installDev logosPackageDownloaderModuleLib}/modules/. $out/modules/
+              chmod -R u+w $out/modules
               so=$(find ${depsvcInstalledDev}/modules -name 'depsvc_plugin.*' | head -1)
               [ -n "$so" ] || { echo "no depsvc plugin"; exit 1; }
               ext="''${so##*.}"
