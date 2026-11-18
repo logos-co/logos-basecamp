@@ -30,6 +30,9 @@
 #include <QNetworkInformation>
 #include <QTimer>
 
+#include <tuple>
+#include <type_traits>
+
 // Off below warnings by default:
 //   QT_LOGGING_RULES="logos.basecamp.intents.debug=true"
 Q_LOGGING_CATEGORY(lcBasecampIntents, "logos.basecamp.intents", QtInfoMsg)
@@ -38,6 +41,26 @@ Q_LOGGING_CATEGORY(lcBasecampIntents, "logos.basecamp.intents", QtInfoMsg)
 // ShellIntents so a unit test can reach them; this file cannot be linked into
 // the test harness. Unqualified below to keep the use sites unchanged.
 using namespace ShellIntents;
+
+namespace {
+
+template <typename> struct SignalArgs;
+template <typename Class, typename... Args>
+struct SignalArgs<void (Class::*)(Args...)> { using type = std::tuple<std::decay_t<Args>...>; };
+
+// Re-emits `signal` as the backend's `reemitted`. connect() accepts a re-emit
+// that declares fewer arguments and drops the rest without a word, so it must
+// declare every one.
+template <typename Sender, typename Signal, typename Reemitted>
+void reemit(Sender* sender, Signal signal, MainUIBackend* backend, Reemitted reemitted)
+{
+    static_assert(std::is_same_v<typename SignalArgs<Signal>::type,
+                                 typename SignalArgs<Reemitted>::type>,
+                  "a re-emitted signal must declare every argument of the one it re-emits");
+    QObject::connect(sender, signal, backend, reemitted);
+}
+
+} // namespace
 
 MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
                              const LogosBasecamp::HostProfile& hostProfile, QObject* parent)
@@ -134,52 +157,52 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
                 m_pendingUiModulesRefresh = false;
                 endModulesLoading();
             });
-    connect(m_uiPluginManager, &UIPluginManager::launcherAppsChanged,
-            this,              &MainUIBackend::launcherAppsChanged);
-    connect(m_uiPluginManager, &UIPluginManager::recentlyClosedAppsChanged,
-            this,              &MainUIBackend::recentlyClosedAppsChanged);
-    connect(m_uiPluginManager, &UIPluginManager::loadingModulesChanged,
-            this,              &MainUIBackend::loadingModulesChanged);
-    connect(m_uiPluginManager, &UIPluginManager::stoppedAppsChanged,
-            this,              &MainUIBackend::stoppedAppsChanged);
-    connect(m_uiPluginManager, &UIPluginManager::currentVisibleAppChanged,
-            this,              &MainUIBackend::currentVisibleAppChanged);
-    connect(m_uiPluginManager, &UIPluginManager::navigateToApps,
-            this,              &MainUIBackend::navigateToApps);
-    connect(m_uiPluginManager, &UIPluginManager::packageInstallFailedNotice,
-            this,              &MainUIBackend::installFailureNoticeRequested);
-    connect(m_uiPluginManager, &UIPluginManager::pluginLoadFailedNotice,
-            this,              &MainUIBackend::loadFailureNoticeRequested);
-    connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
-            this,              &MainUIBackend::missingDepsPopupRequested);
-    connect(m_uiPluginManager, &UIPluginManager::unloadCascadeConfirmationRequested,
-            this,              &MainUIBackend::unloadCascadeConfirmationRequested);
-    connect(m_uiPluginManager, &UIPluginManager::pluginWindowRequested,
-            this,              &MainUIBackend::pluginWindowRequested);
-    connect(m_uiPluginManager, &UIPluginManager::pluginWindowRemoveRequested,
-            this,              &MainUIBackend::pluginWindowRemoveRequested);
-    connect(m_uiPluginManager, &UIPluginManager::presentAppRequested,
-            this,              &MainUIBackend::presentAppRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::launcherAppsChanged,
+           this,              &MainUIBackend::launcherAppsChanged);
+    reemit(m_uiPluginManager, &UIPluginManager::recentlyClosedAppsChanged,
+           this,              &MainUIBackend::recentlyClosedAppsChanged);
+    reemit(m_uiPluginManager, &UIPluginManager::loadingModulesChanged,
+           this,              &MainUIBackend::loadingModulesChanged);
+    reemit(m_uiPluginManager, &UIPluginManager::stoppedAppsChanged,
+           this,              &MainUIBackend::stoppedAppsChanged);
+    reemit(m_uiPluginManager, &UIPluginManager::currentVisibleAppChanged,
+           this,              &MainUIBackend::currentVisibleAppChanged);
+    reemit(m_uiPluginManager, &UIPluginManager::navigateToApps,
+           this,              &MainUIBackend::navigateToApps);
+    reemit(m_uiPluginManager, &UIPluginManager::packageInstallFailedNotice,
+           this,              &MainUIBackend::installFailureNoticeRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::pluginLoadFailedNotice,
+           this,              &MainUIBackend::loadFailureNoticeRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
+           this,              &MainUIBackend::missingDepsPopupRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::unloadCascadeConfirmationRequested,
+           this,              &MainUIBackend::unloadCascadeConfirmationRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::pluginWindowRequested,
+           this,              &MainUIBackend::pluginWindowRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::pluginWindowRemoveRequested,
+           this,              &MainUIBackend::pluginWindowRemoveRequested);
+    reemit(m_uiPluginManager, &UIPluginManager::presentAppRequested,
+           this,              &MainUIBackend::presentAppRequested);
 
     // Forward PackageCoordinator dialog signals. One uninstallPlanRequested
     // serves all four initiators — see buildPlanPayload.
-    connect(m_packageCoordinator, &PackageCoordinator::uninstallPlanRequested,
-            this,             &MainUIBackend::uninstallPlanRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
-            this,             &MainUIBackend::dependencyDataReadyChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::uninstallPlanRequested,
+           this,             &MainUIBackend::uninstallPlanRequested);
+    reemit(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
+           this,             &MainUIBackend::dependencyDataReadyChanged);
     // Distinct upgrade/downgrade/reinstall cascade signal — same dialog shape
     // as the uninstall variant, but the title + body need the target version +
     // UpgradeMode so a downgrade doesn't look like a bare uninstall.
-    connect(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
-            this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::optionalGatePreviewUpdated,
-            this, &MainUIBackend::optionalGatePreviewUpdated);
-    connect(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
-            this,             &MainUIBackend::installGateConfirmationRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
-            this,             &MainUIBackend::requestOpenAddApplicationDialog);
-    connect(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
-            this,             &MainUIBackend::addApplicationDataUpdated);
+    reemit(m_packageCoordinator, &PackageCoordinator::upgradeCascadeConfirmationRequested,
+           this,             &MainUIBackend::upgradeCascadeConfirmationRequested);
+    reemit(m_packageCoordinator, &PackageCoordinator::optionalGatePreviewUpdated,
+           this, &MainUIBackend::optionalGatePreviewUpdated);
+    reemit(m_packageCoordinator, &PackageCoordinator::installGateConfirmationRequested,
+           this,             &MainUIBackend::installGateConfirmationRequested);
+    reemit(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
+           this,             &MainUIBackend::requestOpenAddApplicationDialog);
+    reemit(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
+           this,             &MainUIBackend::addApplicationDataUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
             this, [this](const QString& name) {
         m_uiPluginManager->onAppLauncherClicked(name);
@@ -201,38 +224,38 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this, [this](const QString& name, InstallStage::Value stage) {
         emit catalogInstallStageChanged(name, static_cast<int>(stage));
     });
-    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFinished,
-            this,             &MainUIBackend::catalogInstallFinished);
-    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
-            this,             &MainUIBackend::catalogInstallFailed);
+    reemit(m_packageCoordinator, &PackageCoordinator::catalogInstallFinished,
+           this,             &MainUIBackend::catalogInstallFinished);
+    reemit(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
+           this,             &MainUIBackend::catalogInstallFailed);
 
     // Package repositories — pure re-emits so QML binding to backend.*
-    connect(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
-            this,             &MainUIBackend::repositoriesChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::installTrustUpdated,
-            this,             &MainUIBackend::installTrustUpdated);
-    connect(m_packageCoordinator, &PackageCoordinator::trustedPublishersChanged,
-            this,             &MainUIBackend::trustedPublishersChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::trustedPublisherChangeFailed,
-            this,             &MainUIBackend::trustedPublisherChangeFailed);
-    connect(m_packageCoordinator, &PackageCoordinator::installRefused,
-            this,             &MainUIBackend::installFailureNoticeRequested);
+    reemit(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
+           this,             &MainUIBackend::repositoriesChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::installTrustUpdated,
+           this,             &MainUIBackend::installTrustUpdated);
+    reemit(m_packageCoordinator, &PackageCoordinator::trustedPublishersChanged,
+           this,             &MainUIBackend::trustedPublishersChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::trustedPublisherChangeFailed,
+           this,             &MainUIBackend::trustedPublisherChangeFailed);
+    reemit(m_packageCoordinator, &PackageCoordinator::installRefused,
+           this,             &MainUIBackend::installFailureNoticeRequested);
     connect(m_packageCoordinator, &PackageCoordinator::builtInCopySetAside,
             this,             &MainUIBackend::noticeBuiltInCopy);
     connect(m_coreModuleManager,  &CoreModuleManager::builtInCopySetAside,
             this,             &MainUIBackend::noticeBuiltInCopy);
-    connect(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
-            this,             &MainUIBackend::repositoriesLoadingChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
-            this,             &MainUIBackend::downloadSourceChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::onboardingRequiredChanged,
-            this,             &MainUIBackend::onboardingRequiredChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::storageStateChanged,
-            this,             &MainUIBackend::storageStateChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
-            this,             &MainUIBackend::appsLoadingChanged);
-    connect(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
-            this,             &MainUIBackend::repositoryOperationCompleted);
+    reemit(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
+           this,             &MainUIBackend::repositoriesLoadingChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
+           this,             &MainUIBackend::downloadSourceChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::onboardingRequiredChanged,
+           this,             &MainUIBackend::onboardingRequiredChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::storageStateChanged,
+           this,             &MainUIBackend::storageStateChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::appsLoadingChanged,
+           this,             &MainUIBackend::appsLoadingChanged);
+    reemit(m_packageCoordinator, &PackageCoordinator::repositoryOperationCompleted,
+           this,             &MainUIBackend::repositoryOperationCompleted);
 
     // Any of the three managers can trigger coreModulesChanged:
     //   * CoreModuleManager on stats-tick / refresh
@@ -428,10 +451,10 @@ void MainUIBackend::wireIntents()
 
     // Chooser signals are re-emitted for QML. The broker itself is NOT put into
     // the QML context — that would break the facade contract this class holds.
-    connect(m_intentBroker, &IntentBroker::chooserRequested,
-            this,           &MainUIBackend::intentChooserRequested);
-    connect(m_intentBroker, &IntentBroker::chooserDismissed,
-            this,           &MainUIBackend::intentChooserDismissed);
+    reemit(m_intentBroker, &IntentBroker::chooserRequested,
+           this,           &MainUIBackend::intentChooserRequested);
+    reemit(m_intentBroker, &IntentBroker::chooserDismissed,
+           this,           &MainUIBackend::intentChooserDismissed);
 
     // …and the seam that tells the broker whether anyone is actually listening
     // to those signals. Counting receivers on the broker would always report
@@ -573,8 +596,8 @@ void MainUIBackend::wireIntents()
         LinkRequestCoordinator::requesterName(), ShellIntents::kWebReachableIntents);
 
     m_linkRequests = new LinkRequestCoordinator(m_intentBroker, m_intentRegistry, this);
-    connect(m_linkRequests, &LinkRequestCoordinator::linkFailed,
-            this, &MainUIBackend::linkFailed);
+    reemit(m_linkRequests, &LinkRequestCoordinator::linkFailed,
+           this, &MainUIBackend::linkFailed);
     if (m_hostProfile.packageCatalog && m_packageCoordinator) {
         m_linkRequests->setCatalogGate([this](std::function<void()> then) {
             m_packageCoordinator->whenCatalogLoaded(std::move(then));
