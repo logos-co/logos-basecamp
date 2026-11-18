@@ -197,10 +197,17 @@ void PublisherKeyring::trust(const QVariantMap& publisher,
     QPointer<PublisherKeyring> self(this);
     m_keyring.add(key, [self, key, done](bool ok, const QString& error) {
         if (!self) return;
-        const QString failure = ok ? QString()
-                                   : tr("Couldn't trust “%1”: %2").arg(self->labelOf(key), why(error));
-        // On only once the keyring has been read back.
-        self->refresh([done, failure]() { done(failure); });
+        // On only once a read of the keyring shows the key, whatever the add said.
+        self->refresh([self, key, done, ok, error]() {
+            if (!self) return;
+            const QString name = key.value(QStringLiteral("name")).toString();
+            if (self->m_readable && didOf(self->named(name)) == didOf(key)) {
+                done({});
+                return;
+            }
+            done(tr("Couldn't trust “%1”: %2").arg(self->labelOf(key),
+                 ok ? tr("the keyring doesn't show it") : why(error)));
+        });
     });
 }
 

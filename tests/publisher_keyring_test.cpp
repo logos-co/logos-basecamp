@@ -30,12 +30,14 @@ const QString kZetaDid = QStringLiteral(
 // package_manager's keyring, as listTrustedKeys / addTrustedKey /
 // removeTrustedKey keep it. Like liblgx, any call makes `folder`. Each call is
 // answered when told to, unless `deferred` is off; a name in `failing` cannot
-// be changed, and with `listFails` the keyring cannot be read.
+// be changed, a name in `dropped` is said to be added but isn't, and with
+// `listFails` the keyring cannot be read.
 struct FakeKeyring {
     QString folder;
     QVariantList keys;   // {name, did, displayName, url, addedAt}
     QStringList calls;
     QStringList failing;
+    QStringList dropped;
     bool listFails = false;
     bool deferred = true;
     QList<std::function<void()>> owed;
@@ -52,6 +54,7 @@ struct FakeKeyring {
             called(QStringLiteral("add:") + name);
             answer([this, key, name, done]() {
                 if (failing.contains(name)) { done(false, QStringLiteral("disk full")); return; }
+                if (dropped.contains(name)) { done(true, {}); return; }
                 // As liblgx: the key file of that name is written anew.
                 for (int i = 0; i < keys.size(); ++i)
                     if (keys.at(i).toMap().value(QStringLiteral("name")).toString() == name)
@@ -165,6 +168,39 @@ private slots:
         fake.settle();
         QCOMPARE(failure, QStringLiteral("Couldn't trust “Acme”: disk full"));
         QVERIFY(keyring.keys().isEmpty());
+    }
+
+    // An add the keyring says worked counts only once a read shows the key:
+    // "Trust & install" used to go on when the read-back failed, or didn't
+    // show the key, leaving a publisher the user trusted untrusted.
+    void trustingNeedsTheKeyReadBack()
+    {
+        FakeKeyring unreadable;
+        PublisherKeyring a(unreadable.seam());
+        unreadable.listFails = true;
+        QString failure;
+        a.trust(publisher(kAcmeDid, QStringLiteral("Acme")), [&](const QString& error) { failure = error; });
+        unreadable.settle();
+        QCOMPARE(failure, QStringLiteral("Couldn't trust “Acme”: the keyring doesn't show it"));
+
+        FakeKeyring missing;
+        missing.dropped << keyNameFor(kAcmeDid);
+        PublisherKeyring b(missing.seam());
+        failure.clear();
+        b.trust(publisher(kAcmeDid, QStringLiteral("Acme")), [&](const QString& error) { failure = error; });
+        missing.settle();
+        QCOMPARE(failure, QStringLiteral("Couldn't trust “Acme”: the keyring doesn't show it"));
+        QVERIFY(b.keys().isEmpty());
+
+        // Another key under that name is not this one.
+        FakeKeyring other;
+        other.keys << key(keyNameFor(kAcmeDid), logosDid(), QStringLiteral("Acme"));
+        other.dropped << keyNameFor(kAcmeDid);
+        PublisherKeyring c(other.seam());
+        failure.clear();
+        c.trust(publisher(kAcmeDid, QStringLiteral("Acme")), [&](const QString& error) { failure = error; });
+        other.settle();
+        QVERIFY(!failure.isEmpty());
     }
 
     // Logos goes in under Basecamp's own name for it, whatever a package

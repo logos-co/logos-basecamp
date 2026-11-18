@@ -3,6 +3,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -555,6 +556,28 @@ QString signerChanged(const QVariantMap& verified, const QVariantList& approved,
     return QStringLiteral("%1 v%2 is not signed as you approved it, so nothing was installed. "
                           "Try again to review it.")
         .arg(row.value(QStringLiteral("name")).toString(), row.value(QStringLiteral("version")).toString());
+}
+
+QVariantList intoPrivateCopies(const QVariantList& fetched, const QString& dir, QString* error)
+{
+    QVariantList out;
+    int n = 0;
+    for (const QVariant& v : fetched) {
+        QVariantMap row = v.toMap();
+        const QString path = row.value(QStringLiteral("path")).toString();
+        if (!path.isEmpty()) {
+            const QString copy = QDir(dir).filePath(QStringLiteral("%1-%2").arg(++n)
+                                                        .arg(QFileInfo(path).fileName()));
+            if (!QFile::copy(path, copy)) {
+                if (error) *error = QStringLiteral("Couldn't make a private copy of %1 to install.")
+                                        .arg(row.value(QStringLiteral("name")).toString());
+                return {};
+            }
+            row.insert(QStringLiteral("path"), copy);
+        }
+        out.append(row);
+    }
+    return out;
 }
 
 QStringList publisherKeys(const QString& did, const LogosKeys& logos)
