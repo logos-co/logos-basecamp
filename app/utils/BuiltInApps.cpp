@@ -4,6 +4,7 @@
 #include "interfaces/ICoreRuntime.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -26,7 +27,8 @@ QList<SetAside> copiesInCore(const QString& modulesInfoJson, const QString& user
         const QString path = module.value(QStringLiteral("path")).toString();
         const integrity::Placement where = integrity::placementUnder(path, userRoot);
         if (where.inside)
-            copies.append({name, where.packageDir.isEmpty() ? path : where.packageDir, {}});
+            copies.append({name, where.packageDir.isEmpty() ? path : where.packageDir, {}, true,
+                           module.value(QStringLiteral("loaded")).toBool()});
     }
     return copies;
 }
@@ -67,6 +69,8 @@ QList<SetAside> setAsideFromCore(ICoreRuntime& core, const QString& userRoot, co
     QList<SetAside> copies;
     bool moved = false;
     for (const SetAside& found : copiesInCore(core.modulesInfoJson(), userRoot)) {
+        if (found.loaded && !core.unloadModule(found.name, /*withDependents=*/true))
+            qWarning().noquote() << "Could not stop" << found.name << "before moving" << found.from;
         copies.append(setAside(found, setAsideRoot));
         moved = moved || !copies.last().to.isEmpty();
     }
@@ -89,9 +93,13 @@ QString setAsideMessage(const SetAside& copy)
                               "in %2 could not be moved, so it will not be started. Remove it, "
                               "then restart Basecamp.")
             .arg(copy.name, from);
+    const QString stopped = copy.loaded
+        ? QStringLiteral(" Basecamp stopped what was running under that name; reopen Package Manager "
+                         "to start its own copy.")
+        : QString();
     return QStringLiteral("%1 comes with Basecamp, so only Basecamp's own copy runs. The copy that "
-                          "was in %2 is now in %3.")
-        .arg(copy.name, from, QDir::toNativeSeparators(copy.to));
+                          "was in %2 is now in %3.%4")
+        .arg(copy.name, from, QDir::toNativeSeparators(copy.to), stopped);
 }
 
 } // namespace logos::builtin

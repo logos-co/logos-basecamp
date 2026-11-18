@@ -179,7 +179,7 @@ void CoreModuleManager::refresh()
     // Basecamp's own apps run only from its bundle (utils/BuiltInApps.h).
     for (const auto& copy : logos::builtin::setAsideFromCore(*m_core, m_installedModulesRoot,
                                                              LogosBasecampPaths::setAsideDirectory()))
-        emit builtInCopySetAside(copy.name, copy.from, copy.to);
+        emit builtInCopySetAside(copy.name, copy.from, copy.to, copy.loaded);
     emit coreModulesChanged();
 }
 

@@ -339,8 +339,9 @@ signals:
     // A confirmed package_manager_ui install or upgrade that did not go ahead.
     void installRefused(const QString& name, const QString& reason);
     // A copy of one of Basecamp's own apps listed from the user's plugins dir
-    // (utils/BuiltInApps.h), now in `to`, or left in `from` when `to` is empty.
-    void builtInCopySetAside(const QString& name, const QString& from, const QString& to);
+    // (utils/BuiltInApps.h), now in `to`, or left in `from` when `to` is
+    // empty. `stopped` is always false: a listed app is not a running module.
+    void builtInCopySetAside(const QString& name, const QString& from, const QString& to, bool stopped);
 
 private:
     // The confirm_install intent on screen, and the package it names. Install

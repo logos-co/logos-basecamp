@@ -523,7 +523,7 @@ private:
     // Tells the user about a copy of one of Basecamp's own apps found where
     // they install (utils/BuiltInApps.h): each move, and each copy left in
     // place once (m_builtInCopiesLeft).
-    void noticeBuiltInCopy(const QString& name, const QString& from, const QString& to);
+    void noticeBuiltInCopy(const QString& name, const QString& from, const QString& to, bool stopped);
 
 private slots:
     // Rebuild the inspectors' models from the current manager state. Each

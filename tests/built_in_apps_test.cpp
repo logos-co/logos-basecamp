@@ -41,10 +41,28 @@ class FakeRuntime : public ICoreRuntime {
 public:
     QJsonArray modules;
     int rescans = 0;
+    // Each unload: the name, with its dependents, and whether the file it was
+    // loaded from was still where the core had it.
+    QStringList unloads;
 
-    void add(const QString& name, const QString& path)
+    void add(const QString& name, const QString& path, bool loaded = false)
     {
-        modules.append(QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("path"), path}});
+        modules.append(QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("path"), path},
+                                   {QStringLiteral("loaded"), loaded}});
+    }
+    bool unloadModule(const QString& name, bool withDependents) override
+    {
+        for (int i = 0; i < modules.size(); ++i) {
+            QJsonObject m = modules[i].toObject();
+            if (m.value(QStringLiteral("name")).toString() != name)
+                continue;
+            const bool inPlace = QFileInfo::exists(m.value(QStringLiteral("path")).toString());
+            unloads << QStringLiteral("%1 dependents=%2 inPlace=%3")
+                           .arg(name).arg(int(withDependents)).arg(int(inPlace));
+            m[QStringLiteral("loaded")] = false;
+            modules[i] = m;
+        }
+        return true;
     }
 
     QString modulesInfoJson() const override
@@ -64,7 +82,6 @@ public:
     QStringList knownModules() const override { return {}; }
     QStringList loadedModules() const override { return {}; }
     bool loadModule(const QString&, LoadPolicy) override { return true; }
-    bool unloadModule(const QString&, bool) override { return true; }
     QVariantList allStats() const override { return {}; }
 };
 
@@ -197,6 +214,28 @@ private slots:
 
         QVERIFY(setAsideFromCore(core, user, aside).isEmpty());
         QCOMPARE(core.rescans, 1);
+        QVERIFY(core.unloads.isEmpty());
+    }
+
+    // A rescan repoints a loaded module's entry at the copy it found, so what
+    // runs under that name may be the copy or Basecamp's own: it is stopped,
+    // with what depends on it, while the copy is still in place, then moved.
+    void aLoadedCopyIsStoppedBeforeItMoves()
+    {
+        touch(user + QStringLiteral("/pmb/b.so"));
+        FakeRuntime core;
+        core.add(QStringLiteral("package_manager_ui_backend"), user + QStringLiteral("/pmb/b.so"),
+                 /*loaded=*/true);
+
+        const QList<SetAside> copies = setAsideFromCore(core, user, aside);
+        QCOMPARE(core.unloads,
+                 QStringList{QStringLiteral("package_manager_ui_backend dependents=1 inPlace=1")});
+        QCOMPARE(copies.size(), 1);
+        QVERIFY(copies[0].loaded);
+        QVERIFY(!copies[0].to.isEmpty());
+        QVERIFY(!QFileInfo::exists(user + QStringLiteral("/pmb")));
+        QVERIFY2(setAsideMessage(copies[0]).contains(QStringLiteral("stopped what was running")),
+                 qPrintable(setAsideMessage(copies[0])));
     }
 
     // What the user reads names the app and where its copy is.

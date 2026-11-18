@@ -1336,7 +1336,7 @@ void PackageCoordinator::fetchUiPluginMetadata(bool afterSetAside)
                 const auto copy = afterSetAside
                     ? found : logos::builtin::setAside(found, LogosBasecampPaths::setAsideDirectory());
                 moved = moved || !copy.to.isEmpty();
-                emit self->builtInCopySetAside(copy.name, copy.from, copy.to);
+                emit self->builtInCopySetAside(copy.name, copy.from, copy.to, copy.loaded);
             }
             if (moved) {
                 self->fetchUiPluginMetadata(/*afterSetAside=*/true);

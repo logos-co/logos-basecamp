@@ -837,6 +837,13 @@
             inherit pkgs src logosQtMcp; appPkg = app;
           };
 
+          # Copies of Package Manager in the user's dirs are moved aside or
+          # refused, against the real core and package manager.
+          # Build: nix build .#builtin-apps-test
+          builtin-apps-test = import ./nix/builtin-apps-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+          };
+
           # Shutdown tests (SIGTERM, SIGINT, Ctrl+Q / ⌘Q). Spawns a fresh
           # app per case and asserts orderly exit (code 0).
           shutdown-test = import ./nix/shutdown-test.nix {
@@ -958,6 +965,7 @@
         shutdown-test = self.packages.${system}.shutdown-test;
         download-source-test = self.packages.${system}.download-source-test;
         host-services-test = self.packages.${system}.host-services-test;
+        builtin-apps-test = self.packages.${system}.builtin-apps-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
         mock-tests = self.packages.${system}.mock-tests;
