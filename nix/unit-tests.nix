@@ -1,4 +1,4 @@
-{ pkgs, src, logosPackageHeaders, logosPackageLib, logosViewModuleRuntimeSrc, logosDesignSystem }:
+{ pkgs, src, logosPackageHeaders, logosPackageLib, logosPackageManagerLibrary, logosViewModuleRuntimeSrc, logosDesignSystem }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-unit-tests";
@@ -28,6 +28,7 @@ pkgs.stdenv.mkDerivation {
     cmake -S tests -B build-unit-tests -GNinja -DCMAKE_BUILD_TYPE=Debug \
       -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include" \
       -DLGX_ROOT="${logosPackageLib}" \
+      -DLOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}" \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT="${logosViewModuleRuntimeSrc}" \
       -DCMAKE_PREFIX_PATH="${logosDesignSystem}"
     cmake --build build-unit-tests

@@ -33,6 +33,9 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
+    # The core picks which copy of a module runs, package_manager lists what is
+    # installed: one scan for both, or the list names a copy that does not run.
+    logos-package-manager-module.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.2";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
@@ -796,7 +799,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib logosDesignSystem;
+            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
@@ -811,7 +814,7 @@
           # the test plan phases land to make it a gate.
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib logosDesignSystem;
+            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };

@@ -43,6 +43,19 @@ if(DEFINED LGX_ROOT)
     endif()
 endif()
 
+# libpackage_manager_lib, as the `package_manager_lib` libdep: the scan liblogos
+# runs to pick which copy of a module it loads.
+if(DEFINED LOGOS_PACKAGE_MANAGER_ROOT)
+    find_library(PACKAGE_MANAGER_TEST_LIBRARY NAMES package_manager_lib
+                 PATHS "${LOGOS_PACKAGE_MANAGER_ROOT}/lib" NO_DEFAULT_PATH)
+    if(PACKAGE_MANAGER_TEST_LIBRARY)
+        add_library(package_manager_lib SHARED IMPORTED)
+        set_target_properties(package_manager_lib PROPERTIES
+            IMPORTED_LOCATION "${PACKAGE_MANAGER_TEST_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${LOGOS_PACKAGE_MANAGER_ROOT}/include")
+    endif()
+endif()
+
 # The intent classes include LogosIntent.h — the frozen vocabulary shared with
 # the view-module runtime. It is header-only and pulls in nothing but QtCore, so
 # adding the path costs the dependency-free harness nothing.
