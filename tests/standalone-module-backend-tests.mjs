@@ -120,6 +120,16 @@ test("package_manager: another app cannot call it", async (app) => {
     throw new Error(`the intruder's control call failed, so the refusal proves nothing: ${control}`);
 });
 
+test("package_downloader: another app cannot call it", async (app) => {
+  // The same rule as package_manager's: it fetches what gets installed.
+  const intruder = await requireObject(app, "intruder.root");
+  await evalOn(app, intruder.id, "callPackageDownloader()");
+  const outcome = await waitForAnswer(app, intruder.id, "downloader", "the intruder's package_downloader call");
+  if (outcome.startsWith("REACHED")) throw new Error(`an app called package_downloader: ${outcome}`);
+  if (!sessionLog().includes("access policy denies 'backend_intruder' -> 'package_downloader'"))
+    throw new Error(`package_downloader's refusal was not the access rule's: ${outcome}`);
+});
+
 // Every sidebar app has its own marker; true if any of them is showing.
 async function anyStoppedBadgeVisible(app) {
   const matches = (await app.findByProperty("objectName", "sidebar.marker.stopped")).matches ?? [];
