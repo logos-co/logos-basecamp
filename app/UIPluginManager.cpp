@@ -8,6 +8,7 @@
 #include "PackageCoordinator.h"
 #include "PluginLoader.h"
 #include "QmlHotReload.h"
+#include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/LogosBasecampPaths.h"
 
@@ -312,6 +313,19 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
                 QObject::disconnect(self->m_pendingGatedLoadConn);
                 self->loadUiModule(moduleName);
             });
+        return;
+    }
+
+    // Basecamp's own apps run only from its bundle (utils/BuiltInApps.h): one
+    // still listed from anywhere else could not be moved aside.
+    if (logos::builtin::isBuiltIn(moduleName) && m_uiPluginMetadata.contains(moduleName)
+        && m_uiPluginMetadata.value(moduleName).value("installType").toString() != QLatin1String("embedded")) {
+        const QString dir = QDir::toNativeSeparators(
+            m_uiPluginMetadata.value(moduleName).value("installDir").toString());
+        qWarning() << "Refusing to load" << moduleName << "from" << dir << "- not the copy that came with Basecamp";
+        emit pluginLoadFailedNotice(moduleName,
+            QStringLiteral("It was not started because it comes with Basecamp, and this copy is "
+                           "not the one that did. Remove %1, then restart Basecamp.").arg(dir));
         return;
     }
 

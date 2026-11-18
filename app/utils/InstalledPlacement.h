@@ -29,6 +29,7 @@ struct Problem {
         Changed,       // the files, or the manifest they are checked against, changed
         Unverifiable,  // what the check needs is missing or malformed
         Unchecked,     // the check itself could not run
+        BuiltIn,       // a copy of one of Basecamp's own apps (BuiltInApps.h)
     };
     Problem(QString what_ = {}, Kind kind_ = Kind::Changed)
         : what(std::move(what_)), kind(kind_) {}
