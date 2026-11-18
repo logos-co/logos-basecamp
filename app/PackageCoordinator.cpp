@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QTemporaryDir>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -2891,6 +2892,18 @@ void PackageCoordinator::installAsApproved(const QVariantList& fetched, const QV
         failCatalogInstall(topLevelName, QStringLiteral("Nothing could be fetched."));
         return;
     }
+    // Checked and installed from copies only Basecamp writes, as
+    // package_manager_ui does a local file: another download of the same
+    // release lands on the downloader's path.
+    auto copies = std::make_shared<QTemporaryDir>();
+    QString copyError = copies->isValid() ? QString()
+                                          : QStringLiteral("Couldn't make a private folder to install from.");
+    if (copyError.isEmpty()) kept = logos::trust::intoPrivateCopies(kept, copies->path(), &copyError);
+    if (!copyError.isEmpty()) {
+        failCatalogInstall(topLevelName, copyError);
+        return;
+    }
+    m_installCopies.insert(topLevelName, copies);
     QPointer<PackageCoordinator> self(this);
     checkFetchedSigners(kept, approved, [self, kept, topLevelName](const QString& refused) {
         if (!self) return;
@@ -2933,6 +2946,7 @@ void PackageCoordinator::failCatalogInstall(const QString& name,
                                             const QString& error)
 {
     qWarning() << "confirmCatalogInstall failed for" << name << ":" << error;
+    m_installCopies.remove(name);
     m_installRegistry->fail(name, error);
     emit catalogInstallStageChanged(name, InstallStage::Failed);
     emit catalogInstallFailed(name, error);
@@ -3126,6 +3140,7 @@ void PackageCoordinator::installResultsSequential(const QVariantList& results,
                 return;
             }
 
+            self->m_installCopies.remove(topLevelName);
             if (!failures.isEmpty()) {
                 qDebug() << "  install loop complete with failures for"
                          << topLevelName << ":" << failures.size();
