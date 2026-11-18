@@ -181,8 +181,6 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     connect(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
             this,             &MainUIBackend::addApplicationDataUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
-            this,             &MainUIBackend::launchAppRequested);
-    connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
             this, [this](const QString& name) {
         m_uiPluginManager->onAppLauncherClicked(name);
     }, Qt::QueuedConnection);

@@ -358,7 +358,6 @@ signals:
     // the contract — these are pure re-emits.
     void requestOpenAddApplicationDialog(const QVariantMap& metadata);
     void addApplicationDataUpdated(const QVariantMap& metadata);
-    void launchAppRequested(const QString& name);
     // `stage` is an int, not InstallStage::Value. QML already declares
     // installStage as an int and compares against the QML_ELEMENT-registered
     // InstallStage.* values, so nothing changes for the consumer — but the

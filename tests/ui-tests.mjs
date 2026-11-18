@@ -719,6 +719,44 @@ test("sidebar: active tile follows currentVisibleApp across section switches", a
            "backend.currentVisibleApp at end");
 });
 
+// --- App Manager (A33) — opening an installed app presents it once ---
+//
+// The App Manager's open request reached the launcher twice, through QML and
+// through a queued call in C++, so an open app was presented twice per click.
+
+test("app manager: opening an installed app presents it once", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  const startDockCount = await ensureFixtureAOpen(app, "A33", welcome.id, workspace.id);
+  if (startDockCount === null) return;
+
+  // Only an installed row takes the launch path; any other opens a dialog.
+  const proxyId = await openApplicationsWithProxy(app);
+  const row = await findFixtureARow(app, proxyId);
+  if (!row) throw new Error("fixture A has no installed row in the App Manager");
+  assertEq(row.installStatus, 1, "fixture A's installStatus (InstallStatus.Installed)");
+
+  await evalOn(app, welcome.id,
+    `Qt.createQmlObject('import QtQuick; Connections { objectName: "test.presentProbe"; ' +
+                        'target: backend; property int presented: 0; ' +
+                        'function onPresentAppRequested() { presented++ } }', root) !== null`);
+  const probe = await findByObjectName(app.inspector, "test.presentProbe");
+  if (!probe) throw new Error("the presentAppRequested probe was not created");
+
+  await evalOn(app, welcome.id,
+    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, ${JSON.stringify(row.repositoryUrl)}, ` +
+    `({}), true)`);
+  await app.waitFor(async () => {
+    if ((await evalOn(app, probe.id, "presented")) < 1) throw new Error("not presented yet");
+  }, { timeout: 10000, interval: 250, description: "fixture A to be presented" });
+  // The second presentation was a queued call: give it time to land.
+  await sleep(1500);
+  assertEq(await evalOn(app, probe.id, "presented"), 1, "times fixture A was presented");
+
+  await evalOn(app, probe.id, "destroy()");
+  await restoreFixtureADock(app, workspace.id, startDockCount, "cleanup: fixture A dock to close");
+});
+
 // --- App Manager helpers -----------------------------------------------------
 //
 // AppsFilterProxy's search is a fixed-string case-insensitive contains over
