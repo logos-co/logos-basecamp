@@ -44,6 +44,7 @@ struct Package {
     QString signerUrl;
     bool installed = false;
     bool offered = false;
+    bool builtIn = false;      // one of Basecamp's own apps (BuiltInApps.h), whoever signed it: Invalid
     bool reserved = false;     // ships with Basecamp, and not signed by Logos: Invalid
     QString replacesSignedBy;  // the key that signed the copy it replaces, when another signs it
     bool replacesUnverified = false;  // replaces a copy no checkable key signed, and isn't Logos's
@@ -96,7 +97,8 @@ QList<Package> judgePlan(const QString& name, const QVariantList& resolved,
                          const LogosKeys& logos = logosKeys());
 
 // `package`, as it would replace what is installed as `record`
-// (package_manager's, or empty): a name in `bundled`, which ships with
+// (package_manager's, or empty): one of Basecamp's own apps never installs
+// (Invalid, `builtIn`), a name in `bundled`, which ships with
 // Basecamp, may only come from Logos (otherwise Invalid, `reserved`), and one
 // signed by another publisher than the copy it replaces says so
 // (`replacesSignedBy`), as does one replacing a copy no checkable key signed,
