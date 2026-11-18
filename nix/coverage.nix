@@ -17,7 +17,7 @@
 # .gcno and therefore do NOT appear in the report as 0% — the percentage here
 # is "coverage of the code under unit test", not of all of app/. Adding a
 # source to tests/CMakeLists.txt is what pulls it into the denominator.
-{ pkgs, src, logosPackageHeaders, logosViewModuleRuntimeSrc, logosDesignSystem
+{ pkgs, src, logosPackageHeaders, logosPackageLib, logosViewModuleRuntimeSrc, logosDesignSystem
 , failUnderLine ? 0, failUnderBranch ? 0 }:
 
 let
@@ -61,6 +61,7 @@ pkgs.stdenv.mkDerivation {
     # threads; Debug already implies -O0 -g, which keeps line mapping exact.
     cmake -S tests -B build-cov -GNinja -DCMAKE_BUILD_TYPE=Debug \
       -DLOGOS_PACKAGE_HEADERS="${logosPackageHeaders}/include" \
+      -DLGX_ROOT="${logosPackageLib}" \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT="${logosViewModuleRuntimeSrc}" \
       -DCMAKE_PREFIX_PATH="${logosDesignSystem}" \
       -DCMAKE_CXX_FLAGS="--coverage -fprofile-update=atomic" \
