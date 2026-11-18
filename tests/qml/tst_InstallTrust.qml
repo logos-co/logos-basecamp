@@ -399,6 +399,31 @@ TestCase {
                 0, bodyOf(gate))
     }
 
+    // One of Basecamp's own apps never installs, Logos-signed or not: the box
+    // says it updates only with Basecamp, not that it is damaged.
+    function test_basecamps_own_apps_never_install() {
+        var dlg = openGate("chat", [change("package_manager_ui")])
+        dlg.trust = { needsPrompt: true, blocked: true, canTrust: false, trustCoversAll: false,
+            packages: [{ name: "package_manager_ui", version: "9.0.0", status: "invalid", builtIn: true }],
+            publishers: [],
+            byName: { package_manager_ui: { status: "invalid", builtIn: true } } }
+        compare(noticeTitle(dlg.contentItem), "This can't be installed.")
+        compare(noticeLines(dlg.contentItem),
+                ["Comes with Basecamp and updates only with it: package_manager_ui"])
+        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").enabled, false)
+        tryVerify(function() { return shown(dlg.contentItem, "confirmationDialog.trust.package_manager_ui") })
+        compare(mark(dlg.contentItem, "confirmationDialog.trust.package_manager_ui"),
+                "warning | Comes with Basecamp and updates only with it")
+
+        var gate = openGate("package_manager_ui")
+        gate.trust = { needsPrompt: true, blocked: true, canTrust: false, trustCoversAll: false,
+            packages: [{ name: "package_manager_ui", version: "1.0.0", status: "invalid", builtIn: true }],
+            publishers: [],
+            byName: { package_manager_ui: { status: "invalid", builtIn: true } } }
+        compare(bodyOf(gate).indexOf("Install 'package_manager_ui' v1.0.0, which comes with Basecamp and updates only with it."),
+                0, bodyOf(gate))
+    }
+
     function test_gate_lets_nothing_damaged_through() {
         var dlg = openGate("chat", [change("storage_module")])
         dlg.trust = blocked()

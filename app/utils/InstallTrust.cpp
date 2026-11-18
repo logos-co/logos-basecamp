@@ -1,5 +1,7 @@
 #include "InstallTrust.h"
 
+#include "BuiltInApps.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -326,6 +328,11 @@ Package asReplacement(Package package, const QVariantMap& record, const QStringL
 {
     // Names compare as a case-insensitive file system does, where Wallet_UI
     // lands on wallet_ui.
+    if (builtin::isBuiltIn(package.name)) {
+        package.status = Status::Invalid;
+        package.builtIn = true;
+        return package;
+    }
     if (bundled.contains(package.name, Qt::CaseInsensitive) && !logos.dids.contains(package.did)) {
         package.status = Status::Invalid;
         package.reserved = true;
@@ -685,6 +692,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
         }
         // Who signed the copy it replaces, when someone else signs this one.
         const QString replaces = p.replacesSignedBy.isEmpty() ? QString() : trustedName(p.replacesSignedBy);
+        if (p.builtIn)
+            verdict[QStringLiteral("builtIn")] = true;
         if (p.reserved)
             verdict[QStringLiteral("reserved")] = true;
         if (!replaces.isEmpty())
@@ -711,6 +720,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
                         {QStringLiteral("fingerprint"), untrusted ? fingerprint(p.did) : QString()},
                         {QStringLiteral("signerName"), shown(p.signerName)},
                         {QStringLiteral("signerUrl"), shown(p.signerUrl)}};
+        if (p.builtIn)
+            row[QStringLiteral("builtIn")] = true;
         if (p.reserved)
             row[QStringLiteral("reserved")] = true;
         if (!replaces.isEmpty())

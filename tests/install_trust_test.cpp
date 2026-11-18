@@ -1008,6 +1008,48 @@ private slots:
         QCOMPARE(plan[1].status, Status::Invalid);
     }
 
+    // Basecamp's own apps come with it and update only with it: nothing
+    // installs under their names, Logos-signed or not, in any case.
+    void builtInAppsNeverInstall()
+    {
+        for (const QString& name : {QStringLiteral("package_manager_ui"),
+                                    QStringLiteral("package_manager_ui_backend"),
+                                    QStringLiteral("Package_Manager_UI")}) {
+            for (const QString& did : {logosDid(), kOtherDid, QString()}) {
+                const Package p = asReplacement({name, QStringLiteral("9.0.0"),
+                                                 did.isEmpty() ? Status::Unsigned : Status::Trusted, did},
+                                                {}, {});
+                QCOMPARE(p.status, Status::Invalid);
+                QVERIFY(p.builtIn);
+                QVERIFY(!p.reserved);
+            }
+        }
+
+        const Package logos = asReplacement({QStringLiteral("package_manager_ui"), QStringLiteral("9.0.0"),
+                                             Status::Trusted, logosDid()}, {}, {});
+        const QVariantMap s = summary({logos}, {}, QStringLiteral("package_manager_ui"));
+        QCOMPARE(s.value(QStringLiteral("blocked")).toBool(), true);
+        QCOMPARE(s.value(QStringLiteral("packages")).toList().first().toMap()
+                     .value(QStringLiteral("builtIn")).toBool(), true);
+        QCOMPARE(s.value(QStringLiteral("byName")).toMap().value(QStringLiteral("package_manager_ui")).toMap()
+                     .value(QStringLiteral("builtIn")).toBool(), true);
+
+        // As a dependency in a plan as well.
+        const QList<Package> plan = judgePlan(
+            QStringLiteral("chat"),
+            {planRow(QStringLiteral("chat"), QStringLiteral("1.0.0"), QStringLiteral("a")),
+             planRow(QStringLiteral("package_manager_ui"), QStringLiteral("9.0.0"), QStringLiteral("p"))},
+            [](const QVariantMap&) { return false; },
+            [](const QVariantMap& row) {
+                return QVariantList{release(row.value(QStringLiteral("name")).toString(), row.value(QStringLiteral("version")).toString(),
+                                            row.value(QStringLiteral("rootHash")).toString(), logosDid())};
+            },
+            [](const QVariantMap&) { return QVariantMap{}; }, {logosDid()});
+        QCOMPARE(plan[0].status, Status::Trusted);
+        QCOMPARE(plan[1].status, Status::Invalid);
+        QVERIFY(plan[1].builtIn);
+    }
+
     // A record is found by its exact name before one differing only in case,
     // which a case-insensitive file system finds too: the first
     // case-insensitive match used to stand for an exact one listed after it.

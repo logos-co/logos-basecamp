@@ -207,6 +207,8 @@ Dialog {
         function trustClause() {
             const v = d.verdictFor(root.moduleName);
             if (!v) return "";
+            if (v.builtIn)
+                return ", which comes with Basecamp and updates only with it";
             if (v.reserved)
                 return ", which comes with Basecamp, so only Logos can update it";
             if (v.replaces)

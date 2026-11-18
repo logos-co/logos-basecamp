@@ -23,7 +23,8 @@ ColumnLayout {
         readonly property bool needsPrompt: root.trust.needsPrompt === true
         readonly property var publishers: root.trust.publishers || []
         readonly property var packages: root.trust.packages || []
-        readonly property string invalidNames: d.names(p => p.status === "invalid" && !p.reserved)
+        readonly property string invalidNames: d.names(p => p.status === "invalid" && !p.reserved && !p.builtIn)
+        readonly property string builtInNames: d.names(p => p.builtIn === true)
         readonly property string reservedNames: d.names(p => p.reserved === true)
         // Signed by someone else than the copy they replace, or replacing one
         // nobody signed.
@@ -85,6 +86,8 @@ ColumnLayout {
                                     [d.replaced[i].name, d.replaced[i].replaces])
                            : d.fill(qsTr("%1: the version you have isn't signed, so this may not be from the same publisher."),
                                     [d.replaced[i].name]))
+            if (d.builtInNames.length > 0)
+                lines.push(d.fill(qsTr("Comes with Basecamp and updates only with it: %1"), [d.builtInNames]))
             if (d.reservedNames.length > 0)
                 lines.push(d.fill(qsTr("Comes with Basecamp, so only Logos can update it: %1"), [d.reservedNames]))
             if (d.invalidNames.length > 0)
