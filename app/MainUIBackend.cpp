@@ -19,6 +19,7 @@
 #include "UIPluginManager.h"
 #include "PackageCoordinator.h"
 #include "BuildInfo.h"
+#include "utils/BuiltInApps.h"
 #include "utils/InstalledPlacement.h"
 #include "utils/LogosBasecampPaths.h"
 
@@ -218,6 +219,10 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this,             &MainUIBackend::trustedPublisherChangeFailed);
     connect(m_packageCoordinator, &PackageCoordinator::installRefused,
             this,             &MainUIBackend::installFailureNoticeRequested);
+    connect(m_packageCoordinator, &PackageCoordinator::builtInCopySetAside,
+            this,             &MainUIBackend::noticeBuiltInCopy);
+    connect(m_coreModuleManager,  &CoreModuleManager::builtInCopySetAside,
+            this,             &MainUIBackend::noticeBuiltInCopy);
     connect(m_packageCoordinator, &PackageCoordinator::repositoriesLoadingChanged,
             this,             &MainUIBackend::repositoriesLoadingChanged);
     connect(m_packageCoordinator, &PackageCoordinator::downloadSourceChanged,
@@ -815,6 +820,19 @@ bool MainUIBackend::m_registryDeclares(const QString& intent) const
 {
     return m_intentRegistry
         && m_intentRegistry->resolve(intent).status != IntentRegistry::None;
+}
+
+void MainUIBackend::noticeBuiltInCopy(const QString& name, const QString& from, const QString& to)
+{
+    if (to.isEmpty()) {
+        if (m_builtInCopiesLeft.contains(from))
+            return;
+        m_builtInCopiesLeft.insert(from);
+    }
+    const logos::builtin::SetAside copy{name, from, to};
+    qWarning().noquote() << logos::builtin::setAsideMessage(copy);
+    emit startupNoticeRequested(logos::builtin::setAsideTitle(copy), name,
+                                logos::builtin::setAsideMessage(copy));
 }
 
 void MainUIBackend::offerInstallForUnknownApp(const QString& appName)

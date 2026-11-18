@@ -4,6 +4,7 @@
 #include "logos_mode.h"
 #include "token_manager.h"
 #include "LogosBasecampPaths.h"
+#include "utils/BuiltInApps.h"
 #include "utils/InstalledIntegrity.h"
 #include "utils/InstallTrust.h"
 #include "LogSink.h"
@@ -558,6 +559,18 @@ int main(int argc, char *argv[])
     // Start the core
     core->start();
     std::cout << "Logos Core started successfully!" << std::endl;
+
+    // Basecamp's own apps run only from its bundle (utils/BuiltInApps.h): a
+    // copy the core found where the user installs moves aside before anything
+    // loads, and one that cannot move is refused when it would load.
+    if (hostProfile.useUserModules) {
+        for (const auto& copy : logos::builtin::setAsideFromCore(
+                 *core, LogosBasecampPaths::modulesDirectory(), LogosBasecampPaths::setAsideDirectory())) {
+            qWarning().noquote() << logos::builtin::setAsideMessage(copy);
+            logos::integrity::addStartupNotice({logos::builtin::setAsideTitle(copy), copy.name,
+                                                logos::builtin::setAsideMessage(copy)});
+        }
+    }
 
     LogosAPI logosAPI("core", nullptr);
 
