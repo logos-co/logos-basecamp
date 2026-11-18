@@ -925,6 +925,41 @@ private slots:
         QVERIFY(!signerChanged(verified(true, true, true, kOtherDid), approved, looseRow).isEmpty());
     }
 
+    // What App Manager checks and installs is its own copy: a write to the
+    // downloader's path after the check used to change what was installed.
+    void aFetchedFileIsInstalledFromAPrivateCopy()
+    {
+        QTemporaryDir downloads, copies;
+        const QString path = downloads.filePath(QStringLiteral("cool-1.0.0.lgx"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("approved");
+        file.close();
+        QVariantMap row = planRow(QStringLiteral("cool"), QStringLiteral("1.0.0"), QStringLiteral("r"));
+        row.insert(QStringLiteral("path"), path);
+        const QVariantMap unfetched = planRow(QStringLiteral("dep"), QStringLiteral("1.0.0"), QStringLiteral("d"));
+
+        QString error;
+        const QVariantList out = intoPrivateCopies({row, unfetched}, copies.path(), &error);
+        QCOMPARE(error, QString());
+        QCOMPARE(out.size(), 2);
+        const QString copy = out[0].toMap().value(QStringLiteral("path")).toString();
+        QVERIFY(copy.startsWith(copies.path()));
+        QCOMPARE(out[1].toMap(), unfetched);
+
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("swapped");
+        file.close();
+        QFile installed(copy);
+        QVERIFY(installed.open(QIODevice::ReadOnly));
+        QCOMPARE(installed.readAll(), QByteArray("approved"));
+
+        // No copy, no install.
+        row.insert(QStringLiteral("path"), downloads.filePath(QStringLiteral("gone.lgx")));
+        QVERIFY(intoPrivateCopies({row}, copies.path(), &error).isEmpty());
+        QVERIFY(!error.isEmpty());
+    }
+
     // A request is for a local file when it names one, not when it has no
     // repository: a catalogue release without one used to be checked as a
     // file that isn't there, and could be approved unchecked. A file Basecamp
