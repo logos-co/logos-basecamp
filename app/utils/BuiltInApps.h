@@ -43,6 +43,10 @@ struct SetAside {
     QString from;          // its package directory
     QString to;            // where it is now; empty if it was not moved
     bool movable = true;   // directly in the user's dir; anything else stays put
+    // The core had that name loaded: a rescan repoints a running module's
+    // entry at the copy it found, so what runs may be the copy or Basecamp's
+    // own. Either way it is stopped before the copy moves.
+    bool loaded = false;
 };
 
 // The built-in names the core knows from under `userRoot`, by its
@@ -57,9 +61,9 @@ QList<SetAside> copiesInApps(const QVariantList& uiPlugins, const QString& userR
 // scans, and says where in `to`.
 SetAside setAside(SetAside copy, const QString& setAsideRoot);
 
-// copiesInCore() of `core`, each set aside, then a rescan if any moved so the
-// core forgets them. One left behind is refused when it would load
-// (InstalledPlacement's preflight()).
+// copiesInCore() of `core`, each unloaded with its dependents when loaded and
+// then set aside, then a rescan if any moved so the core forgets them. One
+// left behind is refused when it would load (InstalledPlacement's preflight()).
 QList<SetAside> setAsideFromCore(ICoreRuntime& core, const QString& userRoot,
                                  const QString& setAsideRoot);
 

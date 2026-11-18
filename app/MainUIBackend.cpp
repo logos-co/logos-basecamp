@@ -822,14 +822,15 @@ bool MainUIBackend::m_registryDeclares(const QString& intent) const
         && m_intentRegistry->resolve(intent).status != IntentRegistry::None;
 }
 
-void MainUIBackend::noticeBuiltInCopy(const QString& name, const QString& from, const QString& to)
+void MainUIBackend::noticeBuiltInCopy(const QString& name, const QString& from, const QString& to,
+                                      bool stopped)
 {
     if (to.isEmpty()) {
         if (m_builtInCopiesLeft.contains(from))
             return;
         m_builtInCopiesLeft.insert(from);
     }
-    const logos::builtin::SetAside copy{name, from, to};
+    const logos::builtin::SetAside copy{name, from, to, true, stopped};
     qWarning().noquote() << logos::builtin::setAsideMessage(copy);
     emit startupNoticeRequested(logos::builtin::setAsideTitle(copy), name,
                                 logos::builtin::setAsideMessage(copy));
