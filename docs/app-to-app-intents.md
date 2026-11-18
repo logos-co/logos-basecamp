@@ -188,9 +188,10 @@ The install and upgrade confirmations resolve optional packages throughout the
 required dependency tree. Available options start checked; unavailable options
 are disabled. An approved response includes `data.optionalPackages`, the selected
 resolver request objects with version, repository, artifact hash, and any signer
-pin preserved. Package Manager UI appends these to its download request so checked
-packages and their required dependencies are installed together. Unchecked
-optionals remain outside the install plan.
+pin preserved. The approved `plan` holds the checked packages and their required
+dependencies, each pinned as approved, and Package Manager UI installs exactly that
+plan; it reads `optionalPackages` only to let a checked optional fail without
+stopping the rest. Unchecked optionals remain outside the install plan.
 
 Three properties are load-bearing. Denial answers `unavailable` **on the same floor** as "nothing provides it", so a refused app cannot learn the capability exists. An empty requester list is **refused**, not stored — it reads as "restricted to nobody" but would behave as unrestricted, so a typo must not silently open a destructive capability. And the list survives `rebuild()`, because it is code-declared policy rather than something read off disk.
 
