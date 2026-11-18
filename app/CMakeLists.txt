@@ -297,6 +297,7 @@ set(PROJECT_SOURCES
     utils/AccessPolicyOption.cpp
     utils/HostProfile.h
     utils/HostProfile.cpp
+    utils/BuiltInApps.cpp
     utils/InstalledIntegrity.cpp
     utils/InstalledPlacement.cpp
     utils/InstallTrust.cpp

@@ -88,6 +88,10 @@ signals:
     // Emitted by refresh() and after every stats tick. MainUIBackend forwards
     // it into its own same-named signal, which is what QML binds to.
     void coreModulesChanged();
+    // A copy of one of Basecamp's own apps the rescan found in the user's
+    // modules dir (utils/BuiltInApps.h), now in `to`, or left in `from` when
+    // `to` is empty; `stopped` when that name was loaded and was unloaded.
+    void builtInCopySetAside(const QString& name, const QString& from, const QString& to, bool stopped);
 
 private slots:
     void updateModuleStats();

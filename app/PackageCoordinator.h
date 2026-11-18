@@ -338,6 +338,10 @@ signals:
     void trustedPublisherChangeFailed(const QString& keyName, const QString& message);
     // A confirmed package_manager_ui install or upgrade that did not go ahead.
     void installRefused(const QString& name, const QString& reason);
+    // A copy of one of Basecamp's own apps listed from the user's plugins dir
+    // (utils/BuiltInApps.h), now in `to`, or left in `from` when `to` is
+    // empty. `stopped` is always false: a listed app is not a running module.
+    void builtInCopySetAside(const QString& name, const QString& from, const QString& to, bool stopped);
 
 private:
     // The confirm_install intent on screen, and the package it names. Install
@@ -471,7 +475,9 @@ private:
     // Pull UI plugin metadata from the module and emit uiPluginsFetched. Also
     // seeds the installType cache for the UI-plugin subset; the full-scan pass
     // in refreshDependencyInfo overwrites it with the core-inclusive version.
-    void fetchUiPluginMetadata();
+    // A built-in app listed from the user's dir is set aside first and the
+    // list fetched again, once (`afterSetAside`).
+    void fetchUiPluginMetadata(bool afterSetAside = false);
 
     void tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft);
     void fetchValidVariants();

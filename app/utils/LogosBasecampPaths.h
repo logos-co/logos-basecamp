@@ -59,6 +59,13 @@ inline QString modulesDirectory()
     return baseDirectory() + "/modules";
 }
 
+// Where a copy of one of Basecamp's own apps found in the two above is moved
+// (BuiltInApps.h). Nothing loads from here.
+inline QString setAsideDirectory()
+{
+    return baseDirectory() + "/set-aside";
+}
+
 // Installed themes and the theme choice (Settings → Appearance).
 inline QString themesDirectory()
 {

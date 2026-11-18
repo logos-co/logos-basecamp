@@ -280,6 +280,24 @@ crash, unloaded on close) and `standalone-rejects-module-dir`.
 | `DEV_QML_PATH` (hot reload) | `--qml-source <app>=<dir>`; `LOGOS_QML_HOT_RELOAD=0` still turns watching off. |
 | QML `Settings` under `LogosStandalone` | Under `LogosBasecampStandalone`. |
 
+#### Basecamp's own apps (Package Manager)
+
+Package Manager comes with Basecamp and updates only with it. Nothing installs
+under its names (`package_manager_ui`, `package_manager_ui_backend`), signed by
+Logos or not, and only the copy inside Basecamp runs. A copy in the base
+directory's `plugins/` or `modules/` that Basecamp would pick instead of its own
+is moved to its `set-aside/`, and Basecamp says so; whatever was running under
+that name is stopped first. One that cannot be moved is never started. An older
+copy, which is never picked, stays where it is.
+
+In standalone mode (`--module`, `--modules-dir`) the folders you pass count as
+Basecamp's own: your Package Manager build runs there, and nothing is moved. To
+work on Package Manager itself, use that, or build Basecamp with your checkout:
+
+```bash
+nix run .#app --override-input logos-package-manager-ui path:../logos-package-manager-ui
+```
+
 #### Parallel Instances (`--user-dir`, `--new-instance`)
 
 **One Basecamp per data directory.** Start a second one against a directory

@@ -229,6 +229,13 @@ jobs:
       - name: Host-services grant guard
         run: nix build .#host-services-test -L
 
+      # Copies of Package Manager in the user's dirs, planted before start and
+      # while it runs: moved aside, or refused when they cannot be. Not in the
+      # macOS job, which tests the .app bundle; this test knows the dev
+      # layout, and only Linux shows it which plugin file each process runs.
+      - name: Built-in apps test
+        run: nix build .#builtin-apps-test -L
+
       # The one control that mechanically enforces the one-runtime invariant:
       # each of TokenManager / StoreRegistry / LogosAPI / LogosAPIClient is
       # DEFINED by exactly one image among those sharing a process, and the
