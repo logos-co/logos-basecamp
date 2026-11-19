@@ -449,16 +449,9 @@ void MainUIBackend::wireIntents()
                 m_intentBroker->onAppUnavailable(name);
             });
 
-    // Chooser signals are re-emitted for QML. The broker itself is NOT put into
+    // The chooser reaches QML through this seam alone, which also tells the
+    // broker whether anyone is listening. The broker itself is NOT put into
     // the QML context — that would break the facade contract this class holds.
-    reemit(m_intentBroker, &IntentBroker::chooserRequested,
-           this,           &MainUIBackend::intentChooserRequested);
-    reemit(m_intentBroker, &IntentBroker::chooserDismissed,
-           this,           &MainUIBackend::intentChooserDismissed);
-
-    // …and the seam that tells the broker whether anyone is actually listening
-    // to those signals. Counting receivers on the broker would always report
-    // the two connections just made above.
     m_intentChooser = std::make_unique<ShellIntentChooser>(
         [this](const QString& dispatchId, const QString& intent,
                const QString& requesterName, const QVariantList& providers) {

@@ -3904,6 +3904,37 @@ test("intents: a single provider still asks before dispatching", async (app) => 
   }, { timeout: 45000, interval: 500, description: "provider_a answered" });
 });
 
+// The chooser reached QML twice per request, through the seam that opens it
+// and again as a re-emit of the broker's own signal, and came down twice.
+test("intents: the chooser opens once per request, and closes once", async (app) => {
+  const anchor = await openIntentRequester(app);
+  const overlay = await findByObjectName(app.inspector, "overlayDialogs");
+  if (!overlay) throw new Error("shell overlay not found");
+  await evalOn(app, overlay.id,
+    `Qt.createQmlObject('import QtQuick; Connections { objectName: "test.chooserProbe"; ' +
+                        'target: backend; property int opened: 0; property int closed: 0; ' +
+                        'function onIntentChooserRequested() { opened++ } ' +
+                        'function onIntentChooserDismissed() { closed++ } }', root) !== null`);
+  const probe = await findByObjectName(app.inspector, "test.chooserProbe");
+  if (!probe) throw new Error("the chooser probe was not created");
+
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.request("test.solo")',
+  });
+  await waitForIntentChooser(app, "confirmation for one provider", "the request raised no chooser");
+  await chooseProvider(app, "intent_provider_a", "the sole provider is not offered in the dialog");
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "ok:intent_provider_a") throw new Error(`got "${r}"`);
+  }, { timeout: 45000, interval: 500, description: "provider_a answered" });
+  await sleep(500);
+
+  const counts = await evalFields(app, probe.id, { opened: "opened", closed: "closed" });
+  await evalOn(app, probe.id, "destroy()");
+  assertEq(counts.opened, 1, "times the chooser opened for one request");
+  assertEq(counts.closed, 1, "times the chooser closed for one request");
+});
+
 test("intents: answering a request returns the user to the caller", async (app) => {
   // The round trip. Dispatch already moves the user to the provider; this is
   // about the move BACK, which nothing did before — you approved something in
