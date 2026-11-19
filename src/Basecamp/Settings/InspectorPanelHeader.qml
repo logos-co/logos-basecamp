@@ -13,6 +13,11 @@ import Logos.Theme
 Item {
     id: root
 
+    // One pass, unlike chained arg(): a name that reads "%2" stays as it is.
+    function fill(template, values) {
+        return template.replace(/%([1-9])/g, (match, n) => n <= values.length ? values[n - 1] : match);
+    }
+
     // ─── Public API ───
     property string title: ""
     property string subtitle: ""
@@ -62,7 +67,7 @@ Item {
                 Layout.fillWidth: true
                 text: root.visibleCount === root.totalCount
                       ? qsTr("%n item(s)", "", root.totalCount)
-                      : qsTr("%1 of %2").arg(root.visibleCount).arg(root.totalCount)
+                      : root.fill(qsTr("%1 of %2"), [root.visibleCount, root.totalCount])
                 font.pixelSize: Theme.typography.secondaryText
                 color: Theme.palette.textTertiary
             }

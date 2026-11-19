@@ -44,6 +44,11 @@ LogosWarningDialog {
         readonly property string loadingLabel:
             root.plan && root.plan.targetName ? root.plan.targetName : ""
 
+        // One pass, unlike chained arg(): a name that reads "%2" stays as it is.
+        function fill(template, values) {
+            return template.replace(/%([1-9])/g, (match, n) => n <= values.length ? values[n - 1] : match);
+        }
+
         readonly property var primaryRow: {
             for (var i = 0; i < d.removable.length; ++i)
                 if (d.removable[i].isTarget) return d.removable[i];
@@ -72,7 +77,7 @@ LogosWarningDialog {
                 // Show 3 names, then "+N more" so the line doesn't wrap.
                 const shown = names.slice(0, 3).join(", ");
                 return names.length > 3
-                    ? qsTr("still required by %1 +%2 more").arg(shown).arg(names.length - 3)
+                    ? d.fill(qsTr("still required by %1 +%2 more"), [shown, names.length - 3])
                     : qsTr("still required by %1").arg(shown);
             }
             return qsTr("no longer needed by anything");
@@ -153,12 +158,11 @@ LogosWarningDialog {
             // See ConfirmationDialog for why bundled shows the label alone and
             // everything else shows both.
             text: d.requesterBundled
-                  ? qsTr("Requested by %1, which ships with Logos.").arg(d.requesterLabel)
+                  ? d.fill(qsTr("Requested by %1, which ships with Logos."), [d.requesterLabel])
                   : (d.requesterLabel === d.requester
-                     ? qsTr("Requested by %1 — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
-                         .arg(d.requesterLabel)
-                     : qsTr("Requested by %1 (%2) — not part of Logos, and unsigned, so the shell cannot confirm who published it.")
-                         .arg(d.requesterLabel).arg(d.requester))
+                     ? d.fill(qsTr("Requested by %1, which is not part of Logos."), [d.requesterLabel])
+                     : d.fill(qsTr("Requested by %1 (%2), which is not part of Logos."),
+                              [d.requesterLabel, d.requester]))
         }
 
         // ─── Body ───
@@ -170,8 +174,8 @@ LogosWarningDialog {
             visible: !d.loading
             text: {
                 if (d.broughtInCount > 0) {
-                    return qsTr("%1 and %2 package(s) it brought in will be removed.")
-                             .arg(d.primaryLabel).arg(d.broughtInCount);
+                    return d.fill(qsTr("%1 and %2 package(s) it brought in will be removed."),
+                                  [d.primaryLabel, d.broughtInCount]);
                 }
                 if (d.batch.length > 1) {
                     return qsTr("%1 packages will be removed from disk.")
@@ -195,8 +199,8 @@ LogosWarningDialog {
                 color: Theme.palette.warning
                 font.pixelSize: Theme.typography.secondaryText
                 font.weight: Theme.typography.weightMedium
-                text: qsTr("⚠ %1 installed module(s) depend on %2 and will stop working:")
-                        .arg(d.dependents.length).arg(d.primaryLabel)
+                text: d.fill(qsTr("⚠ %1 installed module(s) depend on %2 and will stop working:"),
+                             [d.dependents.length, d.primaryLabel])
             }
 
             PlanList {
