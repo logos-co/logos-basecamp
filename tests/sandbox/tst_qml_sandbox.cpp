@@ -64,6 +64,7 @@
 #include <QUrl>
 
 #include "restricted/QmlSandbox.h"
+#include "restricted/SharedLogosModules.h"
 #include "restricted/SandboxImages.h"
 
 namespace {
@@ -569,6 +570,45 @@ private slots:
                      qPrintable(QStringLiteral("non-existent probe candidate was not "
                                                "passed through; got ") + out.toString()));
         }
+    }
+
+    // The design system owns Logos.*: a plugin tree that ships its own
+    // Logos/<module> for a shared module must not answer for it, or an app
+    // could swap in its own LogosDialog or LogosSidePanel. Its other Logos/
+    // dirs are its own business.
+    void sandboxShadowsSharedLogosModules_data()
+    {
+        QTest::addColumn<QString>("module");
+        QTest::addColumn<bool>("reserved");
+        for (const QString& module : kSharedLogosModules())
+            QTest::newRow(qPrintable(module)) << module << true;
+        QTest::newRow("Layouts is shared") << QStringLiteral("Layouts") << true;
+        QTest::newRow("not a shared module") << QStringLiteral("Widgets") << false;
+    }
+
+    void sandboxShadowsSharedLogosModules()
+    {
+        QFETCH(QString, module);
+        QFETCH(bool, reserved);
+
+        QTemporaryDir dir(workRoot() + QStringLiteral("/tst_qml_sandbox-XXXXXX"));
+        QVERIFY(dir.isValid());
+        const QString qmldir = dir.path() + QStringLiteral("/Logos/") + module + QStringLiteral("/qmldir");
+        QVERIFY(QDir().mkpath(QFileInfo(qmldir).path()));
+        writeFile(qmldir, QStringLiteral("module Logos.%1\n").arg(module));
+
+        QQmlEngine engine;
+        QmlSandbox::configure(&engine, dir.path(), dir.path() + "/view.qml",
+                              /*appLibDir=*/QString());
+
+        const QUrl probe = QUrl::fromLocalFile(qmldir);
+        const QUrl out = engine.interceptUrl(probe, QQmlAbstractUrlInterceptor::QmldirFile);
+        if (reserved)
+            QVERIFY2(out.isEmpty(), qPrintable(QStringLiteral("the plugin's own Logos.%1 was "
+                                                              "not shadowed; got ").arg(module)
+                                               + out.toString()));
+        else
+            QCOMPARE(out, probe);
     }
 
     // qrc: resources are engine builtins (the app's own bundled QML), never the

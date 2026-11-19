@@ -460,6 +460,18 @@ private slots:
         QCOMPARE(ws.contentsMargins(), QMargins(0, 0, 0, 0));
     }
 
+    // The window narrows to a phone's width (360, beside the 80 px sidebar),
+    // so nothing in the workspace may hold it wider: a 300 px minimum on the
+    // welcome page once did.
+    void workspaceNarrowsToAPhone()
+    {
+        QObject backend;
+        WorkspaceArea ws(&backend);
+        const int width = ws.minimumSizeHint().expandedTo(ws.minimumSize()).width();
+        QVERIFY2(width <= 268, qPrintable(QStringLiteral("the workspace holds the window "
+                                                         "%1 px wide").arg(width)));
+    }
+
     // --- Tab icons propagate from dock windowIcon -------------------------
     //
     // Qt does NOT auto-copy dock->windowIcon() to the tab bar when

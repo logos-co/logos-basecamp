@@ -244,7 +244,6 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
         m_welcomeWidget = new QQuickWidget(this);
         m_welcomeWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
         ThemeColours::clearToBackground(m_welcomeWidget);
-        m_welcomeWidget->setMinimumSize(300, 200);
         m_welcomeWidget->rootContext()->setContextProperty("backend", backend);
         ShellDevQml::load(m_welcomeWidget,
             QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/WelcomePage.qml")),

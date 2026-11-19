@@ -14,6 +14,9 @@ import "../../src/Basecamp/Shell"
 // The assertion that matters is what it does NOT do — name the app that asked.
 TestCase {
     id: testCase
+    // A desktop window: below 600 px dialogs and menus are phone sheets.
+    width: 900
+    height: 700
     name: "IntentInstallDialog"
     when: windowShown
 

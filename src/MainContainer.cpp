@@ -261,7 +261,10 @@ void MainContainer::setupUi()
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
     m_contentWidget->rootContext()->setContextProperty("themeManager", m_themeManager);
     ShellDevQml::load(m_contentWidget,
-        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")),
+        [](QObject* root) {
+            Logos::ThemeManager::followViewWidth(qobject_cast<QQuickItem*>(root));
+        });
     m_contentStack->addWidget(m_contentWidget);
 
     // Index 2: placeholder for package_manager_ui — shows a centered
@@ -356,8 +359,9 @@ void MainContainer::setupUi()
     // Set initial state — Apps section (workspace) visible by default.
     m_contentStack->setCurrentIndex(kAppsStackIndex);
 
-    // Set reasonable minimum size
-    setMinimumSize(800, 600);
+    // As narrow as a phone, as Status's desktop window: the views follow
+    // their width, down to the phone layouts of the design system.
+    setMinimumSize(360, 480);
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
