@@ -50,6 +50,11 @@ Dialog {
     QtObject {
         id: d
 
+        // One pass, unlike chained arg(): a name that reads "%2" stays as it is.
+        function fill(template, values) {
+            return template.replace(/%([1-9])/g, (match, n) => n <= values.length ? values[n - 1] : match);
+        }
+
         readonly property bool installing:
             root.installStage === InstallStage.Downloading
             || root.installStage === InstallStage.Queued
@@ -223,15 +228,14 @@ Dialog {
         function buildFooterText() {
             if (d.installing) {
                 if (d.changingBuckets > 0)
-                    return qsTr("%1 %2 package(s)…")
-                        .arg(d.stageLabel).arg(d.changingBuckets)
+                    return d.fill(qsTr("%1 %2 package(s)…"), [d.stageLabel, d.changingBuckets])
                 return d.stageLabel
             }
 
             if (d.installingBuckets > 0 && d.changingBuckets === 0) {
-                return qsTr("%1 of %2's required package(s) are currently being installed. "
-                            + "Wait for the active install to finish before launching %2.")
-                    .arg(d.installingBuckets).arg(d.targetDisplayName)
+                return d.fill(qsTr("%1 of %2's required package(s) are currently being installed. "
+                                   + "Wait for the active install to finish before launching %2."),
+                              [d.installingBuckets, d.targetDisplayName])
             }
 
             // Top-level + deps all match disk → nothing to do. The action
@@ -246,13 +250,13 @@ Dialog {
                     return qsTr("%1 will be installed.").arg(d.targetDisplayName)
                 case "update":
                     return d.installedVersion.length > 0 && d.targetVersion.length > 0
-                        ? qsTr("%1 will be updated from %2 to %3.")
-                            .arg(d.targetDisplayName).arg(d.installedVersion).arg(d.targetVersion)
+                        ? d.fill(qsTr("%1 will be updated from %2 to %3."),
+                                 [d.targetDisplayName, d.installedVersion, d.targetVersion])
                         : qsTr("%1 will be updated.").arg(d.targetDisplayName)
                 case "downgrade":
                     return d.installedVersion.length > 0 && d.targetVersion.length > 0
-                        ? qsTr("%1 will be downgraded from %2 to %3.")
-                            .arg(d.targetDisplayName).arg(d.installedVersion).arg(d.targetVersion)
+                        ? d.fill(qsTr("%1 will be downgraded from %2 to %3."),
+                                 [d.targetDisplayName, d.installedVersion, d.targetVersion])
                         : qsTr("%1 will be downgraded.").arg(d.targetDisplayName)
                 case "reinstall":
                     return qsTr("%1 will be reinstalled.").arg(d.targetDisplayName)
@@ -280,13 +284,10 @@ Dialog {
                 actionText = qsTr("please update your dependencies")
             }
 
-            return qsTr("%1 out of %2 required package dependencies %3, "
-                        + "%4 to be able to use the %5 application.")
-                .arg(d.changingBuckets)
-                .arg(d.totalDeps)
-                .arg(stateText)
-                .arg(actionText)
-                .arg(d.targetDisplayName)
+            return d.fill(qsTr("%1 out of %2 required package dependencies %3, "
+                               + "%4 to be able to use the %5 application."),
+                          [d.changingBuckets, d.totalDeps, stateText, actionText,
+                           d.targetDisplayName])
         }
         readonly property string footerText: buildFooterText()
 

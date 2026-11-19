@@ -279,6 +279,7 @@ Dialog {
         root.depChanges = depChanges_ || [];
         root.resetOptionalSelection();
         root.requesterName = requester_ || "";
+        root.requesterBundled = !!requesterBundled_;
         root._explicitClose = false;
         open();
     }
@@ -302,6 +303,7 @@ Dialog {
         root.depChanges = depChanges_ || [];
         root.resetOptionalSelection();
         root.requesterName = requester_ || "";
+        root.requesterBundled = !!requesterBundled_;
         root._explicitClose = false;
         open();
     }

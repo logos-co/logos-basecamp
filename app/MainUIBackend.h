@@ -358,7 +358,6 @@ signals:
     // the contract — these are pure re-emits.
     void requestOpenAddApplicationDialog(const QVariantMap& metadata);
     void addApplicationDataUpdated(const QVariantMap& metadata);
-    void launchAppRequested(const QString& name);
     // `stage` is an int, not InstallStage::Value. QML already declares
     // installStage as an int and compares against the QML_ELEMENT-registered
     // InstallStage.* values, so nothing changes for the consumer — but the
@@ -439,16 +438,14 @@ signals:
                                              int mode,
                                              const QStringList& installedDependents,
                                              const QStringList& loadedDependents,
-                                             const QVariantList& depChanges);
+                                             const QVariantList& depChanges,
+                                             const QString& requesterName,
+                                             bool requesterBundled);
 
     // Install gate (package_manager_ui-initiated) — pure re-emit
     // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
     // target version; depChanges is the resolved transitive set the single
     // basecamp dialog lists.
-    // Carries every argument PackageCoordinator emits. It used to declare
-    // only the first three, and Qt truncates silently on connect — so the QML
-    // handler's requesterName / requesterBundled arrived undefined and the
-    // "who asked" line never rendered.
     void optionalGatePreviewUpdated(const QString& name, const QVariantList& changes, bool pending);
     void installGateConfirmationRequested(const QString& name,
                                           const QString& releaseTag,
