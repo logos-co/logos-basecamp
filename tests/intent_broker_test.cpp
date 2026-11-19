@@ -912,10 +912,10 @@ void TestIntentBroker::testAmbiguousWithNoChooserFailsRatherThanHangs()
     FakeEndpoint chatEndpoint;
     broker.registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
 
-    // The regression this pins: the shell ALWAYS connects chooserRequested in
-    // order to re-emit it for QML, so an earlier version that counted receivers
-    // on the broker's own signal saw 1 and waited forever. Model that here —
-    // signal connected, but no dialog mounted.
+    // The regression this pins: an earlier version counted receivers on the
+    // broker's own signal, so any observer connected to it read as a mounted
+    // dialog and the request waited forever. Model that here — signal
+    // connected, but no dialog mounted.
     QSignalSpy chooserSpy(&broker, &IntentBroker::chooserRequested);
     FakeChooser chooser;
     chooser.mounted = false;
