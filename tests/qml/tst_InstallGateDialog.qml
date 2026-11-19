@@ -300,4 +300,45 @@ TestCase {
                 + "silently installed. Body was: " + body)
         dlg.destroy()
     }
+
+    function requesterLineOf(dlg) {
+        function find(item) {
+            if (item.objectName === "confirmationDialog.requester") return item
+            for (var i = 0; i < item.children.length; ++i) {
+                var hit = find(item.children[i])
+                if (hit) return hit
+            }
+            return null
+        }
+        return find(dlg.contentItem ? dlg.contentItem : dlg)
+    }
+
+    // Both dialogs dropped whether the app that asked ships with Logos, so
+    // Package Manager's own requests read as coming from an app that is not
+    // part of Logos.
+    function test_install_gate_says_whether_the_requester_ships_with_logos() {
+        var dlg = dialogComp.createObject(testCase)
+        verify(dlg)
+        dlg.openWithInstallGate("chat", "1.0.0", [], "package_manager_ui", true)
+        var line = requesterLineOf(dlg)
+        verify(line, "no confirmationDialog.requester line")
+        verify(line.text.indexOf("which ships with Logos") !== -1, line.text)
+        dlg.close()
+        dlg.openWithInstallGate("chat", "1.0.0", [], "evil_ui", false)
+        verify(line.text.indexOf("which is not part of Logos") !== -1, line.text)
+        dlg.destroy()
+    }
+
+    function test_upgrade_says_whether_the_requester_ships_with_logos() {
+        var dlg = dialogComp.createObject(testCase)
+        verify(dlg)
+        dlg.openWithUpgrade("chat", "2.0.0", 0, [], [], [], "package_manager_ui", true)
+        var line = requesterLineOf(dlg)
+        verify(line, "no confirmationDialog.requester line")
+        verify(line.text.indexOf("which ships with Logos") !== -1, line.text)
+        dlg.close()
+        dlg.openWithUpgrade("chat", "2.0.0", 0, [], [], [], "evil_ui", false)
+        verify(line.text.indexOf("which is not part of Logos") !== -1, line.text)
+        dlg.destroy()
+    }
 }
