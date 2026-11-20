@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 import Basecamp.Backend
@@ -11,7 +12,8 @@ import Basecamp.Common
 
 // Settings → Module Inspector. Lists every core module liblogos knows about
 // with its load state and live CPU / memory stats, a Load/Unload toggle per
-// row, and the per-module Interface drill-down. Uninstall is deliberately
+// row, and the per-module Interface drill-down; a tap opens a module's detail
+// beside the table, or as the page on a phone. Uninstall is deliberately
 // absent — module management lives in the Package Manager; this view is
 // read-only apart from the load toggle.
 //
@@ -36,6 +38,21 @@ Item {
     signal loadRequested(string name)
     signal unloadRequested(string name)
 
+    // A module's Interface, and on a phone its detail, are levels of the
+    // view's own, their way back Settings' back row: canGoBack says so,
+    // backTitle names where back goes, goBack() goes up one, the deepest
+    // first.
+    readonly property bool canGoBack: showingInterface || details.showingPanel
+    readonly property string backTitle: showingInterface && details.showingPanel && d.openRow
+                                        ? d.openRow.label : qsTr("Module Inspector")
+
+    function goBack() {
+        if (showingInterface)
+            showingInterface = false
+        else
+            details.panelOpen = false
+    }
+
     property string selectedPlugin: ""
     property bool showingInterface: false
 
@@ -54,6 +71,48 @@ Item {
         showingInterface = true;
     }
 
+    // Opens a module's detail, as a tap on its row does.
+    function openDetails(name) {
+        d.openName = name
+        details.panelOpen = true
+    }
+
+    QtObject {
+        id: d
+
+        // The module whose detail is open, found by name among all the rows,
+        // not the shown ones: a search that hides its row leaves the detail
+        // open, and the stats poll updates it in place.
+        property string openName: ""
+        property int revision: 0
+        readonly property var openRow: {
+            revision
+            for (let i = 0; i < allRows.count; ++i) {
+                const entry = allRows.objectAt(i)
+                if (entry && entry.row.name === openName)
+                    return entry.row
+            }
+            return null
+        }
+        readonly property bool openLocked: root.protectedModules.indexOf(openName) !== -1
+
+        // A module that is gone closes its detail, once a reset of the
+        // model has put the others back.
+        onOpenRowChanged: if (!openRow) Qt.callLater(closeIfGone)
+        function closeIfGone() {
+            if (!openRow)
+                details.panelOpen = false
+        }
+    }
+
+    Instantiator {
+        id: allRows
+        model: root.sourceModel
+        delegate: QtObject { readonly property var row: model }
+        onObjectAdded: d.revision++
+        onObjectRemoved: d.revision++
+    }
+
     ModulesFilterProxy {
         id: tableModel
 
@@ -66,195 +125,274 @@ Item {
         anchors.fill: parent
         currentIndex: root.showingInterface ? 1 : 0
 
-        // ─── 0: module list ───
-        // Vertical insets are Layout margins on the children rather than
-        // anchors on this ColumnLayout — StackLayout owns its children's
-        // geometry, so anchor margins here would be ignored.
-        ColumnLayout {
-            spacing: Theme.spacing.medium
+        // ─── 0: module list, and a module's detail ───
+        LogosSidePanel {
+            id: details
+            objectName: "moduleInspector.details"
 
-            InspectorPanelHeader {
-                id: header
+            // Its bar names it; on a phone Settings' back row closes it, not a ‹ of its own.
+            title: d.openRow ? d.openRow.label : ""
+            backInHost: true
+            onPanelOpenChanged: if (!panelOpen) d.openName = ""
 
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.spacing.large
-                Layout.rightMargin: Theme.spacing.large
-                Layout.topMargin: Theme.spacing.large
-                Layout.minimumWidth: 0
+            panelActions: [
+                LogosButton {
+                    objectName: "moduleInspector.details.loadToggle"
+                    visible: !!d.openRow && !d.openRow.isMainUi
+                    enabled: !root.loading && !d.openLocked
+                    text: d.openRow && d.openRow.isLoaded ? qsTr("Unload") : qsTr("Load")
+                    variant: d.openRow && d.openRow.isLoaded ? LogosButton.Variant.Secondary
+                                                             : LogosButton.Variant.Primary
+                    onClicked: {
+                        if (d.openRow.isLoaded) root.unloadRequested(d.openName)
+                        else                    root.loadRequested(d.openName)
+                    }
+                },
+                LogosButton {
+                    objectName: "moduleInspector.details.interface"
+                    visible: !!d.openRow && d.openRow.isLoaded
+                    text: qsTr("Interface")
+                    onClicked: root.openInterface(d.openName)
+                }
+            ]
 
-                title: qsTr("Module Inspector")
-                subtitle: qsTr("Core modules known to the runtime, with live resource usage.")
-                reloadObjectName: "moduleInspector.reloadButton"
-                loading: root.loading
-                visibleCount: tableModel.visibleCount
-                totalCount: tableModel.totalCount
-
-                onReloadClicked: root.reloadRequested()
+            // Stats only mean something for a running module.
+            panel: ModuleDetail {
+                row: d.openRow
+                label: d.openRow ? d.openRow.label : ""
+                name: d.openRow ? d.openRow.name : ""
+                version: d.openRow ? d.openRow.version || "" : ""
+                description: d.openRow ? d.openRow.description || "" : ""
+                fields: !d.openRow ? [] : [
+                    [qsTr("Version"), d.openRow.version || ""],
+                    [qsTr("CPU"), d.openRow.isLoaded ? Number(d.openRow.cpu).toFixed(1) + "%" : ""],
+                    [qsTr("Memory"), d.openRow.isLoaded ? Number(d.openRow.memory).toFixed(1) + " MB" : ""]
+                ]
             }
 
-            LogosTable {
-                id: modulesTable
-                objectName: "moduleInspector.table"
+            content: ColumnLayout {
+                spacing: Theme.spacing.medium
 
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.bottomMargin: Theme.spacing.large
+                InspectorPanelHeader {
+                    id: header
 
-                model: tableModel
-                rowHeight: 56
-                sortRole: "label"
-                sortOrder: Qt.AscendingOrder
-                emptyText: tableModel.totalCount === 0
-                           ? qsTr("No core modules available.")
-                           : qsTr("No modules match the current filter.")
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.spacing.large
+                    Layout.rightMargin: Theme.spacing.large
+                    Layout.topMargin: Theme.spacing.large
+                    Layout.minimumWidth: 0
 
-                onSortRequested: function(role, order) {
-                    modulesTable.sortRole = role
-                    modulesTable.sortOrder = order
-                    tableModel.applySortOrder(order)
+                    title: qsTr("Module Inspector")
+                    subtitle: qsTr("Core modules known to the runtime, with live resource usage.")
+                    reloadObjectName: "moduleInspector.reloadButton"
+                    loading: root.loading
+                    visibleCount: tableModel.visibleCount
+                    totalCount: tableModel.totalCount
+
+                    onReloadClicked: root.reloadRequested()
                 }
 
-                // Keep every row instantiated — see AppsInspectorView for why.
-                Component.onCompleted: if (view) view.cacheBuffer = 20000
+                LogosTable {
+                    id: modulesTable
+                    objectName: "moduleInspector.table"
 
-                columns: [
-                    LogosTableColumn {
-                        title: qsTr("Module")
-                        role: "label"
-                        minWidth: 180
-                        preferredWidth: 240
-                        sortable: true
-                        cellDelegate: moduleCellComponent
-                    },
-                    LogosTableColumn {
-                        title: qsTr("Status")
-                        role: "statusText"
-                        minWidth: 110
-                        preferredWidth: 130
-                        sortable: true
-                        cellDelegate: statusCellComponent
-                    },
-                    LogosTableColumn {
-                        title: qsTr("CPU")
-                        role: "cpu"
-                        minWidth: 80
-                        preferredWidth: 90
-                        sortable: true
-                        cellDelegate: cpuCellComponent
-                    },
-                    LogosTableColumn {
-                        title: qsTr("Memory")
-                        role: "memory"
-                        minWidth: 90
-                        preferredWidth: 110
-                        sortable: true
-                        cellDelegate: memoryCellComponent
-                    },
-                    LogosTableColumn {
-                        title: ""
-                        minWidth: 240
-                        preferredWidth: 260
-                        fillWidth: true
-                        alignment: Qt.AlignRight | Qt.AlignVCenter
-                        cellDelegate: actionsCellComponent
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.bottomMargin: Theme.spacing.large
+
+                    model: tableModel
+                    rowHeight: 56
+                    sortRole: "label"
+                    sortOrder: Qt.AscendingOrder
+                    emptyText: tableModel.totalCount === 0
+                               ? qsTr("No core modules available.")
+                               : qsTr("No modules match the current filter.")
+
+                    onSortRequested: function(role, order) {
+                        modulesTable.sortRole = role
+                        modulesTable.sortOrder = order
+                        tableModel.applySortOrder(order)
                     }
-                ]
 
-                Component {
-                    id: moduleCellComponent
+                    // Keep every row instantiated — see AppsInspectorView for why.
+                    Component.onCompleted: if (view) view.cacheBuffer = 20000
 
-                    ColumnLayout {
-                        spacing: 0
+                    // On a phone each row is a card, its actions behind ⋯. Wider,
+                    // CPU and then Memory drop out before the buttons would:
+                    // Module, Status and the buttons fit anything wider than a
+                    // phone. A column that doesn't fill keeps its preferred
+                    // width, so that is its minimum too. A tap opens the
+                    // detail, which has them all.
+                    phoneCards: true
+                    rowsOpen: true
+                    rowMenu: showingCards ? phoneRowMenu : null
+                    onRowClicked: (index, row) => root.openDetails(row.name)
 
-                        LogosText {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            text: rowItem ? rowItem.label : ""
-                            font.pixelSize: Theme.typography.primaryText
-                            font.weight: Theme.typography.weightMedium
-                            color: Theme.palette.text
-                            elide: Text.ElideRight
+                    ModuleRowMenu {
+                        id: phoneRowMenu
+                        row: modulesTable.menuRow
+                        busy: root.loading
+                        locked: !!row && root.protectedModules.indexOf(row.name) !== -1
+                        interfaceEnabled: true
+
+                        onOpenRequested: root.openDetails(row.name)
+                        onLoadToggleRequested: {
+                            if (row.isLoaded) root.unloadRequested(row.name)
+                            else              root.loadRequested(row.name)
                         }
+                        onInterfaceRequested: root.openInterface(row.name)
+                    }
 
-                        // Raw module name — the identifier other modules call
-                        // it by. Hidden when it matches the display name.
-                        LogosText {
-                            Layout.fillWidth: true
-                            visible: rowItem && rowItem.label !== rowItem.name
-                            text: rowItem ? rowItem.name : ""
-                            font.pixelSize: Theme.typography.secondaryText
-                            color: Theme.palette.textTertiary
-                            elide: Text.ElideRight
+                    columns: [
+                        LogosTableColumn {
+                            title: qsTr("Module")
+                            role: "label"
+                            minWidth: 180
+                            preferredWidth: 240
+                            fillWidth: true
+                            sortable: true
+                            cellDelegate: moduleCellComponent
+                        },
+                        LogosTableColumn {
+                            title: qsTr("Status")
+                            role: "statusText"
+                            minWidth: 130
+                            preferredWidth: 130
+                            sortable: true
+                            card: "badge"
+                            cellDelegate: statusCellComponent
+                        },
+                        LogosTableColumn {
+                            title: qsTr("CPU")
+                            role: "cpu"
+                            minWidth: 90
+                            preferredWidth: 90
+                            priority: 2
+                            sortable: true
+                            card: "hidden"
+                            cellDelegate: cpuCellComponent
+                        },
+                        LogosTableColumn {
+                            title: qsTr("Memory")
+                            role: "memory"
+                            minWidth: 110
+                            preferredWidth: 110
+                            priority: 1
+                            sortable: true
+                            card: "hidden"
+                            cellDelegate: memoryCellComponent
+                        },
+                        LogosTableColumn {
+                            title: ""
+                            minWidth: 240
+                            preferredWidth: 240
+                            alignment: Qt.AlignRight | Qt.AlignVCenter
+                            card: "hidden"
+                            cellDelegate: actionsCellComponent
                         }
-                    }
-                }
+                    ]
 
-                Component {
-                    id: statusCellComponent
+                    Component {
+                        id: moduleCellComponent
 
-                    Item {
-                        ModuleStatusBadge {
-                            // Automation-only: per-module handle so UI tests
-                            // can assert one row's load state — the badge
-                            // wording ("Loaded"/"Not loaded") also appears in
-                            // other tables, so text matching is ambiguous.
-                            objectName: "moduleInspector.status."
-                                        + (rowItem && rowItem.name ? rowItem.name : "")
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            row: rowItem
-                        }
-                    }
-                }
+                        ColumnLayout {
+                            spacing: 0
 
-                // Stats only mean something for a running module; unloaded rows
-                // render an em dash so the column stays aligned without
-                // implying "0% CPU" is a measurement.
-                Component {
-                    id: cpuCellComponent
-
-                    LogosText {
-                        text: (rowItem && rowItem.isLoaded)
-                              ? Number(rowItem.cpu).toFixed(1) + "%" : "—"
-                        color: (rowItem && rowItem.isLoaded) ? Theme.palette.text
-                                                            : Theme.palette.textMuted
-                        font.pixelSize: Theme.typography.primaryText
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                }
-
-                Component {
-                    id: memoryCellComponent
-
-                    LogosText {
-                        text: (rowItem && rowItem.isLoaded)
-                              ? Number(rowItem.memory).toFixed(1) + " MB" : "—"
-                        color: (rowItem && rowItem.isLoaded) ? Theme.palette.text
-                                                            : Theme.palette.textMuted
-                        font.pixelSize: Theme.typography.primaryText
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                }
-
-                Component {
-                    id: actionsCellComponent
-
-                    Item {
-                        ModuleRowActions {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            row: rowItem
-                            busy: root.loading
-                            locked: !!rowItem && root.protectedModules.indexOf(rowItem.name) !== -1
-                            interfaceEnabled: true
-
-                            onLoadToggleRequested: {
-                                if (rowItem.isLoaded) root.unloadRequested(rowItem.name)
-                                else                 root.loadRequested(rowItem.name)
+                            LogosText {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
+                                text: rowItem ? rowItem.label : ""
+                                font.pixelSize: Theme.typography.primaryText
+                                font.weight: Theme.typography.weightMedium
+                                color: Theme.palette.text
+                                elide: Text.ElideRight
                             }
-                            onInterfaceRequested: root.openInterface(rowItem.name)
+
+                            // Raw module name — the identifier other modules call
+                            // it by. Hidden when it matches the display name.
+                            LogosText {
+                                Layout.fillWidth: true
+                                visible: rowItem && rowItem.label !== rowItem.name
+                                text: rowItem ? rowItem.name : ""
+                                font.pixelSize: Theme.typography.secondaryText
+                                color: Theme.palette.textTertiary
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: statusCellComponent
+
+                        // Sized by its badge, so a card can show it too.
+                        Item {
+                            implicitWidth: statusBadge.implicitWidth
+                            implicitHeight: statusBadge.implicitHeight
+
+                            ModuleStatusBadge {
+                                id: statusBadge
+                                // Automation-only: per-module handle so UI tests
+                                // can assert one row's load state — the badge
+                                // wording ("Loaded"/"Not loaded") also appears in
+                                // other tables, so text matching is ambiguous.
+                                objectName: "moduleInspector.status."
+                                            + (rowItem && rowItem.name ? rowItem.name : "")
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                row: rowItem
+                            }
+                        }
+                    }
+
+                    // Stats only mean something for a running module; unloaded rows
+                    // render an em dash so the column stays aligned without
+                    // implying "0% CPU" is a measurement.
+                    Component {
+                        id: cpuCellComponent
+
+                        LogosText {
+                            text: (rowItem && rowItem.isLoaded)
+                                  ? Number(rowItem.cpu).toFixed(1) + "%" : "—"
+                            color: (rowItem && rowItem.isLoaded) ? Theme.palette.text
+                                                                : Theme.palette.textMuted
+                            font.pixelSize: Theme.typography.primaryText
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Component {
+                        id: memoryCellComponent
+
+                        LogosText {
+                            text: (rowItem && rowItem.isLoaded)
+                                  ? Number(rowItem.memory).toFixed(1) + " MB" : "—"
+                            color: (rowItem && rowItem.isLoaded) ? Theme.palette.text
+                                                                : Theme.palette.textMuted
+                            font.pixelSize: Theme.typography.primaryText
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Component {
+                        id: actionsCellComponent
+
+                        Item {
+                            ModuleRowActions {
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                row: rowItem
+                                busy: root.loading
+                                locked: !!rowItem && root.protectedModules.indexOf(rowItem.name) !== -1
+                                interfaceEnabled: true
+
+                                onLoadToggleRequested: {
+                                    if (rowItem.isLoaded) root.unloadRequested(rowItem.name)
+                                    else                 root.loadRequested(rowItem.name)
+                                }
+                                onInterfaceRequested: root.openInterface(rowItem.name)
+                            }
                         }
                     }
                 }
@@ -263,11 +401,11 @@ Item {
 
         // ─── 1: Interface (methods + events) ───
         Item {
+            // Its way back is Settings' back row.
             PluginInterfaceView {
                 anchors.fill: parent
                 anchors.margins: Theme.spacing.large
                 pluginName: root.selectedPlugin
-                onBackClicked: root.showingInterface = false
             }
         }
     }

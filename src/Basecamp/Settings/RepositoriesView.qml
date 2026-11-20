@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 Item {
@@ -88,22 +89,23 @@ Item {
         id: scroll
         anchors.fill: parent
         anchors.margins: Theme.spacing.large
+        contentWidth: availableWidth
         clip: true
 
         ColumnLayout {
             width: scroll.availableWidth
             spacing: Theme.spacing.large
 
-            // Header.
-            RowLayout {
+            // Header: Refresh beside the title while they fit, under it when not.
+            LogosItemLayout {
                 Layout.fillWidth: true
-                spacing: Theme.spacing.medium
 
                 ColumnLayout {
-                    Layout.fillWidth: true
                     spacing: Theme.spacing.tiny
 
                     LogosText {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                         text: qsTr("Package Repositories")
                         font.pixelSize: Theme.typography.panelTitleText
                         font.weight: Theme.typography.weightMedium
@@ -118,7 +120,7 @@ Item {
                     }
                 }
 
-                LogosButton {
+                meta: LogosButton {
                     objectName: "repositories.refreshButton"
                     text: root.loading ? qsTr("Refreshing…") : qsTr("Refresh")
                     enabled: !root.loading
@@ -128,40 +130,19 @@ Item {
                 }
             }
 
-            // Error banner — shown until the next successful op.
-            Rectangle {
+            // Error banner — shown until dismissed or the next successful op.
+            // `shown` stays unbound: dismissing writes it, and the next error
+            // opens it again.
+            LogosNotice {
                 objectName: "repositories.errorBanner"
+                closeButtonItem.objectName: "repositories.errorDismiss"
                 Layout.fillWidth: true
-                visible: d.lastError.length > 0
-                radius: Theme.spacing.radiusSmall
-                color: Theme.colors.getColor(Theme.palette.error, 0.12)
-                border.color: Theme.palette.error
-                border.width: 1
-                implicitHeight: errorRow.implicitHeight + Theme.spacing.medium * 2
-
-                RowLayout {
-                    id: errorRow
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacing.medium
-                    spacing: Theme.spacing.medium
-
-                    LogosText {
-                        Layout.fillWidth: true
-                        text: d.lastError
-                        color: Theme.palette.text
-                        font.pixelSize: Theme.typography.secondaryText
-                        wrapMode: Text.WordWrap
-                    }
-                    LogosIconButton {
-                        objectName: "repositories.errorDismiss"
-                        iconSource: LogosIcons.close
-                        size: 20
-                        iconSize: 14
-                        iconColor: Theme.palette.textTertiary
-                        background: Item {}
-                        onClicked: d.lastError = ""
-                    }
-                }
+                severity: LogosNotice.Error
+                message: d.lastError
+                shown: false
+                closable: true
+                onMessageChanged: shown = message.length > 0
+                onDismissed: d.lastError = ""
             }
 
             // Duplicate-name warning. Derived from the current repository
@@ -201,6 +182,8 @@ Item {
                 visible: root.downloadSource.length > 0
 
                 LogosText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                     text: qsTr("Download source")
                     font.pixelSize: Theme.typography.subtitleText
                     font.weight: Theme.typography.weightMedium
@@ -217,7 +200,8 @@ Item {
                 LogosComboBox {
                     objectName: "repositories.downloadSource"
                     Layout.topMargin: Theme.spacing.tiny
-                    Layout.preferredWidth: 260
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 260
                     Layout.preferredHeight: 40
                     model: d.downloadSourceLabels
                     currentIndex: d.downloadSourceIndex
@@ -238,34 +222,41 @@ Item {
                 spacing: Theme.spacing.small
 
                 LogosText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                     text: qsTr("Add a repository")
                     font.pixelSize: Theme.typography.subtitleText
                     font.weight: Theme.typography.weightMedium
                     color: Theme.palette.text
                 }
                 LogosText {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                     text: qsTr("Paste the URL of a logos-repo.json index.")
                     font.pixelSize: Theme.typography.secondaryText
                     color: Theme.palette.textTertiary
                 }
 
-                RowLayout {
+                // Add beside the URL while the URL keeps its room; under it,
+                // across, when not.
+                LogosItemLayout {
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing.tiny
+                    minimumContentWidth: 200
                     spacing: Theme.spacing.small
 
                     LogosTextField {
                         id: urlInput
                         objectName: "repositories.urlField"
-                        Layout.fillWidth: true
                         placeholderText: qsTr("https://example.com/logos-repo.json")
                         text: d.newRepoUrl
                         onTextChanged: if (text !== d.newRepoUrl) d.newRepoUrl = text
                     }
-                    LogosButton {
+                    meta: LogosButton {
                         objectName: "repositories.addButton"
                         text: qsTr("Add")
                         enabled: d.newRepoUrl.trim().length > 0
+                        Layout.fillWidth: true
                         implicitWidth: 100
                         implicitHeight: 40
                         onClicked: root.addRequested(d.newRepoUrl.trim())
@@ -294,6 +285,7 @@ Item {
                     readonly property string resolveError: modelData.resolveError || ""
                     readonly property bool   isDefault:    modelData.isDefault === true
                     readonly property bool   isEnabled:    modelData.enabled !== false
+                    readonly property bool   nameReused:   d.isDuplicateName(claimedName)
 
                     objectName: "repositories.row." + url
                     Layout.fillWidth: true
@@ -309,7 +301,10 @@ Item {
                         anchors.margins: Theme.spacing.medium
                         spacing: Theme.spacing.tiny
 
-                        RowLayout {
+                        // Badges beside the name while they fit, under it,
+                        // wrapping, when not; the switch and remove stay at
+                        // the end.
+                        LogosItemLayout {
                             Layout.fillWidth: true
                             spacing: Theme.spacing.small
 
@@ -319,50 +314,55 @@ Item {
                                 font.weight: Theme.typography.weightMedium
                                 color: Theme.palette.text
                                 elide: Text.ElideRight
-                                Layout.fillWidth: true
                             }
-                            LogosBadge {
-                                visible: isDefault
-                                text: qsTr("Default")
-                                color: Theme.palette.accentOrange
-                            }
-                            LogosBadge {
-                                visible: !isEnabled
-                                text: qsTr("Disabled")
-                                color: Theme.palette.textTertiary
-                            }
-                            LogosBadge {
-                                objectName: "repositories.duplicateNameBadge." + url
-                                visible: d.isDuplicateName(claimedName)
-                                text: qsTr("Name reused")
-                                color: Theme.palette.warning
-                            }
-                            LogosBadge {
-                                visible: resolveError.length > 0
-                                text: qsTr("Unreachable")
-                                color: Theme.palette.error
-                            }
-                            LogosSwitch {
-                                objectName: "repositories.enableSwitch." + url
-                                checked: isEnabled
-                                onToggled: root.setEnabledRequested(url, checked)
-                            }
-                            LogosIconButton {
-                                objectName: "repositories.remove." + url
-                                size: 32
-                                iconSize: 18
-                                iconSource: LogosIcons.trash
-                                flat: true
-                                Accessible.name: qsTr("Remove")
-                                onClicked: {
-                                    if (isDefault) {
-                                        d.pendingRemoveUrl = url
-                                        removeDefaultDialog.open()
-                                    } else {
-                                        root.removeRequested(url)
+
+                            meta: [
+                                LogosBadge {
+                                    visible: isDefault
+                                    text: qsTr("Default")
+                                    color: Theme.palette.accentOrange
+                                },
+                                LogosBadge {
+                                    visible: !isEnabled
+                                    text: qsTr("Disabled")
+                                    color: Theme.palette.textTertiary
+                                },
+                                LogosBadge {
+                                    objectName: "repositories.duplicateNameBadge." + url
+                                    visible: nameReused
+                                    text: qsTr("Name reused")
+                                    color: Theme.palette.warning
+                                },
+                                LogosBadge {
+                                    visible: resolveError.length > 0
+                                    text: qsTr("Unreachable")
+                                    color: Theme.palette.error
+                                }
+                            ]
+
+                            trailing: [
+                                LogosSwitch {
+                                    objectName: "repositories.enableSwitch." + url
+                                    checked: isEnabled
+                                    onToggled: root.setEnabledRequested(url, checked)
+                                },
+                                LogosIconButton {
+                                    objectName: "repositories.remove." + url
+                                    size: 32
+                                    iconSize: 18
+                                    iconSource: LogosIcons.trash
+                                    flat: true
+                                    Accessible.name: qsTr("Remove")
+                                    onClicked: {
+                                        if (isDefault) {
+                                            d.pendingRemoveUrl = url
+                                            removeDefaultDialog.open()
+                                        } else {
+                                            root.removeRequested(url)
+                                        }
                                     }
                                 }
-                            }
+                            ]
                         }
 
                         LogosSelectableText {
@@ -418,9 +418,8 @@ Item {
     LogosWarningDialog {
         id: removeDefaultDialog
 
-        anchors.centerIn: parent
         title: qsTr("Remove default repository?")
-        width: 420
+        preferredWidth: 420
 
         message: qsTr("The default Logos repository provides the official package catalog. "
                       + "Copy the URL first if you want to restore it later — you can re-add it "

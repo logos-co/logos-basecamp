@@ -766,7 +766,7 @@ async function outerRowField(app, proxyId, i, roleExpr, kind = "string") {
   return evalOn(app, proxyId, expr);
 }
 
-// A search field driven by assigning `text`. That breaks the
+// A search field driven by assigning `text`. On App Manager's that breaks its
 // `text: d.searchText` binding, which is harmless: onTextChanged still feeds
 // d.searchText, and every test ends with the field cleared.
 async function searchFieldOn(app, objectName) {
@@ -1626,12 +1626,13 @@ async function openInterfaceView(app, viewId, moduleName) {
   return iface;
 }
 
-// "← Back", and the module table is on screen again — left as found. Ends
-// with an explicit 2 s inspector round-trip (makeTest's epilogue allows 5 s;
-// this gate guards a UI-thread stall harder).
+// Settings' back row ("‹ Module Inspector", at the top of the section's card),
+// and the module table is on screen again — left as found. Ends with an
+// explicit 2 s inspector round-trip (makeTest's epilogue allows 5 s; this gate
+// guards a UI-thread stall harder).
 async function backToModuleTable(app, viewId) {
-  const back = await requireObject(app, "pluginInterface.back");
-  await invoke(app, back.id, "clicked", 'clicking "← Back"');
+  const back = await requireObject(app, "settings.sectionBack");
+  await invoke(app, back.id, "clicked", 'clicking "‹ Module Inspector"');
   await app.waitFor(async () => {
     assertEq(await evalOn(app, viewId, "showingInterface"), false,
              "moduleInspectorView.showingInterface after Back");
@@ -1753,8 +1754,8 @@ test("settings: Dashboard shows version, build type and commit list", async (app
 
 // --- Settings (A17) — Apps Inspector search filters the table ---
 //
-// settings.searchField is SettingsView's page-level LogosSearchBar, shared by
-// both inspectors and reset on every section switch. Counts come from
+// settings.searchField is the Settings page's search (LogosSections'), shared
+// by both inspectors and cleared on every section switch. Counts come from
 // appsInspector.table's ModulesFilterProxy; the expected "package" count is
 // derived from a snapshot of the roles the proxy matches. The "zzz" absence
 // walk is first proven against the rendered badges with the search empty,
@@ -3287,10 +3288,14 @@ test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) =
 test("search chips show the platform's shortcut text (⌘K on macOS, Ctrl+K elsewhere)", async (app) => {
   await app.click("Applications");
   const expected = process.platform === "darwin" ? "⌘K" : "Ctrl+K";
-  for (const name of ["welcomePage.search", "appManager.searchField", "settings.searchField"]) {
+  for (const name of ["welcomePage.search", "appManager.searchField"]) {
     const bar = await requireObject(app, name);
     assertEq(await evalOn(app, bar.id, "shortcutHint"), expected, `${name} shortcutHint`);
   }
+  // Settings' search is in the page only while an inspector is open.
+  await openAppsInspector(app);
+  const settingsBar = await requireObject(app, "settings.searchField");
+  assertEq(await evalOn(app, settingsBar.id, "shortcutHint"), expected, "settings.searchField shortcutHint");
 });
 
 // --- App Manager "Local" section ---

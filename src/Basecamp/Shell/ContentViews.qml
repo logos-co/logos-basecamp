@@ -147,6 +147,9 @@ Item {
             repositoriesAvailable: backend.repositoryManagement !== false
             trustedPublishers:   backend.trustedPublishers
             installedFromPublisher: did => backend.installedFromPublisher(did)
+            buildVersion:        backend.buildVersion
+            portableBuild:       backend.isPortableBuild
+            buildCommits:        backend.buildCommits
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)

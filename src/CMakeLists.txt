@@ -145,9 +145,11 @@ qt_add_qml_module(basecamp_settings_qml
         Basecamp/Settings/DashboardView.qml
         Basecamp/Settings/AppsInspectorView.qml
         Basecamp/Settings/ModuleInspectorView.qml
+        Basecamp/Settings/ModuleDetail.qml
         Basecamp/Settings/InspectorPanelHeader.qml
         Basecamp/Settings/ModuleStatusBadge.qml
         Basecamp/Settings/ModuleRowActions.qml
+        Basecamp/Settings/ModuleRowMenu.qml
         Basecamp/Settings/PluginInterfaceView.qml
         Basecamp/Settings/RepositoriesView.qml
         Basecamp/Settings/AppearanceView.qml

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 Rectangle {
@@ -34,46 +35,47 @@ Rectangle {
         onClicked: if (!root.current) root.selectRequested()
     }
 
-    RowLayout {
+    // The Built-in badge beside the name while they fit, under it when not.
+    LogosItemLayout {
         id: rowLayout
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: Theme.spacing.medium
         anchors.rightMargin: Theme.spacing.medium
         spacing: Theme.spacing.medium
 
-        LogosRadioButton {
-            objectName: "appearance.radio." + root.themeId
-            Layout.alignment: Qt.AlignVCenter
-            padding: 0
-            spacing: 0
-            // Shows the host's choice; a click only asks for it.
-            checkable: false
-            checked: root.current
-            Accessible.name: root.name
-            onClicked: if (!root.current) root.selectRequested()
-        }
-
-        Rectangle {
-            id: swatch
-            objectName: "appearance.swatch." + root.themeId
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 36
-            Layout.preferredHeight: 36
-            radius: Theme.spacing.radiusSmall
-            border.color: Theme.palette.borderSubtle
-            border.width: 1
-            Accessible.ignored: true
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: root.background }
-                GradientStop { position: 0.5; color: root.background }
-                GradientStop { position: 0.5; color: root.accent }
-                GradientStop { position: 1.0; color: root.accent }
+        leading: [
+            LogosRadioButton {
+                objectName: "appearance.radio." + root.themeId
+                padding: 0
+                spacing: 0
+                // Shows the host's choice; a click only asks for it.
+                checkable: false
+                checked: root.current
+                Accessible.name: root.name
+                onClicked: if (!root.current) root.selectRequested()
+            },
+            Rectangle {
+                id: swatch
+                objectName: "appearance.swatch." + root.themeId
+                implicitWidth: 36
+                implicitHeight: 36
+                radius: Theme.spacing.radiusSmall
+                border.color: Theme.palette.borderSubtle
+                border.width: 1
+                Accessible.ignored: true
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: root.background }
+                    GradientStop { position: 0.5; color: root.background }
+                    GradientStop { position: 0.5; color: root.accent }
+                    GradientStop { position: 1.0; color: root.accent }
+                }
             }
-        }
+        ]
 
         ColumnLayout {
-            Layout.fillWidth: true
             spacing: 2
 
             LogosText {
@@ -95,17 +97,16 @@ Rectangle {
             }
         }
 
-        LogosBadge {
+        meta: LogosBadge {
             objectName: "appearance.builtin." + root.themeId
             visible: root.builtin
             text: qsTr("Built-in")
             color: Theme.palette.textTertiary
         }
 
-        LogosIconButton {
+        trailing: LogosIconButton {
             id: removeButton
             objectName: "appearance.remove." + root.themeId
-            Layout.alignment: Qt.AlignVCenter
             visible: !root.builtin
             flat: true
             size: 32
