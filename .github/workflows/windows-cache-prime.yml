@@ -124,6 +124,12 @@ jobs:
         run: |
           set -euo pipefail
           W='github:logos-co/logos-nix#legacyPackages.x86_64-linux.pkgsWindows'
+          # Push each path as it lands: a runner shut down mid-build never runs
+          # attic-action's post step (stage 3 lost two runners that way).
+          attic watch-store ci > attic-watch.log 2>&1 &
+          # Memory trail, to tell OOM from a runner preemption next time.
+          ( while sleep 30; do echo "mem: $(free -m | awk 'NR==2{print $3"/"$2" MiB used"}')"; done ) &
+          export NIX_CONFIG="max-jobs = 2"
           case "$STAGE" in
             validate)
               # Minutes, not hours. Proves the whole mechanism -- runner builds a
