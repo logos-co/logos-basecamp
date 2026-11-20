@@ -36,11 +36,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: 'validate | 1 | 2 | 3'
+        description: 'validate | 1 | 2 | 3 | 4'
         required: true
         default: validate
         type: choice
-        options: [validate, '1', '2', '3']
+        options: [validate, '1', '2', '3', '4']
   push:
     branches: [ 'ci/windows-cache-prime' ]
 
@@ -112,8 +112,8 @@ jobs:
             exit 1
           fi
           case "$s" in
-            validate|1|2|3) ;;
-            *) echo "::error::unknown stage '$s' (from $src). Expected validate|1|2|3."; exit 1 ;;
+            validate|1|2|3|4) ;;
+            *) echo "::error::unknown stage '$s' (from $src). Expected validate|1|2|3|4."; exit 1 ;;
           esac
           echo "stage=$s" >> "$GITHUB_OUTPUT"
           echo "stage '$s', from $src"
@@ -139,6 +139,8 @@ jobs:
             1) nix build -L --no-link "$W.icu" "$W.boost" "$W.qt6.qtbase" ;;
             2) nix build -L --no-link "$W.qt6.qtdeclarative" "$W.qt6.qtsvg" "$W.qt6.qtremoteobjects" ;;
             3) nix build -L --no-link 'github:logos-co/logos-basecamp#packages.x86_64-windows.default' ;;
+            # logosctl's Windows bundle also pulls the Qt closure of logos-nix 6e0f4a7.
+            4) nix build -L --no-link 'github:logos-co/logos-logoscore-cli#packages.x86_64-windows.ctl-bundle-dir' ;;
             *) echo "::error::unknown stage '$STAGE'"; exit 1 ;;
           esac
 
@@ -153,6 +155,7 @@ jobs:
             1) ATTRS=("$W.icu" "$W.boost" "$W.qt6.qtbase") ;;
             2) ATTRS=("$W.qt6.qtdeclarative" "$W.qt6.qtsvg" "$W.qt6.qtremoteobjects") ;;
             3) ATTRS=('github:logos-co/logos-basecamp#packages.x86_64-windows.default') ;;
+            4) ATTRS=('github:logos-co/logos-logoscore-cli#packages.x86_64-windows.ctl-bundle-dir') ;;
           esac
           {
             echo "### stage $STAGE"
