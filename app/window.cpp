@@ -162,7 +162,7 @@ void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
     // The launch width is sized for the Package Manager's full table (category
     // sidebar through the Action and Description columns) without horizontal
     // scrolling; below it those rightmost columns clip off-screen. Still
-    // resizable down to MainContainer's 800x600 minimum.
+    // resizable down to MainContainer's 360x480 minimum.
     setWindowTitle("Logos Basecamp");
     {
         // ...but never larger than the screen offers: an oversized window opens
@@ -175,7 +175,7 @@ void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
         // Clamp to availableGeometry EXACTLY, not to a fraction of it, so this
         // is a no-op on any display big enough for the design size; otherwise it
         // silently undoes the width above. Qt raises the result back to
-        // MainContainer's 800x600 minimum on its own.
+        // MainContainer's 360x480 minimum on its own.
         //
         // Skipped under the offscreen platform: QOffscreenScreen hardcodes its
         // geometry to 800x600, so clamping to it would shrink every headless UI

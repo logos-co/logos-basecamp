@@ -1,4 +1,5 @@
 #include "QmlHotReload.h"
+#include "ViewWidth.h"
 
 #include "LogosQmlBridge.h"
 
@@ -70,6 +71,7 @@ bool QmlHotReloadView::load()
             qWarning().noquote() << "   " << error.toString();
         return false;
     }
+    followViewWidth(m_view->engine(), qobject_cast<QQuickItem*>(m_view->rootObject()));
     if (m_bridge) m_bridge->replayViewModuleState();
     return true;
 }

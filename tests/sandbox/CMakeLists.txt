@@ -65,6 +65,7 @@ foreach(slot
     sandboxBlocksFileOutsideRoots
     sandboxAllowsFileUnderInstallDir
     sandboxPassesThroughNonExistentProbe
+    sandboxShadowsSharedLogosModules
     sandboxAllowsQrcScheme
     sandboxSupportsScopedInMemoryImages
     sandboxClampsRequestedSize

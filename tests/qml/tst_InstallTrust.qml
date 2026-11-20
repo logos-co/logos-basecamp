@@ -818,6 +818,39 @@ TestCase {
         verify(right <= view.width, "the delete button is inside the view")
     }
 
+    // At a phone's width the key goes under the publisher's name; there its
+    // copy button, touch-sized, is centred on the key, not hanging below it.
+    function test_a_key_under_the_name_lines_up_with_its_copy_button() {
+        Theme.viewWidth = 300
+        var view = createTemporaryObject(publishersComp, testCase, { publishers: [logosRow(), otherRow()], width: 300 })
+        tryVerify(function() { return !!findChild(view, "trustedPublishers.copy.publisher-0123456789abcdef") })
+        waitForRendering(view)
+        var name = findChild(view, "trustedPublishers.name.publisher-0123456789abcdef")
+        var key = findChild(view, "trustedPublishers.fingerprint.publisher-0123456789abcdef")
+        var copy = findChild(view, "trustedPublishers.copy.publisher-0123456789abcdef")
+        Theme.viewWidth = 0
+        verify(key.mapToItem(view, 0, 0).y >= name.mapToItem(view, 0, name.height).y, "under the name")
+        fuzzyCompare(key.mapToItem(view, 0, key.height / 2).y, copy.mapToItem(view, 0, copy.height / 2).y, 1)
+    }
+
+    // Under the name, a key's copy button is at the right, its edge on the
+    // delete button's above it; it had stopped short, beside the key.
+    function test_a_key_under_the_name_keeps_its_copy_button_at_the_right() {
+        Theme.viewWidth = 300
+        try {
+            var view = createTemporaryObject(publishersComp, testCase, { publishers: [logosRow(), otherRow()], width: 300 })
+            tryVerify(function() { return !!findChild(view, "trustedPublishers.copy.publisher-0123456789abcdef") })
+            waitForRendering(view)
+            var name = findChild(view, "trustedPublishers.name.publisher-0123456789abcdef")
+            var copy = findChild(view, "trustedPublishers.copy.publisher-0123456789abcdef")
+            var remove = findChild(view, "trustedPublishers.remove.publisher-0123456789abcdef")
+            verify(copy.mapToItem(view, 0, 0).y >= name.mapToItem(view, 0, name.height).y, "the key is under the name")
+            fuzzyCompare(copy.mapToItem(view, copy.width, 0).x, remove.mapToItem(view, remove.width, 0).x, 1)
+        } finally {
+            Theme.viewWidth = 0
+        }
+    }
+
     // A row says since when its publisher is trusted, so an entry nobody
     // remembers adding stands out. Logos is built in.
     function test_a_publisher_says_since_when_it_is_trusted() {

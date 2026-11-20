@@ -30,6 +30,7 @@
 #include <memory>
 
 #include "CoreDependencyLoader.h"
+#include "ViewWidth.h"
 #include "CoreModuleManager.h"
 #include "utils/InstalledIntegrity.h"
 #include "IComponent.h"
@@ -742,6 +743,8 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
             + (details.isEmpty() ? QString() : QStringLiteral(":\n") + details));
         return;
     }
+
+    followViewWidth(qmlWidget->engine(), qobject_cast<QQuickItem*>(qmlWidget->rootObject()));
 
     // The backend went ready before this QML existed (see onHostReady), so
     // tell the view now; views wait for viewModuleReadyChanged to show content.

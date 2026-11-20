@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 import Logos.Controls
+import Logos.Layouts
 import Logos.Theme
 
 Rectangle {
@@ -20,6 +21,10 @@ Rectangle {
     property bool   repositoriesAvailable: true
     property var    trustedPublishers:   []
     property var    installedFromPublisher: function(did) { return [] }
+    // The build, for the Dashboard.
+    property string buildVersion:        ""
+    property bool   portableBuild:       false
+    property var    buildCommits:        []
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -55,7 +60,7 @@ Rectangle {
         trustedPublishersView.reportFailure(message)
     }
 
-    function showRepositories() { if (root.repositoriesAvailable) d.selectedIndex = d.sectionRepositories }
+    function showRepositories() { if (root.repositoriesAvailable) settingsSections.currentIndex = d.sectionRepositories }
 
     QtObject {
         id: d
@@ -68,210 +73,135 @@ Rectangle {
         readonly property int sectionRepositories:    4
 
         readonly property var sections: [
-            { label: qsTr("Dashboard") },
-            { label: qsTr("Apps Inspector") },
-            { label: qsTr("Module Inspector") },
-            { label: qsTr("Appearance") },
-            { label: qsTr("Package Repositories") },
-            { label: qsTr("Trusted Publishers") }
+            { title: qsTr("Dashboard") },
+            { title: qsTr("Apps Inspector") },
+            { title: qsTr("Module Inspector") },
+            { title: qsTr("Appearance") },
+            { title: qsTr("Package Repositories") },
+            { title: qsTr("Trusted Publishers") }
         ].slice(0, root.repositoriesAvailable ? 6 : 4)   // Repositories and Trusted Publishers must stay last
 
-        property int selectedIndex: 0
+        readonly property int selectedIndex: settingsSections.currentIndex
 
-        // Search text is shared by the two inspectors. Reset whenever the
-        // user switches away so stale queries don't leak between panels.
-        property string searchText: ""
+        // The open inspector, whose levels (a row's detail on a phone, a
+        // module's Interface) Settings' one back row goes up through.
+        readonly property Item openInspector: selectedIndex === sectionAppsInspector ? appsInspector
+                                            : selectedIndex === sectionModuleInspector ? moduleInspector
+                                            : null
 
-        readonly property bool searchable:
-            selectedIndex === sectionAppsInspector ||
-            selectedIndex === sectionModuleInspector
-
-        onSelectedIndexChanged: searchText = ""
+        // The inspectors' table, not over a level of theirs.
+        readonly property bool searchable: !!openInspector && !openInspector.canGoBack
     }
 
     color: Theme.palette.background
 
-    ColumnLayout {
+    // Title, subtitle and the inspectors' search over the Sections list and
+    // the open section; on a phone the list is the page.
+    LogosSections {
+        id: settingsSections
+
         anchors.fill: parent
-        anchors.margins: Theme.spacing.xxlarge
-        spacing: Theme.spacing.xlarge
+        title: qsTr("Settings")
+        subtitle: qsTr("Manage modules, apps and dashboards.")
+        listTitle: qsTr("Sections")
+        sections: d.sections
+        canGoBack: !!d.openInspector && d.openInspector.canGoBack
+        backTitle: d.openInspector ? d.openInspector.backTitle : ""
+        onBackRequested: d.openInspector.goBack()
+        backRowItem.objectName: "settings.back"
+        sectionBackRowItem.objectName: "settings.sectionBack"
 
-        // ─── Header ───
-        // Title + subtitle on the left; when an inspector is selected, a
-        // page-level search bar joins on the right — same layout as
-        // AppManagerView so the two feel familiar side by side.
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing.xlarge
+        // The inspectors share one search; a query doesn't follow the user
+        // to another section.
+        searchEnabled: d.searchable
+        searchPlaceholder: d.selectedIndex === d.sectionAppsInspector
+                           ? qsTr("Search apps…")
+                           : qsTr("Search modules…")
+        searchShortcutHint: searchShortcut.nativeText
+        searchWidth: 605
+        searchItem.objectName: "settings.searchField"
+        onCurrentIndexChanged: closeSearch()
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacing.tiny
-
-                LogosText {
-                    text: qsTr("Settings")
-                    font.pixelSize: Theme.typography.pageTitleText
-                    font.weight: Theme.typography.weightBold
-                    color: Theme.palette.text
-                }
-
-                LogosText {
-                    text: qsTr("Manage modules, apps and dashboards.")
-                    font.pixelSize: Theme.typography.primaryText
-                    color: Theme.palette.textSecondary
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            LogosSearchBar {
-                id: searchBar
-                objectName: "settings.searchField"
-                visible: d.searchable
-                Layout.alignment: Qt.AlignRight
-                Layout.preferredWidth: 605
-                Layout.minimumWidth: 200
-                text: d.searchText
-                placeholderText: d.selectedIndex === d.sectionAppsInspector
-                                 ? qsTr("Search apps…")
-                                 : qsTr("Search modules…")
-                shortcutHint: searchShortcut.nativeText
-                onTextChanged: {
-                    if (text !== d.searchText)
-                        d.searchText = text
-                }
-            }
-
-            Shortcut {
-                id: searchShortcut
-                objectName: "settings.searchShortcut"
-                sequence: "Ctrl+K"
-                context: Qt.WindowShortcut
-                enabled: root.visible && d.searchable
-                onActivated: {
-                    searchBar.textInput.forceActiveFocus()
-                    searchBar.textInput.selectAll()
-                }
-            }
+        Shortcut {
+            id: searchShortcut
+            objectName: "settings.searchShortcut"
+            sequence: "Ctrl+K"
+            context: Qt.WindowShortcut
+            enabled: root.visible && d.searchable
+            onActivated: settingsSections.openSearch()
         }
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: Theme.spacing.medium
+        StackLayout {
+            anchors.fill: parent
+            currentIndex: d.selectedIndex
 
-            // ─── Sections sidebar ───
-            LogosListView {
-                id: sectionsList
-
-                Layout.preferredWidth: 200
-                Layout.minimumWidth: 160
-                Layout.maximumWidth: 200
-                Layout.fillHeight: true
-
-                model: d.sections
-                currentIndex: d.selectedIndex
-
-                header: LogosText {
-                    width: sectionsList.width
-                    topPadding: Theme.spacing.tiny
-                    bottomPadding: Theme.spacing.tiny
-                    text: qsTr("Sections")
-                    font.pixelSize: Theme.typography.subtitleText
-                    font.weight: Theme.typography.weightRegular
-                    color: Theme.palette.text
-                }
-
-                delegate: LogosItemDelegate {
-                    id: cell
-                    width: ListView.view.width
-                    text: modelData.label
-                    highlighted: ListView.isCurrentItem
-                    radius: Theme.spacing.radiusLarge
-                    highlightColor: Theme.palette.backgroundButton
-                    hoverColor: "transparent"
-                    textColor: (cell.highlighted || cell.hovered)
-                                   ? Theme.palette.text
-                                   : Theme.palette.textTertiary
-                    onClicked: d.selectedIndex = index
-                }
+            // 0 — Dashboard.
+            DashboardView {
+                buildVersion:  root.buildVersion
+                portableBuild: root.portableBuild
+                buildCommits:  root.buildCommits
             }
 
-            // ─── Right pane ───
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: Theme.palette.surfaceRaised
-                radius: Theme.spacing.radiusXlarge
-                clip: true
+            // 1 — Apps Inspector (UI plugins).
+            AppsInspectorView {
+                id: appsInspector
+                sourceModel: root.uiModulesModel
+                loading:     root.modulesLoading
+                searchText:  settingsSections.searchText
 
-                StackLayout {
-                    anchors.fill: parent
-                    currentIndex: d.selectedIndex
+                onReloadRequested: root.appsRefreshRequested()
+                onLoadRequested:   name => root.appLoadRequested(name)
+                onUnloadRequested: name => root.appUnloadRequested(name)
+                onVisibleChanged:  if (visible) root.appsInspectorBecameVisible()
+            }
 
-                    // 0 — Dashboard.
-                    DashboardView {}
+            // 2 — Module Inspector (core modules).
+            ModuleInspectorView {
+                id: moduleInspector
+                sourceModel: root.coreModulesModel
+                loading:     root.modulesLoading
+                searchText:  settingsSections.searchText
 
-                    // 1 — Apps Inspector (UI plugins).
-                    AppsInspectorView {
-                        sourceModel: root.uiModulesModel
-                        loading:     root.modulesLoading
-                        searchText:  d.searchText
+                onReloadRequested: root.modulesRefreshRequested()
+                onLoadRequested:   name => root.moduleLoadRequested(name)
+                onUnloadRequested: name => root.moduleUnloadRequested(name)
+                onVisibleChanged:  if (visible) root.moduleInspectorBecameVisible()
+            }
 
-                        onReloadRequested: root.appsRefreshRequested()
-                        onLoadRequested:   name => root.appLoadRequested(name)
-                        onUnloadRequested: name => root.appUnloadRequested(name)
-                        onVisibleChanged:  if (visible) root.appsInspectorBecameVisible()
-                    }
+            // 3 — Appearance (themes).
+            AppearanceView {
+                id: appearanceView
+                onInstallRequested: file => root.themeInstallRequested(file)
+                onSelectRequested:  themeId => root.themeSelectRequested(themeId)
+                onRemoveRequested:  themeId => root.themeRemoveRequested(themeId)
+            }
 
-                    // 2 — Module Inspector (core modules).
-                    ModuleInspectorView {
-                        sourceModel: root.coreModulesModel
-                        loading:     root.modulesLoading
-                        searchText:  d.searchText
+            // 4 — Package Repositories.
+            RepositoriesView {
+                id: repositoriesView
 
-                        onReloadRequested: root.modulesRefreshRequested()
-                        onLoadRequested:   name => root.moduleLoadRequested(name)
-                        onUnloadRequested: name => root.moduleUnloadRequested(name)
-                        onVisibleChanged:  if (visible) root.moduleInspectorBecameVisible()
-                    }
+                repositories:   root.repositories
+                loading:        root.repositoriesLoading
+                downloadSource: root.downloadSource
 
-                    // 3 — Appearance (themes).
-                    AppearanceView {
-                        id: appearanceView
-                        onInstallRequested: file => root.themeInstallRequested(file)
-                        onSelectRequested:  themeId => root.themeSelectRequested(themeId)
-                        onRemoveRequested:  themeId => root.themeRemoveRequested(themeId)
-                    }
+                onRefreshRequested:    root.repositoryRefreshRequested()
+                onAddRequested:        url => root.repositoryAddRequested(url)
+                onRemoveRequested:     url => root.repositoryRemoveRequested(url)
+                onSetEnabledRequested: (url, enabled) =>
+                                           root.repositoryEnabledRequested(url, enabled)
+                onDownloadSourceRequested: source => root.downloadSourceRequested(source)
+                onVisibleChanged:      if (visible)
+                                           root.repositoriesBecameVisible()
+            }
 
-                    // 4 — Package Repositories.
-                    RepositoriesView {
-                        id: repositoriesView
+            // 5 — Trusted Publishers.
+            TrustedPublishersView {
+                id: trustedPublishersView
+                publishers:    root.trustedPublishers || []
+                installedFrom: root.installedFromPublisher
 
-                        repositories:   root.repositories
-                        loading:        root.repositoriesLoading
-                        downloadSource: root.downloadSource
-
-                        onRefreshRequested:    root.repositoryRefreshRequested()
-                        onAddRequested:        url => root.repositoryAddRequested(url)
-                        onRemoveRequested:     url => root.repositoryRemoveRequested(url)
-                        onSetEnabledRequested: (url, enabled) =>
-                                                   root.repositoryEnabledRequested(url, enabled)
-                        onDownloadSourceRequested: source => root.downloadSourceRequested(source)
-                        onVisibleChanged:      if (visible)
-                                                   root.repositoriesBecameVisible()
-                    }
-
-                    // 5 — Trusted Publishers.
-                    TrustedPublishersView {
-                        id: trustedPublishersView
-                        publishers:    root.trustedPublishers || []
-                        installedFrom: root.installedFromPublisher
-
-                        onRemoveRequested:  keyName => root.trustedPublisherRemoveRequested(keyName)
-                        onVisibleChanged:   if (visible) root.trustedPublishersRefreshRequested()
-                    }
-                }
+                onRemoveRequested:  keyName => root.trustedPublisherRemoveRequested(keyName)
+                onVisibleChanged:   if (visible) root.trustedPublishersRefreshRequested()
             }
         }
     }

@@ -30,6 +30,7 @@ add_executable(qml_tests
     ${BASECAMP_SRC}/AppsModel.cpp
     ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel depends on InstallRegistry
     ${BASECAMP_SHELL}/AppsFilterProxy.cpp
+    ${BASECAMP_SHELL}/ModulesFilterProxy.cpp   # the Settings inspectors' tables
     ${BASECAMP_SHELL}/InstallEnums.cpp
     # AUTOMOC pairs a header with a .cpp of the same basename in the SAME
     # directory; InstallEnums.cpp is in src/ and its header in app/interfaces/,
@@ -98,12 +99,14 @@ if(LogosDesignSystem_FOUND)
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_test_qmlplugin>
     )
 
-    # Basecamp.Common, for the install dialogs' trust notice and badges: the
-    # same reasoning as Basecamp.AppManager above.
+    # Basecamp.Common, for the install dialogs' trust notice and badges and the
+    # Settings inspectors' loading overlay: the same reasoning as
+    # Basecamp.AppManager above.
     set(COMMON_QML_FILES
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustNotice.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustLine.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustMark.qml
+        ${BASECAMP_SHELL}/Basecamp/Common/LoadingOverlay.qml
     )
     foreach(qml_file IN LISTS COMMON_QML_FILES)
         get_filename_component(qml_name "${qml_file}" NAME)
