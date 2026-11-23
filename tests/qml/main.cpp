@@ -36,6 +36,9 @@ public:
         // its theme files from fixtures/themes.
         QCoreApplication::setOrganizationName("Logos");
         QCoreApplication::setApplicationName("BasecampQmlTests");
+        // The app's controls style (MainContainer sets Basic), not the platform's.
+        if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
+            qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 #ifdef HAVE_LOGOS_DESIGN_SYSTEM
         Logos::ThemeStore::instance()->addDirectory(
             qEnvironmentVariable("QUICK_TEST_SOURCE_DIR", QUICK_TEST_SOURCE_DIR)

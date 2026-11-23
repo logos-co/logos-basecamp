@@ -1423,8 +1423,10 @@ test("app manager: context menu Details opens the Add Application dialog", async
   if (dialogId === null) return;
 
   await app.waitFor(async () => {
+    // A LogosDialog's title is its header's, not its content's.
+    assertEq(await evalOn(app, dialogId, "title"), "Add Application", "the dialog's title");
     const missing = await missingDialogTexts(app, dialogId, [
-      "Add Application", FIXTURE_A.displayName, "Description", "Required Packages",
+      FIXTURE_A.displayName, "Description", "Required Packages",
     ]);
     if (missing.length > 0) throw new Error(`dialog texts missing: ${missing.join(", ")}`);
   }, { timeout: 5000, interval: 250, description: "the dialog's fixed texts to render" });
@@ -1683,37 +1685,26 @@ test("settings: Dashboard shows version, build type and commit list", async (app
   const isPortable = assertType(await evalOn(app, dashboard.id, "backend.isPortableBuild"),
                                 "boolean", "backend.isPortableBuild");
 
-  // One walk over the view: flat text flags, plus the commit rows read where
-  // the "Commits" heading's column is found (and not descended into).
+  // One walk over the view: flat text flags, plus each commit row's name and
+  // hash, by their objectNames, in order, wherever the row's layout puts them.
   const snapshotDashboard = async () => JSON.parse(await evalOn(app, dashboard.id, `(() => {${WALK_JS}
     const out = {
       hasVersion: false, versionLabelVisible: false, hasCommits: false,
-      hasPortable: false, hasDev: false, rows: null,
+      hasPortable: false, hasDev: false, rows: [],
     };
+    const names = [], hashes = [];
     walk(this, (node) => {
       if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
       // Item.visible is effective visibility, so it tracks the hidden row.
       if (node.text === "Version" && node.visible === true) out.versionLabelVisible = true;
       if (node.text === "Portable build") out.hasPortable = true;
       if (node.text === "Dev build") out.hasDev = true;
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      let hasHeading = false;
-      for (let i = 0; i < kids.length; i += 1) {
-        if (kids[i] && kids[i].text === "Commits") hasHeading = true;
-      }
-      if (!hasHeading) return;
-      out.hasCommits = true;
-      out.rows = [];
-      for (let i = 0; i < kids.length; i += 1) {
-        const k = kids[i];
-        const two = k && k.children && k.children.length === 2 ? k.children : null;
-        if (two && typeof two[0].text === "string" && typeof two[1].text === "string") {
-          out.rows.push({ name: two[0].text, commit: two[1].text });
-        }
-      }
-      return false;
+      if (node.text === "Commits") out.hasCommits = true;
+      if (node.objectName === "dashboard.commitName") names.push(node.text);
+      if (node.objectName === "dashboard.commitHash") hashes.push(node.text);
     });
+    for (let i = 0; i < Math.min(names.length, hashes.length); i += 1)
+      out.rows.push({ name: names[i], commit: hashes[i] });
     return JSON.stringify(out);
   })()`));
 
@@ -3288,17 +3279,12 @@ test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) =
     throw new Error(`callMethod(activated) failed: ${activated.error}`);
   }
 
+  // The page header's search, a toggle around the bar that takes the input.
+  const search = await requireObject(app, "appManager.searchField");
   await app.waitFor(async () => {
-    const bar = await app.inspector.send("findByProperty", {
-      property: "placeholderText", value: "Search apps…",
-    });
-    const bid = bar.matches?.[0]?.id;
-    if (!bid) throw new Error("Search apps… bar not found");
-    const evalR = await app.inspector.send("evaluate", {
-      objectId: bid, expression: "textInput.activeFocus",
-    });
-    if (evalR.result !== true)
-      throw new Error(`textInput.activeFocus = ${evalR.result}, expected true`);
+    const focused = await evalOn(app, search.id, "searchBarItem.textInput.activeFocus");
+    if (focused !== true)
+      throw new Error(`searchBarItem.textInput.activeFocus = ${focused}, expected true`);
   }, { timeout: 3000, interval: 200, description: "search bar to focus" });
 });
 

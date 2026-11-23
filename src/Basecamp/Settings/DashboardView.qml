@@ -85,6 +85,7 @@ Item {
                         Layout.fillWidth: true
 
                         LogosSelectableText {
+                            objectName: "dashboard.commitName"
                             text: modelData.name
                             color: Theme.palette.textSecondary
                             font.pixelSize: Theme.typography.primaryText
@@ -92,6 +93,7 @@ Item {
                         }
 
                         meta: LogosSelectableText {
+                            objectName: "dashboard.commitHash"
                             Layout.fillWidth: true
                             text: modelData.commit
                             color: Theme.palette.text
