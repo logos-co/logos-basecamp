@@ -43,6 +43,7 @@ public:
     void removePluginDock(QWidget* pluginWidget);
     void activatePluginDock(QWidget* pluginWidget);
     bool showStoppedPanel(QWidget* pluginWidget, QWidget* panel);
+    void followAppViewWidth(QWidget* appView);
 
     QDockWidget* dockFor(const QString& moduleName) const { return m_docks.value(moduleName); }
     QString nameForWidget(QWidget* w) const;
@@ -70,6 +71,9 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void hideEvent(QHideEvent* event) override;
     void showEvent(QShowEvent* event) override;
+
+private slots:
+    void followQuickWidgetWidth(QQuickWidget* view);
 
 private:
     void wireWelcomePage(QObject* root);

@@ -2654,6 +2654,23 @@ test("sidebar: open multiple sections sequentially without failure", async (app)
   }
 });
 
+// --- Shell views follow their width ---
+//
+// Each full-window shell view tells its engine's Logos.Theme how wide it is,
+// as the content views do, so the design system's phone type and touch sizes
+// follow the window there too. The welcome page and the dialogs' overlay
+// didn't: their Theme.viewWidth stayed 0, a desktop's, on any window.
+test("shell views: the welcome page and the overlay follow their width", async (app) => {
+  for (const name of ["welcomePage.greeting", "overlayDialogs"]) {
+    const item = await requireObject(app, name);
+    const seen = await evalOn(app, item.id, "Theme.viewWidth");
+    const width = await evalOn(app, item.id, "Window.width");
+    if (!(typeof seen === "number" && seen > 0 && Math.abs(seen - width) < 1)) {
+      throw new Error(`${name}: Theme.viewWidth ${seen}, its window ${width}`);
+    }
+  }
+});
+
 // --- App Manager ---
 test("app manager: panel + categories sidebar render on first open", async (app) => {
   await openPlugin(app, "Applications", ["Apps", "Categories", "All"], { timeout: 15000 });

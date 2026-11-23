@@ -7,6 +7,9 @@ import Basecamp.Backend
 // available, and an app name that uses the cell rather than the icon under it.
 TestCase {
     id: testCase
+    // A desktop window: below 600 px dialogs and menus are phone sheets.
+    width: 900
+    height: 700
     name: "AppGridLayout"
     when: windowShown
 

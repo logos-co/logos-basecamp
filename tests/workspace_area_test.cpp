@@ -26,6 +26,8 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 
+#include <functional>
+
 namespace {
 
 // Let QTimer::singleShot(0, ...) callbacks run — WorkspaceArea uses them
@@ -36,6 +38,29 @@ void processDeferred()
     QCoreApplication::sendPostedEvents();
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
 }
+
+// The app side's hot-reload view as the shell sees it: it replaces its
+// QQuickWidget on every save, and says so.
+class ReloadingView : public QWidget {
+    Q_OBJECT
+public:
+    explicit ReloadingView(std::function<QQuickWidget*()> make) : m_make(std::move(make)) { reload(); }
+    QQuickWidget* view() const { return m_view; }
+    void reload()
+    {
+        delete m_view;
+        m_view = m_make();
+        m_view->setParent(this);
+        emit viewReplaced(m_view);
+    }
+
+signals:
+    void viewReplaced(QQuickWidget* view);
+
+private:
+    std::function<QQuickWidget*()> m_make;
+    QQuickWidget* m_view = nullptr;
+};
 
 QWidget* makePluginWidget(const QString& label)
 {
@@ -458,6 +483,18 @@ private slots:
     {
         WorkspaceArea ws;
         QCOMPARE(ws.contentsMargins(), QMargins(0, 0, 0, 0));
+    }
+
+    // The window narrows to a phone's width (360, beside the 80 px sidebar),
+    // so nothing in the workspace may hold it wider: a 300 px minimum on the
+    // welcome page once did.
+    void workspaceNarrowsToAPhone()
+    {
+        QObject backend;
+        WorkspaceArea ws(&backend);
+        const int width = ws.minimumSizeHint().expandedTo(ws.minimumSize()).width();
+        QVERIFY2(width <= 268, qPrintable(QStringLiteral("the workspace holds the window "
+                                                         "%1 px wide").arg(width)));
     }
 
     // --- Tab icons propagate from dock windowIcon -------------------------
@@ -1466,6 +1503,41 @@ private slots:
 
         QVERIFY(store->setCurrent("dark"));
         QCOMPARE(ws.palette().color(QPalette::Window), QColor("#171717"));
+    }
+
+    // --- View width ----------------------------------------------------------
+
+    // An app's view tells its Logos.Theme how wide it is, and follows it: a
+    // dock's, and each one hot reload puts in its place.
+    void appViewsFollowTheirWidth()
+    {
+        QTemporaryDir dir;
+        QFile qml(dir.filePath("View.qml"));
+        QVERIFY(qml.open(QIODevice::WriteOnly));
+        qml.write("import QtQuick\nimport Logos.Theme\nItem { property real seen: Theme.viewWidth }\n");
+        qml.close();
+        const auto makeView = [&dir] {
+            auto* view = new QQuickWidget;
+            view->setAttribute(Qt::WA_DontShowOnScreen);
+            view->setSource(QUrl::fromLocalFile(dir.filePath("View.qml")));
+            return view;
+        };
+        const auto seen = [](QQuickWidget* view) { return view->rootObject()->property("seen").toReal(); };
+
+        WorkspaceArea ws;
+        QQuickWidget* docked = makeView();
+        QVERIFY2(docked->rootObject(), qPrintable(docked->errors().value(0).toString()));
+        docked->rootObject()->setWidth(390);
+        ws.addPluginDock(docked, "A");
+        QCOMPARE(seen(docked), 390.0);
+        docked->rootObject()->setWidth(1024);
+        QCOMPARE(seen(docked), 1024.0);
+
+        auto* reloading = new ReloadingView(makeView);
+        ws.addPluginDock(reloading, "B");
+        reloading->reload();
+        reloading->view()->rootObject()->setWidth(700);
+        QCOMPARE(seen(reloading->view()), 700.0);
     }
 };
 
