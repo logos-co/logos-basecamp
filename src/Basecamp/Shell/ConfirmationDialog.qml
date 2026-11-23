@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
-import Logos.Icons
 import Logos.Theme
 import Basecamp.AppManager
 import Basecamp.Common
@@ -59,6 +58,9 @@ import Basecamp.Common
 // renders a resolved plan (what goes, what stays and why, what breaks) rather
 // than a pair of dependent lists.
 //
+// A LogosWarningDialog, as UninstallDialog is: centred and 560 wide, and in a
+// phone-wide window a sheet across the bottom, which must be answered.
+//
 // The dialog is controlled by calling `openWith(mode, name, items,
 // blockSummary)` for the one-list modes, `openWithUpgrade(name, version,
 // upgradeMode, installedDeps, loadedDeps, depChanges, requester)` for
@@ -66,7 +68,7 @@ import Basecamp.Common
 // requester)` for the install gate, `openWithInstallError(name, error)` /
 // `openWithLoadError(name, error)` for the error modes. Backend wiring listens for
 // continueClicked/cancelClicked and calls the appropriate slot with `name`.
-Dialog {
+LogosWarningDialog {
     id: root
 
     // "missingDeps" | "unloadCascade" | "upgradeCascade" | "installGate" | "installError"
@@ -229,11 +231,93 @@ Dialog {
         }
     }
 
-    modal: true
-    anchors.centerIn: parent
     width: 560
-    padding: Theme.spacing.large
+    anchors.centerIn: parent
     closePolicy: Popup.CloseOnEscape
+    // A neutral frame, the warning in red.
+    accentColor: Theme.palette.error
+    borderColor: Theme.palette.border
+    backgroundColor: Theme.palette.surfaceRaised
+
+    title: {
+        if (root.mode === "missingDeps") {
+            if (root.blockSummary === "signer")   return "Unexpected Publisher";
+            if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
+            return "Missing Dependencies";
+        }
+        if (root.mode === "unloadCascade")
+            return "Unload Dependent Modules?";
+        if (root.mode === "upgradeCascade") {
+            if (root.upgradeModeKind === 1) return "Downgrade Package?";
+            if (root.upgradeModeKind === 2) return "Reinstall Package?";
+            return "Upgrade Package?";
+        }
+        if (root.mode === "installGate")
+            return "Install Package?";
+        if (root.mode === "installError")
+            return "Install Failed";
+        if (root.mode === "loadFailed")
+            return root.loadFailedTitle || "Couldn't Load App";
+        return "";
+    }
+
+    rightActions: [
+        LogosButton {
+            objectName: "confirmationDialog." + root.mode + ".cancel"
+            text: "Cancel"
+            visible: root.mode !== "missingDeps" && root.mode !== "installError"
+                     && root.mode !== "loadFailed"
+            onClicked: {
+                root._explicitClose = true;
+                root.cancelClicked(root.moduleName);
+                root.close();
+            }
+        },
+
+        LogosButton {
+            objectName: "confirmationDialog." + root.mode + ".confirm"
+            text: {
+                if (root.mode === "missingDeps") return "OK";
+                if (root.mode === "unloadCascade") return "Unload All";
+                if (root.mode === "upgradeCascade") {
+                    if (root.upgradeModeKind === 1) return "Downgrade" + d.anyway;
+                    if (root.upgradeModeKind === 2) return "Reinstall" + d.anyway;
+                    return "Upgrade" + d.anyway;
+                }
+                if (root.mode === "installGate") return "Install" + d.anyway;
+                return "OK";
+            }
+            variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
+                                              : LogosButton.Variant.Primary
+            enabled: !root.resolutionPending && !d.trustHolds
+                     && !root.mandatoryChanges.some(function(c) { return !!c.error; })
+            onClicked: {
+                root._explicitClose = true;
+                root.continueClicked(root.moduleName);
+                root.close();
+            }
+        },
+
+        LogosButton {
+            objectName: "confirmationDialog." + root.mode + ".trustAndConfirm"
+            visible: d.canTrustPublishers
+            text: {
+                if (root.mode === "upgradeCascade") {
+                    if (root.upgradeModeKind === 1) return "Trust & downgrade" + d.anyway;
+                    if (root.upgradeModeKind === 2) return "Trust & reinstall" + d.anyway;
+                    return "Trust & upgrade" + d.anyway;
+                }
+                return "Trust & install" + d.anyway;
+            }
+            variant: LogosButton.Variant.Primary
+            enabled: !root.resolutionPending && !root.mandatoryChanges.some(function(c) { return !!c.error; })
+            onClicked: {
+                root._explicitClose = true;
+                root.trustAndContinueClicked(root.moduleName);
+                root.close();
+            }
+        }
+    ]
 
     // API for parent components — simpler than setting props + open() each time.
     function openWith(mode_, name_, items_, blockSummary_) {
@@ -329,62 +413,8 @@ Dialog {
         open();
     }
 
-    background: Rectangle {
-        color: Theme.palette.surfaceRaised
-        border.color: Theme.palette.border
-        border.width: 1
-        radius: 8
-    }
-
-    contentItem: ColumnLayout {
+    body: ColumnLayout {
         spacing: 12
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            LogosIcon {
-                Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
-                source: LogosIcons.warning
-                color: Theme.palette.error
-                brightness: 1.0
-            }
-
-            LogosText {
-                Layout.fillWidth: true
-                text: {
-                    if (root.mode === "missingDeps") {
-                        // Named, not defaulted: "Missing Dependencies" is
-                        // the fallback only for shapes where something really
-                        // is absent. Any other shape would inherit a title
-                        // contradicting its own body text.
-                        if (root.blockSummary === "signer")   return "Unexpected Publisher";
-                        if (root.blockSummary === "mismatch") return "Incompatible Dependencies";
-                        return "Missing Dependencies";
-                    }
-                    if (root.mode === "unloadCascade")
-                        return "Unload Dependent Modules?";
-                    if (root.mode === "upgradeCascade") {
-                        if (root.upgradeModeKind === 1) return "Downgrade Package?";
-                        if (root.upgradeModeKind === 2) return "Reinstall Package?";
-                        return "Upgrade Package?";
-                    }
-                    if (root.mode === "installGate")
-                        return "Install Package?";
-                    if (root.mode === "installError")
-                        return "Install Failed";
-                    if (root.mode === "loadFailed")
-                        return root.loadFailedTitle || "Couldn't Load App";
-                    return "";
-                }
-                font.pixelSize: Theme.typography.panelTitleText
-                font.weight: Theme.typography.weightBold
-                color: Theme.palette.text
-                wrapMode: Text.Wrap
-            }
-        }
 
         // Who asked. Shown for requests that crossed an app boundary — the
         // package name, never the self-declared display name, so an app cannot
@@ -575,7 +605,7 @@ Dialog {
         // Single-list block — used by missingDeps and unloadCascade.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(150, Math.max(30, root.items.length * 24))
+            Layout.preferredHeight: Math.min(150, itemList.contentHeight + 16)
             color: Theme.palette.surfaceRecessed
             radius: 4
             border.color: Theme.palette.border
@@ -586,6 +616,7 @@ Dialog {
 
             LogosListView {
                 id: itemList
+                objectName: "confirmationDialog.items"
                 anchors.fill: parent
                 anchors.margins: 8
                 model: root.items
@@ -596,10 +627,12 @@ Dialog {
                     // The detail clause is what makes the complaint
                     // actionable: a bare name does not say which version, or
                     // whose package, to go and get.
+                    width: ListView.view ? ListView.view.width : 0
                     text: "• " + (root.displayNameLookup(_name) || _name)
                           + (_detail.length > 0 ? " — " + _detail : "")
                     color: Theme.palette.text
                     font.pixelSize: 13
+                    wrapMode: Text.Wrap
                 }
             }
         }
@@ -626,21 +659,25 @@ Dialog {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(120, Math.max(30, root.loadedItems.length * 24))
+                Layout.preferredHeight: Math.min(120, runningList.contentHeight + 16)
                 color: Theme.palette.surfaceRecessed
                 radius: 4
                 border.color: Theme.palette.border
                 border.width: 1
 
                 LogosListView {
+                    id: runningList
+                    objectName: "confirmationDialog.running"
                     anchors.fill: parent
                     anchors.margins: 8
                     model: root.loadedItems
                     clip: true
                     delegate: LogosText {
+                        width: ListView.view ? ListView.view.width : 0
                         text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: Theme.palette.text
                         font.pixelSize: 13
+                        wrapMode: Text.Wrap
                     }
                 }
             }
@@ -802,84 +839,6 @@ Dialog {
             Layout.fillWidth: true
             Layout.topMargin: 8
             trust: d.trustApplies ? root.trust : ({})
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 8
-            spacing: 8
-
-            Item { Layout.fillWidth: true }
-
-            // Cancel button — hidden in the informational modes since
-            // there's only one button to press there.
-            //
-            // Both buttons carry a mode-derived objectName so UI automation
-            // can target them exactly. Text-based clicking is ambiguous here:
-            // labels like "Uninstall" also appear on the module-row buttons,
-            // and the inspector's text search doesn't distinguish open from
-            // closed dialogs.
-            //
-            // These names are only stable because OverlayDialogs instantiates
-            // one dialog per mode and pins `mode` declaratively. Reusing a
-            // single instance across modes would silently move the handle out
-            // from under the specs that click it.
-            LogosButton {
-                objectName: "confirmationDialog." + root.mode + ".cancel"
-                text: "Cancel"
-                visible: root.mode !== "missingDeps" && root.mode !== "installError"
-                         && root.mode !== "loadFailed"
-                onClicked: {
-                    root._explicitClose = true;
-                    root.cancelClicked(root.moduleName);
-                    root.close();
-                }
-            }
-
-            LogosButton {
-                objectName: "confirmationDialog." + root.mode + ".confirm"
-                text: {
-                    if (root.mode === "missingDeps") return "OK";
-                    if (root.mode === "unloadCascade") return "Unload All";
-                    if (root.mode === "upgradeCascade") {
-                        if (root.upgradeModeKind === 1) return "Downgrade" + d.anyway;
-                        if (root.upgradeModeKind === 2) return "Reinstall" + d.anyway;
-                        return "Upgrade" + d.anyway;
-                    }
-                    if (root.mode === "installGate") return "Install" + d.anyway;
-                    return "OK";
-                }
-                variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
-                                                  : LogosButton.Variant.Primary
-                enabled: !root.resolutionPending && !d.trustHolds
-                         && !root.mandatoryChanges.some(function(c) { return !!c.error; })
-                onClicked: {
-                    root._explicitClose = true;
-                    root.continueClicked(root.moduleName);
-                    root.close();
-                }
-            }
-
-            LogosButton {
-                objectName: "confirmationDialog." + root.mode + ".trustAndConfirm"
-                visible: d.canTrustPublishers
-                // "anyway" too when trusting leaves something unsigned or unchecked.
-                text: {
-                    if (root.mode === "upgradeCascade") {
-                        if (root.upgradeModeKind === 1) return "Trust & downgrade" + d.anyway;
-                        if (root.upgradeModeKind === 2) return "Trust & reinstall" + d.anyway;
-                        return "Trust & upgrade" + d.anyway;
-                    }
-                    return "Trust & install" + d.anyway;
-                }
-                variant: LogosButton.Variant.Primary
-                enabled: !root.resolutionPending && !root.mandatoryChanges.some(function(c) { return !!c.error; })
-                onClicked: {
-                    root._explicitClose = true;
-                    root.trustAndContinueClicked(root.moduleName);
-                    root.close();
-                }
-            }
         }
     }
 

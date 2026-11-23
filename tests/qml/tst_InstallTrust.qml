@@ -151,7 +151,7 @@ TestCase {
 
     function test_gate_waits_for_the_check() {
         var dlg = openGate()
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         dlg.trust = { pending: true }
         compare(confirm.enabled, false)
         verify(shown(dlg.contentItem, "installTrust.checking"))
@@ -161,7 +161,7 @@ TestCase {
         compare(confirm.enabled, true)
         compare(confirm.text, "Install")
         verify(!shown(dlg.contentItem, "installTrust.warning"))
-        verify(!shown(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm"))
+        verify(!shown(dlg.footer, "confirmationDialog.installGate.trustAndConfirm"))
     }
 
     // Nothing to decide still says who signed it. A fully trusted install used
@@ -171,7 +171,7 @@ TestCase {
         dlg.trust = signedByLogos(["blockchain_module"])
         compare(bodyOf(dlg).indexOf("Install 'blockchain_module' v1.0.0, signed by Logos."), 0, bodyOf(dlg))
         verify(!shown(dlg.contentItem, "installTrust.warning"))
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         compare(confirm.text, "Install")
         compare(confirm.enabled, true)
     }
@@ -195,7 +195,7 @@ TestCase {
         compare(mark(dlg.contentItem, "confirmationDialog.trust.mystery"), "warning | Couldn't check who signed it")
         compare(noticeTitle(dlg.contentItem), "Not everything here is from a publisher you trust.")
         compare(noticeLines(dlg.contentItem), ["Install only if you trust its source."])
-        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").text, "Install anyway")
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").text, "Install anyway")
     }
 
     // An optional package's row says it too, so unchecking an unsigned one
@@ -223,7 +223,7 @@ TestCase {
         trustContinueSpy.clear()
         dlg.trust = untrusted()
 
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         compare(confirm.text, "Install anyway")
         compare(confirm.enabled, true)
         compare(confirm.variant, LogosButton.Variant.Secondary)
@@ -238,7 +238,7 @@ TestCase {
                                                "“Other” · key AE21 6C2E F524 7A37 · chat, chat_module"])
         compare(findChild(dlg.contentItem, "installTrust.warning").severity, LogosNotice.Warning)
 
-        var trustButton = findChild(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm")
+        var trustButton = findChild(dlg.footer, "confirmationDialog.installGate.trustAndConfirm")
         verify(trustButton.visible)
         compare(trustButton.text, "Trust & install anyway", "rln stays unsigned")
         mouseClick(trustButton)
@@ -254,7 +254,7 @@ TestCase {
         trustContinueSpy.target = dlg
         trustContinueSpy.clear()
         dlg.trust = untrusted()
-        mouseClick(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm"))
+        mouseClick(findChild(dlg.footer, "confirmationDialog.installGate.confirm"))
         compare(continueSpy.count, 1)
         compare(trustContinueSpy.count, 0)
     }
@@ -268,8 +268,8 @@ TestCase {
     function test_anyway_only_where_trust_would_not_cover_it() {
         var dlg = openGate("chat", [change("chat_module")])
         dlg.trust = trustable()
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
-        var trustButton = findChild(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
+        var trustButton = findChild(dlg.footer, "confirmationDialog.installGate.trustAndConfirm")
         compare(confirm.text, "Install")
         compare(confirm.variant, LogosButton.Variant.Secondary)
         verify(trustButton.visible)
@@ -281,8 +281,8 @@ TestCase {
         var upgrade = createTemporaryObject(dialogComp, testCase)
         upgrade.openWithUpgrade("chat", "2.0.0", 0, [], [], [], "package_manager_ui", false)
         upgrade.trust = trustable()
-        compare(findChild(upgrade.contentItem, "confirmationDialog.upgradeCascade.confirm").text, "Upgrade")
-        var upgradeTrust = findChild(upgrade.contentItem, "confirmationDialog.upgradeCascade.trustAndConfirm")
+        compare(findChild(upgrade.footer, "confirmationDialog.upgradeCascade.confirm").text, "Upgrade")
+        var upgradeTrust = findChild(upgrade.footer, "confirmationDialog.upgradeCascade.trustAndConfirm")
         compare(upgradeTrust.text, "Trust & upgrade")
         upgrade.trust = untrusted()
         compare(upgradeTrust.text, "Trust & upgrade anyway")
@@ -304,10 +304,10 @@ TestCase {
     function test_unsigned_offers_no_publisher_to_trust() {
         var dlg = openGate()
         dlg.trust = unsignedOnly()
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         compare(confirm.text, "Install anyway")
         compare(confirm.variant, LogosButton.Variant.Primary)
-        verify(!shown(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm"))
+        verify(!shown(dlg.footer, "confirmationDialog.installGate.trustAndConfirm"))
         compare(noticeTitle(dlg.contentItem), "Not everything here is from a publisher you trust.")
         compare(noticeLines(dlg.contentItem), ["Install only if you trust its source."])
     }
@@ -346,7 +346,7 @@ TestCase {
         tryVerify(function() { return shown(dlg.contentItem, "confirmationDialog.trust.chat_module") })
         compare(mark(dlg.contentItem, "confirmationDialog.trust.chat_module"),
                 "warning | Not signed by Third, who signed the version you have")
-        verify(!shown(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm"))
+        verify(!shown(dlg.footer, "confirmationDialog.installGate.trustAndConfirm"))
 
         // Replacing a copy nobody signed says that instead.
         dlg.trust = { needsPrompt: true, blocked: false, canTrust: false, trustCoversAll: false,
@@ -384,7 +384,7 @@ TestCase {
         compare(noticeTitle(dlg.contentItem), "This can't be installed.")
         compare(noticeLines(dlg.contentItem),
                 ["Comes with Basecamp, so only Logos can update it: capability_module"])
-        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").enabled, false)
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").enabled, false)
         tryVerify(function() { return shown(dlg.contentItem, "confirmationDialog.trust.capability_module") })
         compare(mark(dlg.contentItem, "confirmationDialog.trust.capability_module"),
                 "warning | Comes with Basecamp, so only Logos can update it")
@@ -402,8 +402,8 @@ TestCase {
     function test_gate_lets_nothing_damaged_through() {
         var dlg = openGate("chat", [change("storage_module")])
         dlg.trust = blocked()
-        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").enabled, false)
-        verify(!shown(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm"))
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").enabled, false)
+        verify(!shown(dlg.footer, "confirmationDialog.installGate.trustAndConfirm"))
         // Nothing to install "anyway": no word about choosing to.
         compare(noticeTitle(dlg.contentItem), "This can't be installed.")
         compare(noticeLines(dlg.contentItem), ["“Other” · key AE21 6C2E F524 7A37 · chat, chat_module",
@@ -424,19 +424,19 @@ TestCase {
         dlg.trust = blocked()
         dlg.close()
         dlg.openWithInstallGate("wallet", "1.0.0", [], "package_manager_ui", false)
-        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").enabled, true)
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").enabled, true)
         verify(!shown(dlg.contentItem, "installTrust.warning"))
         dlg.close()
         dlg.openWithUpgrade("wallet", "2.0.0", 0, [], [], [], "package_manager_ui", false)
-        compare(findChild(dlg.contentItem, "confirmationDialog.upgradeCascade.confirm").enabled, true)
+        compare(findChild(dlg.footer, "confirmationDialog.upgradeCascade.confirm").enabled, true)
     }
 
     function test_upgrade_asks_in_its_own_words() {
         var dlg = createTemporaryObject(dialogComp, testCase)
         dlg.openWithUpgrade("chat", "2.0.0", 0, [], [], [], "package_manager_ui", false)
         dlg.trust = untrusted()
-        var confirm = findChild(dlg.contentItem, "confirmationDialog.upgradeCascade.confirm")
-        var trustButton = findChild(dlg.contentItem, "confirmationDialog.upgradeCascade.trustAndConfirm")
+        var confirm = findChild(dlg.footer, "confirmationDialog.upgradeCascade.confirm")
+        var trustButton = findChild(dlg.footer, "confirmationDialog.upgradeCascade.trustAndConfirm")
         compare(confirm.text, "Upgrade anyway")
         compare(trustButton.text, "Trust & upgrade anyway")
         compare(bodyOf(dlg).indexOf("Upgrade 'chat' to v2.0.0, signed by a publisher you don't trust yet."), 0,
@@ -470,15 +470,15 @@ TestCase {
         tryVerify(function() { return shown(dlg.contentItem, "confirmationDialog.trust.chat_module") })
         compare(mark(dlg.contentItem, "confirmationDialog.trust.chat_module"),
                 "warning | Claims to be Logos, but isn't signed with its key")
-        verify(!shown(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm"))
-        compare(findChild(dlg.contentItem, "confirmationDialog.installGate.confirm").text, "Install anyway")
+        verify(!shown(dlg.footer, "confirmationDialog.installGate.trustAndConfirm"))
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").text, "Install anyway")
 
         // Beside one it can trust, that one is offered.
         t.publishers.push({ did: otherDid + "2", fingerprint: "1111 2222 3333 4444", name: "Fine",
                             packages: ["rln"], impersonates: "" })
         t.canTrust = true
         dlg.trust = t
-        var trustButton = findChild(dlg.contentItem, "confirmationDialog.installGate.trustAndConfirm")
+        var trustButton = findChild(dlg.footer, "confirmationDialog.installGate.trustAndConfirm")
         verify(trustButton.visible)
         compare(trustButton.text, "Trust & install anyway", "the lookalike stays untrusted")
     }
@@ -698,8 +698,8 @@ TestCase {
         var gate = openGate()
         gate.trust = untrusted()
         waitForRendering(gate.contentItem)
-        var gateAnyway = findChild(gate.contentItem, "confirmationDialog.installGate.confirm")
-        var gateTrust = findChild(gate.contentItem, "confirmationDialog.installGate.trustAndConfirm")
+        var gateAnyway = findChild(gate.footer, "confirmationDialog.installGate.confirm")
+        var gateTrust = findChild(gate.footer, "confirmationDialog.installGate.trustAndConfirm")
         compare(gateTrust.parent, gateAnyway.parent, "in the same row")
         verify(gateTrust.x > gateAnyway.x, "Trust & install after Install anyway")
     }

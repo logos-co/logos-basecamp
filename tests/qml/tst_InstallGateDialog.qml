@@ -227,7 +227,7 @@ TestCase {
         var rln = {name: "rln", optional: true, version: "0.10.0"}
         dlg.openWithInstallGate("delivery_module", "0.3.0", [rln], "", true)
         tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.optional.rln") })
-        var button = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var button = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         waitForRendering(testCase)
         verify(gatePreviewSpy.valid)
         mouseClick(findChild(dlg.contentItem, "confirmationDialog.optional.rln"))
