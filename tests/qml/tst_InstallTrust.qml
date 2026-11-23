@@ -289,8 +289,8 @@ TestCase {
 
         var app = createTemporaryObject(appDialogComp, testCase)
         app.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: trustable() })
-        var primary = findChild(app.contentItem, "addApplicationDialog.primaryButton")
-        var appTrust = findChild(app.contentItem, "addApplicationDialog.trustAndInstallButton")
+        var primary = findChild(app.footer, "addApplicationDialog.primaryButton")
+        var appTrust = findChild(app.footer, "addApplicationDialog.trustAndInstallButton")
         compare(primary.text, "Install")
         verify(appTrust.visible)
         compare(appTrust.text, "Trust & install")
@@ -645,7 +645,7 @@ TestCase {
         trustInstallSpy.target = dlg
         trustInstallSpy.clear()
         dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: { pending: true } })
-        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
         compare(primary.text, "Checking packages…")
         compare(primary.enabled, false)
         verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
@@ -656,7 +656,7 @@ TestCase {
         compare(primary.enabled, true)
         compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.chat"), "warning Signed by a publisher you don't trust yet")
         verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
-        var trustButton = findChild(dlg.contentItem, "addApplicationDialog.trustAndInstallButton")
+        var trustButton = findChild(dlg.footer, "addApplicationDialog.trustAndInstallButton")
         verify(trustButton.visible)
         compare(trustButton.text, "Trust & install anyway")
         mouseClick(trustButton)
@@ -675,7 +675,7 @@ TestCase {
         tryVerify(function() { return shown(dlg.contentItem, "packageRow.trust.storage_module") })
         compare(mark(dlg.contentItem, "packageRow.trust.storage_module"), "check | Signed by Logos")
         verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(findChild(dlg.contentItem, "addApplicationDialog.primaryButton").text, "Install")
+        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").text, "Install")
 
         // A new plan being resolved has no verdict yet: no badge from the last.
         dlg.metadata = Object.assign({}, dlg.metadata, { resolutionPending: true })
@@ -689,8 +689,8 @@ TestCase {
         var app = createTemporaryObject(appDialogComp, testCase)
         app.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: untrusted() })
         waitForRendering(app.contentItem)
-        var anyway = findChild(app.contentItem, "addApplicationDialog.primaryButton")
-        var trust = findChild(app.contentItem, "addApplicationDialog.trustAndInstallButton")
+        var anyway = findChild(app.footer, "addApplicationDialog.primaryButton")
+        var trust = findChild(app.footer, "addApplicationDialog.trustAndInstallButton")
         compare(trust.parent, anyway.parent, "in the same row")
         verify(trust.x > anyway.x, "Trust & install after Install anyway")
         compare(anyway.text, "Install anyway")
@@ -704,34 +704,34 @@ TestCase {
         verify(gateTrust.x > gateAnyway.x, "Trust & install after Install anyway")
     }
 
-    // The longest labels, beside Uninstall, still fit the version row: none
-    // spills past the row's edge or over another.
+    // The longest labels, with Uninstall, still fit the dialog's footer: none
+    // spills past its edge or over another.
     function test_the_longest_answers_fit_beside_uninstall() {
         var app = createTemporaryObject(appDialogComp, testCase)
         app.openWith({ name: "chat", repositoryUrl: "https://repo/", selectedVersion: "1.0.0-rc.12",
                        installedVersion: "2.0.0", installStatus: InstallStatus.DowngradeAvailable,
                        trust: untrusted() })
         waitForRendering(app.contentItem)
-        var names = ["uninstallButton", "primaryButton", "trustAndInstallButton"]
+        var names = ["uninstallButton", "closeButton", "primaryButton", "trustAndInstallButton"]
         var right = 0
         for (var i = 0; i < names.length; ++i) {
-            var button = findChild(app.contentItem, "addApplicationDialog." + names[i])
+            var button = findChild(app.footer, "addApplicationDialog." + names[i])
             verify(button.visible, names[i])
-            var at = button.mapToItem(app.contentItem, 0, 0)
+            var at = button.mapToItem(app.footer, 0, 0)
             verify(at.x >= right, names[i] + " starts after what is left of it")
             right = at.x + button.width
         }
-        compare(findChild(app.contentItem, "addApplicationDialog.trustAndInstallButton").text,
+        compare(findChild(app.footer, "addApplicationDialog.trustAndInstallButton").text,
                 "Trust & downgrade anyway")
-        verify(right <= app.contentItem.width, "ends at " + right + " of " + app.contentItem.width)
+        verify(right <= app.footer.width, "ends at " + right + " of " + app.footer.width)
     }
 
     function test_app_dialog_lets_nothing_damaged_through() {
         var dlg = createTemporaryObject(appDialogComp, testCase)
         dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: blocked() })
-        compare(findChild(dlg.contentItem, "addApplicationDialog.primaryButton").enabled, false)
+        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
         verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
-        verify(!shown(dlg.contentItem, "addApplicationDialog.trustAndInstallButton"))
+        verify(!shown(dlg.footer, "addApplicationDialog.trustAndInstallButton"))
     }
 
     // A re-resolve is a new plan: the last one's warning is not about it.
@@ -741,7 +741,7 @@ TestCase {
         verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
         dlg.metadata = Object.assign({}, dlg.metadata, { resolutionPending: true })
         verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(findChild(dlg.contentItem, "addApplicationDialog.primaryButton").enabled, false)
+        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
     }
 
     // Launch installs nothing, so there is nothing to ask about.
@@ -749,7 +749,7 @@ TestCase {
         var dlg = createTemporaryObject(appDialogComp, testCase)
         dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", isInstalled: true,
                        installStatus: InstallStatus.Installed, trust: blocked() })
-        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
         compare(primary.text, "Launch")
         compare(primary.enabled, true)
         verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))

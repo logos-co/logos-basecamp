@@ -10,9 +10,10 @@ LogosMenu {
     objectName: "appContextMenu"
 
     // Plain object snapshot of the row: name, displayName, repositoryUrl,
-    // isInstalled, installStage, installStatus, installType. Set via
-    // openFor() — never bound to a delegate's `model`, which would dangle
-    // once the row scrolls out from under an open menu.
+    // isInstalled, installStage, installStatus, installType. Set by openFor(),
+    // or by the delegate as its contextFor opens it — never bound to a
+    // delegate's `model`, which would dangle once the row scrolls out from
+    // under an open menu.
     property var appData: ({})
 
     signal openRequested(string name, string repositoryUrl)

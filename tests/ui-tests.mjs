@@ -1243,7 +1243,8 @@ async function requireFixtureAMenu(app, row) {
   return menuId;
 }
 
-// The delegate TapHandler's handler verbatim; waits for the menu to show.
+// What a right-click or long press on the delegate does, by hand: the menu
+// with the delegate's snapshot. Waits for the menu to show.
 async function openContextMenuFor(app, menuId, label) {
   await evalOn(app, menuId, "openFor(d.snapshot())");
   await app.waitFor(async () => {
@@ -2674,7 +2675,7 @@ test("shell views: the welcome page and the overlay follow their width", async (
 
 // --- App Manager ---
 test("app manager: panel + categories sidebar render on first open", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories", "All"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories", "All"], { timeout: 15000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -3259,7 +3260,7 @@ test("repositories: removing default drops it from list", async (app) => {
 // ShortcutBridge end-to-end
 // ---------------------------------------------------------------------------
 test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   // QML declares sequence: "Ctrl+K". QShortcut.key stringifies as NativeText
   // — "⌘K" on macOS, "Ctrl+K" elsewhere — so try both.
@@ -3340,7 +3341,7 @@ async function findLocalAppsProxy(app) {
 }
 
 test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) {
@@ -3375,7 +3376,7 @@ test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (a
 });
 
 test("app manager: 'local' header renders iff local rows exist", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) throw new Error("appManager.localAppsProxy not found");

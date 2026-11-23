@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 import Basecamp.Backend
@@ -18,9 +19,9 @@ Rectangle {
     property var appsProxy: null
 
     // Applies a query from outside the view — the welcome page's search hands
-    // its text over when a result routes here. Goes through d.searchText so the
-    // visible field and the proxy stay in step.
-    function applySearch(query) { d.searchText = query }
+    // its text over when a result routes here. Into the field, so the field
+    // and the proxy stay in step.
+    function applySearch(query) { header.openSearch(query) }
     property var repositories: []
     property bool loading: false
     property bool showUnavailable: false
@@ -50,7 +51,7 @@ Rectangle {
         onInstallStateFilterChanged:
             if (root.appsProxy) root.appsProxy.installStateFilter = installStateFilter
 
-        property string searchText: ""
+        readonly property string searchText: header.searchText
         onSearchTextChanged:
             if (root.appsProxy) root.appsProxy.searchText = searchText
 
@@ -94,61 +95,34 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacing.xxlarge
+        anchors.margins: Theme.pageMargin(root.width)
         spacing: Theme.spacing.xlarge
 
-        // Header: title + subtitle on the left, search on the right.
-        RowLayout {
+        // ─── Title and subtitle, the search on their right; on a phone a 🔍
+        // at the end of the title's line ───
+        LogosPageHeader {
+            id: header
+            objectName: "appManager.header"
             Layout.fillWidth: true
-            spacing: Theme.spacing.xlarge
+            title: qsTr("Applications")
+            subtitle: qsTr("Install and manage applications.")
+            // On a phone it would only say the title again.
+            subtitleOnPhone: false
+            searchEnabled: true
+            searchPlaceholder: qsTr("Search apps…")
+            searchShortcutHint: searchShortcut.nativeText
+            searchWidth: 605
+            searchItem.objectName: "appManager.searchField"
+        }
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacing.tiny
-
-                LogosText {
-                    text: "Applications"
-                    font.pixelSize: Theme.typography.pageTitleText
-                    font.weight: Theme.typography.weightBold
-                    color: Theme.palette.text
-                }
-
-                LogosText {
-                    text: "Install and manage applications."
-                    font.pixelSize: Theme.typography.primaryText
-                    color: Theme.palette.textSecondary
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            LogosSearchBar {
-                id: searchBar
-                objectName: "appManager.searchField"
-                Layout.alignment: Qt.AlignRight
-                Layout.preferredWidth: 605
-                Layout.minimumWidth: 200
-                text: d.searchText
-                placeholderText: qsTr("Search apps…")
-                shortcutHint: searchShortcut.nativeText
-                onTextChanged: {
-                    if (text !== d.searchText)
-                        d.searchText = text
-                }
-            }
-
-            // ⌘K focuses + selects the search bar.
-            Shortcut {
-                id: searchShortcut
-                objectName: "appManager.searchShortcut"
-                sequence: "Ctrl+K"
-                context: Qt.WindowShortcut
-                enabled: root.visible
-                onActivated: {
-                    searchBar.textInput.forceActiveFocus()
-                    searchBar.textInput.selectAll()
-                }
-            }
+        // ⌘K focuses + selects the search.
+        Shortcut {
+            id: searchShortcut
+            objectName: "appManager.searchShortcut"
+            sequence: "Ctrl+K"
+            context: Qt.WindowShortcut
+            enabled: root.visible
+            onActivated: header.openSearch()
         }
 
         // The App Manager does not show where each download comes from, so
@@ -168,19 +142,15 @@ Rectangle {
             message: notice ? notice.message : ""
         }
 
-        RowLayout {
+        LogosSidebarLayout {
+            id: body
+            objectName: "appManager.body"
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: Theme.spacing.medium
 
-            // ─── Categories sidebar ───
-            LogosListView {
+            side: LogosListView {
                 id: categoriesList
-
-                Layout.preferredWidth: 200
-                Layout.minimumWidth: 160
-                Layout.maximumWidth: 200
-                Layout.fillHeight: true
 
                 model: d.categories
                 currentIndex: d.selectedCategoryIndex
@@ -213,8 +183,7 @@ Rectangle {
 
             // ─── Apps panel ───
             Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                anchors.fill: parent
                 color: Theme.palette.surfaceRaised
                 radius: Theme.spacing.radiusXlarge
                 clip: true
@@ -227,6 +196,7 @@ Rectangle {
 
                     AppManagerPanelHeader {
                         id: panelHeader
+                        objectName: "appManager.panelHeader"
                         Layout.fillWidth: true
                         Layout.leftMargin: Theme.spacing.medium
                         Layout.rightMargin: Theme.spacing.medium
@@ -234,6 +204,10 @@ Rectangle {
                         loading: root.loading
                         viewMode: d.viewMode
                         showUnavailable: root.showUnavailable
+                        showCategoryPicker: !body.sideShown
+                        categories: d.categories
+                        categoryIndex: d.selectedCategoryIndex
+                        onCategorySelected: (index) => d.selectedCategoryIndex = index
                         onReloadClicked: root.refreshRequested()
                         onRepositoriesClicked: root.navigateToRepositories()
                         onViewModeChangeRequested: (mode) => d.viewMode = mode

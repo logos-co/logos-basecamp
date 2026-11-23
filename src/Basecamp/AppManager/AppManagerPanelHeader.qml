@@ -4,64 +4,66 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 import Basecamp.Icons
 
-Item {
+LogosItemLayout {
     id: root
 
     property alias installStateIndex: stateTabBar.currentIndex
     property string viewMode: "grid"
     property bool loading: false
     property bool showUnavailable: false
+    property bool showCategoryPicker: false
+    property var categories: []
+    property int categoryIndex: 0
 
     signal reloadClicked()
     signal repositoriesClicked()
     signal viewModeChangeRequested(string mode)
     signal showUnavailableRequested(bool show)
+    signal categorySelected(int index)
 
-    implicitHeight: panelHeader.implicitHeight
+    spacing: Theme.spacing.large
+    minimumContentWidth: stateTabBar.implicitWidth
 
-    GridLayout {
-        id: panelHeader
-        anchors.left: parent.left
-        anchors.right: parent.right
-        columnSpacing: Theme.spacing.large
-        rowSpacing: Theme.spacing.medium
-        columns: (leftHalf.implicitWidth + rightHalf.implicitWidth + columnSpacing) <= width
-                 ? 2 : 1
+    Item {
+        implicitWidth: stateTabBar.implicitWidth
+        implicitHeight: stateTabBar.implicitHeight
 
-        RowLayout {
-            id: leftHalf
-            Layout.fillWidth: true
+        LogosTabBar {
+            id: stateTabBar
+            objectName: "appManager.stateTabs"
+            width: implicitWidth
             spacing: Theme.spacing.large
 
-            LogosText {
-                text: qsTr("Apps")
-                font.pixelSize: Theme.typography.panelTitleText
-                font.weight: Theme.typography.weightMedium
-                color: Theme.palette.text
-            }
-
-            LogosTabBar {
-                id: stateTabBar
-                spacing: Theme.spacing.large
-
-                LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
-                LogosTabButton { text: qsTr("Installed") }
-                LogosTabButton { text: qsTr("Not Installed") }
-            }
-
-            Item { Layout.fillWidth: true }
+            LogosTabButton { text: qsTr("All");           iconSource: LogosIcons.pages }
+            LogosTabButton { text: qsTr("Installed") }
+            LogosTabButton { text: qsTr("Not Installed") }
         }
+    }
 
-        RowLayout {
-            id: rightHalf
+    // ─── Toolbar: the picker, then the actions, folding into ⋯ ───
+    meta: [
+        LogosComboBox {
+            objectName: "appManager.categoryCombo"
+            visible: root.showCategoryPicker
             Layout.fillWidth: true
-            spacing: Theme.spacing.medium
+            Layout.minimumWidth: Theme.size.touchTarget * 2
+            Layout.maximumWidth: 220
+            model: root.categories
+            currentIndex: root.categoryIndex
+            displayText: currentIndex <= 0 ? qsTr("All categories") : currentText
+            onActivated: function(index) { root.categorySelected(index) }
+        },
 
-            Item { Layout.fillWidth: panelHeader.columns === 2 }
+        LogosOverflowRow {
+            objectName: "appManager.toolbarActions"
+            Layout.fillWidth: true
+            Layout.minimumWidth: Theme.size.touchTarget
+            spacing: Theme.spacing.medium
 
             LogosIconButton {
                 id: filterButton
@@ -98,46 +100,17 @@ Item {
                 id: filterMenu
                 objectName: "appManager.filterMenu"
 
-                LogosMenuItem {
-                    id: showUnavailableItem
+                CheckItem {
                     objectName: "appManager.showUnavailableItem"
-                    readonly property int indicatorSize: 14
                     text: qsTr("Show unavailable")
-                    checkable: true
                     checked: root.showUnavailable
                     onTriggered: root.showUnavailableRequested(checked)
-
-                    indicator: LogosIcon {
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: Theme.spacing.medium
-                        width: showUnavailableItem.indicatorSize
-                        height: showUnavailableItem.indicatorSize
-                        visible: showUnavailableItem.checked
-                        source: LogosIcons.check
-                        color: Theme.palette.text
-                    }
-
-                    contentItem: LogosText {
-                        leftPadding: Theme.spacing.medium
-                                     + showUnavailableItem.indicatorSize
-                                     + Theme.spacing.small
-                        rightPadding: Theme.spacing.medium
-                        verticalAlignment: Text.AlignVCenter
-                        text: showUnavailableItem.text
-                        color: showUnavailableItem.enabled
-                               ? Theme.palette.text
-                               : Theme.palette.textMuted
-                    }
                 }
             }
 
             LogosButton {
-                id: reloadBtn
                 objectName: "appManager.reloadButton"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 80
                 Layout.preferredWidth: 100
-                Layout.maximumWidth: 100
                 Layout.preferredHeight: 40
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Reload")
@@ -148,10 +121,7 @@ Item {
             }
 
             LogosButton {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 100
-                Layout.preferredWidth: implicitWidth
-                Layout.maximumWidth: implicitWidth
+                objectName: "appManager.repositoriesButton"
                 Layout.preferredHeight: 40
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Manage Repositories")
@@ -170,6 +140,7 @@ Item {
                 }
 
                 LogosIconButton {
+                    objectName: "appManager.gridViewButton"
                     iconSource: LogosIcons.grid
                     size: 20
                     iconSize: 20
@@ -181,6 +152,7 @@ Item {
                 }
 
                 LogosIconButton {
+                    objectName: "appManager.listViewButton"
                     iconSource: LogosIcons.list
                     size: 20
                     iconSize: 20
@@ -191,6 +163,83 @@ Item {
                     background: Item {}
                 }
             }
+
+            // Grid or list: picking the one shown keeps it.
+            ButtonGroup { id: viewModes }
+
+            // Folded, the same in a menu.
+            menu: LogosMenu {
+                objectName: "appManager.moreMenu"
+
+                CheckItem {
+                    objectName: "appManager.moreShowUnavailableItem"
+                    text: qsTr("Show unavailable")
+                    checked: root.showUnavailable
+                    onTriggered: root.showUnavailableRequested(checked)
+                }
+
+                LogosMenuSeparator {}
+
+                CheckItem {
+                    objectName: "appManager.moreGridItem"
+                    ButtonGroup.group: viewModes
+                    text: qsTr("Grid")
+                    checked: root.viewMode === "grid"
+                    onTriggered: root.viewModeChangeRequested("grid")
+                }
+
+                CheckItem {
+                    objectName: "appManager.moreListItem"
+                    ButtonGroup.group: viewModes
+                    text: qsTr("List")
+                    checked: root.viewMode === "list"
+                    onTriggered: root.viewModeChangeRequested("list")
+                }
+
+                LogosMenuSeparator {}
+
+                LogosMenuItem {
+                    objectName: "appManager.moreReloadItem"
+                    text: qsTr("Reload")
+                    enabled: !root.loading
+                    onTriggered: root.reloadClicked()
+                }
+
+                LogosMenuItem {
+                    objectName: "appManager.moreRepositoriesItem"
+                    text: qsTr("Manage Repositories…")
+                    onTriggered: root.repositoriesClicked()
+                }
+            }
+        }
+    ]
+
+    // A menu item with the design system's check mark when checked.
+    component CheckItem: LogosMenuItem {
+        id: checkItem
+        readonly property int indicatorSize: 14
+        checkable: true
+
+        indicator: LogosIcon {
+            anchors.verticalCenter: parent.verticalCenter
+            x: Theme.spacing.medium
+            width: checkItem.indicatorSize
+            height: checkItem.indicatorSize
+            visible: checkItem.checked
+            source: LogosIcons.check
+            color: Theme.palette.text
+        }
+
+        contentItem: LogosText {
+            leftPadding: Theme.spacing.medium
+                         + checkItem.indicatorSize
+                         + Theme.spacing.small
+            rightPadding: Theme.spacing.medium
+            verticalAlignment: Text.AlignVCenter
+            text: checkItem.text
+            color: checkItem.enabled
+                   ? Theme.palette.text
+                   : Theme.palette.textMuted
         }
     }
 }
