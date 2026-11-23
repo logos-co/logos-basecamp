@@ -88,6 +88,7 @@ Item {
         id: scroll
         anchors.fill: parent
         anchors.margins: Theme.spacing.large
+        contentWidth: availableWidth
         clip: true
 
         ColumnLayout {
@@ -99,10 +100,12 @@ Item {
                 spacing: Theme.spacing.tiny
 
                 LogosText {
+                    Layout.fillWidth: true
                     text: qsTr("Appearance")
                     font.pixelSize: Theme.typography.panelTitleText
                     font.weight: Theme.typography.weightMedium
                     color: Theme.palette.text
+                    wrapMode: Text.Wrap
                 }
                 LogosText {
                     text: qsTr("Choose a theme, or add your own theme file.")
@@ -174,6 +177,8 @@ Item {
 
                 LogosText {
                     objectName: "appearance.dockedLayout.title"
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
                     text: qsTr("Docked layout (experimental)")
                     font.pixelSize: Theme.typography.subtitleText
                     font.weight: Theme.typography.weightMedium
@@ -205,8 +210,7 @@ Item {
     LogosWarningDialog {
         id: removeDialog
         objectName: "appearance.removeDialog"
-        anchors.centerIn: parent
-        width: 420
+        preferredWidth: 420
         title: d.pendingRemove ? qsTr("Remove “%1”?").arg(d.pendingRemove.name) : ""
         message: d.pendingRemove && d.pendingRemove.id === Theme.currentTheme
                  ? qsTr("It's the theme in use, so Basecamp switches back to Dark. You can add it again from its file.")

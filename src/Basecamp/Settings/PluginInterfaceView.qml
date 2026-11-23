@@ -6,13 +6,12 @@ import Logos.Controls
 
 Item {
     id: root
-    
+    objectName: "pluginInterfaceView"
+
     property string pluginName: ""
     property var methods: []
     property var events: []
     property string resultText: ""
-
-    signal backClicked()
 
     Component.onCompleted: { loadMethods(); loadEvents() }
     onPluginNameChanged: { loadMethods(); loadEvents() }
@@ -49,26 +48,14 @@ Item {
         anchors.fill: parent
         spacing: 20
 
-        // Header with back button
-        RowLayout {
+        // Its way back is Settings' back row, over it.
+        LogosText {
             Layout.fillWidth: true
-            spacing: 16
-
-            LogosButton {
-                objectName: "pluginInterface.back"
-                text: "← Back"
-                compact: true
-                onClicked: root.backClicked()
-            }
-
-            LogosText {
-                text: "Interface: " + root.pluginName
-                font.pixelSize: 20
-                font.weight: Font.Bold
-                color: Theme.palette.text
-            }
-
-            Item { Layout.fillWidth: true }
+            text: "Interface: " + root.pluginName
+            font.pixelSize: 20
+            font.weight: Font.Bold
+            color: Theme.palette.text
+            elide: Text.ElideRight
         }
 
         // Methods list
@@ -130,21 +117,31 @@ Item {
                                         Layout.fillWidth: true
                                         spacing: 12
 
-                                        LogosText {
-                                            text: modelData.name || modelData
-                                            font.weight: Font.Bold
-                                            color: Theme.palette.info
-                                        }
+                                        // The signature beside the name while
+                                        // it fits, under it when it doesn't.
+                                        Flow {
+                                            id: methodTitle
+                                            Layout.fillWidth: true
+                                            spacing: 12
 
-                                        LogosText {
-                                            text: modelData.signature || ""
-                                            font.pixelSize: Theme.typography.secondaryText
-                                            // textTertiary is under 4.5:1 on the surface card.
-                                            color: Theme.palette.textSecondary
-                                            visible: modelData.signature !== undefined
-                                        }
+                                            LogosText {
+                                                width: Math.min(implicitWidth, methodTitle.width)
+                                                text: modelData.name || modelData
+                                                font.weight: Font.Bold
+                                                color: Theme.palette.info
+                                                elide: Text.ElideRight
+                                            }
 
-                                        Item { Layout.fillWidth: true }
+                                            LogosText {
+                                                width: Math.min(implicitWidth, methodTitle.width)
+                                                text: modelData.signature || ""
+                                                font.pixelSize: Theme.typography.secondaryText
+                                                // textTertiary is under 4.5:1 on the surface card.
+                                                color: Theme.palette.textSecondary
+                                                wrapMode: Text.WrapAnywhere
+                                                visible: modelData.signature !== undefined
+                                            }
+                                        }
 
                                         LogosButton {
                                             objectName: "pluginInterface.call." + (modelData.name || modelData)
@@ -175,7 +172,9 @@ Item {
                         LogosText {
                             text: "No methods available for this plugin."
                             color: Theme.palette.textTertiary
-                            Layout.alignment: Qt.AlignHCenter
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.Wrap
                             Layout.topMargin: 40
                             visible: root.methods.length === 0
                         }
@@ -205,26 +204,30 @@ Item {
                                     anchors.margins: 12
                                     spacing: 8
 
-                                    RowLayout {
+                                    // As a method's: beside the name, or under it.
+                                    Flow {
+                                        id: eventTitle
                                         Layout.fillWidth: true
                                         spacing: 12
 
                                         LogosText {
+                                            width: Math.min(implicitWidth, eventTitle.width)
                                             text: modelData.name || modelData
                                             font.weight: Font.Bold
                                             // Amber to distinguish events from the blue methods.
                                             color: Theme.palette.warning
+                                            elide: Text.ElideRight
                                         }
 
                                         LogosText {
+                                            width: Math.min(implicitWidth, eventTitle.width)
                                             text: modelData.signature || ""
                                             font.pixelSize: Theme.typography.secondaryText
                                             // textTertiary is under 4.5:1 on the surface card.
                                             color: Theme.palette.textSecondary
+                                            wrapMode: Text.WrapAnywhere
                                             visible: modelData.signature !== undefined
                                         }
-
-                                        Item { Layout.fillWidth: true }
                                     }
 
                                     LogosText {

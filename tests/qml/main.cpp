@@ -10,6 +10,7 @@
 #endif
 
 #include "AppsFilterProxy.h"
+#include "ModulesFilterProxy.h"
 #include "InstallEnums.h"
 
 class Setup : public QObject {
@@ -44,6 +45,7 @@ public slots:
             "InstallStatus",
             QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));
         qmlRegisterType<AppsFilterProxy>("Basecamp.Backend", 1, 0, "AppsFilterProxy");
+        qmlRegisterType<ModulesFilterProxy>("Basecamp.Backend", 1, 0, "ModulesFilterProxy");
     }
 
 #ifdef HAVE_LOGOS_DESIGN_SYSTEM
