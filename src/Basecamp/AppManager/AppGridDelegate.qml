@@ -12,6 +12,7 @@ ItemDelegate {
     // ─── Public API ───
     property var appData: ({})
     property int tileSize: 80
+    property int labelSize: Theme.typography.subtitleText
     property bool contextMenuEnabled: true
     signal appClicked(string name, string repositoryUrl)
     signal detailsRequested(string name, string repositoryUrl)
@@ -232,7 +233,7 @@ ItemDelegate {
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 text: d.displayName
-                font.pixelSize: Theme.typography.subtitleText
+                font.pixelSize: root.labelSize
                 color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle
                 elide: Text.ElideRight
                 LogosToolTip {
