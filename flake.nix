@@ -33,6 +33,9 @@
     # newer copy can never win on macOS, and package_manager crashes.
     logos-liblogos.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
+    # The core picks which copy of a module runs, package_manager lists what is
+    # installed: one scan for both, or the list names a copy that does not run.
+    logos-package-manager-module.inputs.logos-package-manager.follows = "logos-package-manager";
     logos-package-downloader-module.url = "github:logos-co/logos-package-downloader-module";
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.2";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
@@ -704,6 +707,10 @@
               # <app>_backend but ships a plugin that calls itself depsvc.
               cp -r ${depsvcInstalledDev}/modules/. $out/modules/
               chmod -R u+w $out/modules
+              # The intruder's dependency, so the access rule, not a missing
+              # module, is what refuses its package_downloader call.
+              cp -r ${installDev logosPackageDownloaderModuleLib}/modules/. $out/modules/
+              chmod -R u+w $out/modules
               so=$(find ${depsvcInstalledDev}/modules -name 'depsvc_plugin.*' | head -1)
               [ -n "$so" ] || { echo "no depsvc plugin"; exit 1; }
               ext="''${so##*.}"
@@ -796,7 +803,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib logosDesignSystem;
+            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
@@ -811,7 +818,7 @@
           # the test plan phases land to make it a gate.
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
-            inherit pkgs src logosPackageHeaders logosDesignSystem;
+            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };
@@ -827,6 +834,13 @@
           # nix/host-services-test.nix and tests/host-services-assert.mjs.
           # Build: nix build .#host-services-test
           host-services-test = import ./nix/host-services-test.nix {
+            inherit pkgs src logosQtMcp; appPkg = app;
+          };
+
+          # Copies of Package Manager in the user's dirs are moved aside or
+          # refused, against the real core and package manager.
+          # Build: nix build .#builtin-apps-test
+          builtin-apps-test = import ./nix/builtin-apps-test.nix {
             inherit pkgs src logosQtMcp; appPkg = app;
           };
 
@@ -951,6 +965,7 @@
         shutdown-test = self.packages.${system}.shutdown-test;
         download-source-test = self.packages.${system}.download-source-test;
         host-services-test = self.packages.${system}.host-services-test;
+        builtin-apps-test = self.packages.${system}.builtin-apps-test;
         symbol-gate = self.packages.${system}.symbol-gate;
         symbol-gate-negative = self.packages.${system}.symbol-gate-negative;
         mock-tests = self.packages.${system}.mock-tests;

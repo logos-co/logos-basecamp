@@ -1,5 +1,6 @@
 #include "InstalledPlacement.h"
 
+#include "BuiltInApps.h"
 #include "interfaces/ICoreRuntime.h"
 
 #include <QCoreApplication>
@@ -54,6 +55,9 @@ QStringList forms(const QString& path)
 
 const Problem kLoose{QStringLiteral("it sits loose in the install directory, not in an installed package"),
                      Problem::Kind::Unverifiable};
+
+const Problem kBuiltInCopy{QStringLiteral("it comes with Basecamp, and this copy is not the one that did"),
+                           Problem::Kind::BuiltIn};
 
 } // namespace
 
@@ -166,6 +170,7 @@ Preflight preflight(const QString& modulesInfoJson, const QString& moduleName,
             if (!it->loaded) {
                 const Placement where = placementUnder(it->path, installRoot);
                 const Problem problem = !where.inside ? Problem()
+                                      : builtin::isBuiltIn(name) ? kBuiltInCopy
                                       : where.packageDir.isEmpty() ? kLoose
                                       : check(where.packageDir);
                 if (!problem.isEmpty()) {
@@ -252,12 +257,22 @@ QString refusalMessage(const QString& module, const QString& culprit,
             ? QStringLiteral("It was not started because its files could not be checked.")
             : QStringLiteral("It was not started because a module it needs, %1, could not be checked.").arg(culprit);
         break;
+    case Problem::Kind::BuiltIn:
+        headline = itself
+            ? QStringLiteral("It was not started because it comes with Basecamp, and this copy is in your apps folder.")
+            : QStringLiteral("It was not started because a module it needs, %1, comes with Basecamp, "
+                             "and this copy is in your apps folder.").arg(culprit);
+        break;
     }
 
     const QString target = itself ? QStringLiteral("it") : culprit;
     const QString broken = itself ? module : culprit;
     QString advice;
-    if (repairsItself(broken) && !culpritDir.isEmpty()) {
+    if (problem.kind == Problem::Kind::BuiltIn) {
+        advice = culpritDir.isEmpty()
+            ? QStringLiteral("Remove %1 from your apps folder, then restart Basecamp.").arg(broken)
+            : QStringLiteral("Remove %1, then restart Basecamp.").arg(QDir::toNativeSeparators(culpritDir));
+    } else if (repairsItself(broken) && !culpritDir.isEmpty()) {
         advice = QStringLiteral("Package Manager cannot repair %1: remove %2 and restart "
                                 "Basecamp to use the copy that came with it.")
                      .arg(broken, QDir::toNativeSeparators(culpritDir));

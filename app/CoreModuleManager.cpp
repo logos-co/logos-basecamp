@@ -1,5 +1,7 @@
 #include "CoreModuleManager.h"
+#include "utils/BuiltInApps.h"
 #include "utils/InstalledIntegrity.h"
+#include "utils/LogosBasecampPaths.h"
 
 
 #include <QDebug>
@@ -174,6 +176,10 @@ void CoreModuleManager::refresh()
     // Re-scan all module directories via the lib, then let the Modules tab
     // re-read the composed list through Q_PROPERTY.
     m_core->refreshModules();
+    // Basecamp's own apps run only from its bundle (utils/BuiltInApps.h).
+    for (const auto& copy : logos::builtin::setAsideFromCore(*m_core, m_installedModulesRoot,
+                                                             LogosBasecampPaths::setAsideDirectory()))
+        emit builtInCopySetAside(copy.name, copy.from, copy.to, copy.loaded);
     emit coreModulesChanged();
 }
 

@@ -9,6 +9,7 @@
 #include "OnboardingState.h"
 #include "RepositorySource.h"
 #include "PackageInstallDecision.h"
+#include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/InstallTrust.h"
 #include "utils/PublisherKeyring.h"
@@ -1297,7 +1298,7 @@ void PackageCoordinator::cancelMultiUninstall(const QStringList& moduleNames)
 // Metadata refresh chain
 // ---------------------------------------------------------------------------
 
-void PackageCoordinator::fetchUiPluginMetadata()
+void PackageCoordinator::fetchUiPluginMetadata(bool afterSetAside)
 {
     // The !m_logosAPI branch below already does the right thing when package
     // metadata is unavailable -- clear the loading state and tell the UI -- so
@@ -1324,8 +1325,24 @@ void PackageCoordinator::fetchUiPluginMetadata()
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
-    logos.package_manager.getInstalledUiPluginsAsync([self](QVariantList uiPlugins) {
+    logos.package_manager.getInstalledUiPluginsAsync([self, afterSetAside](QVariantList uiPlugins) {
         if (!self) return;
+
+        // Basecamp's own apps run only from its bundle (utils/BuiltInApps.h).
+        // One that stays listed from elsewhere is refused when it would load.
+        if (self->m_hostProfile.useUserModules) {
+            bool moved = false;
+            for (const auto& found : logos::builtin::copiesInApps(uiPlugins, LogosBasecampPaths::pluginsDirectory())) {
+                const auto copy = afterSetAside
+                    ? found : logos::builtin::setAside(found, LogosBasecampPaths::setAsideDirectory());
+                moved = moved || !copy.to.isEmpty();
+                emit self->builtInCopySetAside(copy.name, copy.from, copy.to, copy.loaded);
+            }
+            if (moved) {
+                self->fetchUiPluginMetadata(/*afterSetAside=*/true);
+                return;
+            }
+        }
 
         // Seed installType for the UI-plugin subset. refreshDependencyInfo's
         // full-scan pass will overwrite this with the core-inclusive version;

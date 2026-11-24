@@ -11,6 +11,7 @@
 #include "utils/HostProfile.h"
 
 #include <QObject>
+#include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
@@ -519,6 +520,11 @@ private:
     // string it chose.
     void offerInstallForUnknownApp(const QString& appName);
 
+    // Tells the user about a copy of one of Basecamp's own apps found where
+    // they install (utils/BuiltInApps.h): each move, and each copy left in
+    // place once (m_builtInCopiesLeft).
+    void noticeBuiltInCopy(const QString& name, const QString& from, const QString& to, bool stopped);
+
 private slots:
     // Rebuild the inspectors' models from the current manager state. Each
     // is wired to the corresponding *Changed signal on the underlying
@@ -539,6 +545,7 @@ private:
     QVariantList buildCoreModulesSnapshot() const;
 
     const LogosBasecamp::HostProfile m_hostProfile;
+    QSet<QString> m_builtInCopiesLeft;
 
     // Navigation state.
     int m_currentActiveSectionIndex;

@@ -224,6 +224,45 @@ private slots:
         QCOMPARE(calls, 3);
     }
 
+    // A copy of one of Basecamp's own apps in the user's dir is never started,
+    // asked for or reached as a dependency, however sound its files: it was
+    // to be moved aside (BuiltInApps.h). Basecamp's own copy is outside the
+    // root and loads as ever.
+    void aBuiltInAppFromTheUsersDirIsRefused()
+    {
+        const auto sound = [](const QString&) { return Problem(); };
+        FakeRuntime core;
+        core.add(QStringLiteral("app"), root + QStringLiteral("/app/app.so"),
+                 {QStringLiteral("package_manager_ui_backend")});
+        core.add(QStringLiteral("package_manager_ui_backend"),
+                 root + QStringLiteral("/pmb/package_manager_ui_backend.so"));
+
+        Preflight r = preflight(core, QStringLiteral("app"), root, sound);
+        QCOMPARE(r.culprit, QStringLiteral("package_manager_ui_backend"));
+        QCOMPARE(r.problem.kind, Problem::Kind::BuiltIn);
+        QCOMPARE(r.culpritDir, QDir::cleanPath(root + QStringLiteral("/pmb")));
+        QVERIFY(!r.refusal.isEmpty());
+
+        const QString message = refusalMessage(QStringLiteral("app"), r.culprit, r.culpritDir, r.problem);
+        QVERIFY2(message.contains(QStringLiteral("comes with Basecamp")), qPrintable(message));
+        QVERIFY2(message.contains(QDir::toNativeSeparators(r.culpritDir)), qPrintable(message));
+        QVERIFY2(!message.contains(QStringLiteral("Reinstall")), qPrintable(message));
+
+        r = preflight(core, QStringLiteral("package_manager_ui_backend"), root, sound);
+        QCOMPARE(r.problem.kind, Problem::Kind::BuiltIn);
+
+        FakeRuntime oddCase;
+        oddCase.add(QStringLiteral("Package_Manager_UI"), root + QStringLiteral("/odd/x.so"));
+        QCOMPARE(preflight(oddCase, QStringLiteral("Package_Manager_UI"), root, sound).problem.kind,
+                 Problem::Kind::BuiltIn);
+
+        FakeRuntime bundled;
+        bundled.add(QStringLiteral("package_manager_ui_backend"),
+                    tmp.filePath(QStringLiteral("bundle/plugins/package_manager_ui/pmb.so")));
+        QCOMPARE(preflight(bundled, QStringLiteral("package_manager_ui_backend"), root, sound).refusal,
+                 QString());
+    }
+
     // Already running: not reloaded by this call, so not checked. Bundled or
     // developer modules are outside the root and never checked.
     void runningAndOutsideModulesAreNotChecked()
