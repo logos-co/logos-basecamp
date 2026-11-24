@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+import Logos.Theme
 import Basecamp.Backend 1.0
 
 // A real module here, not the directory import the Shell tests use: this
@@ -12,18 +13,12 @@ import Basecamp.AppManager
 // The Required Packages list, and what happens when the dialog runs out of
 // window.
 //
-// It used to be sized to its own contentHeight with interactive: false, which
-// is two ways of saying the same thing — the list was always exactly as tall as
-// its contents, so it never had anything out of view to scroll to, and the
-// dialog grew a row taller per dependency. An app with a long dependency chain
-// pushed Install, Uninstall and the footer summary off the bottom of the
-// window, and there was no way to get to them.
-//
-// The fix is a capped dialog plus a ColumnLayout in which only the list has any
-// slack. That second half is the fragile one: Layout.minimumHeight defaults to
-// 0, so a section that forgets to declare one silently squashes instead of the
-// list scrolling. test_a_short_window_takes_it_out_of_the_list_only is the
-// guard on that.
+// The list once grew a row per dependency, and an app with a long dependency
+// chain pushed Install, Uninstall and the footer summary off the bottom of the
+// window. On a desktop the list now stops at six rows and scrolls within; the
+// dialog, a LogosDialog, keeps its title and its actions in view and scrolls
+// its body when the window is shorter still. In a phone-wide window it is a
+// sheet whose list shows every row, so the sheet scrolls as one.
 TestCase {
     id: testCase
     name: "AddApplicationDialog"
@@ -33,7 +28,7 @@ TestCase {
 
     readonly property int rowHeight: 56
     readonly property int maxRows: 6
-    readonly property int showcaseHeight: 200
+    readonly property int showcaseHeight: 140
 
     // Taller than the dialog ever wants to be, so the cap never engages.
     readonly property int roomyWindow: 1100
@@ -99,8 +94,9 @@ TestCase {
             m.destroy();
     }
 
-    // A Dialog is a Popup, not an Item: its content lives under contentItem and
-    // never appears in the object tree findChild() walks.
+    // A Dialog is a Popup, not an Item: its content lives under contentItem,
+    // and its actions under footer, and never appears in the object tree
+    // findChild() walks.
     function deepFind(node, name) {
         if (!node)
             return null;
@@ -125,7 +121,7 @@ TestCase {
     function find(host, name) {
         var item = null;
         tryVerify(function () {
-            item = deepFind(host.dialog.contentItem, name);
+            item = deepFind(host.dialog.contentItem, name) || deepFind(host.dialog.footer, name);
             return item !== null && item.height > 0;
         }, 5000, name + " is realised");
         return item;
@@ -256,27 +252,114 @@ TestCase {
         cleanupHost(host);
     }
 
-    // The load-bearing one. A ColumnLayout takes a shortfall out of every child
-    // in proportion to the slack each has, and Layout.minimumHeight defaults to
-    // 0 — so without an explicit minimum on every other section, a short window
-    // squashes the showcase and clips the footer while the list sails on at six
-    // rows. This asserts the shortfall lands where it was aimed.
-    function test_a_short_window_takes_it_out_of_the_list_only() {
+    // A phone-wide window: a sheet across the bottom, the window's width, not a
+    // popup 560 past its sides; its rows give their names and versions room
+    // rather than run their badges out of it.
+    function test_a_phone_wide_window_fits_it_and_its_rows_data() {
+        return [{ tag: "390", width: 390 }, { tag: "360", width: 360 }];
+    }
+
+    function test_a_phone_wide_window_fits_it_and_its_rows(data) {
+        Theme.viewWidth = data.width;
+        var host = hostComp.createObject(testCase, { width: data.width, height: 800 });
+        host.dialog.requiredPackagesModel = modelWith(3);
+        host.dialog.openWith({ name: "target_app", displayName: "Target App",
+                               description: "the app being added",
+                               selectedVersion: "2.0.0", versions: [] });
+        tryCompare(host.dialog, "opened", true);
+        waitForRendering(testCase);
+
+        verify(host.dialog.sheet, "a sheet");
+        compare(host.dialog.x, 0);
+        compare(host.dialog.width, data.width);
+        tryCompare(host.dialog, "y", host.height - host.dialog.height);
+        var list = listOf(host);
+        var badge = deepFind(list.itemAtIndex(0), "packageRowStageBadge");
+        verify(badge, "the first row's badge");
+        var right = badge.mapToItem(list, badge.width, 0).x;
+        verify(right <= list.width, "the badge ends at " + right + " in a " + list.width + " px list");
+        verify(!deepFind(list.itemAtIndex(0), "packageRowDescription").truncated
+               || deepFind(list.itemAtIndex(0), "packageRowDescription").opacity === 0,
+               "a description fits or is left out, never a lone …");
+
+        cleanupHost(host);
+        Theme.viewWidth = 0;
+    }
+
+    // As a sheet its actions stack full width, Uninstall first and the main
+    // one last, where the thumb is, right under the body; no Close, as a drag
+    // or a tap outside closes it. Its list shows every row, so the sheet
+    // scrolls as one rather than a list inside a scroll.
+    function test_a_phone_sheet_stacks_its_actions_and_scrolls_as_one() {
+        Theme.viewWidth = 390;
+        var host = hostComp.createObject(testCase, { width: 390, height: 800 });
+        host.dialog.requiredPackagesModel = modelWith(12);
+        host.dialog.openWith({ name: "target_app", displayName: "Target App",
+                               description: "the app being added", selectedVersion: "2.0.0",
+                               installedVersion: "1.0.0", latestVersion: "2.0.0",
+                               installType: "user", isInstalled: true,
+                               installStatus: InstallStatus.UpgradeAvailable, versions: [] });
+        tryCompare(host.dialog, "opened", true);
+        tryCompare(host.dialog, "y", host.height - host.dialog.height);
+        waitForRendering(testCase);
+
+        verify(!find(host, "addApplicationDialog.primaryButton").parent.children.some(function (c) {
+            return c.objectName === "addApplicationDialog.closeButton" && c.visible;
+        }), "no Close on a sheet");
+        var order = ["uninstallButton", "primaryButton"];
+        var buttons = order.map(function (n) { return find(host, "addApplicationDialog." + n); });
+        var image = grabImage(testCase);
+        var lastY = -1;
+        for (var i = 0; i < buttons.length; ++i) {
+            var b = buttons[i];
+            verify(b.visible, order[i]);
+            compare(b.width, host.dialog.footer.width - 2 * Theme.spacing.large, order[i] + " full width");
+            var at = b.mapToItem(testCase, 0, b.height / 2);
+            verify(at.y > lastY, order[i] + " below the one before");
+            lastY = at.y;
+        }
+
+        var body = host.dialog.scrollViewItem;
+        var gap = buttons[0].mapToItem(testCase, 0, 0).y - body.mapToItem(testCase, 0, body.height).y;
+        verify(gap <= Theme.spacing.medium + 0.5, "the actions follow the body, " + gap + " px under it");
+
+        var list = listOf(host);
+        compare(list.height, list.contentHeight, "every row shows");
+        verify(!list.interactive, "the list doesn't scroll on its own");
+
+        cleanupHost(host);
+        Theme.viewWidth = 0;
+    }
+
+    function test_a_desktop_shows_each_rows_description() {
+        var host = openWithDeps(3);
+        var desc = deepFind(listOf(host).itemAtIndex(0), "packageRowDescription");
+        compare(desc.opacity, 1);
+        verify(!desc.truncated);
+        cleanupHost(host);
+    }
+
+    // A window too short for the dialog scrolls its body: the list keeps its
+    // six rows, the showcase and the footer summary keep their size, and the
+    // actions stay in view, under the body.
+    function test_a_short_window_scrolls_the_body_and_keeps_the_actions() {
         var host = openWithDeps(20, testCase.crampedWindow);
         var list = listOf(host);
 
-        verify(list.height < testCase.maxRows * testCase.rowHeight,
-               "the list gave up room, got " + list.height + "px");
-        verify(list.height >= testCase.rowHeight,
-               "but never below one row, got " + list.height + "px");
-        verify(list.interactive, "and is still reachable by scrolling");
+        verify(host.dialog.height <= host.height, "inside the window");
+        compare(list.height, testCase.maxRows * testCase.rowHeight, "the list keeps its six rows");
+        verify(list.interactive, "and scrolls within");
 
         var showcase = find(host, "addApplicationDialog.showcase");
         compare(showcase.height, testCase.showcaseHeight, "the showcase did not squash");
-
         var footer = find(host, "addApplicationDialog.footerText");
-        compare(footer.height, footer.implicitHeight,
-                "the footer summary is not clipped");
+        compare(footer.height, footer.implicitHeight, "the footer summary is not clipped");
+
+        var body = host.dialog.scrollViewItem;
+        verify(body.contentHeight > body.height, "the body scrolls to the rest");
+        var primary = find(host, "addApplicationDialog.primaryButton");
+        var bottom = primary.mapToItem(host, 0, primary.height).y;
+        verify(bottom <= host.dialog.y + host.dialog.height, "Install in view, at " + bottom);
 
         cleanupHost(host);
     }

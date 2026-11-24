@@ -39,7 +39,7 @@ TestCase {
 
         compare(dlg.mode, "loadFailed")
         compare(dlg.moduleName, "blockchain_ui")
-        verify(findChildWithText(dlg.contentItem, "Couldn't Load App"), "title rendered")
+        verify(findChildWithText(dlg.header, "Couldn't Load App"), "title rendered")
         verify(findChildWithText(dlg.contentItem, "'Blockchain' failed to load. Details:"),
                "body names the app by display name")
 
@@ -60,14 +60,14 @@ TestCase {
         dlg.openWithLoadError("capability_module", "Basecamp started without the modules you installed.",
                               "Installed Modules Not Used")
         tryVerify(function() { return dlg.opened })
-        verify(findChildWithText(dlg.contentItem, "Installed Modules Not Used"), "notice title rendered")
-        verify(!findChildWithText(dlg.contentItem, "Couldn't Load App"), "app title replaced")
+        verify(findChildWithText(dlg.header, "Installed Modules Not Used"), "notice title rendered")
+        verify(!findChildWithText(dlg.header, "Couldn't Load App"), "app title replaced")
         dlg.close()
         tryVerify(function() { return !dlg.visible })
 
         dlg.openWithLoadError("blockchain_ui", compileError)
         tryVerify(function() { return dlg.opened })
-        verify(findChildWithText(dlg.contentItem, "Couldn't Load App"), "app title is back")
+        verify(findChildWithText(dlg.header, "Couldn't Load App"), "app title is back")
         dlg.destroy()
     }
 
@@ -86,10 +86,10 @@ TestCase {
         dlg.openWithLoadError("blockchain_ui", compileError)
         tryVerify(function() { return dlg.opened })
 
-        var cancel = findChild(dlg.contentItem, "confirmationDialog.loadFailed.cancel")
+        var cancel = findChild(dlg.footer, "confirmationDialog.loadFailed.cancel")
         verify(cancel)
         verify(!cancel.visible, "no Cancel in an informational dialog")
-        var ok = findChild(dlg.contentItem, "confirmationDialog.loadFailed.confirm")
+        var ok = findChild(dlg.footer, "confirmationDialog.loadFailed.confirm")
         verify(ok)
         compare(ok.text, "OK")
         mouseClick(ok)

@@ -101,7 +101,7 @@ ItemDelegate {
         RowLayout {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: 150
-            Layout.minimumWidth: 150
+            Layout.minimumWidth: Theme.size.touchTarget * 2
             Layout.maximumWidth: 150
             spacing: Theme.spacing.small
 
@@ -150,7 +150,10 @@ ItemDelegate {
         // versionPicked signal that the dialog folds into its pin map.
         Item {
             Layout.alignment: Qt.AlignVCenter
+            Layout.fillWidth: true
             Layout.preferredWidth: 110
+            Layout.minimumWidth: Theme.size.touchTarget * 2
+            Layout.maximumWidth: 110
             Layout.preferredHeight: 32
 
             LogosComboBox {
@@ -211,12 +214,14 @@ ItemDelegate {
         LogosText {
             id: descLabel
             Layout.fillWidth: true
+            Layout.preferredWidth: 0
             Layout.alignment: Qt.AlignVCenter
             objectName: "packageRowDescription"
             text: root.appRow ? (root.appRow.description || "") : ""
             font.pixelSize: Theme.typography.secondaryText
             color: Theme.palette.textTertiary
             elide: Text.ElideRight
+            opacity: width >= Theme.size.touchTarget ? 1 : 0
 
             HoverHandler { id: descHover }
             LogosToolTip {

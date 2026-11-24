@@ -374,9 +374,8 @@ async function waitGateHidden(app, timeout = 5000) {
   }, { timeout, interval: 100, description: "the install gate to close" });
 }
 
-// Title and body of an OPEN gate, read from its contentItem subtree: the
-// title is the first rendered text (the header row), the body the LogosText
-// named confirmationDialog.body.
+// Title and body of an OPEN gate: its title, and the texts its header and
+// content render, the body being the LogosText named confirmationDialog.body.
 async function gateTexts(app, gate) {
   const nodes = JSON.parse(await app.evalOn(gate, `(() => {
     const out = [];
@@ -388,12 +387,13 @@ async function gateTexts(app, gate) {
       if (!kids || typeof kids.length !== "number") return;
       for (let i = 0; i < kids.length; i += 1) walk(kids[i]);
     };
+    walk(header);
     walk(contentItem);
     return JSON.stringify(out);
   })()`));
   const body = nodes.find((n) => n.objectName === "confirmationDialog.body");
-  const title = nodes.find((n) => n.text.length > 0 && n !== body);
-  return { title: title ? title.text : "", body: body ? body.text : "", texts: nodes.map((n) => n.text) };
+  const title = await app.evalOn(gate, "title");
+  return { title: typeof title === "string" ? title : "", body: body ? body.text : "", texts: nodes.map((n) => n.text) };
 }
 
 // ---------------------------------------------------------------------------

@@ -2,12 +2,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
-import Logos.Icons
 import Logos.Theme
 import Basecamp.Backend 1.0
 import Basecamp.Common
 
-Dialog {
+LogosDialog {
     id: root
 
     property var metadata: ({})
@@ -191,7 +190,18 @@ Dialog {
             d.installedDepsCount + " / " + d.totalDeps
 
         // ── Fixed section heights ──
-        readonly property int showcaseHeight:   200
+        // The footer's actions in a row, with the room between the two sides.
+        readonly property real actionsWidth: {
+            let w = 2 * Theme.spacing.large
+            let n = 1
+            w += Math.max(110, actionButton.implicitWidth)
+            if (d.canUninstall) { w += uninstallButton.implicitWidth; ++n }
+            if (!root.sheet) { w += closeButton.implicitWidth; ++n }
+            if (d.canTrustPublishers) { w += Math.max(110, trustButton.implicitWidth); ++n }
+            return w + n * Theme.spacing.small
+        }
+
+        readonly property int showcaseHeight:   140
         readonly property int versionRowHeight: 52
 
         // ── Package list: the required rows, then the optional ones ──
@@ -333,54 +343,82 @@ Dialog {
         }
     }
 
-    modal: true
-    anchors.centerIn: parent
-    width: 560
-    height: root.parent
-            ? Math.min(implicitHeight, root.parent.height - 2 * Theme.spacing.large)
-            : implicitHeight
-    padding: 0
+    title: qsTr("Add Application")
+    preferredWidth: Math.max(560, d.actionsWidth)
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    borderColor: Theme.palette.borderSubtle
+    leftPadding: 0
+    rightPadding: 0
+    bottomPadding: 0
 
-    background: Rectangle {
-        color: Theme.palette.backgroundSecondary
-        border.color: Theme.palette.borderSubtle
-        border.width: 1
-        radius: Theme.spacing.radiusLarge
-    }
-
-    contentItem: ColumnLayout {
-        spacing: Theme.spacing.large
-
-        // ─── Header ───
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
-            Layout.fillHeight: false
-            Layout.topMargin: Theme.spacing.large
-            Layout.leftMargin: Theme.spacing.large
-            Layout.rightMargin: Theme.spacing.large
-
-            LogosText {
-                Layout.fillWidth: true
-                text: qsTr("Add Application")
-                font.pixelSize: Theme.typography.pageTitleText
-                font.weight: Theme.typography.weightBold
-                color: Theme.palette.text
+    leftActions: [
+        LogosButton {
+            id: uninstallButton
+            objectName: "addApplicationDialog.uninstallButton"
+            visible: d.canUninstall
+            text: qsTr("Uninstall")
+            onClicked: {
+                root.uninstallRequested(d.targetName, d.targetRepoUrl)
+                root.close()
             }
-
-            LogosIconButton {
-                objectName: "addApplicationDialog.closeButton"
-                iconSource: LogosIcons.close
-                size: 28
-                iconSize: 14
-                background: Rectangle {
-                    radius: width / 2
-                    color: Theme.palette.surfaceRaised
-                }
-                onClicked: root.close()
+            contentItem: LogosText {
+                text: uninstallButton.text
+                color: Theme.palette.error
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
             }
+            background: Item {}
         }
+    ]
+
+    rightActions: [
+        LogosButton {
+            id: closeButton
+            objectName: "addApplicationDialog.closeButton"
+            visible: !root.sheet
+            text: qsTr("Close")
+            onClicked: root.close()
+        },
+
+        LogosButton {
+            id: actionButton
+            objectName: "addApplicationDialog.primaryButton"
+            Layout.preferredWidth: Math.max(110, implicitWidth)
+            enabled: d.actionEnabled
+            text: d.actionText
+            onClicked: {
+                if (d.actionMode === "launch") {
+                    root.launchRequested(d.targetName)
+                    root.close()
+                    return
+                }
+                root.installRequested(d.targetName, d.targetRepoUrl)
+            }
+            variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
+                                          : LogosButton.Variant.Primary
+        },
+
+        LogosButton {
+            id: trustButton
+            objectName: "addApplicationDialog.trustAndInstallButton"
+            visible: d.canTrustPublishers
+            Layout.preferredWidth: Math.max(110, implicitWidth)
+            enabled: d.actionEnabled
+            text: {
+                switch (d.actionMode) {
+                case "update":    return d.anyway ? qsTr("Trust & update anyway") : qsTr("Trust & update")
+                case "downgrade": return d.anyway ? qsTr("Trust & downgrade anyway") : qsTr("Trust & downgrade")
+                case "reinstall": return d.anyway ? qsTr("Trust & reinstall anyway") : qsTr("Trust & reinstall")
+                }
+                return d.anyway ? qsTr("Trust & install anyway") : qsTr("Trust & install")
+            }
+            onClicked: root.trustAndInstallRequested(d.targetName, d.targetRepoUrl)
+            variant: LogosButton.Variant.Primary
+        }
+    ]
+
+    body: ColumnLayout {
+        spacing: Theme.spacing.large
 
         // ─── App showcase ───
         Rectangle {
@@ -389,7 +427,6 @@ Dialog {
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.preferredHeight: d.showcaseHeight
-            Layout.minimumHeight: d.showcaseHeight
             color: Theme.palette.background
             radius: Theme.spacing.radiusMedium
 
@@ -428,8 +465,6 @@ Dialog {
         // ─── Description ───
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
-            Layout.fillHeight: false
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             spacing: Theme.spacing.tiny
@@ -448,141 +483,56 @@ Dialog {
             }
         }
 
-        // ─── Version row: version | date | size | Install (| Trust & install) ───
-        // The answers go under the version when they don't fit beside it.
+        // ─── Version row: version | date | size ───
         Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
-            Layout.preferredHeight: Math.max(d.versionRowHeight,
-                                             versionGrid.implicitHeight + Theme.spacing.medium)
-            Layout.minimumHeight: Layout.preferredHeight
+            Layout.preferredHeight: d.versionRowHeight
             color: Theme.palette.background
             radius: Theme.spacing.radiusMedium
 
-            GridLayout {
-                id: versionGrid
+            RowLayout {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: Theme.spacing.medium
-                anchors.rightMargin: Theme.spacing.small
-                columns: versionLabel.implicitWidth + answers.implicitWidth + columnSpacing <= width ? 2 : 1
-                columnSpacing: Theme.spacing.large
-                rowSpacing: Theme.spacing.small
+                anchors.rightMargin: Theme.spacing.medium
+                spacing: Theme.spacing.large
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacing.large
-
-                    LogosText {
-                        id: versionLabel
-                        Layout.alignment: Qt.AlignVCenter
-                        text: d.targetVersion ? ("Version " + d.targetVersion) : ""
-                        color: Theme.palette.text
-                        font.pixelSize: Theme.typography.secondaryText
-                        font.weight: Theme.typography.weightMedium
-                    }
-                    // Where the buttons need the room, these give it up first.
-                    LogosText {
-                        objectName: "addApplicationDialog.releasedText"
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.minimumWidth: 0
-                        text: d.releasedText
-                        color: Theme.palette.textTertiary
-                        font.pixelSize: Theme.typography.secondaryText
-                        elide: Text.ElideRight
-                    }
-                    LogosText {
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.minimumWidth: 0
-                        text: d.sizeText
-                        color: Theme.palette.textTertiary
-                        font.pixelSize: Theme.typography.secondaryText
-                        elide: Text.ElideRight
-                    }
-
-                    Item { Layout.fillWidth: true }
+                LogosText {
+                    Layout.alignment: Qt.AlignVCenter
+                    text: d.targetVersion ? ("Version " + d.targetVersion) : ""
+                    color: Theme.palette.text
+                    font.pixelSize: Theme.typography.secondaryText
+                    font.weight: Theme.typography.weightMedium
+                }
+                // In a narrow dialog these give up their room first.
+                LogosText {
+                    objectName: "addApplicationDialog.releasedText"
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.minimumWidth: 0
+                    text: d.releasedText
+                    color: Theme.palette.textTertiary
+                    font.pixelSize: Theme.typography.secondaryText
+                    elide: Text.ElideRight
+                }
+                LogosText {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.minimumWidth: 0
+                    text: d.sizeText
+                    color: Theme.palette.textTertiary
+                    font.pixelSize: Theme.typography.secondaryText
+                    elide: Text.ElideRight
                 }
 
-                RowLayout {
-                    id: answers
-                    objectName: "addApplicationDialog.answers"
-                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                    spacing: Theme.spacing.large
-
-                    LogosButton {
-                        id: uninstallButton
-                        objectName: "addApplicationDialog.uninstallButton"
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredHeight: 40
-                        Layout.leftMargin: Theme.spacing.small
-                        Layout.rightMargin: Theme.spacing.small
-                        visible: d.canUninstall
-                        text: qsTr("Uninstall")
-                        onClicked: {
-                            root.uninstallRequested(d.targetName, d.targetRepoUrl)
-                            root.close()
-                        }
-                        contentItem: LogosText {
-                            text: uninstallButton.text
-                            color: Theme.palette.error
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Item {}
-                    }
-
-                    LogosButton {
-                        id: actionButton
-                        objectName: "addApplicationDialog.primaryButton"
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredWidth: Math.max(110, implicitWidth)
-                        Layout.minimumWidth: Layout.preferredWidth
-                        Layout.preferredHeight: 40
-                        enabled: d.actionEnabled
-                        text: d.actionText
-                        onClicked: {
-                            if (d.actionMode === "launch") {
-                                root.launchRequested(d.targetName)
-                                root.close()
-                                return
-                            }
-                            root.installRequested(d.targetName, d.targetRepoUrl)
-                        }
-                        variant: d.canTrustPublishers ? LogosButton.Variant.Secondary
-                                                      : LogosButton.Variant.Primary
-                    }
-
-                    LogosButton {
-                        objectName: "addApplicationDialog.trustAndInstallButton"
-                        visible: d.canTrustPublishers
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredWidth: Math.max(110, implicitWidth)
-                        Layout.minimumWidth: Layout.preferredWidth
-                        Layout.preferredHeight: 40
-                        enabled: d.actionEnabled
-                        // "anyway" too when trusting leaves something unsigned or unchecked.
-                        text: {
-                            switch (d.actionMode) {
-                            case "update":    return d.anyway ? qsTr("Trust & update anyway") : qsTr("Trust & update")
-                            case "downgrade": return d.anyway ? qsTr("Trust & downgrade anyway") : qsTr("Trust & downgrade")
-                            case "reinstall": return d.anyway ? qsTr("Trust & reinstall anyway") : qsTr("Trust & reinstall")
-                            }
-                            return d.anyway ? qsTr("Trust & install anyway") : qsTr("Trust & install")
-                        }
-                        onClicked: root.trustAndInstallRequested(d.targetName, d.targetRepoUrl)
-                        variant: LogosButton.Variant.Primary
-                    }
-                }
+                Item { Layout.fillWidth: true }
             }
         }
 
         // ─── Required Packages section ───
         RowLayout {
             Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
-            Layout.fillHeight: false
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
@@ -611,12 +561,12 @@ Dialog {
             // The 16px moves onto the rows instead (below), which leaves the
             // bar hugging the dialog edge and the content clear of it.
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.preferredHeight: Math.min(d.listWantedHeight, d.listCapHeight)
-            Layout.maximumHeight: Layout.preferredHeight
-            Layout.minimumHeight: d.depsRowHeight
+            // At most six rows on a desktop, scrolling within; in a sheet all
+            // of them, so the sheet scrolls as one.
+            Layout.preferredHeight: root.sheet ? d.listWantedHeight
+                                               : Math.min(d.listWantedHeight, d.listCapHeight)
 
-            interactive: d.listWantedHeight > height
+            interactive: !root.sheet && d.listWantedHeight > height
             spacing: 0
             model: root.requiredPackagesModel
 
@@ -702,7 +652,6 @@ Dialog {
             objectName: "addApplicationDialog.trust"
             visible: d.showTrust
             Layout.fillWidth: true
-            Layout.fillHeight: false
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
@@ -720,11 +669,9 @@ Dialog {
         LogosText {
             objectName: "addApplicationDialog.errorText"
             Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
-            Layout.bottomMargin: Theme.spacing.large
             visible: root.installStage === InstallStage.Failed
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.typography.secondaryText
@@ -738,11 +685,9 @@ Dialog {
         LogosText {
             objectName: "addApplicationDialog.resolutionBanner"
             Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
-            Layout.bottomMargin: Theme.spacing.large
             visible: root.installStage !== InstallStage.Failed && d.hasResolutionErrors
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.typography.secondaryText
@@ -755,11 +700,9 @@ Dialog {
         LogosText {
             objectName: "addApplicationDialog.footerText"
             Layout.fillWidth: true
-            Layout.minimumHeight: implicitHeight
             Layout.leftMargin: Theme.spacing.large
             Layout.rightMargin: Theme.spacing.large
             Layout.topMargin: Theme.spacing.medium
-            Layout.bottomMargin: Theme.spacing.large
             visible: root.installStage !== InstallStage.Failed
                      && !d.hasResolutionErrors
                      && d.footerText.length > 0

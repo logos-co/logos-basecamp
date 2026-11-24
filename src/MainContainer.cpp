@@ -261,7 +261,10 @@ void MainContainer::setupUi()
     m_contentWidget->rootContext()->setContextProperty("backend", m_host->backendObject());
     m_contentWidget->rootContext()->setContextProperty("themeManager", m_themeManager);
     ShellDevQml::load(m_contentWidget,
-        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")));
+        QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/ContentViews.qml")),
+        [](QObject* root) {
+            Logos::ThemeManager::followViewWidth(qobject_cast<QQuickItem*>(root));
+        });
     m_contentStack->addWidget(m_contentWidget);
 
     // Index 2: placeholder for package_manager_ui — shows a centered
@@ -327,6 +330,7 @@ void MainContainer::setupUi()
     ShellDevQml::load(m_overlayWidget,
         QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OverlayDialogs.qml")),
         [this](QObject* root) {
+            Logos::ThemeManager::followViewWidth(qobject_cast<QQuickItem*>(root));
             connect(root, SIGNAL(overlayActiveChanged(bool)),
                     this, SLOT(onOverlayActiveChanged(bool)));
         });
@@ -344,6 +348,7 @@ void MainContainer::setupUi()
         ShellDevQml::load(m_onboardingWidget,
             QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/OnboardingShell.qml")),
             [this](QObject* root) {
+                Logos::ThemeManager::followViewWidth(qobject_cast<QQuickItem*>(root));
                 connect(root, SIGNAL(finished()), this, SLOT(onOnboardingFinished()));
             });
         m_onboardingWidget->raise();
@@ -356,8 +361,9 @@ void MainContainer::setupUi()
     // Set initial state — Apps section (workspace) visible by default.
     m_contentStack->setCurrentIndex(kAppsStackIndex);
 
-    // Set reasonable minimum size
-    setMinimumSize(800, 600);
+    // As narrow as a phone, as Status's desktop window: the views follow
+    // their width, down to the phone layouts of the design system.
+    setMinimumSize(360, 480);
 }
 
 void MainContainer::resizeEvent(QResizeEvent* event)
@@ -558,6 +564,7 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
             m_contentStack->removeWidget(placeholder);
             placeholder->deleteLater();
         }
+        if (m_workspaceArea) m_workspaceArea->followAppViewWidth(widget);
         // A new pane's QML just materialised — ask the bridge to pick up any
         // Shortcut { } blocks inside it. Deferred, so the QML tree has time to
         // instantiate.

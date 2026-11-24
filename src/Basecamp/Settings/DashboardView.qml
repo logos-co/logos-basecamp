@@ -2,58 +2,67 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
+import Logos.Layouts
 import Logos.Theme
 
 Item {
     id: root
 
+    property string buildVersion: ""
+    property bool portableBuild: false
+    property var buildCommits: []   // [{ name, commit }]
+
     LogosScrollView {
         id: scroll
         anchors.fill: parent
-        anchors.margins: 40
+        anchors.margins: Theme.pageMargin(root.width)
+        contentWidth: availableWidth
         clip: true
 
         ColumnLayout {
             width: scroll.availableWidth
-            spacing: 20
+            spacing: Theme.spacing.xlarge
 
             LogosText {
-                text: "Dashboard"
-                font.pixelSize: 24
-                font.weight: Font.Bold
+                Layout.fillWidth: true
+                text: qsTr("Dashboard")
+                font.pixelSize: Theme.typography.panelTitleText
+                font.weight: Theme.typography.weightBold
                 color: Theme.palette.text
+                wrapMode: Text.Wrap
             }
 
             // Build summary: version (release only) + build type.
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.spacing.small
 
                 // "Version" stays a plain label so a drag-select copies the
                 // bare version string, not the prefix.
                 RowLayout {
                     Layout.fillWidth: true
-                    visible: backend.buildVersion.length > 0
-                    spacing: 6
+                    visible: root.buildVersion.length > 0
+                    spacing: Theme.spacing.small
 
                     LogosText {
-                        text: "Version"
-                        font.pixelSize: 18
+                        Layout.alignment: Qt.AlignTop
+                        text: qsTr("Version")
+                        font.pixelSize: Theme.typography.subtitleText
                         color: Theme.palette.text
                     }
 
                     LogosSelectableText {
                         Layout.fillWidth: true
-                        text: backend.buildVersion
-                        font.pixelSize: 18
+                        text: root.buildVersion
+                        font.pixelSize: Theme.typography.subtitleText
                         color: Theme.palette.text
                         wrapMode: TextEdit.WrapAnywhere
                     }
                 }
 
                 LogosText {
-                    text: backend.isPortableBuild ? "Portable build" : "Dev build"
-                    font.pixelSize: 14
+                    text: root.portableBuild ? qsTr("Portable build") : qsTr("Dev build")
+                    font.pixelSize: Theme.typography.primaryText
                     color: Theme.palette.textSecondary
                 }
             }
@@ -61,40 +70,35 @@ Item {
             // Commit hashes for basecamp + all flake dependencies.
             ColumnLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 10
-                spacing: 4
+                spacing: Theme.spacing.small
 
                 LogosText {
-                    text: "Commits"
-                    font.pixelSize: 16
-                    font.weight: Font.Bold
+                    text: qsTr("Commits")
+                    font.pixelSize: Theme.typography.subtitleText
+                    font.weight: Theme.typography.weightBold
                     color: Theme.palette.text
                 }
 
                 Repeater {
-                    model: backend.buildCommits
-                    delegate: RowLayout {
+                    model: root.buildCommits
+                    delegate: LogosItemLayout {
                         Layout.fillWidth: true
-                        spacing: 12
 
-                        // Module name and commit hash are both copy targets, so
-                        // they wrap instead of eliding — an elided hash cannot
-                        // be selected in full.
                         LogosSelectableText {
+                            objectName: "dashboard.commitName"
                             text: modelData.name
                             color: Theme.palette.textSecondary
-                            font.pixelSize: 13
-                            Layout.preferredWidth: 260
-                            Layout.alignment: Qt.AlignTop
+                            font.pixelSize: Theme.typography.primaryText
                             wrapMode: TextEdit.WrapAnywhere
                         }
-                        LogosSelectableText {
+
+                        meta: LogosSelectableText {
+                            objectName: "dashboard.commitHash"
+                            Layout.fillWidth: true
                             text: modelData.commit
                             color: Theme.palette.text
-                            font.family: "monospace"
-                            font.pixelSize: 13
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignTop
+                            font.family: Theme.typography.mono
+                            font.pixelSize: Theme.typography.primaryText
                             wrapMode: TextEdit.WrapAnywhere
                         }
                     }

@@ -12,6 +12,7 @@ ItemDelegate {
     // ─── Public API ───
     property var appData: ({})
     property int tileSize: 80
+    property int labelSize: Theme.typography.subtitleText
     property bool contextMenuEnabled: true
     signal appClicked(string name, string repositoryUrl)
     signal detailsRequested(string name, string repositoryUrl)
@@ -113,14 +114,10 @@ ItemDelegate {
     hoverEnabled: true
     onClicked: if (d.isAvailable) root.appClicked(d.nameText, d.repositoryUrl)
 
-    TapHandler {
-        enabled: root.contextMenuEnabled
-        acceptedButtons: Qt.RightButton
-        onTapped: contextMenu.openFor(d.snapshot())
-    }
-
     AppContextMenu {
         id: contextMenu
+        contextFor: root.contextMenuEnabled ? root : null
+        onAboutToShow: appData = d.snapshot()
         onOpenRequested:      (name, repo) => root.appClicked(name, repo)
         onDetailsRequested:   (name, repo) => root.detailsRequested(name, repo)
         onInstallRequested:   (name, repo) => root.installRequested(name, repo)
@@ -236,7 +233,7 @@ ItemDelegate {
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 text: d.displayName
-                font.pixelSize: Theme.typography.subtitleText
+                font.pixelSize: root.labelSize
                 color: d.isInstalled ? Theme.palette.text : Theme.palette.textSubtle
                 elide: Text.ElideRight
                 LogosToolTip {

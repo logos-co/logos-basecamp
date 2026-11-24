@@ -766,7 +766,7 @@ async function outerRowField(app, proxyId, i, roleExpr, kind = "string") {
   return evalOn(app, proxyId, expr);
 }
 
-// A search field driven by assigning `text`. That breaks the
+// A search field driven by assigning `text`. On App Manager's that breaks its
 // `text: d.searchText` binding, which is harmless: onTextChanged still feeds
 // d.searchText, and every test ends with the field cleared.
 async function searchFieldOn(app, objectName) {
@@ -1243,7 +1243,8 @@ async function requireFixtureAMenu(app, row) {
   return menuId;
 }
 
-// The delegate TapHandler's handler verbatim; waits for the menu to show.
+// What a right-click or long press on the delegate does, by hand: the menu
+// with the delegate's snapshot. Waits for the menu to show.
 async function openContextMenuFor(app, menuId, label) {
   await evalOn(app, menuId, "openFor(d.snapshot())");
   await app.waitFor(async () => {
@@ -1422,8 +1423,10 @@ test("app manager: context menu Details opens the Add Application dialog", async
   if (dialogId === null) return;
 
   await app.waitFor(async () => {
+    // A LogosDialog's title is its header's, not its content's.
+    assertEq(await evalOn(app, dialogId, "title"), "Add Application", "the dialog's title");
     const missing = await missingDialogTexts(app, dialogId, [
-      "Add Application", FIXTURE_A.displayName, "Description", "Required Packages",
+      FIXTURE_A.displayName, "Description", "Required Packages",
     ]);
     if (missing.length > 0) throw new Error(`dialog texts missing: ${missing.join(", ")}`);
   }, { timeout: 5000, interval: 250, description: "the dialog's fixed texts to render" });
@@ -1626,12 +1629,13 @@ async function openInterfaceView(app, viewId, moduleName) {
   return iface;
 }
 
-// "← Back", and the module table is on screen again — left as found. Ends
-// with an explicit 2 s inspector round-trip (makeTest's epilogue allows 5 s;
-// this gate guards a UI-thread stall harder).
+// Settings' back row ("‹ Module Inspector", at the top of the section's card),
+// and the module table is on screen again — left as found. Ends with an
+// explicit 2 s inspector round-trip (makeTest's epilogue allows 5 s; this gate
+// guards a UI-thread stall harder).
 async function backToModuleTable(app, viewId) {
-  const back = await requireObject(app, "pluginInterface.back");
-  await invoke(app, back.id, "clicked", 'clicking "← Back"');
+  const back = await requireObject(app, "settings.sectionBack");
+  await invoke(app, back.id, "clicked", 'clicking "‹ Module Inspector"');
   await app.waitFor(async () => {
     assertEq(await evalOn(app, viewId, "showingInterface"), false,
              "moduleInspectorView.showingInterface after Back");
@@ -1681,37 +1685,26 @@ test("settings: Dashboard shows version, build type and commit list", async (app
   const isPortable = assertType(await evalOn(app, dashboard.id, "backend.isPortableBuild"),
                                 "boolean", "backend.isPortableBuild");
 
-  // One walk over the view: flat text flags, plus the commit rows read where
-  // the "Commits" heading's column is found (and not descended into).
+  // One walk over the view: flat text flags, plus each commit row's name and
+  // hash, by their objectNames, in order, wherever the row's layout puts them.
   const snapshotDashboard = async () => JSON.parse(await evalOn(app, dashboard.id, `(() => {${WALK_JS}
     const out = {
       hasVersion: false, versionLabelVisible: false, hasCommits: false,
-      hasPortable: false, hasDev: false, rows: null,
+      hasPortable: false, hasDev: false, rows: [],
     };
+    const names = [], hashes = [];
     walk(this, (node) => {
       if (node.text === ${JSON.stringify(buildVersion)}) out.hasVersion = true;
       // Item.visible is effective visibility, so it tracks the hidden row.
       if (node.text === "Version" && node.visible === true) out.versionLabelVisible = true;
       if (node.text === "Portable build") out.hasPortable = true;
       if (node.text === "Dev build") out.hasDev = true;
-      const kids = node.children;
-      if (!kids || typeof kids.length !== "number") return;
-      let hasHeading = false;
-      for (let i = 0; i < kids.length; i += 1) {
-        if (kids[i] && kids[i].text === "Commits") hasHeading = true;
-      }
-      if (!hasHeading) return;
-      out.hasCommits = true;
-      out.rows = [];
-      for (let i = 0; i < kids.length; i += 1) {
-        const k = kids[i];
-        const two = k && k.children && k.children.length === 2 ? k.children : null;
-        if (two && typeof two[0].text === "string" && typeof two[1].text === "string") {
-          out.rows.push({ name: two[0].text, commit: two[1].text });
-        }
-      }
-      return false;
+      if (node.text === "Commits") out.hasCommits = true;
+      if (node.objectName === "dashboard.commitName") names.push(node.text);
+      if (node.objectName === "dashboard.commitHash") hashes.push(node.text);
     });
+    for (let i = 0; i < Math.min(names.length, hashes.length); i += 1)
+      out.rows.push({ name: names[i], commit: hashes[i] });
     return JSON.stringify(out);
   })()`));
 
@@ -1753,8 +1746,8 @@ test("settings: Dashboard shows version, build type and commit list", async (app
 
 // --- Settings (A17) — Apps Inspector search filters the table ---
 //
-// settings.searchField is SettingsView's page-level LogosSearchBar, shared by
-// both inspectors and reset on every section switch. Counts come from
+// settings.searchField is the Settings page's search (LogosSections'), shared
+// by both inspectors and cleared on every section switch. Counts come from
 // appsInspector.table's ModulesFilterProxy; the expected "package" count is
 // derived from a snapshot of the roles the proxy matches. The "zzz" absence
 // walk is first proven against the rendered badges with the search empty,
@@ -2654,9 +2647,26 @@ test("sidebar: open multiple sections sequentially without failure", async (app)
   }
 });
 
+// --- Shell views follow their width ---
+//
+// Each full-window shell view tells its engine's Logos.Theme how wide it is,
+// as the content views do, so the design system's phone type and touch sizes
+// follow the window there too. The welcome page and the dialogs' overlay
+// didn't: their Theme.viewWidth stayed 0, a desktop's, on any window.
+test("shell views: the welcome page and the overlay follow their width", async (app) => {
+  for (const name of ["welcomePage.greeting", "overlayDialogs"]) {
+    const item = await requireObject(app, name);
+    const seen = await evalOn(app, item.id, "Theme.viewWidth");
+    const width = await evalOn(app, item.id, "Window.width");
+    if (!(typeof seen === "number" && seen > 0 && Math.abs(seen - width) < 1)) {
+      throw new Error(`${name}: Theme.viewWidth ${seen}, its window ${width}`);
+    }
+  }
+});
+
 // --- App Manager ---
 test("app manager: panel + categories sidebar render on first open", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories", "All"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories", "All"], { timeout: 15000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -3241,7 +3251,7 @@ test("repositories: removing default drops it from list", async (app) => {
 // ShortcutBridge end-to-end
 // ---------------------------------------------------------------------------
 test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   // QML declares sequence: "Ctrl+K". QShortcut.key stringifies as NativeText
   // — "⌘K" on macOS, "Ctrl+K" elsewhere — so try both.
@@ -3269,17 +3279,12 @@ test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) =
     throw new Error(`callMethod(activated) failed: ${activated.error}`);
   }
 
+  // The page header's search, a toggle around the bar that takes the input.
+  const search = await requireObject(app, "appManager.searchField");
   await app.waitFor(async () => {
-    const bar = await app.inspector.send("findByProperty", {
-      property: "placeholderText", value: "Search apps…",
-    });
-    const bid = bar.matches?.[0]?.id;
-    if (!bid) throw new Error("Search apps… bar not found");
-    const evalR = await app.inspector.send("evaluate", {
-      objectId: bid, expression: "textInput.activeFocus",
-    });
-    if (evalR.result !== true)
-      throw new Error(`textInput.activeFocus = ${evalR.result}, expected true`);
+    const focused = await evalOn(app, search.id, "searchBarItem.textInput.activeFocus");
+    if (focused !== true)
+      throw new Error(`searchBarItem.textInput.activeFocus = ${focused}, expected true`);
   }, { timeout: 3000, interval: 200, description: "search bar to focus" });
 });
 
@@ -3287,10 +3292,14 @@ test("shortcut bridge: ⌘K in AppManager focuses the search bar", async (app) =
 test("search chips show the platform's shortcut text (⌘K on macOS, Ctrl+K elsewhere)", async (app) => {
   await app.click("Applications");
   const expected = process.platform === "darwin" ? "⌘K" : "Ctrl+K";
-  for (const name of ["welcomePage.search", "appManager.searchField", "settings.searchField"]) {
+  for (const name of ["welcomePage.search", "appManager.searchField"]) {
     const bar = await requireObject(app, name);
     assertEq(await evalOn(app, bar.id, "shortcutHint"), expected, `${name} shortcutHint`);
   }
+  // Settings' search is in the page only while an inspector is open.
+  await openAppsInspector(app);
+  const settingsBar = await requireObject(app, "settings.searchField");
+  assertEq(await evalOn(app, settingsBar.id, "shortcutHint"), expected, "settings.searchField shortcutHint");
 });
 
 // --- App Manager "Local" section ---
@@ -3318,7 +3327,7 @@ async function findLocalAppsProxy(app) {
 }
 
 test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) {
@@ -3353,7 +3362,7 @@ test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (a
 });
 
 test("app manager: 'local' header renders iff local rows exist", async (app) => {
-  await openPlugin(app, "Applications", ["Apps", "Categories"], { timeout: 15000 });
+  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
 
   const proxyId = await findLocalAppsProxy(app);
   if (proxyId === null) throw new Error("appManager.localAppsProxy not found");

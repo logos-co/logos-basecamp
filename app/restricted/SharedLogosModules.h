@@ -20,6 +20,7 @@ inline const QStringList& kSharedLogosModules()
         QStringLiteral("Theme"),
         QStringLiteral("Controls"),
         QStringLiteral("Icons"),
+        QStringLiteral("Layouts"),
     };
     return v;
 }

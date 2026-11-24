@@ -30,6 +30,7 @@ add_executable(qml_tests
     ${BASECAMP_SRC}/AppsModel.cpp
     ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel depends on InstallRegistry
     ${BASECAMP_SHELL}/AppsFilterProxy.cpp
+    ${BASECAMP_SHELL}/ModulesFilterProxy.cpp   # the Settings inspectors' tables
     ${BASECAMP_SHELL}/InstallEnums.cpp
     # AUTOMOC pairs a header with a .cpp of the same basename in the SAME
     # directory; InstallEnums.cpp is in src/ and its header in app/interfaces/,
@@ -67,6 +68,9 @@ if(LogosDesignSystem_FOUND)
         ${APPMANAGER_QML_DIR}/AppGridDelegate.qml
         ${APPMANAGER_QML_DIR}/AppListDelegate.qml
         ${APPMANAGER_QML_DIR}/AppContextMenu.qml
+        ${APPMANAGER_QML_DIR}/AppManagerView.qml
+        ${APPMANAGER_QML_DIR}/AppManagerPanelHeader.qml
+        ${APPMANAGER_QML_DIR}/AppRepoSection.qml
     )
     # Resource paths are computed relative to CMAKE_CURRENT_SOURCE_DIR, and
     # these sit two directories up — without an alias each lands under a
@@ -98,12 +102,15 @@ if(LogosDesignSystem_FOUND)
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_test_qmlplugin>
     )
 
-    # Basecamp.Common, for the install dialogs' trust notice and badges: the
-    # same reasoning as Basecamp.AppManager above.
+    # Basecamp.Common, for the install dialogs' trust notice and badges and the
+    # Settings inspectors' loading overlay: the same reasoning as
+    # Basecamp.AppManager above.
     set(COMMON_QML_FILES
+        ${BASECAMP_SHELL}/Basecamp/Common/EmptyView.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustNotice.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustLine.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustMark.qml
+        ${BASECAMP_SHELL}/Basecamp/Common/LoadingOverlay.qml
     )
     foreach(qml_file IN LISTS COMMON_QML_FILES)
         get_filename_component(qml_name "${qml_file}" NAME)
@@ -121,6 +128,36 @@ if(LogosDesignSystem_FOUND)
     target_link_libraries(qml_tests PRIVATE
         basecamp_common_test_qml
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_test_qmlplugin>
+    )
+    # Basecamp.Icons, the shell's own icons, and Basecamp.Common's EmptyView:
+    # what the App Manager and the welcome page import.
+    set(ICONS_DIR "${BASECAMP_SHELL}/Basecamp/Icons")
+    set(ICONS_RESOURCES
+        ${ICONS_DIR}/logos-lambda.svg
+        ${ICONS_DIR}/dashboard.svg
+        ${ICONS_DIR}/filter.svg
+        ${ICONS_DIR}/module.svg
+        ${ICONS_DIR}/settings.svg
+        ${ICONS_DIR}/tent.png
+        ${ICONS_DIR}/workspace.svg
+    )
+    foreach(icon_file IN LISTS ICONS_RESOURCES ITEMS ${ICONS_DIR}/BasecampIcons.qml)
+        get_filename_component(icon_name "${icon_file}" NAME)
+        set_source_files_properties("${icon_file}" PROPERTIES QT_RESOURCE_ALIAS "${icon_name}")
+    endforeach()
+    set_source_files_properties(${ICONS_DIR}/BasecampIcons.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+    qt_add_qml_module(basecamp_icons_test_qml
+        URI Basecamp.Icons
+        VERSION 1.0
+        STATIC
+        RESOURCE_PREFIX /qt/qml
+        OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Icons
+        QML_FILES ${ICONS_DIR}/BasecampIcons.qml
+        RESOURCES ${ICONS_RESOURCES}
+    )
+    target_link_libraries(qml_tests PRIVATE
+        basecamp_icons_test_qml
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_icons_test_qmlplugin>
     )
     qt_import_qml_plugins(qml_tests)
 else()

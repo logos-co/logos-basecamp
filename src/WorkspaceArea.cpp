@@ -1,6 +1,7 @@
 #include "WorkspaceArea.h"
 #include "ShellDevQml.h"
 #include "ThemeColours.h"
+#include <ThemeManager.h>
 
 #include <QApplication>
 #include <QBoxLayout>
@@ -244,11 +245,13 @@ WorkspaceArea::WorkspaceArea(QObject* backend, QWidget* parent)
         m_welcomeWidget = new QQuickWidget(this);
         m_welcomeWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
         ThemeColours::clearToBackground(m_welcomeWidget);
-        m_welcomeWidget->setMinimumSize(300, 200);
         m_welcomeWidget->rootContext()->setContextProperty("backend", backend);
         ShellDevQml::load(m_welcomeWidget,
             QUrl(QStringLiteral("qrc:/qt/qml/Basecamp/Shell/Basecamp/Shell/WelcomePage.qml")),
-            [this](QObject* root) { wireWelcomePage(root); });
+            [this](QObject* root) {
+                Logos::ThemeManager::followViewWidth(qobject_cast<QQuickItem*>(root));
+                wireWelcomePage(root);
+            });
 
         if (m_welcomeWidget->status() == QQuickWidget::Error) {
             qWarning() << "WorkspaceArea: WelcomePage.qml failed to load:"
@@ -460,6 +463,7 @@ void WorkspaceArea::addPluginDock(QWidget* pluginWidget,
     }
     dock->installEventFilter(this);
     pluginWidget->installEventFilter(this);
+    followAppViewWidth(pluginWidget);
 
     const QIcon icon = pluginWidget->windowIcon();
     if (!icon.isNull()) dock->setWindowIcon(icon);
@@ -571,6 +575,21 @@ void WorkspaceArea::removePluginDock(QWidget* pluginWidget)
 {
     const QString name = nameForWidget(pluginWidget);
     if (!name.isEmpty()) removePluginDock(name);
+}
+
+void WorkspaceArea::followAppViewWidth(QWidget* appView)
+{
+    followQuickWidgetWidth(appQuickWidget(appView));
+    // The app side's hot-reload view replaces its QQuickWidget on every save.
+    if (appView && appView->metaObject()->indexOfSignal("viewReplaced(QQuickWidget*)") >= 0)
+        connect(appView, SIGNAL(viewReplaced(QQuickWidget*)),
+                this, SLOT(followQuickWidgetWidth(QQuickWidget*)), Qt::UniqueConnection);
+}
+
+void WorkspaceArea::followQuickWidgetWidth(QQuickWidget* view)
+{
+    if (auto* root = view ? qobject_cast<QQuickItem*>(view->rootObject()) : nullptr)
+        Logos::ThemeManager::followViewWidth(root);
 }
 
 bool WorkspaceArea::showStoppedPanel(QWidget* pluginWidget, QWidget* panel)

@@ -62,9 +62,9 @@ TestCase {
         compare(previewSpy.count, 1)
         compare(previewSpy.signalArguments[0][4].storage_module, "0.2.0")
         verify(previewSpy.signalArguments[0][2].storage_module === undefined)
-        compare(findChild(dlg.contentItem, "addApplicationDialog.primaryButton").enabled, false)
+        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
         dlg.metadata = Object.assign({}, dlg.metadata, {resolutionPending: false})
-        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        mouseClick(findChild(dlg.footer, "addApplicationDialog.primaryButton"))
         compare(installSpy.count, 1)
         compare(installSpy.signalArguments[0][0], "chat")
         waitForRendering(testCase)
@@ -121,7 +121,7 @@ TestCase {
                 { name: "missing_module", error: "no candidate" }
             ] }
         dlg.openWith(metadata)
-        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
         dlg.metadata = Object.assign({}, metadata, {resolutionPending: true})
         compare(primary.enabled, false)
         dlg.metadata = metadata
@@ -146,7 +146,7 @@ TestCase {
         compare(previewSpy.signalArguments[0][3].storage_module, false)
         verify(previewSpy.signalArguments[0][3].missing_module === undefined)
         dlg.metadata = metadata
-        mouseClick(findChild(dlg.contentItem, "addApplicationDialog.primaryButton"))
+        mouseClick(findChild(dlg.footer, "addApplicationDialog.primaryButton"))
         compare(installSpy.count, 1)
         dlg.destroy()
     }
@@ -176,7 +176,7 @@ TestCase {
         verify(findChild(dlg.contentItem, "addApplicationDialog.optionalPackages").visible)
         compare(findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module").checked, true)
         compare(findChild(dlg.contentItem, "addApplicationDialog.optional.rln").checked, false)
-        var primary = findChild(dlg.contentItem, "addApplicationDialog.primaryButton")
+        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
         compare(primary.text, "Launch")
         dlg.metadata = Object.assign({}, metadata, {optionalChangesPending: true})
         compare(primary.text, "Install")
@@ -227,7 +227,7 @@ TestCase {
         var rln = {name: "rln", optional: true, version: "0.10.0"}
         dlg.openWithInstallGate("delivery_module", "0.3.0", [rln], "", true)
         tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.optional.rln") })
-        var button = findChild(dlg.contentItem, "confirmationDialog.installGate.confirm")
+        var button = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
         waitForRendering(testCase)
         verify(gatePreviewSpy.valid)
         mouseClick(findChild(dlg.contentItem, "confirmationDialog.optional.rln"))

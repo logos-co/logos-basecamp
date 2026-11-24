@@ -19,7 +19,7 @@ Item {
     QtObject {
         id: d
 
-        readonly property int gridMinCellWidth: 180
+        readonly property int gridMinCellWidth: Theme.tileWidth(root.width)
         readonly property int gridCellHeight: 162
         readonly property int listRowHeight: 64
 

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 import Logos.Theme
 
 Item {
@@ -102,22 +103,24 @@ Item {
                 }
 
                 width: ListView.view.width
-                height: 56
+                height: Math.max(56, cells.implicitHeight + 2 * Theme.spacing.medium)
 
-                RowLayout {
-                    anchors.fill: parent
+                LogosItemLayout {
+                    id: cells
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: Theme.spacing.large
                     anchors.rightMargin: Theme.spacing.large
                     spacing: Theme.spacing.small
 
-                    LogosTile {
+                    leading: LogosTile {
                         label: row.label
                         tileSize: 32
                         interactive: false
                     }
 
                     ColumnLayout {
-                        Layout.fillWidth: true
                         spacing: 0
 
                         LogosText {
@@ -142,28 +145,34 @@ Item {
                         }
                     }
 
-                    LogosText {
-                        objectName: "trustedPublishers.fingerprint." + row.keyName
-                        text: row.modelData.fingerprint || qsTr("unreadable key")
-                        font.family: Theme.typography.mono
-                        font.pixelSize: Theme.typography.secondaryText
-                        color: Theme.palette.textSecondary
-                    }
-                    LogosCopyButton {
-                        objectName: "trustedPublishers.copy." + row.keyName
-                        value: row.modelData.did || ""
-                        size: 20
-                        iconSize: 14
-                    }
+                    // A fingerprint wraps rather than lose any of itself.
+                    meta: [
+                        LogosText {
+                            objectName: "trustedPublishers.fingerprint." + row.keyName
+                            Layout.fillWidth: true
+                            text: row.modelData.fingerprint || qsTr("unreadable key")
+                            font.family: Theme.typography.mono
+                            font.pixelSize: Theme.typography.secondaryText
+                            color: Theme.palette.textSecondary
+                            wrapMode: Text.WordWrap
+                        },
+                        LogosCopyButton {
+                            objectName: "trustedPublishers.copy." + row.keyName
+                            value: row.modelData.did || ""
+                            size: 20
+                            iconSize: 14
+                        }
+                    ]
 
-                    Item {
-                        Layout.leftMargin: Theme.spacing.large
-                        Layout.preferredWidth: 32
-                        Layout.preferredHeight: 32
+                    // Apart from the copy button beside it.
+                    trailing: Item {
+                        implicitWidth: removeButton.width + Theme.spacing.small
+                        implicitHeight: removeButton.height
 
                         LogosIconButton {
+                            id: removeButton
                             objectName: "trustedPublishers.remove." + row.keyName
-                            anchors.centerIn: parent
+                            anchors.right: parent.right
                             enabled: !row.busy
                             size: 32
                             iconSize: 18
@@ -194,11 +203,10 @@ Item {
         id: removeDialog
         objectName: "trustedPublishers.removeConfirm"
 
-        anchors.centerIn: parent
-        width: 420
+        preferredWidth: 420
         title: qsTr("Delete this publisher?")
 
-        contentItem: LogosText {
+        body: LogosText {
             objectName: "trustedPublishers.removeConfirm.message"
             text: {
                 let message = d.fill(qsTr("Future installs from “%1” will ask first."), [d.pendingLabel])

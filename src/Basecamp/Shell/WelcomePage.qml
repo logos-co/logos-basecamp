@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import Logos.Theme
 import Logos.Controls
+import Logos.Layouts
 
 import Basecamp.AppManager
 import Basecamp.Common
@@ -44,22 +45,22 @@ Item {
                 : []
 
         readonly property int columnWidth: 992
-        readonly property int sectionSpacing: 48
+        readonly property bool phone: Theme.windowClass(root.width) === "phone"
+        readonly property int sectionSpacing: phone ? Theme.spacing.xlarge : 48
         readonly property int cardGap: 24
-        readonly property int greetingSize: 40
+        readonly property int greetingSize: Theme.typography.displayText
         // Depends only on the window, so typing never moves the page.
-        readonly property int topMargin:
-            Math.round(Math.max(Theme.spacing.xxlarge, scroller.availableHeight * 0.12))
-        readonly property int sectionGap: 42
-
-        readonly property int tileSize: 120
-        readonly property int cellWidth: tileSize
-        readonly property int cellHeight: tileSize + Theme.spacing.medium + 28
-        readonly property int tileGap: Theme.spacing.xxlarge
-        readonly property int resultTileSize: 80
+        readonly property int topMargin: phone ? Theme.spacing.xlarge
+                                               : Math.round(Math.max(Theme.spacing.xxlarge, root.height * 0.12))
+        readonly property int sectionGap: phone ? Theme.spacing.large : 42
+        readonly property real cardScale: Theme.typography.panelTitleText / 24
+        readonly property int tileSize: 80
+        readonly property int labelHeight: Math.ceil(2 * labelMetrics.height)
+        readonly property int tilePitch: Theme.tileWidth(column.width)
+        readonly property int cellHeight: tileSize + Theme.spacing.medium + labelHeight
+        readonly property int resultTileSize: tileSize
         readonly property int resultCellWidth: resultTileSize
-        readonly property int resultCellHeight: resultTileSize
-                                                + Theme.spacing.medium + 28
+        readonly property int resultCellHeight: resultTileSize + Theme.spacing.medium + labelHeight
         readonly property int resultGap: Theme.spacing.xxlarge
         readonly property int rowIconSize: 24
         readonly property int resultCapacity:
@@ -81,14 +82,15 @@ Item {
             (typeFilter !== "core" ? appsProxy.visibleCount : 0)
             + (typeFilter !== "ui_qml" ? packagesProxy.visibleCount : 0) === 0
 
-        readonly property int greetingToSearch: 40
+        readonly property int greetingToSearch: phone ? Theme.spacing.xlarge : 40
         readonly property int searchFieldHeight: 54
         readonly property int filterButtonSize: 50
         readonly property int filterIconSize: 28
-        readonly property real cardScale: 1.0
+    }
 
-        // Below this the two cards stop fitting side by side.
-        readonly property bool narrow: column.width < 2 * 300 + cardGap
+    FontMetrics {
+        id: labelMetrics
+        font.pixelSize: Theme.typography.secondaryText
     }
 
     implicitWidth: 1000
@@ -107,14 +109,15 @@ Item {
 
     LogosScrollView {
         id: scroller
+        objectName: "welcomePage.scroller"
 
         anchors.fill: parent
         visible: root.catalogAvailable
+        contentHeight: column.implicitHeight + d.topMargin + Theme.spacing.xxlarge
 
         Item {
             width: scroller.availableWidth
-            height: Math.max(scroller.availableHeight,
-                             column.implicitHeight + d.topMargin + Theme.spacing.xxlarge)
+            height: Math.max(scroller.availableHeight, scroller.contentHeight)
 
             // Anchored to the top, not centred: the results below the search
             // change height while typing, and centring made the page jump.
@@ -125,45 +128,48 @@ Item {
                 anchors.topMargin: d.topMargin
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: Math.min(d.columnWidth,
-                                scroller.availableWidth - 2 * Theme.spacing.xxlarge)
+                                scroller.availableWidth - 2 * Theme.pageMargin(scroller.availableWidth))
                 spacing: d.sectionSpacing
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: d.greetingToSearch
 
-                    RowLayout {
+                    Flow {
                         Layout.fillWidth: true
                         spacing: Theme.spacing.medium
 
                         LogosText {
+                            id: greeting
                             objectName: "welcomePage.greeting"
-                            Layout.maximumWidth: column.width - alphaBadge.width
-                                                 - Theme.spacing.medium
+                            width: Math.min(implicitWidth, parent.width)
                             font.pixelSize: d.greetingSize
                             color: Theme.palette.textSecondary
-                            elide: Text.ElideRight
+                            wrapMode: Text.Wrap
                             text: qsTr("Welcome to Basecamp")
                         }
 
-                        LogosBadge {
-                            id: alphaBadge
-                            Layout.alignment: Qt.AlignVCenter
-                            text: qsTr("ALPHA")
-                            color: Theme.palette.accentOrange
-                            backgroundColor: "transparent"
-                            radius: Theme.spacing.radiusPill
-                            horizontalPadding: 6
-                            verticalPadding: 2
+                        Item {
+                            width: alphaBadge.width
+                            height: greeting.contentHeight / Math.max(1, greeting.lineCount)
 
-                            Binding {
-                                target: alphaBadge.labelItem
-                                property: "font.pixelSize"
-                                value: Theme.typography.badgeText
+                            LogosBadge {
+                                id: alphaBadge
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: qsTr("ALPHA")
+                                color: Theme.palette.accentOrange
+                                backgroundColor: "transparent"
+                                radius: Theme.spacing.radiusPill
+                                horizontalPadding: 6
+                                verticalPadding: 2
+
+                                Binding {
+                                    target: alphaBadge.labelItem
+                                    property: "font.pixelSize"
+                                    value: Theme.typography.badgeText
+                                }
                             }
                         }
-
-                        Item { Layout.fillWidth: true }
                     }
 
                     RowLayout {
@@ -203,17 +209,16 @@ Item {
                     }
                 }
 
-                GridLayout {
+                // Side by side while both keep their width, else one above the other.
+                LogosCardGrid {
                     objectName: "welcomePage.actions"
                     Layout.fillWidth: true
                     visible: !d.searching
-                    columns: d.narrow ? 1 : 2
-                    columnSpacing: d.cardGap
-                    rowSpacing: d.cardGap
+                    minimumCellWidth: 300
+                    spacing: d.cardGap
 
                     ActionCard {
                         objectName: "welcomePage.discoverApplications"
-                        Layout.fillWidth: true
                         scaleFactor: d.cardScale
                         verb: qsTr("Discover")
                         noun: qsTr("Applications")
@@ -223,7 +228,6 @@ Item {
 
                     ActionCard {
                         objectName: "welcomePage.managePackages"
-                        Layout.fillWidth: true
                         scaleFactor: d.cardScale
                         verb: qsTr("Manage")
                         noun: qsTr("Packages")
@@ -244,9 +248,12 @@ Item {
                         color: Theme.palette.textSecondary
                     }
 
-                    RowLayout {
+                    Grid {
+                        objectName: "welcomePage.recentApps"
                         Layout.fillWidth: true
-                        spacing: d.tileGap
+                        columns: Math.max(1, Math.floor((width + columnSpacing) / d.tilePitch))
+                        columnSpacing: d.tilePitch - d.tileSize
+                        rowSpacing: Theme.spacing.large
 
                         Repeater {
                             model: d.recentApps
@@ -257,9 +264,10 @@ Item {
                                 required property var modelData
 
                                 objectName: "welcomePage.recent." + recentDelegate.modelData.name
-                                width: d.cellWidth
+                                width: d.tileSize
                                 height: d.cellHeight
                                 tileSize: d.tileSize
+                                labelSize: Theme.typography.secondaryText
 
                                 appData: ({
                                     name: recentDelegate.modelData.name,
@@ -279,8 +287,6 @@ Item {
                                 contextMenuEnabled: false
                             }
                         }
-
-                        Item { Layout.fillWidth: true }
                     }
                 }
 
@@ -322,7 +328,7 @@ Item {
                         Layout.fillWidth: true
                         visible: d.noMatches && !d.catalogLoading
                         text: qsTr("No results for \u201C%1\u201D").arg(d.query)
-                        font.pixelSize: Theme.typography.subtitleText
+                        font.pixelSize: Theme.typography.secondaryText
                         color: Theme.palette.textTertiary
                     }
 
@@ -331,7 +337,7 @@ Item {
                         Layout.fillWidth: true
                         visible: d.noMatches && d.catalogLoading
                         text: qsTr("Searching the catalog\u2026")
-                        font.pixelSize: Theme.typography.subtitleText
+                        font.pixelSize: Theme.typography.secondaryText
                         color: Theme.palette.textTertiary
                     }
                 }
@@ -428,6 +434,7 @@ Item {
                 width: d.resultCellWidth
                 height: d.resultCellHeight
                 tileSize: d.resultTileSize
+                labelSize: Theme.typography.secondaryText
                 appData: model
 
                 onAppClicked:         (name, repo) => row.activated(name, repo,
@@ -470,7 +477,7 @@ Item {
                         LogosText {
                             Layout.alignment: Qt.AlignHCenter
                             text: qsTr("+%1").arg(row.overflow)
-                            font.pixelSize: Theme.typography.subtitleText
+                            font.pixelSize: Theme.typography.secondaryText
                             color: Theme.palette.textSecondary
                         }
                     }

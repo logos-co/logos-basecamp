@@ -7,6 +7,9 @@ import Basecamp.Backend
 // available, and an app name that uses the cell rather than the icon under it.
 TestCase {
     id: testCase
+    // A desktop window: below 600 px dialogs and menus are phone sheets.
+    width: 900
+    height: 700
     name: "AppGridLayout"
     when: windowShown
 
@@ -72,27 +75,32 @@ TestCase {
     ListModel { id: emptyModel }
 
     // ── The cell width follows the available width ───────────────────────────
-    function test_columns_follow_the_available_width() {
+    // A tile's narrowest cell is the design system's for that width
+    // (Theme.tileWidth): three across a phone, five across a desktop's grid.
+    function test_columns_follow_the_available_width_data() {
+        return [
+            { tag: "desktop 1000", width: 1000, columns: 5 },
+            { tag: "tablet 700",   width: 700,  columns: 5 },
+            { tag: "tablet 600",   width: 600,  columns: 4 },
+            { tag: "phone 340",    width: 340,  columns: 3 },
+            { tag: "phone 200",    width: 200,  columns: 1 },
+        ];
+    }
+
+    function test_columns_follow_the_available_width(data) {
         var model = Qt.createQmlObject(
             'import QtQuick; ListModel {}', testCase, "gridModel");
         for (var i = 0; i < 6; ++i)
             model.append({ name: "app_" + i, displayName: "App " + i });
 
         var grid = createTemporaryObject(gridComp, testCase, {
-            width: 1000, height: 600, modulesSource: model,
+            width: data.width, height: 600, modulesSource: model,
         });
         verify(grid, "grid created");
-        var cellHeight = 162;
-
-        compare(grid.implicitHeight, 2 * cellHeight,
-                "five columns at 1000px");
-        grid.width = 400;
-        tryCompare(grid, "implicitHeight", 3 * cellHeight, 2000,
-                   "two columns at 400px");
-
-        grid.width = 120;
-        tryCompare(grid, "implicitHeight", 6 * cellHeight, 2000,
-                   "one column below the minimum cell width");
+        var delegate = findByObjectName(grid, "appManager.app.app_0");
+        verify(delegate, "delegate instantiated");
+        compare(Math.floor(data.width / delegate.width), data.columns, "columns");
+        compare(grid.implicitHeight, Math.ceil(6 / data.columns) * 162, "rows of 162");
     }
 
     function test_cells_absorb_the_leftover_width() {

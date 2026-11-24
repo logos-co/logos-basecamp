@@ -10,7 +10,22 @@
 #endif
 
 #include "AppsFilterProxy.h"
+#include "AppsModel.h"
+#include "ModulesFilterProxy.h"
 #include "InstallEnums.h"
+
+// The App Manager's model, filled by a test as the backend fills it.
+class TestAppsModel : public AppsModel {
+    Q_OBJECT
+public:
+    using AppsModel::AppsModel;
+    Q_INVOKABLE void setCatalog(const QVariantList& rows) { replaceCatalog(rows); }
+    Q_INVOKABLE void install(const QString& name, const QString& version, const QString& installType)
+    {
+        markInstalled(name, version);
+        setInstallType(name, installType);
+    }
+};
 
 class Setup : public QObject {
     Q_OBJECT
@@ -21,6 +36,9 @@ public:
         // its theme files from fixtures/themes.
         QCoreApplication::setOrganizationName("Logos");
         QCoreApplication::setApplicationName("BasecampQmlTests");
+        // The app's controls style (MainContainer sets Basic), not the platform's.
+        if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
+            qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 #ifdef HAVE_LOGOS_DESIGN_SYSTEM
         Logos::ThemeStore::instance()->addDirectory(
             qEnvironmentVariable("QUICK_TEST_SOURCE_DIR", QUICK_TEST_SOURCE_DIR)
@@ -44,6 +62,8 @@ public slots:
             "InstallStatus",
             QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));
         qmlRegisterType<AppsFilterProxy>("Basecamp.Backend", 1, 0, "AppsFilterProxy");
+        qmlRegisterType<ModulesFilterProxy>("Basecamp.Backend", 1, 0, "ModulesFilterProxy");
+        qmlRegisterType<TestAppsModel>("BasecampTests", 1, 0, "TestAppsModel");
     }
 
 #ifdef HAVE_LOGOS_DESIGN_SYSTEM
