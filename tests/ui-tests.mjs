@@ -719,6 +719,44 @@ test("sidebar: active tile follows currentVisibleApp across section switches", a
            "backend.currentVisibleApp at end");
 });
 
+// --- App Manager (A33) — opening an installed app presents it once ---
+//
+// The App Manager's open request reached the launcher twice, through QML and
+// through a queued call in C++, so an open app was presented twice per click.
+
+test("app manager: opening an installed app presents it once", async (app) => {
+  const welcome = await requireWelcomePage(app);
+  const workspace = await requireWorkspace(app);
+  const startDockCount = await ensureFixtureAOpen(app, "A33", welcome.id, workspace.id);
+  if (startDockCount === null) return;
+
+  // Only an installed row takes the launch path; any other opens a dialog.
+  const proxyId = await openApplicationsWithProxy(app);
+  const row = await findFixtureARow(app, proxyId);
+  if (!row) throw new Error("fixture A has no installed row in the App Manager");
+  assertEq(row.installStatus, 1, "fixture A's installStatus (InstallStatus.Installed)");
+
+  await evalOn(app, welcome.id,
+    `Qt.createQmlObject('import QtQuick; Connections { objectName: "test.presentProbe"; ' +
+                        'target: backend; property int presented: 0; ' +
+                        'function onPresentAppRequested() { presented++ } }', root) !== null`);
+  const probe = await findByObjectName(app.inspector, "test.presentProbe");
+  if (!probe) throw new Error("the presentAppRequested probe was not created");
+
+  await evalOn(app, welcome.id,
+    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, ${JSON.stringify(row.repositoryUrl)}, ` +
+    `({}), true)`);
+  await app.waitFor(async () => {
+    if ((await evalOn(app, probe.id, "presented")) < 1) throw new Error("not presented yet");
+  }, { timeout: 10000, interval: 250, description: "fixture A to be presented" });
+  // The second presentation was a queued call: give it time to land.
+  await sleep(1500);
+  assertEq(await evalOn(app, probe.id, "presented"), 1, "times fixture A was presented");
+
+  await evalOn(app, probe.id, "destroy()");
+  await restoreFixtureADock(app, workspace.id, startDockCount, "cleanup: fixture A dock to close");
+});
+
 // --- App Manager helpers -----------------------------------------------------
 //
 // AppsFilterProxy's search is a fixed-string case-insensitive contains over
@@ -3864,6 +3902,37 @@ test("intents: a single provider still asks before dispatching", async (app) => 
     const r = await lastResult(app, anchor);
     if (r !== "ok:intent_provider_a") throw new Error(`got "${r}"`);
   }, { timeout: 45000, interval: 500, description: "provider_a answered" });
+});
+
+// The chooser reached QML twice per request, through the seam that opens it
+// and again as a re-emit of the broker's own signal, and came down twice.
+test("intents: the chooser opens once per request, and closes once", async (app) => {
+  const anchor = await openIntentRequester(app);
+  const overlay = await findByObjectName(app.inspector, "overlayDialogs");
+  if (!overlay) throw new Error("shell overlay not found");
+  await evalOn(app, overlay.id,
+    `Qt.createQmlObject('import QtQuick; Connections { objectName: "test.chooserProbe"; ' +
+                        'target: backend; property int opened: 0; property int closed: 0; ' +
+                        'function onIntentChooserRequested() { opened++ } ' +
+                        'function onIntentChooserDismissed() { closed++ } }', root) !== null`);
+  const probe = await findByObjectName(app.inspector, "test.chooserProbe");
+  if (!probe) throw new Error("the chooser probe was not created");
+
+  await app.inspector.send("evaluate", {
+    objectId: anchor, expression: 'root.request("test.solo")',
+  });
+  await waitForIntentChooser(app, "confirmation for one provider", "the request raised no chooser");
+  await chooseProvider(app, "intent_provider_a", "the sole provider is not offered in the dialog");
+  await app.waitFor(async () => {
+    const r = await lastResult(app, anchor);
+    if (r !== "ok:intent_provider_a") throw new Error(`got "${r}"`);
+  }, { timeout: 45000, interval: 500, description: "provider_a answered" });
+  await sleep(500);
+
+  const counts = await evalFields(app, probe.id, { opened: "opened", closed: "closed" });
+  await evalOn(app, probe.id, "destroy()");
+  assertEq(counts.opened, 1, "times the chooser opened for one request");
+  assertEq(counts.closed, 1, "times the chooser closed for one request");
 });
 
 test("intents: answering a request returns the user to the caller", async (app) => {

@@ -342,10 +342,6 @@ Item {
             loadFailedDialog.openWithLoadError(name, message, title);
         }
 
-        function onLaunchAppRequested(name) {
-            backend.onAppLauncherClicked(name);
-        }
-
         function onRequestOpenAddApplicationDialog(metadata) {
             if (!addApplicationDialog.visible) {
                 addApplicationDialog.openWith(metadata);
