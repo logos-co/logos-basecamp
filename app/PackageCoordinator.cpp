@@ -1367,15 +1367,35 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
     LogosAPIClient* dlClient = downloaderClient();
 
     if (dlClient && dlClient->isConnected()) {
-        withDownloaderStarted([this, dlClient, installedByName]() {
+        // Reload, catalogChanged and the metadata chain can each start a fetch,
+        // and their answers can arrive out of order. Only the newest one counts.
+        const quint64 generation = ++m_catalogGeneration;
+        withDownloaderStarted([this, installedByName, generation]() {
+            LogosModules logos(m_logosAPI);
             QPointer<PackageCoordinator> self(this);
-            dlClient->invokeRemoteMethodAsync(
-                "package_downloader", "getCatalog", QVariantList{},
-                [self, installedByName](QVariant catalogVar) {
+            // `getCatalogAsyncResult`, not a bare async call: the bare one hands
+            // the callback an empty QVariant when the call times out or fails,
+            // which read as an empty catalog and cleared every repository from
+            // the App Manager until a later Reload happened to succeed.
+            logos.package_downloader.getCatalogAsyncResult(
+                [self, installedByName, generation](logos::AsyncResult<QVariantList> r) {
                     if (!self) return;
-                    const QVariantList catalog = catalogVar.toList();
-                    self->buildCatalogIndexes(catalog);
-                    self->populateAppsModel(catalog, installedByName);
+                    // A newer fetch is on its way; its answer replaces this one.
+                    if (generation != self->m_catalogGeneration) return;
+                    if (r.ok()) {
+                        self->buildCatalogIndexes(r.value);
+                        self->populateAppsModel(r.value, installedByName);
+                    } else {
+                        // Keep what is on screen: a failed read says nothing
+                        // about what the repositories offer.
+                        qWarning() << "PackageCoordinator: package_downloader.getCatalog failed,"
+                                      " keeping the current catalog:"
+                                   << QString::fromStdString(r.error.message);
+                        if (self->m_appsLoading) {
+                            self->m_appsLoading = false;
+                            emit self->appsLoadingChanged();
+                        }
+                    }
                     self->catalogFetchFinished();
                 });
         });
