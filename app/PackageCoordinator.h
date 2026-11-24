@@ -15,6 +15,7 @@ namespace logos::trust { struct Package; class PublisherKeyring; }
 #include <QHash>
 #include <QMap>
 #include <QSet>
+#include <QTemporaryDir>
 
 #include <functional>
 #include <utility>
@@ -716,6 +717,9 @@ private:
     QVariantList m_installedPackagesCache;
     // package_manager's record of the installed `name`, or empty.
     QVariantMap installedRecord(const QString& name) const;
+    // Per App Manager install, the private copies it checks and installs
+    // (installAsApproved()); removed when it ends.
+    QHash<QString, std::shared_ptr<QTemporaryDir>> m_installCopies;
     // The names only Logos may install under (reservedNames()).
     QStringList m_bundledNames;
     QSet<QString>            m_installedNameSet;

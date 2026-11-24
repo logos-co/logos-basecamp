@@ -161,6 +161,12 @@ QString sha256Of(const QString& path);
 QString notAsApproved(const QVariantList& fetched, const QVariantList& planned,
                       const QVariantList& approved);
 
+// `fetched` with each downloaded file (its `path`) copied into `dir`, and
+// `path` naming the copy: what is checked and installed then can't change
+// under another write to the downloader's path. Empty, with `error` set, if a
+// copy can't be made.
+QVariantList intoPrivateCopies(const QVariantList& fetched, const QString& dir, QString* error);
+
 // Why a fetched file, as package_manager's verifyPackage() read it, is not
 // the release `approved` holds: not valid, or not signed by the approved key
 // (signed at all, for one approved unsigned).
