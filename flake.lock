@@ -2325,11 +2325,11 @@
         "logos-module-builder": "logos-module-builder_2"
       },
       "locked": {
-        "lastModified": 1795615252,
-        "narHash": "sha256-AGkquyPi1dj5hGfl9StubYaxio+hCritz3istl6rimY=",
+        "lastModified": 1795626807,
+        "narHash": "sha256-GUC7H7oLF+wCSjt2qRTtpYLQkjiBlX1tFL72j0e7k6w=",
         "owner": "logos-co",
         "repo": "logos-intents-module",
-        "rev": "812533765a9fdf39f61b51e0a5cf51a59ff68d73",
+        "rev": "76b1901b9dd6d76991ba58c1bdae78708354a8b8",
         "type": "github"
       },
       "original": {

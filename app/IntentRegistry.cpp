@@ -1,10 +1,10 @@
 #include "IntentRegistry.h"
 
 #include "LogosIntent.h"
+#include "utils/ManifestFile.h"
 
 #include <QDebug>
 #include <QDir>
-#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -26,18 +26,19 @@ QVariantMap readMetadataFile(const QString& installDir, QString* errorOut)
 {
     const QString path = QDir(installDir).filePath(QStringLiteral("metadata.json"));
 
-    QFile file(path);
-    if (!file.exists()) {
+    QByteArray bytes;
+    const logos::manifest::Read read = logos::manifest::read(installDir, &bytes);
+    if (read == logos::manifest::Read::Missing) {
         *errorOut = QStringLiteral("no metadata.json at %1").arg(path);
         return {};
     }
-    if (!file.open(QIODevice::ReadOnly)) {
-        *errorOut = QStringLiteral("cannot read %1: %2").arg(path, file.errorString());
+    if (read != logos::manifest::Read::Ok) {
+        *errorOut = QStringLiteral("cannot read %1: %2").arg(path, logos::manifest::describe(read));
         return {};
     }
 
     QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         *errorOut = QStringLiteral("malformed JSON in %1: %2")
                         .arg(path, parseError.errorString());

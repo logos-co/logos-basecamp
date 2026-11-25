@@ -1,4 +1,4 @@
-// srcdeps: intents/IntentsModuleHost.cpp
+// srcdeps: intents/IntentsModuleHost.cpp utils/ManifestFile.cpp
 //
 // Basecamp as intents_module's presenter, against a fake module: what it sends,
 // when a click opens a request, how work items reach the shell, how an app's

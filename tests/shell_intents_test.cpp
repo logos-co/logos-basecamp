@@ -1,4 +1,4 @@
-// srcdeps: ShellIntents.cpp IntentRegistry.cpp
+// srcdeps: ShellIntents.cpp IntentRegistry.cpp utils/ManifestFile.cpp
 //
 // The shell's own capability list, asserted against the SAME registration the
 // app performs — ShellIntents::registerWith is what MainUIBackend calls, not a

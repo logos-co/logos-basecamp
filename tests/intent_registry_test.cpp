@@ -1,4 +1,4 @@
-// srcdeps: IntentRegistry.cpp
+// srcdeps: IntentRegistry.cpp utils/ManifestFile.cpp
 //
 // IntentRegistry resolution rules. These are the parts with security
 // consequences — reserved-namespace refusal, shell-identity protection,
@@ -50,6 +50,7 @@ private slots:
     void testShellMayProvideReservedNamespace();
     void testDiskRecordCannotClaimShellIdentity();
     void testMalformedJsonIsDiagnosedNotFatal();
+    void testOversizedMetadataIsDiagnosedNotRead();
     void testBareStringArrayIsRefused();
     void testInvalidNameIsRejected();
     void testNonUiQmlIsSkipped();
@@ -229,6 +230,24 @@ void TestIntentRegistry::testMalformedJsonIsDiagnosedNotFatal()
     QCOMPARE(registry.resolve(QStringLiteral("a.b")).status, IntentRegistry::Ok);
     QCOMPARE(registry.diagnostics().size(), 1);
     QVERIFY(registry.diagnostics().first().contains(QStringLiteral("bad_ui")));
+}
+
+// Read on the UI thread at every rescan: past 1 MiB it is refused unread, as
+// intents_module refuses it.
+void TestIntentRegistry::testOversizedMetadataIsDiagnosedNotRead()
+{
+    QTemporaryDir root;
+    QByteArray big = R"({"provides":[{"intent":"a.b"}],"description":")";
+    big += QByteArray(2 * 1024 * 1024, 'x');
+    big += R"("})";
+    const QString dir = makeApp(root, QStringLiteral("huge"), big);
+
+    IntentRegistry registry;
+    registry.rebuild({ { QStringLiteral("huge_ui"), plugin(dir) } }, nullptr, nullptr);
+    QCOMPARE(registry.resolve(QStringLiteral("a.b")).status, IntentRegistry::None);
+    QCOMPARE(registry.diagnostics().size(), 1);
+    QVERIFY2(registry.diagnostics().first().contains(QStringLiteral("larger than 1 MiB")),
+             qPrintable(registry.diagnostics().first()));
 }
 
 void TestIntentRegistry::testBareStringArrayIsRefused()

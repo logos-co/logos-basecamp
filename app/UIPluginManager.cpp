@@ -11,6 +11,7 @@
 #include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/LogosBasecampPaths.h"
+#include "utils/ManifestFile.h"
 
 #include <QDebug>
 #include <QDir>
@@ -1309,12 +1310,10 @@ bool UIPluginManager::isAppBackend(const QString& moduleName) const
 QString UIPluginManager::backendModuleOf(const QVariantMap& meta) const
 {
     QString backend = meta.value("backend").toString();
-    if (backend.isEmpty()) {
-        QFile file(QDir(meta.value("installDir").toString()).filePath("metadata.json"));
-        if (file.open(QIODevice::ReadOnly))
-            backend = QJsonDocument::fromJson(file.readAll()).object()
-                          .value(QStringLiteral("backend")).toString();
-    }
+    QByteArray bytes;
+    if (backend.isEmpty()
+        && logos::manifest::read(meta.value("installDir").toString(), &bytes) == logos::manifest::Read::Ok)
+        backend = QJsonDocument::fromJson(bytes).object().value(QStringLiteral("backend")).toString();
     return backend;
 }
 

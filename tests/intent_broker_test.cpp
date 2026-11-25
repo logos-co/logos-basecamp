@@ -1,4 +1,4 @@
-// srcdeps: IntentBroker.cpp IntentRegistry.cpp
+// srcdeps: IntentBroker.cpp IntentRegistry.cpp utils/ManifestFile.cpp
 //
 // The broker drives fakes and nothing else — no bridge, no LogosAPI, no
 // widgets. Deadlines are shortened so the timeout cases are affordable.
