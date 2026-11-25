@@ -25,6 +25,7 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QIcon>
 #include <QDir>
@@ -32,10 +33,13 @@
 #include <QStandardPaths>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <QStringList>
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
+#include <QTimer>
 #include <QFile>
 #ifdef Q_OS_MAC
     #include "macWindowStyle.h"
@@ -639,13 +643,33 @@ int main(int argc, char *argv[])
             qWarning() << "intents_module did not load; intents through it are off this session";
         } else {
             intentsHost = std::make_unique<IntentsModuleHost>(
-                [api = &logosAPI](const QString& method, const QVariantList& args) {
+                [api = &logosAPI](const QString& method, const QVariantList& args, IntentsModuleHost::Reply reply) {
                     LogosAPIClient* client = api->getClient(QStringLiteral("intents_module"));
-                    return client ? client->invokeRemoteMethod(QStringLiteral("intents_module"), method,
-                                                               args, Timeout(3000)).toString()
-                                  : QString();
+                    if (!client) {
+                        reply(QString());
+                        return;
+                    }
+                    client->invokeRemoteMethodAsync(QStringLiteral("intents_module"), method, args,
+                        LogosAPIClient::AsyncResultErrorCallback(
+                            [reply](QVariant value, const logos::CallError& error) {
+                                reply(error.ok() ? value.toString() : QString());
+                            }),
+                        Timeout(3000));
                 });
-            if (!intentsHost->claim()) {
+            // The one wait on the module, before any window exists: what is
+            // set up next depends on whether Basecamp is its presenter.
+            auto claimed = std::make_shared<std::optional<bool>>();
+            QEventLoop claiming;
+            QPointer<QEventLoop> waiting(&claiming);
+            intentsHost->claim([claimed, waiting](bool ok) {
+                *claimed = ok;
+                if (waiting) waiting->quit();
+            });
+            if (!claimed->has_value()) {
+                QTimer::singleShot(10 * 1000, &claiming, &QEventLoop::quit);
+                claiming.exec();
+            }
+            if (!claimed->value_or(false)) {
                 qWarning() << "intents_module could not be claimed; unloading it, so intents "
                               "through it are off this session";
                 core->unloadModule(QStringLiteral("intents_module"), /*withDependents=*/true);

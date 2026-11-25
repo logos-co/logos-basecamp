@@ -120,10 +120,10 @@ public:
 
     // How a decision reaches the requester. Set by MainUIBackend, which owns
     // the broker — keeping it a callback is what stops this class needing one.
-    // Returns whether the broker accepted the response; false means the
+    // `heard` learns whether the broker took the response; false means the
     // dispatch already ended (requester gone, or timed out) and nobody heard.
-    using IntentResponder = std::function<bool(const QString& requestId, bool ok,
-                                               const QString& error, const QVariant& data)>;
+    using IntentResponder = std::function<void(const QString& requestId, bool ok, const QString& error,
+                                               const QVariant& data, std::function<void(bool heard)> heard)>;
     void setIntentResponder(IntentResponder responder)
     { m_intentResponder = std::move(responder); }
 
@@ -370,13 +370,13 @@ private:
     QString m_pendingInstallRequestId;
     QString m_pendingInstallName;
 
-    // Answer `requestId` and report whether the broker accepted it. A false
-    // return means the requester is gone or the dispatch already ended, which
-    // is the signal to finish the job locally rather than assume PMU will.
-    // Empty id -> false, no call: that is how a shell-initiated flow is told it
-    // owns the removal.
-    bool finishIntent(const QString& requestId, bool ok,
-                      const QString& error = QString(), const QVariant& data = QVariant());
+    // Answer `requestId`; `heard` learns whether the broker accepted it. False
+    // means the requester is gone or the dispatch already ended, which is the
+    // signal to finish the job locally rather than assume PMU will. Empty id
+    // -> false, no call: that is how a shell-initiated flow is told it owns
+    // the removal.
+    void finishIntent(const QString& requestId, bool ok, const QString& error = QString(),
+                      const QVariant& data = QVariant(), std::function<void(bool heard)> heard = {});
 
     QVariantList m_pendingOptionalPackages;
     QString m_pendingPreviewName, m_pendingPreviewRepo, m_pendingPreviewVersion;

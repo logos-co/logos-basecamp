@@ -33,6 +33,11 @@ bool isInput(QEvent::Type type)
     }
 }
 
+QVariantMap failedEnvelope()
+{
+    return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("failed")}};
+}
+
 QString compact(const QJsonObject& o)
 {
     return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
@@ -80,52 +85,77 @@ IntentsModuleHost::IntentsModuleHost(Call call, QObject* parent)
     connect(m_syncTimer, &QTimer::timeout, this, &IntentsModuleHost::sync);
 }
 
-QJsonObject IntentsModuleHost::callJson(const QString& method, const QVariantList& args) const
+void IntentsModuleHost::callJson(const QString& method, const QVariantList& args,
+                                 std::function<void(const QJsonObject&)> then, std::function<void()> dropped)
 {
-    const QString reply = m_call ? m_call(method, args) : QString();
-    return QJsonDocument::fromJson(reply.toUtf8()).object();
+    const quint64 call = ++m_nextCall;
+    m_inFlight.insert(call, std::move(dropped));
+    QPointer<IntentsModuleHost> self(this);
+    Reply reply = [self, call, then = std::move(then)](const QString& text) {
+        // Already answered by `dropped`, when the instance went first.
+        if (!self || !self->m_inFlight.remove(call)) return;
+        if (then) then(QJsonDocument::fromJson(text.toUtf8()).object());
+    };
+    if (m_call) m_call(method, args, std::move(reply));
+    else reply(QString());
 }
 
-bool IntentsModuleHost::claim()
+void IntentsModuleHost::claim(std::function<void(bool)> done)
 {
-    if (isClaimed()) return true;
-    const QJsonObject r = callJson(QStringLiteral("claim"), {});
-    m_secret = r.value(QStringLiteral("ok")).toBool() ? r.value(QStringLiteral("secret")).toString()
-                                                      : QString();
-    if (m_secret.isEmpty()) qWarning() << "intents_module: could not claim the presenter role";
-    return isClaimed();
+    if (isClaimed()) {
+        if (done) done(true);
+        return;
+    }
+    callJson(QStringLiteral("claim"), {}, [this, done](const QJsonObject& r) {
+        m_secret = r.value(QStringLiteral("ok")).toBool() ? r.value(QStringLiteral("secret")).toString()
+                                                          : QString();
+        if (m_secret.isEmpty()) qWarning() << "intents_module: could not claim the presenter role";
+        if (done) done(isClaimed());
+    });
 }
 
 void IntentsModuleHost::restarted()
 {
-    // Still the instance this secret was minted by: nothing was lost.
-    if (isClaimed()) {
-        const QJsonObject r = callJson(QStringLiteral("next_work"), {m_secret});
-        if (r.value(QStringLiteral("ok")).toBool()) {
-            take(r.value(QStringLiteral("items")).toArray());
-            return;
-        }
-    }
-
-    forgetInstance();
-    if (!claim()) {
-        m_gaveUp = true;
-        emit presenterRoleLost();
+    if (!isClaimed()) {
+        reclaim();
         return;
     }
-    // Said, and its work pulled, once it knows what the old instance did.
-    m_reclaimed = true;
-    m_workWaiting = true;
-    sync();
+    // Still the instance this secret was minted by: nothing was lost.
+    callJson(QStringLiteral("next_work"), {m_secret}, [this](const QJsonObject& r) {
+        if (r.value(QStringLiteral("ok")).toBool()) take(r.value(QStringLiteral("items")).toArray());
+        else reclaim();
+    });
 }
 
-// Everything the instance had open went with it, the claim too.
+void IntentsModuleHost::reclaim()
+{
+    forgetInstance();
+    claim([this](bool claimed) {
+        if (!claimed) {
+            m_gaveUp = true;
+            emit presenterRoleLost();
+            return;
+        }
+        // Said, and its work pulled, once it knows what the old instance did.
+        m_reclaimed = true;
+        m_workWaiting = true;
+        sync();
+    });
+}
+
+// Everything the instance had open went with it, the claim too, and what was
+// on its way to it is heard by nobody.
 void IntentsModuleHost::forgetInstance()
 {
     ++m_generation;
+    for (const std::function<void()>& dropped : std::exchange(m_inFlight, {}))
+        if (dropped) dropped();
+    m_syncing = false;
+    m_pulling = false;
+    m_pullAgain = false;
     const QHash<QString, ResultFn> shellRequests = std::exchange(m_shellRequests, {});
-    for (const ResultFn& done : shellRequests)
-        done(QVariantMap{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("failed")}});
+    for (const ResultFn& done : shellRequests) done(failedEnvelope());
+    failWaitingRequests();
     const QSet<QString> choices = m_choices;
     m_choices.clear();
     m_choiceModules.clear();
@@ -150,37 +180,54 @@ bool IntentsModuleHost::isReady() const
     return isClaimed() && m_shellDeclared && m_shellAcked && m_installedSent && m_installedAcked;
 }
 
-// What the module has to hold before Basecamp asks or answers through it.
-// Each call waits for its answer or its 3 s timeout, in a nested event loop,
-// so an attempt ends at its first failed call, and each failed attempt waits
-// twice as long for the next: a module that doesn't answer is asked once a
-// minute. Work it hands out meanwhile brings the next attempt forward.
+// What the module has to hold before Basecamp asks or answers through it, one
+// call at a time. An attempt ends at its first failed call (its 3 s timeout,
+// when the module doesn't answer), and each failed attempt waits twice as long
+// for the next, up to a minute; work the module hands out meanwhile brings
+// the next attempt forward.
 void IntentsModuleHost::sync()
 {
-    if (!isClaimed()) return;
-    QString failed;
+    if (!isClaimed() || m_syncing) return;
     if (m_shellDeclared && !m_shellAcked) {
-        m_shellAcked = callJson(QStringLiteral("declare_shell"), {m_secret, compact(m_shell)})
-                           .value(QStringLiteral("ok")).toBool();
-        if (!m_shellAcked) failed = QStringLiteral("declare_shell");
+        syncStep(QStringLiteral("declare_shell"), compact(m_shell), m_shellVersion, &m_shellVersion, &m_shellAcked);
+        return;
     }
-    if (failed.isEmpty() && m_installedSent && !m_installedAcked) {
-        m_installedAcked = callJson(QStringLiteral("set_installed"), {m_secret, compact(m_installed)})
-                               .value(QStringLiteral("ok")).toBool();
-        if (!m_installedAcked) failed = QStringLiteral("set_installed");
-    }
-    if (!failed.isEmpty()) {
-        qWarning().noquote() << "intents_module:" << failed << "not taken; sending it again in"
-                             << m_syncDelayMs << "ms";
-        m_syncTimer->start(m_syncDelayMs);
-        m_syncDelayMs = std::min(m_syncDelayMs * 2, m_syncRetryCapMs);
+    if (m_installedSent && !m_installedAcked) {
+        syncStep(QStringLiteral("set_installed"), compact(m_installed), m_installedVersion, &m_installedVersion,
+                 &m_installedAcked);
         return;
     }
     m_syncDelayMs = m_syncRetryMs;
-    if (!isReady()) return;
+    if (!isReady()) {
+        failWaitingRequests();
+        return;
+    }
     if (std::exchange(m_reclaimed, false)) qInfo() << "intents_module: claimed again after it restarted";
     take({});
+    for (ShellAsk& ask : std::exchange(m_asksWaiting, {}))
+        sendShellRequest(ask.intent, ask.params, ask.asLink, std::move(ask.done));
     if (m_workWaiting) pullWork();
+}
+
+// Taken only while still the latest: a newer declaration or list, set while
+// this one was on its way, goes next.
+void IntentsModuleHost::syncStep(const QString& method, const QString& payload, quint64 version,
+                                 const quint64* current, bool* acked)
+{
+    m_syncing = true;
+    callJson(method, {m_secret, payload}, [this, method, version, current, acked](const QJsonObject& r) {
+        m_syncing = false;
+        if (!r.value(QStringLiteral("ok")).toBool()) {
+            qWarning().noquote() << "intents_module:" << method << "not taken; sending it again in"
+                                 << m_syncDelayMs << "ms";
+            m_syncTimer->start(m_syncDelayMs);
+            m_syncDelayMs = std::min(m_syncDelayMs * 2, m_syncRetryCapMs);
+            failWaitingRequests();
+            return;
+        }
+        if (*current == version) *acked = true;
+        sync();
+    });
 }
 
 bool IntentsModuleHost::takeReload(bool moduleRunning)
@@ -217,6 +264,7 @@ void IntentsModuleHost::declareShell(const QJsonObject& shell)
     m_shell = shell;
     m_shellDeclared = true;
     m_shellAcked = false;
+    ++m_shellVersion;
     if (!m_syncTimer->isActive()) sync();
 }
 
@@ -228,23 +276,52 @@ void IntentsModuleHost::setInstalled(const QJsonArray& packages)
     m_installedRevisions = revisions;
     m_installedSent = true;
     m_installedAcked = false;
+    ++m_installedVersion;
     if (!m_syncTimer->isActive()) sync();
 }
 
-bool IntentsModuleHost::shellRequest(const QString& intent, const QVariantMap& params, bool asLink,
+void IntentsModuleHost::shellRequest(const QString& intent, const QVariantMap& params, bool asLink,
                                      ResultFn done)
 {
-    if (!isReady()) return false;
-    const QJsonObject r = callJson(QStringLiteral("shell_request"),
-                                   {m_secret, intent, compact(QJsonObject::fromVariantMap(params)), asLink});
-    const QString handle = r.value(QStringLiteral("handle")).toString();
-    if (!r.value(QStringLiteral("ok")).toBool() || handle.isEmpty()) {
-        qWarning().noquote() << "intents_module refused" << intent << "from"
-                             << (asLink ? "a link" : "Basecamp") << ":" << r.value(QStringLiteral("error")).toString();
-        return false;
+    if (isReady()) {
+        sendShellRequest(intent, params, asLink, std::move(done));
+        return;
     }
-    if (done) m_shellRequests.insert(handle, std::move(done));
-    return true;
+    // Being told what it needs right now, as when a link that launched
+    // Basecamp goes right after the installed list: it waits for that.
+    if (isClaimed() && m_syncing) {
+        m_asksWaiting.append({intent, params, asLink, std::move(done)});
+        return;
+    }
+    if (done) done(failedEnvelope());
+}
+
+void IntentsModuleHost::failWaitingRequests()
+{
+    for (const ShellAsk& ask : std::exchange(m_asksWaiting, {}))
+        if (ask.done) ask.done(failedEnvelope());
+}
+
+void IntentsModuleHost::sendShellRequest(const QString& intent, const QVariantMap& params, bool asLink,
+                                         ResultFn done)
+{
+    const auto failed = [done]() {
+        if (done) done(failedEnvelope());
+    };
+    callJson(QStringLiteral("shell_request"),
+             {m_secret, intent, compact(QJsonObject::fromVariantMap(params)), asLink},
+             [this, intent, asLink, done, failed](const QJsonObject& r) {
+                 const QString handle = r.value(QStringLiteral("handle")).toString();
+                 if (!r.value(QStringLiteral("ok")).toBool() || handle.isEmpty()) {
+                     qWarning().noquote() << "intents_module refused" << intent << "from"
+                                          << (asLink ? "a link" : "Basecamp") << ":"
+                                          << r.value(QStringLiteral("error")).toString();
+                     failed();
+                     return;
+                 }
+                 if (done) m_shellRequests.insert(handle, done);
+             },
+             failed);
 }
 
 void IntentsModuleHost::registerBackend(const QString& app, const QString& module)
@@ -317,8 +394,18 @@ void IntentsModuleHost::pullWork()
         }
         return;
     }
+    // One pull at a time: one asked for meanwhile goes once it is back.
+    if (m_pulling) {
+        m_pullAgain = true;
+        return;
+    }
+    m_pulling = true;
     m_workWaiting = false;
-    take(callJson(QStringLiteral("next_work"), {m_secret}).value(QStringLiteral("items")).toArray());
+    callJson(QStringLiteral("next_work"), {m_secret}, [this](const QJsonObject& r) {
+        m_pulling = false;
+        take(r.value(QStringLiteral("items")).toArray());
+        if (std::exchange(m_pullAgain, false)) pullWork();
+    });
 }
 
 // Work pulled before the module was ready is handled once it is.
@@ -329,12 +416,17 @@ void IntentsModuleHost::take(const QJsonArray& items)
     for (const QJsonValue& item : std::exchange(m_heldWork, {})) handle(item.toObject());
 }
 
-bool IntentsModuleHost::answer(const QString& workId, const QJsonObject& answer)
+void IntentsModuleHost::answer(const QString& workId, const QJsonObject& answer, std::function<void(bool)> taken)
 {
-    const bool taken = callJson(QStringLiteral("answer"), {m_secret, workId, compact(answer)})
-                           .value(QStringLiteral("ok")).toBool();
-    if (!taken) qWarning().noquote() << "intents_module: answer to" << workId << "not taken";
-    return taken;
+    callJson(QStringLiteral("answer"), {m_secret, workId, compact(answer)},
+             [workId, taken](const QJsonObject& r) {
+                 const bool ok = r.value(QStringLiteral("ok")).toBool();
+                 if (!ok) qWarning().noquote() << "intents_module: answer to" << workId << "not taken";
+                 if (taken) taken(ok);
+             },
+             [taken]() {
+                 if (taken) taken(false);
+             });
 }
 
 void IntentsModuleHost::handle(const QJsonObject& item)
@@ -493,13 +585,20 @@ void IntentsModuleHost::finishStart(const QString& app)
     for (const std::function<void()>& done : m_starting.take(app)) done();
 }
 
-bool IntentsModuleHost::respondShell(const QString& id, bool ok, const QVariant& data, const QString& error)
+bool IntentsModuleHost::respondShell(const QString& id, bool ok, const QVariant& data, const QString& error,
+                                     std::function<void(bool)> taken)
 {
-    if (!m_shellDeliveries.remove(id)) return false;
-    return answer(id, {{QStringLiteral("action"), QStringLiteral("respond")},
-                       {QStringLiteral("ok"), ok},
-                       {QStringLiteral("data"), QJsonValue::fromVariant(data)},
-                       {QStringLiteral("error"), error}});
+    if (!m_shellDeliveries.remove(id)) {
+        if (taken) taken(false);
+        return false;
+    }
+    answer(id,
+           {{QStringLiteral("action"), QStringLiteral("respond")},
+            {QStringLiteral("ok"), ok},
+            {QStringLiteral("data"), QJsonValue::fromVariant(data)},
+            {QStringLiteral("error"), error}},
+           std::move(taken));
+    return true;
 }
 
 // ── Auto-return ──────────────────────────────────────────────────────────────

@@ -233,8 +233,8 @@ public slots:
     // Delegating one-liners, like the rest of this facade. The broker is
     // deliberately NOT exposed to the QML context: that would let any view
     // reach policy directly and break the single-surface contract.
-    // Returns whether the broker accepted the response — false means the
-    // dispatch already ended and nobody heard it.
+    // Returns whether a broker took it: the QML broker answers at once,
+    // intents_module only later (answerShellIntent()).
     Q_INVOKABLE bool respondToShellIntent(const QString& requestId, bool ok,
                                           const QVariant& data = QVariant(),
                                           const QString& error = QString());
@@ -525,6 +525,10 @@ public:
     Q_INVOKABLE QVariantMap providerDetailsFor(const QString& packageName) const;
 
 private:
+    // As respondToShellIntent(); `heard` learns whether the answer reached the
+    // requester: false when it was gone, or its request had ended.
+    bool answerShellIntent(const QString& requestId, bool ok, const QVariant& data, const QString& error,
+                           std::function<void(bool heard)> heard);
     // packages.show / packages.install to the Package Manager, which answers
     // them only through intents_module. `orElse` when nothing can take it.
     void askPackageManager(const QString& intent, const QString& packageName,

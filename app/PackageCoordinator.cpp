@@ -779,8 +779,9 @@ void PackageCoordinator::runUninstallCascade(const QString& moduleName, const QV
         // version and install the new one; doing only the removal ourselves
         // would delete the package outright. Leave it installed (unloaded) —
         // the requester has already told the user the action failed.
-        if (!finishIntent(requestId, true, QString(), answer) && !isUpgrade)
-            performLocalRemoval({moduleName});
+        finishIntent(requestId, true, QString(), answer, [selfDefer, moduleName, isUpgrade](bool heard) {
+            if (selfDefer && !heard && !isUpgrade) selfDefer->performLocalRemoval({moduleName});
+        });
 
         emit coreModulesChanged();
         emit uiModulesChanged();
@@ -893,12 +894,14 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
 // arrives, so the unload has always finished first.
 // ---------------------------------------------------------------------------
 
-bool PackageCoordinator::finishIntent(const QString& requestId, bool ok,
-                                      const QString& error, const QVariant& data)
+void PackageCoordinator::finishIntent(const QString& requestId, bool ok, const QString& error,
+                                      const QVariant& data, std::function<void(bool)> heard)
 {
-    if (requestId.isEmpty()) return false;
-    if (!m_intentResponder) return false;
-    return m_intentResponder(requestId, ok, error, data);
+    if (requestId.isEmpty() || !m_intentResponder) {
+        if (heard) heard(false);
+        return;
+    }
+    m_intentResponder(requestId, ok, error, data, std::move(heard));
 }
 
 // Only the dialog previewing `name` may end its preview; unrelated dialogs must
@@ -1275,8 +1278,10 @@ void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleN
 
     // Everything in the batch is unloaded — tell the requester it may remove
     // them; if nobody heard, the removal falls to us.
-    if (!finishIntent(requestId, true))
-        performLocalRemoval(moduleNames);
+    QPointer<PackageCoordinator> self(this);
+    finishIntent(requestId, true, QString(), QVariant(), [self, moduleNames](bool heard) {
+        if (self && !heard) self->performLocalRemoval(moduleNames);
+    });
 
     emit coreModulesChanged();
     emit uiModulesChanged();
