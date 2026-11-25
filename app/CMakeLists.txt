@@ -301,6 +301,8 @@ set(PROJECT_SOURCES
     utils/InstalledIntegrity.cpp
     utils/InstalledPlacement.cpp
     utils/InstallTrust.cpp
+    utils/ManifestFile.h
+    utils/ManifestFile.cpp
     utils/PublisherKeyring.h
     utils/PublisherKeyring.cpp
     utils/StandaloneMode.h

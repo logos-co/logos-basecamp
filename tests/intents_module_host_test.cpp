@@ -1,4 +1,4 @@
-// srcdeps: intents/IntentsModuleHost.cpp
+// srcdeps: intents/IntentsModuleHost.cpp utils/ManifestFile.cpp
 //
 // Basecamp as intents_module's presenter, against a fake module: what it sends,
 // when a click opens a request, how work items reach the shell, how an app's
@@ -262,6 +262,7 @@ private slots:
     void aDeclarationWhileARetryIsDueWaitsForIt();
     void retriesBackOff();
     void nothingIsPulledBeforeTheModuleIsReady();
+    void aModuleHandingOutWorkIsSyncedAtOnce();
     void workARestartThatWasNotOneFoundWaitsUntilReady();
     void aRestartIsAnnouncedOnceTheModuleIsReady();
     void theSameInstalledPackagesAreSentOnce();
@@ -1402,7 +1403,7 @@ void TestIntentsModuleHost::retriesBackOff()
 void TestIntentsModuleHost::nothingIsPulledBeforeTheModuleIsReady()
 {
     FakeModule m;
-    m.refuseSetInstalled = 1;
+    m.refuseSetInstalled = 2;   // the retry work_available brings fails too
     IntentsModuleHost host(m.call());
     host.setSyncRetryMs(10);
     host.setAttention(QStringLiteral("immediate"));
@@ -1413,6 +1414,29 @@ void TestIntentsModuleHost::nothingIsPulledBeforeTheModuleIsReady()
     QTRY_COMPARE_WITH_TIMEOUT(m.opened(), QStringList{QStringLiteral("w1")}, 2000);
     QCOMPARE(m.methods().indexOf(QStringLiteral("next_work")),
              m.methods().lastIndexOf(QStringLiteral("set_installed")) + 1);
+}
+
+// A module that hands out work answers again: what it didn't take goes at
+// once, while the click behind that work still counts, not at the backoff's
+// next turn, up to a minute later.
+void TestIntentsModuleHost::aModuleHandingOutWorkIsSyncedAtOnce()
+{
+    FakeModule m;
+    m.refuseSetInstalled = 1;
+    IntentsModuleHost host(m.call());
+    host.setSyncRetryMs(60 * 1000);
+    host.setAttention(QStringLiteral("interactive"));
+    host.setAppOfModule(&appOfBackend);
+    makeReady(host);
+    QVERIFY(!host.isReady());
+    QWidget view;
+    host.watchView(QStringLiteral("wallet"), &view);
+    QTest::mousePress(&view, Qt::LeftButton);
+    m.work.append(pending("w1"));
+    host.pullWork();
+    QVERIFY(host.isReady());
+    QCOMPARE(m.calls(QStringLiteral("set_installed")).size(), 2);
+    QCOMPARE(m.opened(), QStringList{QStringLiteral("w1")});
 }
 
 // The same instance after all: what its probe pulled waits for readiness too.

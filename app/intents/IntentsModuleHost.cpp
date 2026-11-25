@@ -1,24 +1,16 @@
 #include "IntentsModuleHost.h"
 
+#include "utils/ManifestFile.h"
+
 #include <QCryptographicHash>
 #include <QDebug>
-#include <QDir>
 #include <QEvent>
-#include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QTimer>
 #include <QWidget>
 
 #include <algorithm>
 #include <utility>
-
-#ifndef Q_OS_WIN
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -27,8 +19,6 @@ constexpr qint64 kReturnBreakerWindowMs = 3 * 1000;
 constexpr int    kReturnBreakerLimit    = 5;
 
 constexpr int kMaxReloads = 3;
-// intents_module reads no larger manifest.
-constexpr qint64 kManifestMaxBytes = 1024 * 1024;
 
 bool isInput(QEvent::Type type)
 {
@@ -53,36 +43,19 @@ QString compact(const QJsonArray& a)
     return QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact));
 }
 
-// The SHA-256 of `<dir>/metadata.json`, read as intents_module reads it: a
-// regular file only, never blocking on open (a package's file may be a FIFO),
-// at most kManifestMaxBytes. "" when there is none, "unreadable" otherwise.
+// The SHA-256 of `<dir>/metadata.json` (logos::manifest::read()): "" when
+// there is none, "unreadable" when it can't be read that way.
 QString manifestRevision(const QString& dir)
 {
-    const QString path = QDir(dir).filePath(QStringLiteral("metadata.json"));
-    if (dir.isEmpty() || !QFileInfo::exists(path)) return {};
     QByteArray bytes;
-#ifdef Q_OS_WIN
-    QFile file(path);
-    bool ok = QFileInfo(path).isFile() && file.open(QIODevice::ReadOnly);
-    if (ok) bytes = file.read(kManifestMaxBytes + 1);
-#else
-    const int fd = ::open(QFile::encodeName(path).constData(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    struct stat st {};
-    bool ok = fd >= 0 && ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
-    char buffer[64 * 1024];
-    while (ok && bytes.size() <= kManifestMaxBytes) {
-        const ssize_t n = ::read(fd, buffer, sizeof buffer);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) {
-            ok = n == 0;
-            break;
-        }
-        bytes.append(buffer, n);
+    switch (logos::manifest::read(dir, &bytes)) {
+    case logos::manifest::Read::Ok:
+        return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+    case logos::manifest::Read::Missing:
+        return {};
+    default:
+        return QStringLiteral("unreadable");
     }
-    if (fd >= 0) ::close(fd);
-#endif
-    if (!ok || bytes.size() > kManifestMaxBytes) return QStringLiteral("unreadable");
-    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
 }
 
 // What the module reads from each package, as it is now: an app upgraded in
@@ -178,9 +151,10 @@ bool IntentsModuleHost::isReady() const
 }
 
 // What the module has to hold before Basecamp asks or answers through it.
-// Each call blocks the UI until answered or timed out, so an attempt ends at
-// its first failed call, and each failed attempt waits twice as long for the
-// next: a module that doesn't answer costs one timeout a minute.
+// Each call waits for its answer or its 3 s timeout, in a nested event loop,
+// so an attempt ends at its first failed call, and each failed attempt waits
+// twice as long for the next: a module that doesn't answer is asked once a
+// minute. Work it hands out meanwhile brings the next attempt forward.
 void IntentsModuleHost::sync()
 {
     if (!isClaimed()) return;
@@ -335,6 +309,12 @@ void IntentsModuleHost::pullWork()
 {
     if (!isReady()) {
         m_workWaiting = isClaimed();
+        // It hands out work, so it answers again: what it didn't take goes now,
+        // not at the backoff's next turn, or a click behind that work expires.
+        if (m_workWaiting && m_syncTimer->isActive()) {
+            m_syncTimer->stop();
+            sync();
+        }
         return;
     }
     m_workWaiting = false;

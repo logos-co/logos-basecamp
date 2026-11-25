@@ -120,7 +120,7 @@ public:
 
     // ── Work ────────────────────────────────────────────────────────────
     // On work_available. Not before isReady(): the work waits in the module,
-    // and is pulled once it is.
+    // and is pulled once it is. A sync that failed is tried again at once.
     void pullWork();
 
     bool ownsChoice(const QString& id) const { return m_choices.contains(id); }

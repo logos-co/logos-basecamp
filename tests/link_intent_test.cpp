@@ -1,4 +1,4 @@
-// srcdeps: links/LinkRequestCoordinator.cpp links/LinkUrl.cpp links/LinkUrlInbox.cpp IntentBroker.cpp IntentRegistry.cpp ShellIntents.cpp
+// srcdeps: links/LinkRequestCoordinator.cpp links/LinkUrl.cpp links/LinkUrlInbox.cpp IntentBroker.cpp IntentRegistry.cpp ShellIntents.cpp utils/ManifestFile.cpp
 //
 // A clicked `basecamp://` URL, from the inbox through to the broker, against
 // the real registry and broker with the same fakes intent_broker_test uses.
