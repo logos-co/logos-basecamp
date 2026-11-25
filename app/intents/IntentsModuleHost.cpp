@@ -178,9 +178,10 @@ bool IntentsModuleHost::isReady() const
 }
 
 // What the module has to hold before Basecamp asks or answers through it.
-// Each call blocks the UI until answered or timed out, so an attempt ends at
-// its first failed call, and each failed attempt waits twice as long for the
-// next: a module that doesn't answer costs one timeout a minute.
+// Each call waits for its answer or its 3 s timeout, in a nested event loop,
+// so an attempt ends at its first failed call, and each failed attempt waits
+// twice as long for the next: a module that doesn't answer is asked once a
+// minute. Work it hands out meanwhile brings the next attempt forward.
 void IntentsModuleHost::sync()
 {
     if (!isClaimed()) return;
@@ -335,6 +336,12 @@ void IntentsModuleHost::pullWork()
 {
     if (!isReady()) {
         m_workWaiting = isClaimed();
+        // It hands out work, so it answers again: what it didn't take goes now,
+        // not at the backoff's next turn, or a click behind that work expires.
+        if (m_workWaiting && m_syncTimer->isActive()) {
+            m_syncTimer->stop();
+            sync();
+        }
         return;
     }
     m_workWaiting = false;
