@@ -31,6 +31,7 @@
 
 #include "CoreDependencyLoader.h"
 #include "CoreModuleManager.h"
+#include "intents/IntentsModuleHost.h"
 #include "utils/InstalledIntegrity.h"
 #include "IComponent.h"
 #include "IntentBridgeAdapter.h"
@@ -573,10 +574,11 @@ bool PluginLoader::restrictBackendToView(const QString& backendModule, const QSt
     if (!cap) return false;
     const QString capToken =
         m_logosAPI->getTokenManager()->getToken(QStringLiteral("capability_module"));
+    QStringList callers{ viewName, QStringLiteral("core") };
+    if (m_intentsHost) callers << QStringLiteral("intents_module");
     const QVariant ok = cap->invokeRemoteMethod(
         QStringLiteral("capability_module"), QStringLiteral("registerRestriction"),
-        QVariantList{ capToken, backendModule,
-                      QStringList{ viewName, QStringLiteral("core") } });
+        QVariantList{ capToken, backendModule, callers });
     if (ok.toBool()) qInfo().noquote() << "Restricted" << backendModule << "to" << viewName;
     return ok.toBool();
 }
@@ -718,6 +720,8 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
     // both converge here.
     if (m_intentAdapter)
         m_intentAdapter->attach(request.name, bridge);
+    if (m_intentsHost && !request.backendModule.isEmpty())
+        m_intentsHost->watchView(request.name, qmlWidget);
 
     qmlWidget->rootContext()->setContextProperty("logos", bridge);
     qmlWidget->rootContext()->setContextProperty("isActiveTab", true);
@@ -747,6 +751,9 @@ void PluginLoader::finishUiQmlLoad(QQuickWidget* qmlWidget,
     // tell the view now; views wait for viewModuleReadyChanged to show content.
     bridge->replayViewModuleState();
 
+    if (m_intentsHost && !request.backendModule.isEmpty())
+        m_intentsHost->registerBackend(request.name, request.backendModule);
+
     setLoading(request.name, false);
     emit pluginLoaded(request.name, qmlWidget, nullptr, UIPluginType::UiQml, viewHost);
 }
@@ -759,17 +766,23 @@ void PluginLoader::loadHotReloadView(const PluginLoadRequest& request,
 {
     if (m_intentAdapter)
         m_intentAdapter->attach(request.name, bridge);
+    // Each save builds a new widget: each one is watched for the app's clicks.
+    QPointer<IntentsModuleHost> intents;
+    if (m_intentsHost && !request.backendModule.isEmpty()) intents = m_intentsHost;
 
     auto* view = new QmlHotReloadView(
         request.name, request.hotReloadDir, QUrl::fromLocalFile(request.qmlViewPath), bridge,
-        [request, bridge]() {
+        [request, bridge, intents]() {
             QQuickWidget* qmlWidget = createSandboxedView(request);
             qmlWidget->rootContext()->setContextProperty("logos", bridge);
+            if (intents) intents->watchView(request.name, qmlWidget);
             return qmlWidget;
         });
     if (!request.iconPath.isEmpty())
         view->setWindowIcon(QIcon(request.iconPath));
     view->load();
+    if (intents)
+        intents->registerBackend(request.name, request.backendModule);
 
     setLoading(request.name, false);
     emit pluginLoaded(request.name, view, nullptr, UIPluginType::UiQml, viewHost);

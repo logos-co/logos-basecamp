@@ -32,6 +32,17 @@ struct HostProfile {
 
     bool devHost = false;     // labelled as a developer's host
 
+    // App backends and core modules ask and provide through intents_module, with
+    // Basecamp as its presenter; apps' screens keep the QML path beside it until
+    // 0.5. False only when the module failed to load.
+    bool intentsModule = true;
+    // How intents_module reaches the person: "bundled" opens a request from
+    // what ships with Basecamp at once and any other only after a click in its
+    // app's screen; "interactive" always waits for that click; "immediate"
+    // opens every request, in developer builds only. What doesn't open waits
+    // in the pending list. See intentsAttentionFor().
+    QString intentsAttention = QStringLiteral("bundled");
+
     // false: a dependency outside its declared version range loads with a
     // warning instead of being refused. A missing dependency still refuses.
     bool enforceDependencyVersions = true;
@@ -44,6 +55,11 @@ struct HostProfile {
     // Elsewhere (loaded only as a dependency) it is docked like any app.
     bool packageManagerUiIsSection() const;
 };
+
+// The intents attention `requested` (--intents-attention or
+// LOGOS_INTENTS_ATTENTION) asks for: "bundled" when it is empty, unknown, or
+// "immediate" outside a `developerBuild`, with `warning` saying so.
+QString intentsAttentionFor(const QString& requested, bool developerBuild, QString* warning);
 
 } // namespace LogosBasecamp
 

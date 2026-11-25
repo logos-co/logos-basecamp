@@ -3982,6 +3982,26 @@ test("intents: cancelling also returns the user to the caller", async (app) => {
   if (r !== "cancelled") throw new Error(`expected cancelled, got "${r}"`);
 });
 
+// A package confirmation whose request ended closes, so it can't answer nobody
+// or refuse the next one (#570). Here its requester goes away while it is up.
+test("intents: a package confirmation closes when its request ends", async (app) => {
+  const anchor = await openIntentRequester(app);
+  await evalOn(app, anchor, '(logos.request("basecamp.packages.confirm_install", ' +
+                            '{ name: "probe_pkg" }, function () {}), "sent")');
+  await app.waitFor(async () => {
+    if ((await visibilityOf(app, "confirmationDialog.installGate")) !== true)
+      throw new Error("no install confirmation yet");
+  }, { timeout: 20000, interval: 250, description: "the install confirmation" });
+
+  const welcome = await findByObjectName(app.inspector, "welcomePage.greeting");
+  if (!welcome) throw new Error("no welcomePage.greeting to reach the backend through");
+  await evalOn(app, welcome.id, '(backend.unloadUiModule("intent_requester_demo"), "unloaded")');
+  await app.waitFor(async () => {
+    if ((await visibilityOf(app, "confirmationDialog.installGate")) !== false)
+      throw new Error("the confirmation is still up");
+  }, { timeout: 15000, interval: 250, description: "the confirmation to close" });
+});
+
 test("intents: a hand-off leaves the user where it took them", async (app) => {
   // THE PAIR IS THE POINT. Identical provider, identical button, identical
   // ok:true — differing only by "handoff": true in metadata.json. If the shell

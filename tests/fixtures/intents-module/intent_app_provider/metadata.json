@@ -1,0 +1,51 @@
+{
+  "name": "intent_app_provider",
+  "display_name": "App Provider",
+  "version": "1.0.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "testing",
+  "description": "intents_module test fixture: an app whose backend provides test.app_echo and asks the person first (test artifact, not a real app)",
+  "main": "intent_app_provider_plugin",
+  "view": "qml/Main.qml",
+  "dependencies": [],
+  "interface_dependencies": [
+    {"name": "intents", "file": "contracts/intents.lidl", "input": "logos-intents-module"}
+  ],
+  "provides": [
+    {
+      "intent": "test.app_echo",
+      "params": [
+        {
+          "name": "text",
+          "type": "string",
+          "required": true,
+          "description": "Echoed back once approved"
+        }
+      ]
+    },
+    {
+      "intent": "packages.show",
+      "handoff": true
+    }
+  ],
+  "uses": [],
+  "codegen": {
+    "rep": "src/intent_app_provider.rep"
+  },
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": []
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  },
+  "icon": "src/icons/icon.png",
+  "backend": "module"
+}

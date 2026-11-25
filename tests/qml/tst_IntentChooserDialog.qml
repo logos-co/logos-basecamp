@@ -69,6 +69,8 @@ TestCase {
         dlg.openWith({ dispatchId: "d-t1", intent: "wallet.send",
                        requesterName: "chat_ui", providers: testCase.oneProvider });
         compare(dlg.title, "Use this app?");
+        dlg.closeFor("d-t1");
+        tryVerify(function () { return !dlg.visible && dlg.dispatchId === ""; }, 5000, "closed");
 
         // …and back, so the title tracks the offer rather than being set once.
         dlg.openWith({ dispatchId: "d-t2", intent: "wallet.send",
@@ -222,6 +224,65 @@ TestCase {
 
     // Whatever closed it, nothing of the finished request stays addressable —
     // and the catalog rows do not sit there stale waiting for the next offer.
+    // Another request, from either broker, never repoints the one the person
+    // is deciding on: the host queues it until this one has closed.
+    function test_a_second_request_never_replaces_the_one_on_screen() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith({ dispatchId: "d-a", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.twoProviders });
+        ignoreWarning(/a chooser is already up/);
+        dlg.openWith({ dispatchId: "d-b", intent: "signing.approve",
+                       requesterName: "other_module", providers: testCase.oneProvider });
+        compare(dlg.dispatchId, "d-a");
+        compare(dlg.requesterName, "chat_ui");
+        compare(dlg.providers.length, 2);
+        dlg.destroy();
+    }
+
+    // The host shows the next chooser only once this one has fully closed.
+    function test_closing_says_the_slot_is_free_after_it_has_closed() {
+        var dlg = dialogComp.createObject(testCase);
+        var freed = [];
+        dlg.choiceClosed.connect(function (id) { freed.push({ id: id, visible: dlg.visible }); });
+        dlg.openWith({ dispatchId: "d-c", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.twoProviders });
+        dlg.closeFor("d-c");
+        tryVerify(function () { return freed.length === 1; }, 5000, "closed");
+        compare(freed[0].id, "d-c");
+        compare(freed[0].visible, false);
+        compare(dlg.dispatchId, "");
+        dlg.destroy();
+    }
+
+    // Who signed the package asking, as Details says for each provider.
+    function test_the_requester_says_who_signed_it() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.detailsLookup = function (name) {
+            return name === "chat_ui" ? { moduleName: name, trust: { status: "trusted", publisher: "Logos" } }
+                                      : { moduleName: name };
+        };
+        dlg.openWith({ dispatchId: "d-r", intent: "wallet.send",
+                       requesterName: "chat_ui", providers: testCase.twoProviders });
+        var line = null;
+        tryVerify(function () {
+            line = deepFind(dlg.contentItem, "intentRequesterTrust");
+            return line !== null && line.visible;
+        }, 5000, "the requester's signer line");
+        compare(deepFind(line, "installTrust.lineWords").text, "Signed by Logos");
+        dlg.destroy();
+    }
+
+    // Basecamp's own requests come from no package: no signer line.
+    function test_no_signer_line_without_a_verdict() {
+        var dlg = dialogComp.createObject(testCase);
+        dlg.openWith({ dispatchId: "d-s", intent: "wallet.send",
+                       requesterName: "main_ui", providers: testCase.twoProviders });
+        var line = deepFind(dlg.contentItem, "intentRequesterTrust");
+        verify(line !== null);
+        verify(!line.visible);
+        dlg.destroy();
+    }
+
     function test_closing_leaves_nothing_of_the_request_behind() {
         var dlg = dialogComp.createObject(testCase, {
             installableLookup: function (intent) { return testCase.oneInstallable; }

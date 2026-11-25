@@ -1095,11 +1095,11 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         const bool localFile = logos::trust::requestsLocalFile(params);
         beginConfirmationTrust(name, version, localFile, params, requesterName);
         resolveDepChangesThen(name, repositoryUrl, version, localFile,
-            [this, name, version, requesterName](bool resolved,
-                                                          const QVariantList& changes) {
+            [this, name, version, requesterName, dispatchId](bool resolved,
+                                                                      const QVariantList& changes) {
                 emit installGateConfirmationRequested(name, version, changes, requesterName,
                                                      requesterIsBundled(requesterName),
-                                                     resolved);
+                                                     resolved, dispatchId);
                 // The dialog opens on what is known so far; the rest follows.
                 if (m_gateTrust.name == name) emitTrust(TrustFlow::Gate);
             });
@@ -1122,11 +1122,11 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         const bool localFile = logos::trust::requestsLocalFile(params);
         beginConfirmationTrust(name, version, localFile, params, requesterName);
         resolveDepChangesThen(name, repositoryUrl, version, localFile,
-            [this, name, version, mode, installedDeps, loadedDeps, requesterName]
+            [this, name, version, mode, installedDeps, loadedDeps, requesterName, dispatchId]
             (bool /*resolved*/, const QVariantList& changes) {
                 emit upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
                                                         loadedDeps, changes, requesterName,
-                                                        requesterIsBundled(requesterName));
+                                                        requesterIsBundled(requesterName), dispatchId);
                 if (m_gateTrust.name == name) emitTrust(TrustFlow::Gate);
             });
         return true;
@@ -1144,7 +1144,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         }
 
         const bool multi = names.size() > 1;
-        const QVariantMap plan =
+        QVariantMap plan =
             buildPlanPayload(names, dependentsOfBatch(names),
                              QStringLiteral("packages"), multi, requesterName);
         if (plan.value(QStringLiteral("removable")).toList().isEmpty()) {
@@ -1158,6 +1158,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
             ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, dispatchId}
             : PendingAction{PendingOp::UninstallCascade, names.first(), {}, dispatchId};
 
+        plan.insert(QStringLiteral("requestId"), dispatchId);
         emit uninstallPlanRequested(plan);
         return true;
     }
@@ -2762,7 +2763,8 @@ void PackageCoordinator::startResolvedInstall(const QString& name,
                                                  installedDependents, loadedDependents,
                                                  reviewed,
                                                  /*requesterName=*/QString(),
-                                                 /*requesterBundled=*/false);
+                                                 /*requesterBundled=*/false,
+                                                 /*requestId=*/QString());
         return;
     }
 
@@ -3199,6 +3201,28 @@ QVariantMap PackageCoordinator::installedTrust(const QString& name) const
     return verdict;
 }
 
+void PackageCoordinator::shellIntentEnded(const QString& dispatchId)
+{
+    if (dispatchId.isEmpty()) return;
+    // As a cancel would, minus the answer: nobody would hear it.
+    QString name;
+    if (dispatchId == m_pendingInstallRequestId) {
+        name = m_pendingInstallName;
+        m_pendingInstallRequestId.clear();
+        m_pendingInstallName.clear();
+    } else if (dispatchId == m_pendingAction.intentRequestId) {
+        name = m_pendingAction.op == PendingOp::MultiUninstallCascade ? m_pendingAction.names.value(0)
+                                                                      : m_pendingAction.name;
+        m_pendingAction = {};
+    } else {
+        return;
+    }
+    endGatePreview(name);
+    qInfo().noquote() << "PackageCoordinator: the request behind the confirmation for" << name
+                      << "ended; closing it";
+    emit confirmationWithdrawn(dispatchId);
+}
+
 void PackageCoordinator::refreshTrustedPublishers()
 {
     withTrustedKeys([]() {});
@@ -3323,7 +3347,8 @@ void PackageCoordinator::assessPlanTrust(TrustFlow flow, const QString& name,
                 [self](const QVariantMap& row) {
                     return self->installedRecord(row.value(QStringLiteral("name")).toString());
                 },
-                logos::trust::trustedDids(self->m_publisherKeyring->keys()), self->m_bundledNames);
+                logos::trust::trustedDids(self->m_publisherKeyring->keys()),
+                logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, resolved));
             self->publishTrust(flow, epoch, plan, self->trustSummary(name, packages),
                                {{QStringLiteral("plan"),
                                  logos::trust::approvedPlan(name, resolved, packages)}});
@@ -3391,13 +3416,16 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
                         if (!self) return;
                         const QVariantMap file =
                             logos::trust::fileIdentity(name, version, verified, inspected, sha256);
-                        const logos::trust::Package package = logos::trust::asReplacement(
+                        const logos::trust::Package package = logos::trust::asInstall(
                             file.isEmpty()
                                 ? logos::trust::Package{name, version, logos::trust::Status::Invalid}
                                 : logos::trust::fromVerifiedFile(
                                       name, version, verified,
                                       logos::trust::trustedDids(self->m_publisherKeyring->keys())),
-                            self->installedRecord(name), self->m_bundledNames);
+                            inspected.value(QStringLiteral("type")).toString(),
+                            self->installedRecord(name),
+                            self->installedRecord(name + QStringLiteral("_backend")),
+                            logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, {}));
                         self->publishTrust(TrustFlow::Gate, epoch, {}, self->trustSummary(name, {package}),
                                            {{QStringLiteral("file"), file}});
                     }, Qt::QueuedConnection);

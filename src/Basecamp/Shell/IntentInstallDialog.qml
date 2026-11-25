@@ -44,6 +44,8 @@ IntentDialog {
     signal installRequested(string providerName)
 
     function openWith(intent, candidates, details) {
+        // Not swapped under the person reading it: a later offer is dropped.
+        if (visible) return
         d.intentName = intent || ""
         d.candidates = d.merge(candidates || [], details || [])
         d.selected   = d.candidates.length > 0 ? d.candidates[0].moduleName : ""

@@ -29,6 +29,8 @@ Item {
             return qsTr("Comes with Basecamp and updates only with it")
         if (d.reserved)
             return qsTr("Comes with Basecamp, so only Logos can update it")
+        if (d.backendTaken)
+            return qsTr("Another installed package has the name its backend needs")
         if (d.replaces.length > 0)
             return qsTr("Not signed by %1, who signed the version you have").arg(d.replaces)
         if (d.replacesUnverified)
@@ -63,6 +65,8 @@ Item {
         readonly property bool installed: !!root.verdict && root.verdict.installed === true
         // Not what you have, or not anyone's but Logos's to replace.
         readonly property bool reserved: !!root.verdict && root.verdict.reserved === true
+        // An installed package already has the name this app's backend runs as.
+        readonly property bool backendTaken: !!root.verdict && root.verdict.backendTaken === true
         // One of Basecamp's own apps, which no package replaces.
         readonly property bool builtIn: !!root.verdict && root.verdict.builtIn === true
         readonly property string replaces: root.verdict ? (root.verdict.replaces || "") : ""
@@ -70,7 +74,7 @@ Item {
         readonly property color tint: {
             if (d.installed)
                 return Theme.palette.textTertiary
-            if (d.builtIn || d.reserved || d.replaces.length > 0 || d.replacesUnverified)
+            if (d.builtIn || d.reserved || d.backendTaken || d.replaces.length > 0 || d.replacesUnverified)
                 return Theme.palette.error
             switch (d.status) {
             case "bundled":

@@ -24,6 +24,7 @@ class ViewModuleHost;
 class CoreModuleManager;
 class PackageCoordinator;
 class IntentBridgeAdapter;
+class IntentsModuleHost;
 enum class UIPluginType;
 
 // UIPluginManager — owns UI plugin widget lifecycle in this process.
@@ -80,6 +81,7 @@ public:
     // Forwarded to PluginLoader, which attaches each ui_qml app's bridge as it
     // loads. Pass-through, so this class never has to know what an intent is.
     void setIntentAdapter(IntentBridgeAdapter* adapter);
+    void setIntentsModuleHost(IntentsModuleHost* host);
 
     // Unmounts every in-process UI plugin widget. Must run WHILE the shell's
     // widget tree is still alive — the widgets are docked inside it — which is
@@ -136,6 +138,12 @@ public:
     // By value, not by reference: the registry rebuilds by clear-and-refill, so
     // a reference held across a refresh is a use-after-free waiting to happen.
     QMap<QString, QVariantMap> uiPluginMetadataSnapshot() const;
+    // The app `module` is the backend of: the builder's `<app>_backend`, of an
+    // app installed with that backend, and registered from that app's package.
+    // Empty for any other module, one installed on its own by that name too.
+    QString appOfBackend(const QString& module) const;
+    // The other way round: `<app>_backend` for an app installed with that backend.
+    QString backendOfApp(const QString& app) const;
 
     // Mounted in-process right now — distinct from "installed" and from "its
     // core module is loaded". An intent provider needs a live view.

@@ -27,6 +27,8 @@ class IntentBroker;
 class LinkRequestCoordinator;
 class IntentBridgeAdapter;
 class UIPluginPresenter;
+class IntentsModuleHost;
+class IntentChooserQueue;
 class ShellIntentEndpoint;
 class ShellIntentChooser;
 class ShellIntentInstaller;
@@ -151,9 +153,11 @@ class MainUIBackend : public QObject {
     Q_PROPERTY(bool modulesLoading READ modulesLoading NOTIFY modulesLoadingChanged)
 
 public:
+    // `intentsHost`: intents_module's presenter, already claimed; this takes it.
     explicit MainUIBackend(LogosAPI* logosAPI = nullptr,
                            ICoreRuntime* core = nullptr,
                            const LogosBasecamp::HostProfile& hostProfile = {},
+                           IntentsModuleHost* intentsHost = nullptr,
                            QObject* parent = nullptr);
 
     // Tears down the UI-plugin layer while the shell that hosts those widgets
@@ -237,6 +241,8 @@ public slots:
     Q_INVOKABLE void resolveIntentChooser(const QString& dispatchId,
                                           const QString& providerName);
     Q_INVOKABLE void cancelIntentChooser(const QString& dispatchId);
+    // The chooser dialog has closed, after its exit transition: the next one may come up.
+    Q_INVOKABLE void intentChooserClosed(const QString& dispatchId);
 
     // Catalog packages that could service `intent` but are not installed. The
     // chooser lists these alongside the real providers so the mixed case stops
@@ -261,8 +267,8 @@ public slots:
 
     // "Install this package" from outside the Package Manager — the welcome
     // page's result tiles. Hands off to whoever provides `packages.install`,
-    // so the user lands in the Package Manager on that package, in front of
-    // the same gate dialog its own rows raise.
+    // so the user lands in the Package Manager on that package, whose Install
+    // asks for the same gate dialog its own rows raise.
     Q_INVOKABLE void requestPackageInstall(const QString& packageName);
 
     // Uninstall flow — delegated to PackageCoordinator. uninstallApp is the
@@ -440,7 +446,8 @@ signals:
                                              const QStringList& loadedDependents,
                                              const QVariantList& depChanges,
                                              const QString& requesterName,
-                                             bool requesterBundled);
+                                             bool requesterBundled,
+                                             const QString& requestId);
 
     // Install gate (package_manager_ui-initiated) — pure re-emit
     // of PackageCoordinator::installGateConfirmationRequested. releaseTag is the
@@ -452,7 +459,10 @@ signals:
                                           const QVariantList& depChanges,
                                           const QString& requesterName,
                                           bool requesterBundled,
-                                          bool depChangesResolved);
+                                          bool depChangesResolved,
+                                          const QString& requestId);
+    // Its request ended unanswered: the dialog showing it closes, answering nothing.
+    void confirmationWithdrawn(const QString& requestId);
 
     // MDI coordination (re-emitted from UIPluginManager).
     void pluginWindowRequested(QWidget* widget, const QString& title);
@@ -493,6 +503,14 @@ private:
     // Wires the intent signal graph and registers the shell's own provided
     // capabilities. Called once, after UIPluginManager exists.
     void wireIntents();
+    void wireIntentsModule();
+    void pushInstalledToIntentsModule();
+    // intents_module stopped: load it again, and claim the new one.
+    void keepIntentsModuleRunning();
+    // One of the shell's own intents, from either broker: how many handlers
+    // took it (0 = nobody is listening).
+    int deliverShellIntent(const QString& dispatchId, const QString& intent,
+                           const QVariantMap& params, const QString& requesterName);
     void rebuildIntentRegistry();
     void rebuildInstallableProviders();
     QString repositoryUrlFor(const QString& packageName) const;
@@ -507,7 +525,10 @@ public:
     Q_INVOKABLE QVariantMap providerDetailsFor(const QString& packageName) const;
 
 private:
-    bool m_registryDeclares(const QString& intent) const;
+    // packages.show / packages.install to the Package Manager, which answers
+    // them only through intents_module. `orElse` when nothing can take it.
+    void askPackageManager(const QString& intent, const QString& packageName,
+                           std::function<void()> orElse);
     void showPackageDetailsFallback(const QString& packageName);
     int beginAppLaunch(const QString& dispatchId, const QVariantMap& params);
 
@@ -558,6 +579,10 @@ private:
     IntentBroker*        m_intentBroker    = nullptr;
     IntentBridgeAdapter* m_intentAdapter   = nullptr;
     UIPluginPresenter*   m_intentPresenter = nullptr;
+    // Null when intents_module failed to load. Built next to the adapter for the
+    // same reason: bridges tell it when they go.
+    IntentsModuleHost*   m_intentsHost     = nullptr;
+    IntentChooserQueue*  m_chooserQueue    = nullptr;
     std::unique_ptr<ShellIntentEndpoint> m_shellEndpoint;
     std::unique_ptr<ShellIntentChooser>  m_intentChooser;
     std::unique_ptr<ShellIntentInstaller> m_intentInstaller;

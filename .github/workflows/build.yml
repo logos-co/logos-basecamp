@@ -217,6 +217,11 @@ jobs:
       - name: Integration test (UI tests)
         run: nix build .#integration-test -L
 
+      # intents_module end to end: Basecamp as its presenter, a requester app,
+      # a provider app and a provider core module.
+      - name: intents_module test
+        run: nix build .#intents-module-test --no-link -L
+
       - name: Shutdown test
         run: nix build .#shutdown-test -L
         

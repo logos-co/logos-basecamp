@@ -154,6 +154,9 @@ Item {
         onChoiceCancelled: function(dispatchId) {
             backend.cancelIntentChooser(dispatchId);
         }
+        onChoiceClosed: function(dispatchId) {
+            backend.intentChooserClosed(dispatchId);
+        }
         // Ordering is the dialog's: it cancels first, so by the time this
         // arrives the request has been answered and the install resumes nothing.
         onInstallRequested: function(intent, providerName) {
@@ -292,20 +295,27 @@ Item {
         function onUpgradeCascadeConfirmationRequested(name, releaseTag, mode,
                                                        installedDependents, loadedDependents,
                                                        depChanges, requesterName,
-                                                       requesterBundled) {
+                                                       requesterBundled, requestId) {
             upgradeCascadeDialog.openWithUpgrade(name, releaseTag, mode,
                                                  installedDependents, loadedDependents,
-                                                 depChanges, requesterName, requesterBundled);
+                                                 depChanges, requesterName, requesterBundled,
+                                                 requestId);
         }
 
         // Install gate (package_manager_ui-initiated). releaseTag is the
         // target version; depChanges is the resolved transitive set.
+        // Its request ended unanswered: nothing would hear the answer.
+        function onConfirmationWithdrawn(requestId) {
+            for (const dialog of [installGateDialog, upgradeCascadeDialog, uninstallDialog])
+                dialog.withdraw(requestId);
+        }
+
         function onInstallGateConfirmationRequested(name, releaseTag, depChanges,
                                                     requesterName, requesterBundled,
-                                                    depChangesResolved) {
+                                                    depChangesResolved, requestId) {
             installGateDialog.openWithInstallGate(name, releaseTag, depChanges,
                                                   requesterName, requesterBundled,
-                                                  depChangesResolved);
+                                                  depChangesResolved, requestId);
         }
 
         // Each dialog hears only its own flow's verdict: another install of

@@ -25,8 +25,13 @@ public:
     using ResultFn = std::function<void(const QString& requestId,
                                         const QVariantMap& envelope)>;
 
+    using EndedFn = std::function<void(const QString& dispatchId)>;
+
     explicit ShellIntentEndpoint(DeliverFn deliver, ResultFn onResult = {})
         : m_deliver(std::move(deliver)), m_onResult(std::move(onResult)) {}
+
+    // A request the shell took ended without its answer.
+    void setOnEnded(EndedFn onEnded) { m_onEnded = std::move(onEnded); }
 
     int deliverRequest(const QString& dispatchId, const QString& intent,
                        const QVariantMap& params,
@@ -41,6 +46,11 @@ public:
         if (m_onResult) m_onResult(requestId, envelope);
     }
 
+    void dispatchEnded(const QString& dispatchId) override
+    {
+        if (m_onEnded) m_onEnded(dispatchId);
+    }
+
     // Null is correct, not a shortcut: asObject() tracks endpoints that can
     // outlive the broker's interest, and this one dies with the shell.
     QObject* asObject() override { return nullptr; }
@@ -48,4 +58,5 @@ public:
 private:
     DeliverFn m_deliver;
     ResultFn  m_onResult;
+    EndedFn   m_onEnded;
 };

@@ -29,6 +29,9 @@ public:
     virtual void deliverResult(const QString& requestId,
                                const QVariantMap& envelope) = 0;
     virtual QObject* asObject() = 0;
+    // A request delivered here ended some other way than this endpoint's
+    // answer: a deadline, its requester gone, an abandon.
+    virtual void dispatchEnded(const QString& dispatchId) { Q_UNUSED(dispatchId); }
 };
 
 // Loading and showing an app. The broker knows nothing about widgets, docks or

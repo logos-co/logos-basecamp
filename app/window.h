@@ -15,6 +15,7 @@
 #include <QWindow>
 
 class LogosAPI;
+class IntentsModuleHost;
 class MainUIBackend;
 class ShellHostAdapter;
 class IShellView;
@@ -31,9 +32,12 @@ class Window : public QMainWindow
     Q_OBJECT
 
 public:
+    // `intentsHost`: intents_module's presenter, already claimed; null when it
+    // is off. The window's backend takes it.
     explicit Window(LogosAPI* logosAPI,
                     ICoreRuntime* core,
                     const LogosBasecamp::HostProfile& hostProfile,
+                    IntentsModuleHost* intentsHost = nullptr,
                     QWidget *parent = nullptr);
     ~Window();
 
@@ -66,7 +70,7 @@ private slots:
     void quitApplication();
 
 private:
-    void setupUi(const LogosBasecamp::HostProfile& hostProfile);
+    void setupUi(const LogosBasecamp::HostProfile& hostProfile, IntentsModuleHost* intentsHost);
     // Resize the window so its FRAME fits the available geometry of the screen
     // it is on -- shrinking when it does not fit, and growing back toward
     // m_desiredSize when room returns. Runs at first show (frame margins are

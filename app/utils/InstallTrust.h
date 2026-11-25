@@ -46,6 +46,7 @@ struct Package {
     bool offered = false;
     bool builtIn = false;      // one of Basecamp's own apps (BuiltInApps.h), whoever signed it: Invalid
     bool reserved = false;     // ships with Basecamp, and not signed by Logos: Invalid
+    bool backendTaken = false; // an app whose `<name>_backend` another installed package has: Invalid
     QString replacesSignedBy;  // the key that signed the copy it replaces, when another signs it
     bool replacesUnverified = false;  // replaces a copy no checkable key signed, and isn't Logos's
 };
@@ -97,9 +98,11 @@ QList<Package> judgePlan(const QString& name, const QVariantList& resolved,
                          const LogosKeys& logos = logosKeys());
 
 // `package`, as it would replace what is installed as `record`
-// (package_manager's, or empty): one of Basecamp's own apps never installs
-// (Invalid, `builtIn`), a name in `bundled`, which ships with
-// Basecamp, may only come from Logos (otherwise Invalid, `reserved`), and one
+// (package_manager's, or empty): one of Basecamp's own apps, or a name it
+// calls modules under (identityNames()), never installs (Invalid, `builtIn`),
+// a reserved name (`bundled`: reservedNames(), or
+// reservedFor() for one install) may only come from Logos
+// (otherwise Invalid, `reserved`), and one
 // signed by another publisher than the copy it replaces says so
 // (`replacesSignedBy`), as does one replacing a copy no checkable key signed,
 // unless Logos signed it (`replacesUnverified`). Logos's keys are one
@@ -117,11 +120,37 @@ QVariantMap installedRecordOf(const QVariantList& installed, const QString& name
 // (main.cpp's restrictPackageModules()).
 QStringList packageModuleCallers();
 
+// `package`, as installing it would put it on disk: asReplacement(), and an
+// app (`type` ui_qml) whose backend's name (`<name>_backend`) an installed
+// package has (`backendRecord`, its record; empty if none) is Invalid
+// (`backendTaken`). Every way in is judged by this: a catalogue plan's rows
+// (the package, its dependencies, its upgrades) and a local file.
+Package asInstall(Package package, const QString& type, const QVariantMap& record,
+                  const QVariantMap& backendRecord, const QStringList& bundled,
+                  const LogosKeys& logos = logosKeys());
+
+// The names Basecamp and the runtime call modules under, and intents_module
+// knows them by: Basecamp (`core`), the runtime's `core_service`, which may
+// call any module under an enforce policy, the shell (`main_ui`) and the link
+// requester (`logos_link`). A package under one would act as them, so none
+// installs, Logos's either.
+QStringList identityNames();
+
 // The names only Logos may install under (asReplacement()'s `bundled`): the
 // `modules` and `apps` Basecamp ships, the backend each of those apps loads,
-// every packageModuleCallers() name, and `core_service`, which the runtime
-// lets call any module under an enforce policy.
+// every packageModuleCallers() name, and intents_module.
 QStringList reservedNames(const QStringList& modules, const QStringList& apps);
+
+// The names reserved for one install: `bundled` (reservedNames()), plus the
+// backend (`<app>_backend`) of each ui_qml app `installed` or in the `plan`.
+// It ships inside its app's package, and a package by that name would make
+// the app's backend unregistrable. A name that only ends in _backend, with no
+// such app, is a package like any other: the catalogue has eth_wallet_backend.
+QStringList reservedFor(const QStringList& bundled, const QVariantList& installed,
+                        const QVariantList& plan);
+
+// A name in `reserved`, case-insensitively.
+bool isReservedName(const QString& name, const QStringList& reserved);
 
 // The file a confirm request names in `localPath`, if Basecamp may open it at
 // all: only the Package Manager installs from a file, and only an absolute,

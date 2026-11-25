@@ -1109,19 +1109,153 @@ private slots:
     {
         const QStringList reserved = reservedNames({QStringLiteral("capability_module")},
                                                    {QStringLiteral("wallet_ui")});
-        for (const char* name : {"capability_module", "wallet_ui", "wallet_ui_backend", "core_service"})
+        for (const char* name : {"capability_module", "wallet_ui", "wallet_ui_backend", "intents_module"})
             QVERIFY2(reserved.contains(QLatin1String(name)), name);
         // Whatever Basecamp ships: each name that may call package_manager.
         QVERIFY(packageModuleCallers().contains(QStringLiteral("core")));
         for (const QString& caller : packageModuleCallers())
             QVERIFY2(reservedNames({}, {}).contains(caller), qPrintable(caller));
-        const Package daemon = asReplacement({QStringLiteral("Core_Service"), QStringLiteral("1.0.0"),
+        const Package broker = asReplacement({QStringLiteral("Intents_Module"), QStringLiteral("1.0.0"),
                                               Status::Trusted, kOtherDid}, {}, reserved);
-        QCOMPARE(daemon.status, Status::Invalid);
-        QVERIFY(daemon.reserved);
-        QCOMPARE(asReplacement({QStringLiteral("core"), QStringLiteral("1.0.0"), Status::Trusted, logosDid()},
-                               {}, reserved).status,
+        QCOMPARE(broker.status, Status::Invalid);
+        QVERIFY(broker.reserved);
+        QCOMPARE(asReplacement({QStringLiteral("intents_module"), QStringLiteral("1.0.0"), Status::Trusted,
+                                logosDid()}, {}, reserved).status,
                  Status::Trusted);
+    }
+
+    // The names Basecamp and the runtime call modules under: a package under
+    // one would act as them, so none installs, whoever signed it. A main_ui
+    // Logos signed would still be the shell to every module.
+    void identityNamesNeverInstall()
+    {
+        for (const char* name : {"core", "core_service", "Core_Service", "main_ui", "logos_link"}) {
+            for (const QString& did : {logosDid(), kOtherDid}) {
+                const Package p = asReplacement({QLatin1String(name), QStringLiteral("1.0.0"),
+                                                 Status::Trusted, did}, {}, reservedNames({}, {}));
+                QCOMPARE(p.status, Status::Invalid);
+                QVERIFY2(p.builtIn, name);
+            }
+        }
+    }
+
+    // An app's backend ships inside the app's package: one installed under that
+    // name, while the app is installed or installs with it, would make the
+    // backend unregistrable. Only Logos may. A name that only ends in _backend,
+    // with no such app, is a package like any other.
+    void anAppsBackendNameIsReservedWhileTheAppIsThere()
+    {
+        const QVariantList installed{
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("chat_ui")}, {QStringLiteral("type"), QStringLiteral("ui_qml")}},
+            QVariantMap{{QStringLiteral("name"), QStringLiteral("eth_rpc_module")}, {QStringLiteral("type"), QStringLiteral("core")}}};
+        QVariantMap planned = planRow(QStringLiteral("wallet_ui"), QStringLiteral("1.0.0"), QStringLiteral("a"));
+        planned[QStringLiteral("type")] = QStringLiteral("ui_qml");
+        const QStringList reserved = reservedFor({}, installed, {planned});
+
+        for (const char* name : {"chat_ui_backend", "Chat_UI_Backend", "wallet_ui_backend"}) {
+            const Package p = asReplacement({QLatin1String(name), QStringLiteral("1.0.0"),
+                                             Status::Trusted, kOtherDid}, {}, reserved);
+            QCOMPARE(p.status, Status::Invalid);
+            QVERIFY2(p.reserved, name);
+        }
+        QCOMPARE(asReplacement({QStringLiteral("chat_ui_backend"), QStringLiteral("1.0.0"),
+                                Status::Trusted, logosDid()}, {}, reserved).status,
+                 Status::Trusted);
+        for (const char* name : {"eth_wallet_backend", "eth_rpc_module_backend", "chat_ui", "backend"}) {
+            const Package p = asReplacement({QLatin1String(name), QStringLiteral("1.0.0"),
+                                             Status::Trusted, kOtherDid}, {}, reserved);
+            QVERIFY2(!p.reserved, name);
+            QCOMPARE(p.status, Status::Trusted);
+        }
+    }
+
+    // The Ethereum wallet brings eth_wallet_backend, a core module that only
+    // ends in _backend: it installs with the app. A package in the same plan
+    // under the app's own backend name does not.
+    void aModuleThatOnlyEndsInBackendInstallsWithItsApp()
+    {
+        const auto onDisk = [](const QVariantMap&) { return false; };
+        const auto versionsOf = [](const QVariantMap& row) {
+            return QVariantList{release(row.value(QStringLiteral("name")).toString(),
+                                        row.value(QStringLiteral("version")).toString(),
+                                        row.value(QStringLiteral("rootHash")).toString(), kOtherDid)};
+        };
+        const auto installedOf = [](const QVariantMap&) { return QVariantMap{}; };
+        const auto typed = [](const char* name, const char* type, const char* hash) {
+            QVariantMap row = planRow(QLatin1String(name), QStringLiteral("0.1.0"), QLatin1String(hash));
+            row[QStringLiteral("type")] = QLatin1String(type);
+            return row;
+        };
+        const QVariantList wallet{typed("eth_wallet_ui", "ui_qml", "a"), typed("eth_wallet_backend", "core", "b")};
+        for (const Package& p : judgePlan(QStringLiteral("eth_wallet_ui"), wallet, onDisk, versionsOf, installedOf,
+                                          {kOtherDid}, reservedFor({}, {}, wallet))) {
+            QVERIFY2(!p.reserved, qPrintable(p.name));
+            QCOMPARE(p.status, Status::Trusted);
+        }
+
+        QVariantList impostor = wallet;
+        impostor.append(typed("eth_wallet_ui_backend", "core", "c"));
+        const QList<Package> judged = judgePlan(QStringLiteral("eth_wallet_ui"), impostor, onDisk, versionsOf,
+                                                installedOf, {kOtherDid}, reservedFor({}, {}, impostor));
+        QCOMPARE(judged.last().name, QStringLiteral("eth_wallet_ui_backend"));
+        QVERIFY(judged.last().reserved);
+        QCOMPARE(judged.last().status, Status::Invalid);
+    }
+
+    // The other order: a package already installed under the name an app's
+    // backend runs as. The app would not get its backend, and that package
+    // would pass for it, so the app doesn't install, whoever signed it.
+    void anAppWhoseBackendNameIsTakenDoesNotInstall()
+    {
+        const auto onDisk = [](const QVariantMap&) { return false; };
+        const auto versionsOf = [](const QVariantMap& row) {
+            return QVariantList{release(row.value(QStringLiteral("name")).toString(),
+                                        row.value(QStringLiteral("version")).toString(),
+                                        row.value(QStringLiteral("rootHash")).toString(), logosDid())};
+        };
+        const auto installedOf = [](const QVariantMap& row) {
+            return row.value(QStringLiteral("name")).toString() == QLatin1String("chat_ui_backend")
+                ? QVariantMap{{QStringLiteral("installType"), QStringLiteral("user")},
+                              {QStringLiteral("type"), QStringLiteral("core")}}
+                : QVariantMap{};
+        };
+        QVariantMap app = planRow(QStringLiteral("chat_ui"), QStringLiteral("1.0.0"), QStringLiteral("a"));
+        app[QStringLiteral("type")] = QStringLiteral("ui_qml");
+        const QList<Package> taken = judgePlan(QStringLiteral("chat_ui"), {app}, onDisk, versionsOf,
+                                               installedOf, {logosDid()});
+        QCOMPARE(taken.size(), 1);
+        QVERIFY(taken[0].backendTaken);
+        QCOMPARE(taken[0].status, Status::Invalid);
+
+        // A core module of that name is a package like any other.
+        QVariantMap core = planRow(QStringLiteral("chat_ui"), QStringLiteral("1.0.0"), QStringLiteral("a"));
+        core[QStringLiteral("type")] = QStringLiteral("core");
+        const QList<Package> fine = judgePlan(QStringLiteral("chat_ui"), {core}, onDisk, versionsOf,
+                                              installedOf, {logosDid()});
+        QVERIFY(!fine[0].backendTaken);
+        QCOMPARE(fine[0].status, Status::Trusted);
+    }
+
+    // A local file is judged as a catalogue row is: an app whose backend's
+    // name an installed package has doesn't install from a file either.
+    void aLocalAppWhoseBackendNameIsTakenDoesNotInstall()
+    {
+        const QVariantMap backendName{{QStringLiteral("installType"), QStringLiteral("user")},
+                                      {QStringLiteral("type"), QStringLiteral("core")}};
+        const Package file = fromVerifiedFile(QStringLiteral("chat_ui"), QStringLiteral("1.0.0"),
+                                              verified(true, true, true, logosDid()), {logosDid()});
+        QCOMPARE(file.status, Status::Trusted);
+        const Package app = asInstall(file, QStringLiteral("ui_qml"), {}, backendName, {});
+        QCOMPARE(app.status, Status::Invalid);
+        QVERIFY(app.backendTaken);
+        QCOMPARE(asInstall(file, QStringLiteral("core"), {}, backendName, {}).status, Status::Trusted);
+        QCOMPARE(asInstall(file, QStringLiteral("ui_qml"), {}, {}, {}).status, Status::Trusted);
+        // And it is judged as replacing what it would replace.
+        const Package shell = asInstall(fromVerifiedFile(QStringLiteral("main_ui"), QStringLiteral("1.0.0"),
+                                                         verified(true, true, true, logosDid()), {logosDid()}),
+                                        QStringLiteral("ui_qml"), {}, {}, reservedNames({}, {}));
+        QCOMPARE(shell.status, Status::Invalid);
+        QVERIFY(shell.builtIn);
     }
 
     // An update signed by another publisher than the copy it replaces asks,

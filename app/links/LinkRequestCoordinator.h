@@ -56,6 +56,12 @@ public:
     void setParkDeadlineMs(int ms);
 
     void setCatalogGate(std::function<void(std::function<void()>)> whenCatalogLoaded);
+    // With intents_module: a link's request goes there instead of the broker,
+    // and its result comes back through resultArrived(). False = refused at once.
+    using Submitter = std::function<bool(const QString& requestId, const QString& intent,
+                                         const QVariantMap& params)>;
+    void setSubmitter(Submitter submit) { m_submit = std::move(submit); }
+    void resultArrived(const QString& requestId, const QVariantMap& envelope) { onResult(requestId, envelope); }
 
 signals:
     // For the shell to show. `reason` is developer-facing text, never anything
@@ -86,6 +92,7 @@ private:
 
     std::function<void()> m_raise;
     std::function<void(std::function<void()>)> m_whenCatalogLoaded;
+    Submitter m_submit;
 
     bool m_ready = false;
     bool m_inFlight = false;

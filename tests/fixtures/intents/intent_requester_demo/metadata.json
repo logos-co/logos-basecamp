@@ -22,6 +22,9 @@
     },
     {
       "intent": "test.handoff"
+    },
+    {
+      "intent": "basecamp.packages.confirm_install"
     }
   ]
 }

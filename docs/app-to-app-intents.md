@@ -49,7 +49,7 @@ Nothing is signed yet, so a name is a claim rather than an identity. §6 sets ou
 | A `basecamp://` link is clicked | Becomes an intent from a requester the shell mints — never the shell itself, so the chooser still applies (§7) |
 | Requester is not on a restricted intent's list | `unavailable`, floored — indistinguishable from "nothing provides it" |
 
-**Providers are `ui_qml` apps, by design.** Intents exist for *user-mediated* actions: the caller does not know who will service the request, and a human chooses. Core modules have no such problem — they already call each other directly by name through `LogosAPI`, with no chooser and no consent step, because nothing is being decided. A backend that needs another backend should make that call, not raise an intent.
+**Providers are `ui_qml` apps, by design.** Intents exist for *user-mediated* actions: the caller does not know who will service the request, and a human chooses. Core modules have no such problem — they already call each other directly by name through `LogosAPI`, with no chooser and no consent step, because nothing is being decided. A backend that needs another backend should make that call, not raise an intent. (That is this path. With `intents_module`, §9, an app's backend or a core module asks and provides.)
 
 **Not yet:** one provider per request; `cardinality: "all"` is reserved but unimplemented (§7). There is no "always use this app" — every ambiguous request raises the chooser (§7). Nothing crosses devices or process trees.
 
@@ -268,6 +268,7 @@ Note what the manifest does **not** carry: the author's `params`. Only intent na
 | Frozen vocabulary | `logos-view-module-runtime/include/LogosIntent.h` |
 | QML surface | `logos-view-module-runtime/src/LogosQmlBridge.cpp` |
 | Registry / broker | `logos-basecamp/app/IntentRegistry.{h,cpp}`, `IntentBroker.{h,cpp}` |
+| `intents_module` and its presenter | `logos-intents-module`; `logos-basecamp/app/intents/IntentsModuleHost.{h,cpp}` (§9) |
 | Shell's own capabilities | `logos-basecamp/app/ShellIntents.{h,cpp}` |
 | Deep links | `logos-basecamp/app/links/` — `LinkUrl` (parser), `SingleInstanceGuard`, `LinkUrlInbox`, `LinkRequestCoordinator`, `SchemeRegistrar` |
 | Dialogs | `logos-basecamp/src/Basecamp/Shell/Intent*Dialog.qml` |
@@ -313,3 +314,34 @@ Absent means `false`. Per *(provider, intent)*, like `params` and for the same r
 **Why no return affordance.** An earlier draft had a floating "← Back to Chat" chip for every case auto-return declines. Dropped: every loaded app has a permanent sidebar icon, and plugin widgets are confined to the content stack, so a provider's own popup cannot cover the way back. The chip would have been a second escape hatch layered on one that cannot be blocked — at the cost of a component, a grace timer, bridge plumbing, and a placement constraint (`OverlayDialogs` must stay hidden when idle or it steals the Linux drag-and-drop pixmap). **That makes "app content cannot cover the sidebar" load-bearing**, and it is the kind of thing a later full-bleed workspace would quietly break.
 
 Known limits: wander off before the provider answers and there is no automatic return; the install-offer flow has none, as above; and a return lands you on the app, not on where you were inside it — in-app position survives only because nothing here unloads anything.
+
+---
+
+## 9. `intents_module`: backends and core modules
+
+*Apps' screens still ask and answer through the broker above. App backends and core modules use `intents_module`, which every build runs beside it. In 0.5 the screens' path goes, and this is the only one.*
+
+The registry and broker for modules are a core module, `intents_module`, and Basecamp is its **presenter**: it draws what the module asks for and decides when to interrupt the person. The module knows modules, not apps: an app asks and answers through its backend (`"backend": "module"`, the module `<app>_backend`), whose own `metadata.json` declares the app's `uses` and `provides`, and Basecamp shows that backend as its app. The QML path keeps running beside it for apps that haven't moved; each side sees only its own providers, so an intent a core module provides isn't reachable from an app's screen, and the other way round. For app authors: "Asking and answering from the backend" in `logos-tutorial/guide-intents-for-app-developers.md`. The module's API: `logos-intents-module/README.md`.
+
+What Basecamp does as the presenter:
+
+- **Claims the module** right after loading it, before any app loads, then declares the shell's own intents and the installed packages, an app's backend under the app's name and icon. It tells the module again when a package changes, an upgrade in place included, and sends again what the module didn't take: a second later, then twice as long each time, up to a minute, since each call holds the UI until it times out. It pulls no work from the module until it holds both. The catalogue stays in Basecamp: an install offer from the module names only the intent, and Basecamp finds what could be installed. A link to an intent that only an uninstalled package provides is refused by the module, and Basecamp offers that install itself.
+- **Decides when a request interrupts.** Every new request waits in the module, pending, until Basecamp opens it. By default (`bundled`) it opens one at once when what asks shipped with Basecamp, and any other only when the person clicked or pressed a key in the asking app within the last 2 seconds, one request per click. A core module has no screen to click in, so unless it ships with Basecamp its requests don't open (see the gaps below). Trusting a publisher lets its packages install, not interrupt. `--intents-attention interactive` waits for that click every time, for Basecamp's own packages too; `immediate` opens every request, and only developer builds (those with the QML inspector) take it. The chooser says who signed the package asking.
+- **Needs a new click after a hand-off.** The click that started a hand-off was in the requester, so a provider asks for anything needing approval once the person clicks in its own view: `packages.install` opens the package in Package Manager, and clicking Install there asks for the install dialog.
+- **Starts what the person picks** before answering the chooser: an app is loaded and Basecamp waits for its backend (up to 45 seconds); a core module is loaded as the Module Inspector would. One that does not come up is answered anyway, and the request fails as `unavailable`.
+- **Does the rest of the work it is given**: the chooser, raising the provider's app when the module delivers to it (a module with no screen is not raised), the shell's own intents (the package confirmations and the rest, with the same dialogs as above), install offers, and the return to the requester on `completed`, with the guards in §8.
+- **Asks through the module itself.** The Welcome page's `packages.show` / `packages.install` and every `basecamp://` link go through `shell_request`, so Basecamp's own requests use one broker, the module. A link still asks under its own requester name and still faces the chooser.
+- **Claims the module** as soon as it loads, before anything else starts; one it can't claim is unloaded, and only the QML path runs.
+- **Shows one chooser at a time**, whichever broker asks, and never changes the one on screen: the next waits until it has closed.
+- **Closes a package confirmation whose request ended** (expired, its requester gone, the module restarted), so it can't block the next one or answer nobody (#570). It closes the dialog showing that request, by its ID, and the dialog answers nothing: a cancel goes by package name, and would cancel a retry for the same package.
+- **Restarts the module** if it stops, up to three times, and claims the new instance. Requests in flight fail; the apps' backends keep running. Past the third it stays off, and so does one Basecamp can't claim again: the Welcome page's Details and Install open the App Manager's dialog instead, and what apps and links ask through it fails.
+
+Known gaps:
+
+- **No pending list in the UI yet.** A request that doesn't open (one with no click behind it, so any core module's that doesn't ship with Basecamp) waits until it expires, after 30 minutes, as `cancelled`.
+- **Ask from the backend, on the click.** A request a core module makes for an app (app → core module → intent) has no click behind it and doesn't open. Ask from the app's own backend, in response to the person's click. A presenter with no screen to click in, such as the one planned for `logoscore`, may open every request.
+- **The screens' path has no click rule.** Requests from apps' screens, on the QML path, open at once as before, whoever made the app. Only requests through the module wait for a click.
+- **A click also opens a request sent just before it.** Basecamp sees a request only when it pulls its work, so a request the app's backend sent a moment before the click, and not yet pulled, is opened by that click. It is the app the person is using either way.
+- **Install offers name only the intent.** The module's `offer_install` doesn't say who asked or whether a link may reach the intent, so for a module's request Basecamp can't name the requester in its offer or check `"web": true`. The offer only suggests an install.
+- **Not supported under `--access-policy enforce`.** That policy refuses every request and delivery through the module: they aren't dependency edges, as an app's calls to its backend aren't either. A policy entry written by the frontend would fix both; until then, use the default policy.
+- **A restarted module goes to the first host caller that claims it.** Basecamp claims the new instance at once and unloads it if that fails, but nothing yet proves the claim is Basecamp's. Tracked until Logos Core can give the presenter a credential.

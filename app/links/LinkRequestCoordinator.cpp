@@ -176,6 +176,12 @@ void LinkRequestCoordinator::handleUrl(const QString& rawUrl)
         if (!m_broker) return;
         qInfo().noquote() << "LinkRequestCoordinator: dispatching link request"
                           << requestId << "for intent" << intent;
+        if (m_submit) {
+            if (!m_submit(requestId, intent, params))
+                onResult(requestId, QVariantMap{{QStringLiteral("ok"), false},
+                                                {QStringLiteral("error"), QStringLiteral("failed")}});
+            return;
+        }
         m_broker->submit(m_endpoint.get(), requestId, intent, params);
     };
 

@@ -680,6 +680,11 @@ void IntentBroker::finish(const QString& dispatchId, bool ok,
     const PendingRequest request = it.value();
     m_pending.erase(it);   // erase before delivering: fire-once by construction
 
+    // The provider that took it may be showing something for it.
+    if (request.phase == Phase::Dispatched && request.provider
+        && path != CompletionPath::ProviderResponse)
+        request.provider->dispatchEnded(dispatchId);
+
     // dismiss() used to be emitted only from chooseProvider(), so the dialog
     // came down when a choice was MADE and never when a request ended any other
     // way — a backstop firing, a requester dying, an abandon. The record went,
@@ -881,6 +886,8 @@ void IntentBroker::endpointDestroyed(IntentEndpoint* endpoint)
         }
 
         if (it->provider == endpoint) {
+            // Gone: nothing is told the request ended.
+            it->provider = nullptr;
             // "unavailable", not "failed": distinguishing "was reached and
             // died" from "was never there" leaks install state.
             failWithFloor(dispatchId, logos::intent::errUnavailable(),

@@ -225,6 +225,11 @@ public slots:
     // ({status, publisher, impersonates}): unknown until the installed
     // packages and the keyring are loaded.
     QVariantMap installedTrust(const QString& name) const;
+    // True when the requester is an embedded (bundled) package.
+    bool requesterIsBundled(const QString& requesterName) const;
+    // A confirmation request the shell was answering ended without that
+    // answer: its dialog closes, and the next confirmation isn't refused.
+    void shellIntentEnded(const QString& dispatchId);
 
     // Package-repository management — thin wrappers around the
     // package_downloader IPC surface
@@ -293,6 +298,7 @@ signals:
     // "Uninstall and Unload Dependents?". `mode` mirrors
     // PackageTypes::UpgradeMode (0=Upgrade, 1=Downgrade, 2=Sidegrade).
     // `requesterName` is host-attested — who asked, for the dialog to name.
+    // `requestId`: the request it answers, empty for Basecamp's own.
     void upgradeCascadeConfirmationRequested(const QString& name,
                                              const QString& releaseTag,
                                              int mode,
@@ -300,7 +306,8 @@ signals:
                                              const QStringList& loadedDependents,
                                              const QVariantList& depChanges,
                                              const QString& requesterName,
-                                             bool requesterBundled);
+                                             bool requesterBundled,
+                                             const QString& requestId);
 
     // Fresh-install confirmation dialog trigger — the sibling of the upgrade
     // cascade for a not-yet-installed package. Carries the target version and
@@ -314,8 +321,12 @@ signals:
                                           const QVariantList& depChanges,
                                           const QString& requesterName,
                                           bool requesterBundled,
-                                          bool depChangesResolved);
+                                          bool depChangesResolved,
+                                          const QString& requestId);
     void optionalGatePreviewUpdated(const QString& name, const QVariantList& changes, bool pending);
+    // The request `requestId` a confirmation was shown for ended unanswered:
+    // its dialog closes, and answers nothing.
+    void confirmationWithdrawn(const QString& requestId);
 
     // Repository management — change-notify for the QML-facing cache and
     // an outcome signal for add/remove/toggle (success or error string).
@@ -384,9 +395,6 @@ private:
 
     // Remove each name. Only after the cascade-unload has run.
     void performLocalRemoval(const QStringList& names);
-
-    // True when the requester is an embedded (bundled) package.
-    bool requesterIsBundled(const QString& requesterName) const;
 
     // Union of the batch's installed dependents, excluding the batch itself.
     QStringList dependentsOfBatch(const QStringList& names) const;
