@@ -1,0 +1,32 @@
+{
+  "name": "intent_echo_provider",
+  "display_name": "Echo Provider",
+  "version": "1.0.0",
+  "description": "intents_module test fixture: a core module that answers test.module_echo by itself (test artifact, not a real module)",
+  "author": "Logos Core Team",
+  "type": "core",
+  "category": "testing",
+  "main": "intent_echo_provider_plugin",
+  "dependencies": [],
+  "interface_dependencies": [
+    {"name": "intents", "file": "contracts/intents.lidl", "input": "logos-intents-module"}
+  ],
+  "provides": [
+    {
+      "intent": "test.module_echo",
+      "params": [
+        { "name": "text", "type": "string", "required": true, "description": "Echoed back" }
+      ]
+    }
+  ],
+  "nix": {
+    "packages": { "build": [], "runtime": [] },
+    "external_libraries": [],
+    "cmake": { "find_packages": [], "extra_sources": [] }
+  },
+  "interface": "universal",
+  "codegen": {
+    "impl_class": "IntentEchoProviderImpl",
+    "impl_header": "src/intent_echo_provider_impl.h"
+  }
+}

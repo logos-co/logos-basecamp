@@ -329,12 +329,12 @@ Package asReplacement(Package package, const QVariantMap& record, const QStringL
 {
     // Names compare as a case-insensitive file system does, where Wallet_UI
     // lands on wallet_ui.
-    if (builtin::isBuiltIn(package.name)) {
+    if (builtin::isBuiltIn(package.name) || isReservedName(package.name, identityNames())) {
         package.status = Status::Invalid;
         package.builtIn = true;
         return package;
     }
-    if (bundled.contains(package.name, Qt::CaseInsensitive) && !logos.dids.contains(package.did)) {
+    if (isReservedName(package.name, bundled) && !logos.dids.contains(package.did)) {
         package.status = Status::Invalid;
         package.reserved = true;
         return package;
@@ -371,13 +371,51 @@ QStringList packageModuleCallers()
     return {QStringLiteral("core"), QStringLiteral("package_manager_ui_backend")};
 }
 
+Package asInstall(Package package, const QString& type, const QVariantMap& record,
+                  const QVariantMap& backendRecord, const QStringList& bundled, const LogosKeys& logos)
+{
+    package = asReplacement(std::move(package), record, bundled, logos);
+    // An app's backend runs as `<name>_backend`. A package installed under
+    // that name would keep it from running, and pass for it.
+    if (type == QLatin1String("ui_qml") && !backendRecord.isEmpty()) {
+        package.status = Status::Invalid;
+        package.backendTaken = true;
+    }
+    return package;
+}
+
+QStringList identityNames()
+{
+    return {QStringLiteral("core"), QStringLiteral("core_service"), QStringLiteral("main_ui"),
+            QStringLiteral("logos_link")};
+}
+
 QStringList reservedNames(const QStringList& modules, const QStringList& apps)
 {
     QStringList names = modules + packageModuleCallers();
-    names << QStringLiteral("core_service");
+    names << QStringLiteral("intents_module");
     for (const QString& app : apps)
         names << app << app + QStringLiteral("_backend");
     return names;
+}
+
+QStringList reservedFor(const QStringList& bundled, const QVariantList& installed,
+                        const QVariantList& plan)
+{
+    QStringList names = bundled;
+    for (const QVariantList* packages : {&installed, &plan}) {
+        for (const QVariant& v : *packages) {
+            const QVariantMap package = v.toMap();
+            if (package.value(QStringLiteral("type")).toString() == QLatin1String("ui_qml"))
+                names << package.value(QStringLiteral("name")).toString() + QStringLiteral("_backend");
+        }
+    }
+    return names;
+}
+
+bool isReservedName(const QString& name, const QStringList& reserved)
+{
+    return reserved.contains(name, Qt::CaseInsensitive);
 }
 
 QList<Package> judgePlan(const QString& name, const QVariantList& resolved,
@@ -394,9 +432,11 @@ QList<Package> judgePlan(const QString& name, const QVariantList& resolved,
         const QString rowName = row.value(QStringLiteral("name")).toString();
         const QString version = row.value(QStringLiteral("version")).toString();
         if (rowName == name || !onDisk(row))
-            return asReplacement(fromCatalog(rowName, version, row.value(QStringLiteral("rootHash")).toString(),
-                                             versionsOf(row), trusted),
-                                 installedOf(row), bundled, logos);
+            return asInstall(fromCatalog(rowName, version, row.value(QStringLiteral("rootHash")).toString(),
+                                         versionsOf(row), trusted),
+                             row.value(QStringLiteral("type")).toString(), installedOf(row),
+                             installedOf({{QStringLiteral("name"), rowName + QStringLiteral("_backend")}}),
+                             bundled, logos);
         return fromInstalled(rowName, version, installedOf(row), trusted);
     };
 
@@ -719,6 +759,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
             verdict[QStringLiteral("builtIn")] = true;
         if (p.reserved)
             verdict[QStringLiteral("reserved")] = true;
+        if (p.backendTaken)
+            verdict[QStringLiteral("backendTaken")] = true;
         if (!replaces.isEmpty())
             verdict[QStringLiteral("replaces")] = replaces;
         if (p.replacesUnverified)
@@ -747,6 +789,8 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
             row[QStringLiteral("builtIn")] = true;
         if (p.reserved)
             row[QStringLiteral("reserved")] = true;
+        if (p.backendTaken)
+            row[QStringLiteral("backendTaken")] = true;
         if (!replaces.isEmpty())
             row[QStringLiteral("replaces")] = replaces;
         if (p.replacesUnverified)

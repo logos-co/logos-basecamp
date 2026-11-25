@@ -99,11 +99,26 @@ TestCase {
 
         dlg.openWith("probe.echo", ["probe_ui", "other_ui"], []);
         dlg.select("other_ui");
+        dlg.close();
+        tryVerify(function () { return !dlg.visible; }, 5000, "closed");
 
         // A stale selection carried into the next offer would install a package
         // the user never saw, for a request they were not asked about.
         dlg.openWith("probe.echo", ["probe_ui"]);
         compare(dlg.selectedCandidate, "probe_ui", "reset to the new first candidate");
+
+        dlg.destroy();
+    }
+
+    // An offer the person is reading is not swapped for another under them.
+    function test_a_later_offer_does_not_replace_the_open_one() {
+        var dlg = dialogComp.createObject(testCase);
+
+        dlg.openWith("probe.echo", ["probe_ui", "other_ui"], []);
+        dlg.select("other_ui");
+        dlg.openWith("wallet.send", ["wallet_ui"], []);
+        compare(dlg.intentName, "probe.echo");
+        compare(dlg.selectedCandidate, "other_ui");
 
         dlg.destroy();
     }
@@ -291,6 +306,8 @@ TestCase {
         }, 5000, "the body line is realised");
         verify(body.text.indexOf("installed from") < 0,
                "no origin clause without a repository, got: " + body.text);
+        dlg.close();
+        tryVerify(function () { return !dlg.visible; }, 5000, "closed");
 
         // Two candidates: the list renders, and the subtitle is the module name
         // alone rather than "name · ".

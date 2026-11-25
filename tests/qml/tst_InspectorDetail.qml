@@ -31,6 +31,7 @@ TestCase {
     ]
 
     ListModel { id: modules }
+    ListModel { id: modulesAgain }
 
     Component { id: moduleInspectorComp; ModuleInspectorView { sourceModel: modules } }
     Component { id: appsInspectorComp; AppsInspectorView { sourceModel: modules } }
@@ -229,6 +230,24 @@ TestCase {
         findChild(view, "moduleInspector.details.interface").clicked()
         verify(view.showingInterface)
         compare(view.selectedPlugin, "depsvc")
+    }
+
+    // The modules model resets whenever a module comes or goes, and every row
+    // is made again: a row on its way out has no data, and the open detail
+    // must not read it.
+    function test_a_reset_under_an_open_detail_reads_no_gone_row() {
+        failOnWarning(/Cannot read property/)
+        const view = makeView(moduleInspectorComp, 1000)
+        view.openDetails("depsvc")
+        const details = detailsOf(view)
+        verify(details.panelOpen)
+        modulesAgain.clear()
+        for (const row of rows)
+            modulesAgain.append(row)
+        view.sourceModel = modulesAgain
+        waitForRendering(view)
+        verify(details.panelOpen)
+        compare(titleOf(view), "Dependency Service")
     }
 
     function test_a_module_that_goes_closes_its_detail() {

@@ -15,6 +15,7 @@
 #include "links/LinkUrlInbox.h"
 #include "links/SchemeRegistrar.h"
 #include "links/SingleInstanceGuard.h"
+#include "intents/IntentsModuleHost.h"
 #ifdef ENABLE_QML_INSPECTOR
 #include "inspectorserver.h"
 #endif
@@ -230,6 +231,14 @@ int main(int argc, char *argv[])
                            "plugins/ and module_data/ — use --user-dir instead "
                            "if they must not interfere."));
         parser.addOption(newInstanceOption);
+        QCommandLineOption intentsAttentionOption(QStringLiteral("intents-attention"),
+            QStringLiteral("How intents_module's requests reach the person: \"bundled\" "
+                           "(default) opens one from what ships with Basecamp at once, and any "
+                           "other only after a click in the asking app's screen; \"interactive\" "
+                           "always waits for that click; \"immediate\" opens every request at "
+                           "once, in developer builds only. Also LOGOS_INTENTS_ATTENTION."),
+            QStringLiteral("bundled|interactive|immediate"));
+        parser.addOption(intentsAttentionOption);
         // Standalone mode: host exactly these apps, one tab each, for
         // developing them. See utils/StandaloneMode.h.
         QCommandLineOption moduleOption(QStringLiteral("module"),
@@ -307,6 +316,20 @@ int main(int argc, char *argv[])
 
         launchUri = parser.value(uriOption);
         forceNewInstance = parser.isSet(newInstanceOption);
+        // Developer builds are the ones with the QML inspector; no release has it.
+#ifdef ENABLE_QML_INSPECTOR
+        constexpr bool developerBuild = true;
+#else
+        constexpr bool developerBuild = false;
+#endif
+        QString attentionWarning;
+        hostProfile.intentsAttention = LogosBasecamp::intentsAttentionFor(
+            parser.isSet(intentsAttentionOption) ? parser.value(intentsAttentionOption)
+                                                 : qEnvironmentVariable("LOGOS_INTENTS_ATTENTION"),
+            developerBuild, &attentionWarning);
+        if (!attentionWarning.isEmpty()) qWarning().noquote() << attentionWarning;
+        if (hostProfile.intentsAttention == QStringLiteral("immediate"))
+            qWarning() << "--intents-attention immediate: every module's requests open at once";
         windowWidth = parser.value(widthOption).toInt();
         windowHeight = parser.value(heightOption).toInt();
 
@@ -608,6 +631,30 @@ int main(int argc, char *argv[])
         }
         return core->loadModule(name, LoadPolicy::RequiredAndOptional);
     };
+    // First, and claimed as soon as it is up, before anything else could
+    // call it. One Basecamp can't claim is unloaded: someone else may hold it.
+    std::unique_ptr<IntentsModuleHost> intentsHost;
+    if (hostProfile.intentsModule) {
+        if (!loadChecked(QStringLiteral("intents_module"))) {
+            qWarning() << "intents_module did not load; intents through it are off this session";
+        } else {
+            intentsHost = std::make_unique<IntentsModuleHost>(
+                [api = &logosAPI](const QString& method, const QVariantList& args) {
+                    LogosAPIClient* client = api->getClient(QStringLiteral("intents_module"));
+                    return client ? client->invokeRemoteMethod(QStringLiteral("intents_module"), method,
+                                                               args, Timeout(3000)).toString()
+                                  : QString();
+                });
+            if (!intentsHost->claim()) {
+                qWarning() << "intents_module could not be claimed; unloading it, so intents "
+                              "through it are off this session";
+                core->unloadModule(QStringLiteral("intents_module"), /*withDependents=*/true);
+                intentsHost.reset();
+            }
+        }
+        hostProfile.intentsModule = intentsHost != nullptr;
+    }
+
     bool loaded = loadChecked(QStringLiteral("package_manager"));
 
     if (loaded) {
@@ -655,7 +702,7 @@ int main(int argc, char *argv[])
 
     // Create and show the main window. Heap-allocated so we can control
     // destruction ordering explicitly during shutdown (see below).
-    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get(), hostProfile);
+    auto mainWindow = std::make_unique<Window>(&logosAPI, core.get(), hostProfile, intentsHost.release());
     if (windowWidth > 0 || windowHeight > 0)
         mainWindow->setLaunchSize(windowWidth, windowHeight);
     mainWindow->show();

@@ -50,6 +50,9 @@ public:
         results.append({requestId, envelope});
     }
 
+    QStringList ended;   // dispatches taken here that ended without this answer
+    void dispatchEnded(const QString& dispatchId) override { ended << dispatchId; }
+
     QObject* asObject() override { return nullptr; }
 
     bool ok() const { return results.value(0).second.value(QStringLiteral("ok")).toBool(); }
@@ -204,6 +207,9 @@ private:
     void buildOneProviderWorld(QTemporaryDir& root, IntentRegistry& registry);
 
 private slots:
+    void testAShellDialogsRequestEndingTellsTheShell();
+    void testTheShellsOwnAnswerIsNoEnding();
+    void testAProviderThatDiedIsToldNothing();
     void testNotDeclaredShortCircuits();
     void testNoProviderIsUnavailableAfterFloor();
     void testRestrictedRequesterIsDeniedIndistinguishably();
@@ -2114,6 +2120,73 @@ void TestIntentBroker::testChooserAnsweringDuringDismissIsSafe()
     QCOMPARE(chatEndpoint.error(), QStringLiteral("cancelled"));
     QVERIFY(walletEndpoint.requests.isEmpty());
     QCOMPARE(broker.pendingCount(), 0);
+}
+
+namespace {
+
+// chat_ui may ask for the shell's basecamp.packages.confirm_install.
+struct ShellConfirmWorld {
+    QTemporaryDir root;
+    IntentRegistry registry;
+    FakePresenter presenter;
+    FakeEndpoint chatEndpoint, shellEndpoint;
+    std::unique_ptr<IntentBroker> broker;   // last, so it goes before what it points at
+
+    ShellConfirmWorld()
+    {
+        const QString requester = writeApp(root, QStringLiteral("chat_ui"), R"({
+            "name": "chat_ui", "type": "ui_qml",
+            "uses": [ { "intent": "basecamp.packages.confirm_install" } ]
+        })");
+        QMap<QString, QVariantMap> plugins;
+        plugins.insert(QStringLiteral("chat_ui"),
+                       QVariantMap{{QStringLiteral("installDir"), requester},
+                                   {QStringLiteral("type"), QStringLiteral("ui_qml")}});
+        registry.rebuild(plugins, [](const QString& n) { return n; },
+                         [](const QString&) { return QString(); });
+        registry.registerShellProvider(QStringLiteral("main_ui"),
+                                       {QStringLiteral("basecamp.packages.confirm_install")}, {},
+                                       QStringLiteral("Logos"), QString());
+        broker = std::make_unique<IntentBroker>(&registry, &presenter);
+        broker->setTimeouts(5000, 5000, 20);
+        broker->registerEndpoint(QStringLiteral("chat_ui"), &chatEndpoint);
+        broker->registerEndpoint(QStringLiteral("main_ui"), &shellEndpoint);
+        broker->submit(&chatEndpoint, QStringLiteral("req-1"),
+                       QStringLiteral("basecamp.packages.confirm_install"), {});
+        spin(80);
+    }
+};
+
+} // namespace
+
+// The shell took the request and put a dialog up; the requester went away.
+// Nothing would hear the dialog's answer now, so the shell is told (#570).
+void TestIntentBroker::testAShellDialogsRequestEndingTellsTheShell()
+{
+    ShellConfirmWorld w;
+    QCOMPARE(w.shellEndpoint.requests.size(), 1);
+    const QString dispatchId = w.shellEndpoint.requests.first().dispatchId;
+    w.broker->endpointDestroyed(&w.chatEndpoint);
+    QCOMPARE(w.shellEndpoint.ended, QStringList{dispatchId});
+}
+
+void TestIntentBroker::testTheShellsOwnAnswerIsNoEnding()
+{
+    ShellConfirmWorld w;
+    const QString dispatchId = w.shellEndpoint.requests.first().dispatchId;
+    QVERIFY(w.broker->submitResponse(&w.shellEndpoint, dispatchId, true, {}, QString()));
+    spin(50);
+    QVERIFY(w.shellEndpoint.ended.isEmpty());
+}
+
+// A provider being destroyed is not called back while it goes.
+void TestIntentBroker::testAProviderThatDiedIsToldNothing()
+{
+    ShellConfirmWorld w;
+    w.broker->endpointDestroyed(&w.shellEndpoint);
+    spin(80);
+    QVERIFY(w.shellEndpoint.ended.isEmpty());
+    QCOMPARE(w.chatEndpoint.error(), QStringLiteral("unavailable"));
 }
 
 QTEST_MAIN(TestIntentBroker)

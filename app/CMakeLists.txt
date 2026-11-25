@@ -336,6 +336,8 @@ set(PROJECT_SOURCES
     IntentRegistry.cpp
     IntentBroker.cpp
     IntentBridgeAdapter.cpp
+    IntentChooserQueue.cpp
+    intents/IntentsModuleHost.cpp
     UIPluginPresenter.cpp
     CoreModuleManager.cpp
     CoreDependencyLoader.cpp

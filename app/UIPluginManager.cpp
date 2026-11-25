@@ -632,9 +632,36 @@ void UIPluginManager::setIntentAdapter(IntentBridgeAdapter* adapter)
     if (m_pluginLoader) m_pluginLoader->setIntentAdapter(adapter);
 }
 
+void UIPluginManager::setIntentsModuleHost(IntentsModuleHost* host)
+{
+    if (m_pluginLoader) m_pluginLoader->setIntentsModuleHost(host);
+}
+
 QMap<QString, QVariantMap> UIPluginManager::uiPluginMetadataSnapshot() const
 {
     return m_uiPluginMetadata;
+}
+
+QString UIPluginManager::appOfBackend(const QString& module) const
+{
+    const QString suffix = QStringLiteral("_backend");
+    if (!module.endsWith(suffix)) return {};
+    const QString app = module.chopped(suffix.size());
+    if (backendOfApp(app) != module) return {};
+    // A module installed on its own under that name is not the app's, and is
+    // never shown as it: the core knows the app's only once it registered it.
+    if (m_coreModuleManager && m_coreModuleManager->knownModules().contains(module)
+        && !isAppBackend(module))
+        return {};
+    return app;
+}
+
+QString UIPluginManager::backendOfApp(const QString& app) const
+{
+    const auto it = m_uiPluginMetadata.constFind(app);
+    if (it == m_uiPluginMetadata.cend()) return {};
+    const QString backend = backendModuleOf(it.value());
+    return isBackendNameFor(app, backend) ? backend : QString();
 }
 
 bool UIPluginManager::isUiAppLoaded(const QString& moduleName) const

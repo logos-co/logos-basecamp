@@ -40,6 +40,7 @@
     logos-storage-module.url = "github:logos-co/logos-storage-module/v3.0.2";
     logos-package-downloader-module.inputs.storage_module.follows = "logos-storage-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
+    logos-intents-module.url = "github:logos-co/logos-intents-module";
     logos-modules-state-module.url = "github:logos-co/logos-modules-state-module";
     logos-package.url = "github:logos-co/logos-package";
     logos-package-manager-ui.url = "github:logos-co/logos-package-manager-ui";
@@ -49,6 +50,7 @@
     # signer-binding fix.
     logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
     logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
+    logos-package-manager-ui.inputs.logos-intents-module.follows = "logos-intents-module";
     logos-design-system.url = "github:logos-co/logos-design-system";
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     # ui-host links the same qt-host and protocol the app does.
@@ -71,7 +73,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-storage-module, logos-capability-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-storage-module, logos-capability-module, logos-intents-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -152,6 +154,7 @@
         logosLiblogosPortable = logos-liblogos.packages.${system}.portable;
         logosPackageManagerModuleLibPortable = logos-package-manager-module.packages.${system}.lib-portable;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
+        logosIntentsModule = logos-intents-module.packages.${system}.default;
         logosModulesStateModule = logos-modules-state-module.packages.${system}.default;
         logosPackageLib = logos-package.packages.${system}.lib;
         # Headers-only output (include/ with logos/semver.hpp + semver/, no
@@ -191,7 +194,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosIntentsModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -224,6 +227,9 @@
             logosPackageManagerModuleLib
             logosPackageDownloaderModuleLib
             logosCapabilityModule
+            # The intent broker for app backends and core modules; Basecamp is
+            # its presenter (app/intents/).
+            logosIntentsModule
             # The module lifecycle registry. liblogos feeds it load/unload/crash
             # as sequenced facts, which is what lets a consumer stop polling --
             # PackageCoordinator's settle-timer inference is what this replaces.
@@ -236,6 +242,7 @@
             logosPackageManagerModuleLibPortable
             logosPackageDownloaderModuleLib
             logosCapabilityModule
+            logosIntentsModule
             logosModulesStateModule
             packageManagerUIPlugin
             logosStorageModuleLib
@@ -257,6 +264,7 @@
             installedModules = map installDev [
               logosPackageManagerModuleLib
               logosCapabilityModule
+              logosIntentsModule
               logosModulesStateModule
             ];
           };
@@ -328,6 +336,7 @@
             installedModules = map installPortable [
               logosPackageManagerModuleLibPortable
               logosCapabilityModule
+              logosIntentsModule
               logosModulesStateModule
             ];
             portable = true;
@@ -740,6 +749,44 @@
             name = "standalone-module-backend-test";
             installPkg = self.packages.${system}.standalone-module-backend-fixture;
             testFiles = [ ./tests/standalone-module-backend-tests.mjs ];
+          };
+          # intents_module end to end. The requester is opened (--module); the
+          # providers, a core module and an app, are only available
+          # (--modules-dir), so picking one is what starts it. All built with
+          # the builder intents_module itself uses, and bind it by its contract.
+          intents-module-fixture =
+            let builder = logos-intents-module.inputs.logos-module-builder;
+            in (builder.lib.mkLogosQmlModule {
+              src = ./tests/fixtures/intents-module/intent_module_requester;
+              configFile = ./tests/fixtures/intents-module/intent_module_requester/metadata.json;
+              flakeInputs = { logos-module-builder = builder; inherit logos-intents-module; };
+            }).packages.${system}.install;
+          intents-module-providers =
+            let
+              builder = logos-intents-module.inputs.logos-module-builder;
+              echo = installDev (builder.lib.mkLogosModule {
+                src = ./tests/fixtures/intents-module/intent_echo_provider;
+                configFile = ./tests/fixtures/intents-module/intent_echo_provider/metadata.json;
+                flakeInputs = { logos-module-builder = builder; inherit logos-intents-module; };
+              }).packages.${system}.default;
+              app = (builder.lib.mkLogosQmlModule {
+                src = ./tests/fixtures/intents-module/intent_app_provider;
+                configFile = ./tests/fixtures/intents-module/intent_app_provider/metadata.json;
+                flakeInputs = { logos-module-builder = builder; inherit logos-intents-module; };
+              }).packages.${system}.install;
+            in buildPkgs.runCommandLocal "intents-module-providers" { } ''
+              mkdir -p $out
+              cp -r ${app}/. $out/
+              chmod -R u+w $out
+              cp -r ${echo}/modules/. $out/modules/
+            '';
+          intents-module-test = mkPluginTest {
+            inherit pkgs;
+            name = "intents-module-test";
+            installPkg = self.packages.${system}.intents-module-fixture;
+            modulesDir = self.packages.${system}.intents-module-providers;
+            testFiles = [ ./tests/intents-module-tests.mjs ];
+            extraArgs = "--intents-attention interactive";
           };
           # A single module dir is refused, so its siblings never reach the
           # scanners or dependency resolution.

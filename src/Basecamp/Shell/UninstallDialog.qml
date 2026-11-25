@@ -6,7 +6,8 @@ import Logos.Icons
 import Logos.Theme
 
 // The one uninstall confirmation. Plan payload shape:
-//   { kind, multi, batch, removable[], kept[], dependents[], loading?, targetName? }
+//   { kind, multi, batch, removable[], kept[], dependents[], loading?, targetName?,
+//     requestId? (the request it answers) }
 // See PackageCoordinator::buildPlanPayload for row fields.
 LogosWarningDialog {
     id: root
@@ -20,6 +21,14 @@ LogosWarningDialog {
     function openWithPlan(plan_) {
         root.plan = plan_ || ({});
         open();
+    }
+
+    // Request `requestId_` (the plan's `requestId`) ended unanswered: the
+    // dialog showing it closes, and answers nothing.
+    function withdraw(requestId_) {
+        if (!root.visible || !requestId_ || requestId_ !== (root.plan.requestId || "")) return false;
+        close();
+        return true;
     }
 
     QtObject {

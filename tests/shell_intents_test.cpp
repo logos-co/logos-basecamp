@@ -14,6 +14,8 @@
 #include "LogosIntent.h"
 
 #include <QDir>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -31,6 +33,8 @@ private slots:
     void testAppLaunchTakesTheAppNameAsAParameter();
     void testPreRenameNamesAreGone();
     void testAppsCannotClaimTheNewNavigationIntents();
+    void testModuleDeclarationMatchesTheRegistration();
+    void testModuleDeclarationRestrictsEveryConfirmIntent();
 
 private:
     static IntentRegistry* freshRegistry(QObject* parent)
@@ -227,6 +231,44 @@ void TestShellIntents::testAppsCannotClaimTheNewNavigationIntents()
         QCOMPARE(resolution.found.size(), 1);
         QCOMPARE(resolution.found.first().moduleName, QStringLiteral("main_ui"));
     }
+}
+
+static QStringList strings(const QJsonValue& v)
+{
+    QStringList out;
+    for (const QJsonValue& s : v.toArray()) out << s.toString();
+    return out;
+}
+
+// intents_module gets the same capabilities the old registry does.
+void TestShellIntents::testModuleDeclarationMatchesTheRegistration()
+{
+    const QJsonObject shell = ShellIntents::moduleDeclaration(
+        QStringLiteral("main_ui"), QStringLiteral("Logos"), QString(), QStringLiteral("logos_link"));
+    QCOMPARE(shell.value(QStringLiteral("name")).toString(), QStringLiteral("main_ui"));
+    QCOMPARE(shell.value(QStringLiteral("reservedPrefix")).toString(), QStringLiteral("basecamp."));
+    QCOMPARE(strings(shell.value(QStringLiteral("provides"))),
+             ShellIntents::kNavigationIntents + ShellIntents::kPackageConfirmIntents);
+    QCOMPARE(strings(shell.value(QStringLiteral("handoff"))), ShellIntents::kNavigationIntents);
+    QCOMPARE(strings(shell.value(QStringLiteral("uses"))), ShellIntents::kShellUses);
+    const QJsonObject link = shell.value(QStringLiteral("link")).toObject();
+    QCOMPARE(link.value(QStringLiteral("name")).toString(), QStringLiteral("logos_link"));
+    QCOMPARE(strings(link.value(QStringLiteral("webIntents"))), ShellIntents::kWebReachableIntents);
+}
+
+// confirm_install too: the module lets any package that declares a shell
+// intent ask for it, so each confirm intent names who may: the Package
+// Manager's backend, which asks for the app.
+void TestShellIntents::testModuleDeclarationRestrictsEveryConfirmIntent()
+{
+    const QJsonObject restricted = ShellIntents::moduleDeclaration(
+        QStringLiteral("main_ui"), QStringLiteral("Logos"), QString(), QStringLiteral("logos_link"))
+        .value(QStringLiteral("restricted")).toObject();
+    for (const QString& confirm : ShellIntents::kPackageConfirmIntents)
+        QCOMPARE(strings(restricted.value(confirm)),
+                 QStringList{QStringLiteral("package_manager_ui_backend")});
+    for (const QString& web : ShellIntents::kWebReachableIntents)
+        QVERIFY2(!ShellIntents::kPackageConfirmIntents.contains(web), qPrintable(web));
 }
 
 QTEST_MAIN(TestShellIntents)

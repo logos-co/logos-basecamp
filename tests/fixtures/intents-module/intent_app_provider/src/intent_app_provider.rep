@@ -1,0 +1,6 @@
+class IntentAppProvider
+{
+    SLOT(void approve())
+    SLOT(void decline())
+    PROP(QString request="" READONLY)
+}

@@ -1,0 +1,47 @@
+{
+  "name": "intent_module_requester",
+  "display_name": "Intent Requester",
+  "version": "1.0.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "testing",
+  "description": "intents_module test fixture: an app whose backend asks for test.module_echo, on a click in its view or later (test artifact, not a real app)",
+  "main": "intent_module_requester_plugin",
+  "view": "qml/Main.qml",
+  "dependencies": [],
+  "interface_dependencies": [
+    {"name": "intents", "file": "contracts/intents.lidl", "input": "logos-intents-module"}
+  ],
+  "uses": [
+    {
+      "intent": "test.module_echo"
+    },
+    {
+      "intent": "test.app_echo"
+    },
+    {
+      "intent": "basecamp.settings.open"
+    },
+    {
+      "intent": "basecamp.packages.confirm_install"
+    }
+  ],
+  "codegen": {
+    "rep": "src/intent_module_requester.rep"
+  },
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": []
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  },
+  "icon": "src/icons/icon.png",
+  "backend": "module"
+}

@@ -126,6 +126,7 @@ private slots:
     void testUrlIsParkedUntilTheRegistryIsReady();
     void testParkedUrlFailsAfterTheDeadline();
     void testOnlyOneLinkRequestInFlight();
+    void testWithASubmitterALinkGoesThereOneAtATime();
     void testBareUrlRaisesWithoutSubmitting();
     void testSurvivesTheBrokerBeingDestroyedFirst();
     void testCatalogWebOptInReachesTheInstallOffer();
@@ -415,6 +416,49 @@ void TestLinkIntent::testOnlyOneLinkRequestInFlight()
 
     QCOMPARE(chooser.presented.size(), 1);
     QVERIFY2(failures.count() >= 1, "the dropped links were dropped silently");
+}
+
+// With intents_module a link goes there instead of the broker, still one at a
+// time: the next is taken only once the result of the last came back.
+void TestLinkIntent::testWithASubmitterALinkGoesThereOneAtATime()
+{
+    QObject owner;
+    QTemporaryDir root;
+    const QString dir = makeApp(root, QStringLiteral("wallet"),
+        R"({"provides":[{"intent":"wallet.send","web":true}]})");
+    IntentRegistry* registry = wired(&owner);
+    registry->rebuild({ { QStringLiteral("wallet_ui"), plugin(dir) } }, nullptr, nullptr);
+
+    FakePresenter presenter;
+    FakeChooser chooser;
+    IntentBroker broker(registry, &presenter, &owner);
+    broker.setChooser(&chooser);
+
+    LinkRequestCoordinator coordinator(&broker, registry, &owner);
+    QStringList submitted;
+    QString lastId;
+    coordinator.setSubmitter([&](const QString& id, const QString& intent, const QVariantMap&) {
+        submitted << intent;
+        lastId = id;
+        return true;
+    });
+    coordinator.onRegistryReady();
+    QSignalSpy failures(&coordinator, &LinkRequestCoordinator::linkFailed);
+
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/wallet.send"));
+    spin(200);
+    QCOMPARE(submitted, QStringList{QStringLiteral("wallet.send")});
+    QCOMPARE(chooser.presented.size(), 0);   // not through the broker
+
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/wallet.send"));
+    spin(200);
+    QCOMPARE(submitted.size(), 1);
+    QCOMPARE(failures.count(), 1);
+
+    coordinator.resultArrived(lastId, {{QStringLiteral("ok"), true}});
+    LinkUrlInbox::instance().post(QStringLiteral("basecamp://intent/wallet.send"));
+    spin(200);
+    QCOMPARE(submitted.size(), 2);
 }
 
 void TestLinkIntent::testBareUrlRaisesWithoutSubmitting()

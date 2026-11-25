@@ -1,0 +1,10 @@
+class IntentModuleRequester
+{
+    SLOT(void ask(QString intent, QString text, bool clicked))
+    SLOT(void cancelWaiting())
+    SLOT(void deliverDirectly(QString module, QString intent))
+    PROP(QString status="idle" READONLY)
+    PROP(QString history="" READONLY)
+    PROP(int waiting=0 READONLY)
+    PROP(QString direct="" READONLY)
+}

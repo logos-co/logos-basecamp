@@ -18,6 +18,7 @@ class QQuickWidget;
 class ViewModuleHost;
 class LogosQmlBridge;
 class IntentBridgeAdapter;
+class IntentsModuleHost;
 class CoreModuleManager;
 class CoreDependencyLoader;
 
@@ -61,6 +62,9 @@ public:
     // LogosIntentRouter, because attaching is basecamp's concern — the runtime's
     // router treats bridge POINTERS as identity and has no registration method.
     void setIntentAdapter(IntentBridgeAdapter* adapter) { m_intentAdapter = adapter; }
+    // intents_module: an app's backend may be called by it, and the app's view is
+    // watched for the clicks that let a request interrupt.
+    void setIntentsModuleHost(IntentsModuleHost* host) { m_intentsHost = host; }
 
     explicit PluginLoader(LogosAPI* logosAPI,
                           CoreModuleManager* coreModuleManager,
@@ -146,6 +150,7 @@ private:
     LogosAPI* m_logosAPI;
 
     IntentBridgeAdapter* m_intentAdapter = nullptr;
+    IntentsModuleHost* m_intentsHost = nullptr;
     CoreModuleManager* m_coreModuleManager;   // not owned
     QString            m_installedAppsRoot;
 

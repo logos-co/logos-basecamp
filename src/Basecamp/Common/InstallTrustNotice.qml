@@ -23,9 +23,11 @@ ColumnLayout {
         readonly property bool needsPrompt: root.trust.needsPrompt === true
         readonly property var publishers: root.trust.publishers || []
         readonly property var packages: root.trust.packages || []
-        readonly property string invalidNames: d.names(p => p.status === "invalid" && !p.reserved && !p.builtIn)
+        readonly property string invalidNames: d.names(p => p.status === "invalid" && !p.reserved && !p.builtIn
+                                                            && !p.backendTaken)
         readonly property string builtInNames: d.names(p => p.builtIn === true)
         readonly property string reservedNames: d.names(p => p.reserved === true)
+        readonly property string backendTakenNames: d.names(p => p.backendTaken === true)
         // Signed by someone else than the copy they replace, or replacing one
         // nobody signed.
         readonly property var replaced: d.packages.filter(p => !!p.replaces || p.replacesUnverified === true)
@@ -90,6 +92,9 @@ ColumnLayout {
                 lines.push(d.fill(qsTr("Comes with Basecamp and updates only with it: %1"), [d.builtInNames]))
             if (d.reservedNames.length > 0)
                 lines.push(d.fill(qsTr("Comes with Basecamp, so only Logos can update it: %1"), [d.reservedNames]))
+            if (d.backendTakenNames.length > 0)
+                lines.push(d.fill(qsTr("Another installed package has the name its backend needs: %1"),
+                                  [d.backendTakenNames]))
             if (d.invalidNames.length > 0)
                 lines.push(d.fill(qsTr("Damaged, or the signature doesn't hold: %1"), [d.invalidNames]))
             return lines.join("\n")

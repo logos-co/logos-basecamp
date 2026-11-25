@@ -34,6 +34,48 @@ TestCase {
     SignalSpy { id: installSpy; signalName: "installRequested" }
     SignalSpy { id: previewSpy; signalName: "versionChangeRequested" }
     SignalSpy { id: gatePreviewSpy; signalName: "optionalPreviewRequested" }
+    SignalSpy { id: gateCancelSpy; signalName: "cancelClicked" }
+
+    // Its request ended: only the dialog showing it closes, and it answers
+    // nothing. A cancel goes by package name, so it would have cancelled
+    // whatever asked about the same package next.
+    function test_a_withdrawn_request_closes_without_an_answer() {
+        var dlg = dialogComp.createObject(testCase)
+        gateCancelSpy.target = dlg
+        gateCancelSpy.clear()
+        dlg.openWithInstallGate("chat", "1.0.0", [], "package_manager_ui", true, true, "a1")
+        tryCompare(dlg, "opened", true)
+        verify(!dlg.withdraw("b1"))
+        verify(!dlg.withdraw(""))
+        verify(dlg.visible)
+        verify(dlg.withdraw("a1"))
+        tryCompare(dlg, "visible", false)
+        compare(gateCancelSpy.count, 0)
+        dlg.destroy()
+    }
+
+    // The same package asked again the moment the first request ended: the
+    // retry is what shows, and nothing cancels it.
+    function test_a_retry_right_after_a_withdrawal_is_not_cancelled() {
+        var dlg = dialogComp.createObject(testCase)
+        gateCancelSpy.target = dlg
+        gateCancelSpy.clear()
+        dlg.openWithInstallGate("chat", "1.0.0", [], "package_manager_ui", true, true, "a1")
+        tryCompare(dlg, "opened", true)
+        dlg.withdraw("a1")
+        dlg.openWithInstallGate("chat", "1.1.0", [], "package_manager_ui", true, true, "b1")
+        wait(500)
+        verify(dlg.visible)
+        compare(dlg.requestId, "b1")
+        compare(dlg.upgradeTargetVersion, "1.1.0")
+        compare(gateCancelSpy.count, 0)
+        // Escape still answers the request on screen.
+        keyClick(Qt.Key_Escape)
+        tryCompare(dlg, "visible", false)
+        compare(gateCancelSpy.count, 1)
+        compare(gateCancelSpy.signalArguments[0][0], "chat")
+        dlg.destroy()
+    }
 
     function selectableOptional() {
         return { name: "storage_module", displayName: "Storage Module", optional: true,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 
@@ -59,10 +60,25 @@ inline const QStringList kWebReachableIntents = {
     QStringLiteral("basecamp.packages.open"),
 };
 
+// What the shell itself asks for.
+inline const QStringList kShellUses = {
+    QStringLiteral("packages.show"),
+    QStringLiteral("packages.install"),
+};
+
 // Declare the shell's provides, hand-offs, uses and requester restrictions.
 void registerWith(IntentRegistry* registry,
                   const QString& shellModuleName,
                   const QString& displayName,
                   const QString& iconSource);
+
+// The same, for intents_module's declare_shell, with the link requester. Every
+// confirm intent is restricted to the Package Manager's backend, the module it
+// asks through: the module lets any package that declares a shell intent ask
+// for it otherwise.
+QJsonObject moduleDeclaration(const QString& shellModuleName,
+                              const QString& displayName,
+                              const QString& iconSource,
+                              const QString& linkRequesterName);
 
 } // namespace ShellIntents

@@ -75,6 +75,8 @@ LogosWarningDialog {
     // | "loadFailed"
     property string mode: "missingDeps"
     property string moduleName: ""
+    // The request the dialog answers; empty for Basecamp's own.
+    property string requestId: ""
     // For "missingDeps" each entry is a map from
     // logos::dependencyBlockerToMap — {name, kind, requiredVersion,
     // installedVersion, requiredSigner, signerDid, detail}. For the other
@@ -213,6 +215,8 @@ LogosWarningDialog {
                 return ", which comes with Basecamp and updates only with it";
             if (v.reserved)
                 return ", which comes with Basecamp, so only Logos can update it";
+            if (v.backendTaken)
+                return ", whose backend's name another installed package already has";
             if (v.replaces)
                 return ", which isn't signed by " + v.replaces + ", who signed the version you have";
             if (v.replacesUnverified)
@@ -325,11 +329,22 @@ LogosWarningDialog {
     function openWith(mode_, name_, items_, blockSummary_) {
         root.mode = mode_;
         root.moduleName = name_ || "";
+        root.requestId = "";
         root.items = items_ || [];
         root.blockSummary = blockSummary_ || "";
         root.loadedItems = [];
         root._explicitClose = false;
         open();
+    }
+
+    // Request `requestId_` ended unanswered: the dialog showing it closes, and
+    // answers nothing. A cancel would go by name, to whatever asks about the
+    // same package next.
+    function withdraw(requestId_) {
+        if (!root.visible || !requestId_ || requestId_ !== root.requestId) return false;
+        root._explicitClose = true;
+        close();
+        return true;
     }
 
     // An `items` entry is either a blocker map or a bare module name. Read it
@@ -352,10 +367,12 @@ LogosWarningDialog {
     // would — but the title + body lead with the target version and the
     // UpgradeMode so the user sees the full operation, not just
     // "Uninstall and Unload Dependents?".
-    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_, requester_, requesterBundled_) {
+    function openWithUpgrade(name_, version_, upgradeMode_, installedDeps_, loadedDeps_, depChanges_, requester_, requesterBundled_,
+                             requestId_) {
         root.mode = "upgradeCascade";
         root.trust = ({});
         root.moduleName = name_ || "";
+        root.requestId = requestId_ || "";
         root.upgradeTargetVersion = version_ || "";
         root.upgradeModeKind = upgradeMode_ | 0;
         root.items = installedDeps_ || [];
@@ -374,9 +391,10 @@ LogosWarningDialog {
     // Continue / Cancel still flow through continueClicked / cancelClicked;
     // the backend routes those to confirmInstallGate / cancelInstallGate.
     function openWithInstallGate(name_, version_, depChanges_, requester_, requesterBundled_,
-                                depChangesResolved_) {
+                                depChangesResolved_, requestId_) {
         root.mode = "installGate";
         root.trust = ({});
+        root.requestId = requestId_ || "";
         // Defaults to true so existing callers keep today's meaning.
         root.depChangesResolved = depChangesResolved_ === undefined
                                   ? true : !!depChangesResolved_;
@@ -395,6 +413,7 @@ LogosWarningDialog {
     function openWithInstallError(name_, errorMessage_) {
         root.mode = "installError";
         root.moduleName = name_ || "";
+        root.requestId = "";
         root.errorMessage = errorMessage_ || "";
         root.items = [];
         root.loadedItems = [];
@@ -408,6 +427,7 @@ LogosWarningDialog {
     function openWithLoadError(name_, error_, title_) {
         root.mode = "loadFailed";
         root.moduleName = name_ || "";
+        root.requestId = "";
         root.errorMessage = (error_ || "").trim();
         root.loadFailedTitle = title_ || "";
         root.items = [];

@@ -32,7 +32,8 @@
 #endif
 
 Window::Window(LogosAPI* logosAPI, ICoreRuntime* core,
-               const LogosBasecamp::HostProfile& hostProfile, QWidget *parent)
+               const LogosBasecamp::HostProfile& hostProfile,
+               IntentsModuleHost* intentsHost, QWidget *parent)
     : QMainWindow(parent)
     , m_logosAPI(logosAPI)
     , m_core(core)
@@ -42,7 +43,7 @@ Window::Window(LogosAPI* logosAPI, ICoreRuntime* core,
     , m_quitAction(nullptr)
 {
     setObjectName(QStringLiteral("logosMainWindow"));
-    setupUi(hostProfile);
+    setupUi(hostProfile, intentsHost);
     createTrayIcon();
 #ifdef Q_OS_MAC
     createMenuBar();
@@ -93,7 +94,7 @@ Window::~Window()
     }
 }
 
-void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
+void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile, IntentsModuleHost* intentsHost)
 {
     // The UI shell is a Qt plugin — plugins/main_ui/main_ui.{so,dylib,dll} —
     // reached through IShellView / IShellHost. It gets a QWidget* out and eight
@@ -103,7 +104,7 @@ void Window::setupUi(const LogosBasecamp::HostProfile& hostProfile)
     // Ownership stays HERE: the backend and its adapter belong to the Window and
     // the shell only borrows them. Deliberately not parented to `this`; ~Window
     // destroys them explicitly and in order.
-    m_backend     = new MainUIBackend(m_logosAPI, m_core, hostProfile, nullptr);
+    m_backend     = new MainUIBackend(m_logosAPI, m_core, hostProfile, intentsHost, nullptr);
     m_hostAdapter = new ShellHostAdapter(m_backend, nullptr);
 
     QString pluginExtension;

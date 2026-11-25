@@ -54,6 +54,9 @@ IntentDialog {
     signal providerChosen(string dispatchId, string providerName)
     signal choiceCancelled(string dispatchId)
 
+    // After the exit transition, however it closed: the slot is free.
+    signal choiceClosed(string dispatchId)
+
     // Emitted AFTER choiceCancelled for the same dispatch: an uninstalled
     // package cannot be dispatched to, so the request ends before the install
     // begins. The user retries once it lands, exactly as on the
@@ -66,6 +69,12 @@ IntentDialog {
     // describing the wrong app.
     function openWith(request) {
         var r = request || ({})
+        // Never repointed under the person deciding: the host queues the next.
+        if (visible || d.dispatchId !== "") {
+            console.warn("IntentChooserDialog: a chooser is already up; not replacing it with",
+                         r.dispatchId)
+            return
+        }
         d.dispatchId    = r.dispatchId    || ""
         d.intentName    = r.intent        || ""
         d.requesterName = r.requesterName || ""
@@ -96,8 +105,10 @@ IntentDialog {
         // However it closed, the request is over. Cleared here rather than in
         // closeFor() so it happens after the exit transition, and for every
         // path rather than just a withdrawal.
+        const closedId = d.dispatchId
         d.dispatchId  = ""
         d.installable = []
+        root.choiceClosed(closedId)
     }
 
     // One provider is not a choice. The broker sends it here anyway — see its
@@ -223,6 +234,13 @@ IntentDialog {
             elide: Text.ElideRight
             visible: d.requesterName !== ""
                      && root.displayNameLookup(d.requesterName) !== d.requesterName
+        }
+
+        // Who signed the package asking, as Details says for each app below.
+        InstallTrustLine {
+            objectName: "intentRequesterTrust"
+            Layout.fillWidth: true
+            verdict: d.requesterName !== "" ? root.detailsLookup(d.requesterName).trust : undefined
         }
 
         LogosListView {

@@ -2,6 +2,8 @@
 
 #include "IntentRegistry.h"
 
+#include <QJsonArray>
+
 namespace ShellIntents {
 
 void registerWith(IntentRegistry* registry,
@@ -11,9 +13,7 @@ void registerWith(IntentRegistry* registry,
 {
     if (!registry) return;
 
-    registry->registerShellUses(shellModuleName,
-                                { QStringLiteral("packages.show"),
-                                  QStringLiteral("packages.install") });
+    registry->registerShellUses(shellModuleName, kShellUses);
 
     QStringList provides = kNavigationIntents;
     provides += kPackageConfirmIntents;
@@ -24,6 +24,29 @@ void registerWith(IntentRegistry* registry,
     for (const QString& destructive : kRestrictedToPackageManagerUi)
         registry->restrictIntentToRequesters(
             destructive, { QStringLiteral("package_manager_ui") });
+}
+
+QJsonObject moduleDeclaration(const QString& shellModuleName,
+                              const QString& displayName,
+                              const QString& iconSource,
+                              const QString& linkRequesterName)
+{
+    QJsonObject restricted;
+    for (const QString& confirm : kPackageConfirmIntents)
+        restricted.insert(confirm, QJsonArray{kPackageManagerAppName + QStringLiteral("_backend")});
+    return QJsonObject{
+        {QStringLiteral("name"), shellModuleName},
+        {QStringLiteral("reservedPrefix"), QStringLiteral("basecamp.")},
+        {QStringLiteral("uses"), QJsonArray::fromStringList(kShellUses)},
+        {QStringLiteral("provides"), QJsonArray::fromStringList(kNavigationIntents + kPackageConfirmIntents)},
+        {QStringLiteral("handoff"), QJsonArray::fromStringList(kNavigationIntents)},
+        {QStringLiteral("displayName"), displayName},
+        {QStringLiteral("iconSource"), iconSource},
+        {QStringLiteral("restricted"), restricted},
+        {QStringLiteral("link"), QJsonObject{
+             {QStringLiteral("name"), linkRequesterName},
+             {QStringLiteral("webIntents"), QJsonArray::fromStringList(kWebReachableIntents)}}},
+    };
 }
 
 } // namespace ShellIntents
