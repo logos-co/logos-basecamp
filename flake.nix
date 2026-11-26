@@ -47,11 +47,31 @@
     # The UI otherwise brings its own package_manager and package_downloader,
     # so the closure carries two of each and the UI that drives installs sits
     # on the older one — the one with no VersionMismatch, and without the
-    # signer-binding fix.
+    # signer-binding fix. Its shared library is the shell's revision too.
     logos-package-manager-ui.inputs.package_manager.follows = "logos-package-manager-module";
     logos-package-manager-ui.inputs.package_downloader.follows = "logos-package-downloader-module";
     logos-package-manager-ui.inputs.logos-intents-module.follows = "logos-intents-module";
+    logos-package-manager-ui.inputs.logos-package.follows = "logos-package";
+    logos-package-manager-ui.inputs.basecamp-installer-common.follows = "basecamp-installer-common";
+    # App Manager, the Applications section, built in as the Package Manager
+    # is, on the same modules and the same revision of their shared library.
+    logos-app-manager-ui = {
+      url = "github:logos-co/logos-app-manager-ui";
+      inputs.package_manager.follows = "logos-package-manager-module";
+      inputs.package_downloader.follows = "logos-package-downloader-module";
+      inputs.logos-intents-module.follows = "logos-intents-module";
+      inputs.logos-package.follows = "logos-package";
+      inputs.basecamp-installer-common.follows = "basecamp-installer-common";
+    };
     logos-design-system.url = "github:logos-co/logos-design-system";
+    # The words and rules the two installer apps share. src/Basecamp/Installer
+    # holds a copy of its JavaScript; the shared-installer-words check keeps it
+    # this revision.
+    basecamp-installer-common = {
+      url = "github:logos-co/basecamp-installer-common";
+      inputs.logos-nix.follows = "logos-nix";
+      inputs.logos-package.follows = "logos-package";
+    };
     logos-view-module-runtime.url = "github:logos-co/logos-view-module-runtime";
     # ui-host links the same qt-host and protocol the app does.
     logos-view-module-runtime.inputs.logos-protocol.follows = "logos-protocol";
@@ -73,7 +93,7 @@
     extra-trusted-public-keys = [ "public:l4HrXgL4nw246+LBh2SOJyhz64BoGegOYLheT/iIAPU=" ];
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-storage-module, logos-capability-module, logos-intents-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-design-system, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt, logos-qt-sdk, logos-module, logos-module-loader-qt, logos-liblogos, logos-package-manager, logos-package-manager-module, logos-package-downloader-module, logos-storage-module, logos-capability-module, logos-intents-module, logos-modules-state-module, logos-package, logos-package-manager-ui, logos-app-manager-ui, logos-design-system, basecamp-installer-common, logos-view-module-runtime, logos-qt-mcp, nix-bundle-logos-module-install, nix-bundle-dir, nix-bundle-appimage, nix-bundle-macos-app }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       # Build info (version + commit hashes) baked into the app binary so
@@ -104,7 +124,9 @@
           { name = "logos-modules-state-module"; commit = revOf logos-modules-state-module; }
           { name = "logos-package"; commit = revOf logos-package; }
           { name = "logos-package-manager-ui"; commit = revOf logos-package-manager-ui; }
+          { name = "logos-app-manager-ui"; commit = revOf logos-app-manager-ui; }
           { name = "logos-design-system"; commit = revOf logos-design-system; }
+          { name = "basecamp-installer-common"; commit = revOf basecamp-installer-common; }
           { name = "logos-view-module-runtime"; commit = revOf logos-view-module-runtime; }
           { name = "logos-qt-mcp"; commit = revOf logos-qt-mcp; }
           { name = "nix-bundle-logos-module-install"; commit = revOf nix-bundle-logos-module-install; }
@@ -163,6 +185,7 @@
         # the app entirely.
         logosPackageHeaders = logos-package.packages.${system}.headers;
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
+        logosAppManagerUI = logos-app-manager-ui.packages.${system}.default;
         logosDesignSystem = logos-design-system.packages.${system}.default;
         logosViewModuleRuntime = logos-view-module-runtime.packages.${system}.default;
         # logos-qt-mcp is the QML inspector used by the UI test harness: source
@@ -194,7 +217,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosCapabilityModule, logosIntentsModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosAppManagerUI, logosCapabilityModule, logosIntentsModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -212,6 +235,7 @@
           };
 
           packageManagerUIPlugin = logosPackageManagerUI;
+          appManagerUIPlugin = logosAppManagerUI;
 
           # Pre-installed modules/plugins (bundle + lgpm install in one step).
           # Dev build: raw derivation (depends on /nix/store at runtime).
@@ -236,6 +260,7 @@
             # Optional by construction: absent, the feed never arms.
             logosModulesStateModule
             packageManagerUIPlugin
+            appManagerUIPlugin
             logosStorageModuleLib
           ];
           installedDistributed = map installPortable [
@@ -245,6 +270,7 @@
             logosIntentsModule
             logosModulesStateModule
             packageManagerUIPlugin
+            appManagerUIPlugin
             logosStorageModuleLib
           ];
 
@@ -540,6 +566,7 @@
           # Individual outputs.
           main-ui-plugin = mainUIPlugin;
           package-manager-ui-plugin = packageManagerUIPlugin;
+          app-manager-ui-plugin = appManagerUIPlugin;
           app = app;
 
           # Dev host for one app: nix run .#app-standalone -- --module <path>
@@ -1004,6 +1031,20 @@
       });
 
       checks = forAllSystems ({ pkgs, system, ... }: {
+        # The copy of the shared installer JavaScript is the pinned revision's,
+        # and no shell QML writes one of its phrases again.
+        shared-installer-words = let
+          common = basecamp-installer-common.packages.${buildSystemFor system}.default;
+        in pkgs.runCommand "logos-basecamp-shared-installer-words" {
+          nativeBuildInputs = [ pkgs.python3 ];
+        } ''
+          cd ${./.}
+          diff -r ${common}/qml/Installer src/Basecamp/Installer \
+            || { echo "src/Basecamp/Installer is not the pinned basecamp-installer-common: run scripts/sync-installer-common.sh"; exit 1; }
+          python3 ${common}/tools/shared-words-check ${common}/qml/Installer src \
+            --skip src/Basecamp/Installer --allow tests/shared-words-allow.txt
+          touch $out
+        '';
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;

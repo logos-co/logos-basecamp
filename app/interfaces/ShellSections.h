@@ -12,8 +12,8 @@ class ShellSection : public QObject {
 public:
     enum Value {
         Workspace = 0,       // WorkspaceArea — plugin docks, or WelcomePage
-        AppManager = 1,      // ContentViews.qml → app catalog / inspector
-        PackageManager = 2,  // package_manager_ui, hoisted into the stack
+        AppManager = 1,      // the Apps slot's app (DefaultApps.h), hoisted into the stack
+        PackageManager = 2,  // the Packages slot's app (DefaultApps.h), hoisted into the stack
         Settings = 3,        // ContentViews.qml → settings pages
     };
     Q_ENUM(Value)

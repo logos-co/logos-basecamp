@@ -6,10 +6,10 @@ intro: |
   An app in the App Manager is rarely one package. `reinstall_demo` below is
   three: the app itself plus two dependencies, each its own `.lgx` in the
   catalog. When a catalog republishes **one** of them — same version number, new
-  contents, so a new `rootHash` — Basecamp's install dialog says so per
-  subcomponent: one row reads **Reinstall**, the others read **Installed**.
+  contents, so a new `rootHash` — the App Manager offers **Reinstall**, and
+  Basecamp's install confirmation lists the one subcomponent that drifted.
 
-  This doc-test proves that confirming that dialog downloads **only the drifted
+  This doc-test proves that confirming it downloads **only the drifted
   package**. It is the regression test for
   [basecamp#427](https://github.com/logos-co/logos-basecamp/issues/427), where
   every subcomponent was refetched because the skip-what-is-current check ran on
@@ -27,7 +27,7 @@ what_you_build: |
 
 what_you_learn:
   - How an app with dependencies is published to a catalog as several `.lgx` packages
-  - How Basecamp's add-application dialog labels each subcomponent (Install / Upgrade / Downgrade / Reinstall / Installed)
+  - How Basecamp's install confirmation lists what an install changes (Install / Upgrade / Downgrade / Reinstall)
   - What makes a package "drift": the same version republished with different contents, so its `rootHash` changes
   - That confirming a reinstall fetches only the subcomponents whose version or hash differs
   - How to prove what an app downloaded from outside the app, using the serving side's access log
@@ -81,8 +81,8 @@ sections:
       All three packages are QML-only (`ui_qml`) apps at **1.0.0**, hand-crafted
       here so the catalog is entirely ours. The only thing that makes
       `reinstall_demo` an app *with* subcomponents is its manifest's
-      `dependencies` array — that is what the resolver walks when the dialog
-      opens.
+      `dependencies` array — that is what the resolver walks when Basecamp's
+      confirmation opens.
     steps:
       - title: "Write the package templates"
         text: |
@@ -541,23 +541,42 @@ sections:
               texts: ["Reinstall Demo"]
               timeout: 35000
 
-            - name: "Open the app"
+            # App Manager asks Basecamp, whose install confirmation lists what
+            # the install brings.
+            - name: "Ask to install the app"
               action: click_object
               find_by: "objectName"
               find_value: "appManager.app.reinstall_demo"
 
-            # A subcomponent row exists only in this dialog, and only once the
-            # resolver has answered — the dialog being ready, rather than a guess
-            # at how long that takes.
-            - name: "The dialog has resolved its subcomponents"
-              action: wait_for
-              texts: ["Reinstall Dep A"]
-              timeout: 20000
-
-            - name: "The dialog is open"
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
+            # A subcomponent row exists only once Basecamp's resolver has
+            # answered — the confirmation being ready, rather than a guess at
+            # how long that takes.
+            - name: "The confirmation has resolved its subcomponents"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.change.reinstall_dep_a"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "The confirmation is open"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               screenshot: "partial-reinstall-first-install.png"
@@ -565,7 +584,7 @@ sections:
             - name: "The checks have finished"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
@@ -573,14 +592,16 @@ sections:
             - name: "Install it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
-            # The primary button reads Launch only in AddApplicationDialog's
-            # "launch" mode, i.e. once the install has finished and the app is
-            # healthy. That is the completion signal a sleep was approximating.
+            # The app's sidebar tile appears once it is installed: the
+            # completion signal a sleep was approximating.
             - name: "The install finishes"
-              action: wait_for
-              texts: ["Launch"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "sidebar.app.reinstall_demo"
+              property: "visible"
+              value: true
               timeout: 30000
 
       - title: "All three packages were fetched"
@@ -648,9 +669,9 @@ sections:
     step: true
     text: |
       The app's tile now reports a hash difference, because one of the packages
-      it depends on does — so opening it raises the dialog instead of launching
-      it. The dialog labels `reinstall_dep_b` **Reinstall** and the other two
-      **Installed**, and confirming fetches exactly the one that drifted.
+      it depends on does — so its details offer **Reinstall**. Basecamp's
+      confirmation lists `reinstall_dep_b` to reinstall, and confirming fetches
+      exactly the one that drifted.
     steps:
       - title: "Open the app again and confirm"
         ui_test:
@@ -672,22 +693,41 @@ sections:
               texts: ["Reinstall Demo"]
               timeout: 35000
 
-            - name: "Open the app"
-              action: click_object
+            - name: "Open the app's details"
+              action: call_method
               find_by: "objectName"
               find_value: "appManager.app.reinstall_demo"
+              method: "openDetails"
+              args: []
+              text: "A click on an installed app opens it, so we ask for its details instead, as its context menu does."
 
-            # This wait IS the dialog-resolved signal; no settle sleep needed.
-            - name: "One subcomponent reads Reinstall"
-              action: wait_for
-              texts: ["Reinstall"]
+            - name: "Its details offer Reinstall"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "text"
+              value: "Reinstall"
+              timeout: 30000
+
+            - name: "Reinstall it"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
+            # The drifted subcomponent's row: the confirmation has resolved.
+            - name: "The confirmation lists the drifted subcomponent"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "confirmationDialog.change.reinstall_dep_b"
+              property: "visible"
+              value: true
               timeout: 20000
               screenshot: "partial-reinstall-dialog.png"
 
             - name: "The checks have finished"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
@@ -695,11 +735,16 @@ sections:
             - name: "Confirm the reinstall"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
+            # Shown while there is something to do or it is being done; gone
+            # once the reinstall is on disk.
             - name: "The reinstall finishes"
-              action: wait_for
-              texts: ["Launch"]
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: false
               timeout: 30000
 
       - title: "Only the drifted dependency was fetched"

@@ -18,7 +18,6 @@ class FixtureBackend : public QObject {
     Q_PROPERTY(QAbstractItemModel* uiModulesModel READ uiModulesModel CONSTANT)
     Q_PROPERTY(QAbstractItemModel* coreModulesModel READ coreModulesModel CONSTANT)
     Q_PROPERTY(QAbstractItemModel* appsModel READ appsModel CONSTANT)
-    Q_PROPERTY(QVariantList requiredPackages READ requiredPackages NOTIFY requiredPackagesChanged)
     Q_PROPERTY(QVariantList launcherApps READ launcherApps NOTIFY launcherAppsChanged)
     Q_PROPERTY(QString currentVisibleApp READ currentVisibleApp NOTIFY currentVisibleAppChanged)
     Q_PROPERTY(QStringList loadingModules READ loadingModules NOTIFY loadingModulesChanged)
@@ -40,7 +39,6 @@ public:
     QAbstractItemModel* uiModulesModel() const;
     QAbstractItemModel* coreModulesModel() const;
     QAbstractItemModel* appsModel() const;
-    QVariantList requiredPackages() const;
     QVariantList launcherApps() const;
     QString currentVisibleApp() const;
     QStringList loadingModules() const;
@@ -56,25 +54,20 @@ public:
     bool modulesLoading() const;
 
     Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
-    Q_INVOKABLE void uninstallApp(const QString& name, const QString& repositoryUrl = QString());
     Q_INVOKABLE void confirmUnloadCascade(const QString& moduleName);
     Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName);
     Q_INVOKABLE void confirmUninstallMultiCascade(const QStringList& moduleNames);
     Q_INVOKABLE void cancelMultiUninstall(const QStringList& moduleNames);
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
-    Q_INVOKABLE void cancelPendingUninstallApp(const QString& name);
     Q_INVOKABLE void confirmInstallGate(const QString& name);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
     Q_INVOKABLE void openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins = QVariantMap(), bool allowFastLaunch = true);
-    Q_INVOKABLE void confirmCatalogInstall(const QString& name, const QString& repositoryUrl);
-    Q_INVOKABLE void notifyAddApplicationDialogClosed();
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
     Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);
     Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
     Q_INVOKABLE void refreshUiModules();
     Q_INVOKABLE void refreshRepositories();
-    Q_INVOKABLE void refreshAppCatalog();
     Q_INVOKABLE void requestCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
@@ -104,7 +97,6 @@ signals:
     void repositoriesChanged();
     void repositoriesLoadingChanged();
     void downloadSourceChanged();
-    void requiredPackagesChanged();
 
 private:
     QJsonObject      m_fixture;

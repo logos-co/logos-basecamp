@@ -1,0 +1,76 @@
+#pragma once
+
+#include <QList>
+#include <QObject>
+#include <QString>
+#include <QVariantList>
+#include <QVariantMap>
+
+#include <functional>
+
+class QTimer;
+
+// One approved package change at a time, whichever app asks: a
+// basecamp.packages.confirm_* waits while another's dialog is on screen, and
+// once approved, while that change is still being made. The change is made
+// once package_manager shows it on disk, the app that made it asks again (an
+// installer app asks only after its last change ended) or stops, or a while
+// has passed with nothing of it on its way.
+class ConfirmationQueue : public QObject {
+    Q_OBJECT
+public:
+    struct Request {
+        QString id;
+        QString intent;
+        QVariantMap params;
+        QString requester;
+    };
+    // Shows it, and answers it later; false when it couldn't be shown and was
+    // answered already.
+    using Begin = std::function<bool(const Request&)>;
+
+    explicit ConfirmationQueue(QObject* parent = nullptr);
+
+    void setBegin(Begin begin) { m_begin = std::move(begin); }
+    // How long an approved change may go with nothing of it on its way
+    // before the next is shown anyway.
+    void setChangeTimeout(int ms) { m_changeTimeoutMs = ms; }
+
+    // Shown now, or once the ones before it are through.
+    void submit(const Request& request);
+    // Its answer: approved with `data` ({plan} or {file}), or not.
+    void answered(const QString& id, bool approved, const QVariant& data);
+    // Its request ended unanswered: dropped if waiting, ended if on screen.
+    void withdrawn(const QString& id);
+    // package_manager's installed packages, after a change.
+    void installedChanged(const QVariantList& installed);
+    // A package on its way, its download moving: the change it is in waits
+    // on, however long that takes.
+    void progressed(const QString& name);
+    // The app that asked stopped, and with it the change it was making.
+    void requesterStopped(const QString& requester);
+
+    QString onScreen() const { return m_onScreen.id; }
+    int waiting() const { return int(m_waiting.size()); }
+    // The requester whose approved change is being made, or "".
+    QString changing() const { return m_change.requester; }
+
+private:
+    struct Change {
+        QString requester;
+        QVariantMap installs;   // name -> version; "" any
+        QStringList removes;
+    };
+
+    void next();
+    void endChange();
+    bool madeOn(const QVariantList& installed) const;
+
+    Begin m_begin;
+    int m_changeTimeoutMs = 10 * 60 * 1000;
+    Request m_onScreen;
+    QList<Request> m_waiting;
+    Change m_change;
+    QTimer* m_changeTimer;
+    bool m_beginning = false;
+};

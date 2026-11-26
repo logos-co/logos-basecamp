@@ -401,14 +401,28 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
             - name: "Let the dialog open"
               action: sleep
               ms: 2000
 
-            - name: "The install dialog is open"
+            - name: "Basecamp's install confirmation is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               screenshot: "storage-install.png"
@@ -416,7 +430,7 @@ sections:
             - name: "The checks have finished"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
@@ -424,7 +438,7 @@ sections:
             - name: "Install it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
             - name: "Let the download finish"
               action: sleep
@@ -506,7 +520,7 @@ sections:
             - name: "Its details are open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
               property: "visible"
               value: true
               timeout: 30000
@@ -514,7 +528,7 @@ sections:
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
 
             - name: "Let the confirmation open"
               action: sleep
@@ -561,15 +575,29 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
             - name: "Let the dialog open"
               action: sleep
               ms: 2000
               text: "A click in the first moments after the dialog opens can be lost."
 
-            - name: "The install dialog is open"
+            - name: "Basecamp's install confirmation is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               timeout: 30000
@@ -577,16 +605,16 @@ sections:
             - name: "Its dependencies are resolved"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
-              text: "The button stays disabled while the dialog resolves what the install needs."
+              text: "Install stays disabled while Basecamp works out what the install needs and who signed it."
 
             - name: "Install it with the node stopped"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
             - name: "Let the download finish"
               action: sleep
@@ -596,7 +624,7 @@ sections:
       - title: "Check that the download started the node again"
         text: |
           After the stop, only the download started the node: the App Manager
-          and the reinstall dialog left it alone. The count stops where the
+          and Basecamp's install confirmation left it alone. The count stops where the
           reinstalled Storage UI loads, since its view starts the node too.
         run: |
           awk '/StorageModuleImpl::stop called/ { stopped = 1; next }
@@ -695,7 +723,7 @@ sections:
             - name: "Its details are open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
               property: "visible"
               value: true
               timeout: 30000
@@ -703,7 +731,7 @@ sections:
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
 
             - name: "Let the confirmation open"
               action: sleep
@@ -723,15 +751,29 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
             - name: "Let the dialog open"
               action: sleep
               ms: 2000
               text: "A click in the first moments after the dialog opens can be lost."
 
-            - name: "The install dialog is open"
+            - name: "Basecamp's install confirmation is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               timeout: 30000
@@ -739,16 +781,16 @@ sections:
             - name: "Its dependencies are resolved"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
-              text: "The button stays disabled while the dialog resolves what the install needs."
+              text: "Install stays disabled while Basecamp works out what the install needs and who signed it."
 
             - name: "Install it without storage_module"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
             - name: "Let the download finish"
               action: sleep
@@ -851,7 +893,7 @@ sections:
             - name: "Its details are open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
               property: "visible"
               value: true
               timeout: 30000
@@ -859,7 +901,7 @@ sections:
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
 
             - name: "Let the confirmation open"
               action: sleep
@@ -879,15 +921,29 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
             - name: "Let the dialog open"
               action: sleep
               ms: 2000
               text: "A click in the first moments after the dialog opens can be lost."
 
-            - name: "The install dialog is open"
+            - name: "Basecamp's install confirmation is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               timeout: 30000
@@ -895,16 +951,16 @@ sections:
             - name: "Its dependencies are resolved"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
-              text: "The button stays disabled while the dialog resolves what the install needs."
+              text: "Install stays disabled while Basecamp works out what the install needs and who signed it."
 
             - name: "Install it with storage_module back"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
             - name: "Let the download finish"
               action: sleep
@@ -989,7 +1045,7 @@ sections:
             - name: "Its details are open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
               property: "visible"
               value: true
               timeout: 30000
@@ -997,7 +1053,7 @@ sections:
             - name: "Uninstall it"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.uninstallButton"
+              find_value: "appManager.details.uninstall"
 
             - name: "Let the confirmation open"
               action: sleep
@@ -1044,15 +1100,29 @@ sections:
               find_by: "objectName"
               find_value: "appManager.app.storage_ui"
 
+            # The click shows what installing it brings; Install there asks Basecamp.
+            - name: "Its details offer Install"
+              action: expect_property
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+              property: "visible"
+              value: true
+              timeout: 20000
+
+            - name: "Install from its details"
+              action: click_object
+              find_by: "objectName"
+              find_value: "appManager.details.action"
+
             - name: "Let the dialog open"
               action: sleep
               ms: 2000
               text: "A click in the first moments after the dialog opens can be lost."
 
-            - name: "The install dialog is open"
+            - name: "Basecamp's install confirmation is open"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate"
               property: "visible"
               value: true
               timeout: 30000
@@ -1060,16 +1130,16 @@ sections:
             - name: "Its dependencies are resolved"
               action: expect_property
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
               property: "enabled"
               value: true
               timeout: 30000
-              text: "The button stays disabled while the dialog resolves what the install needs."
+              text: "Install stays disabled while Basecamp works out what the install needs and who signed it."
 
             - name: "Install it from another network"
               action: click_object
               find_by: "objectName"
-              find_value: "addApplicationDialog.primaryButton"
+              find_value: "confirmationDialog.installGate.confirm"
 
             - name: "Let the download finish"
               action: sleep

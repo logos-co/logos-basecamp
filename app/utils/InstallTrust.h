@@ -42,6 +42,7 @@ struct Package {
     QString did;
     QString signerName;  // the package's own claim: shown, never trusted
     QString signerUrl;
+    QString sha256;      // the catalogue's digest of the whole file, its manifest included
     bool installed = false;
     bool offered = false;
     bool builtIn = false;      // one of Basecamp's own apps (BuiltInApps.h), whoever signed it: Invalid
@@ -104,7 +105,8 @@ QList<Package> judgePlan(const QString& name, const QVariantList& resolved,
 // reservedFor() for one install) may only come from Logos
 // (otherwise Invalid, `reserved`), and one
 // signed by another publisher than the copy it replaces says so
-// (`replacesSignedBy`), as does one replacing a copy no checkable key signed,
+// (`replacesSignedBy`; Basecamp's own copy is Logos's), as does one
+// replacing a copy no checkable key signed,
 // unless Logos signed it (`replacesUnverified`). Logos's keys are one
 // publisher; names compare case-insensitively.
 Package asReplacement(Package package, const QVariantMap& record, const QStringList& bundled,
@@ -116,8 +118,8 @@ Package asReplacement(Package package, const QVariantMap& record, const QStringL
 QVariantMap installedRecordOf(const QVariantList& installed, const QString& name);
 
 // Who may call package_manager and package_downloader, which hold the keyring
-// and install packages: Basecamp (`core`) and the Package Manager's backend
-// (main.cpp's restrictPackageModules()).
+// and install packages: Basecamp (`core`) and the backends of the default-app
+// slots allowed to (DefaultApps.h; main.cpp's restrictPackageModules()).
 QStringList packageModuleCallers();
 
 // `package`, as installing it would put it on disk: asReplacement(), and an
@@ -136,9 +138,15 @@ Package asInstall(Package package, const QString& type, const QVariantMap& recor
 // installs, Logos's either.
 QStringList identityNames();
 
+// The modules Basecamp ships that the person may update themselves, judged
+// like any package: Logos Storage. Nothing Basecamp checks relies on it; what
+// it downloads is checked after.
+QStringList updatableBundledModules();
+
 // The names only Logos may install under (asReplacement()'s `bundled`): the
-// `modules` and `apps` Basecamp ships, the backend each of those apps loads,
-// every packageModuleCallers() name, and intents_module.
+// `modules` Basecamp ships but updatableBundledModules(), the `apps` it ships
+// and the backend each of them loads, every packageModuleCallers() name, and
+// intents_module.
 QStringList reservedNames(const QStringList& modules, const QStringList& apps);
 
 // The names reserved for one install: `bundled` (reservedNames()), plus the
@@ -164,9 +172,10 @@ Package fromVerifiedFile(const QString& name, const QString& version,
 
 // What approving a plan lets package_manager_ui install: each row of
 // `resolved`, as a resolver request pinned to that release -- {name, version,
-// rootHash, repositoryUrl, signer, optional}. `signer` is the key `judged`
-// (judgePlan()) says signed it. A row already on disk is left out, except
-// `name` itself.
+// rootHash, repositoryUrl, signer, sha256, optional}. `signer` is the key
+// `judged` (judgePlan()) says signed it; an unsigned one has `sha256`
+// instead, the catalogue's digest of the file, which pins its manifest too.
+// A row already on disk is left out, except `name` itself.
 QVariantList approvedPlan(const QString& name, const QVariantList& resolved,
                           const QList<Package>& judged);
 
@@ -181,25 +190,6 @@ QVariantMap fileIdentity(const QString& name, const QString& version,
 
 // The SHA-256 of the file at `path`, in hex; empty if it can't be read.
 QString sha256Of(const QString& path);
-
-// Why the packages fetched for an approved plan may not be installed: a
-// required one (in `planned`, what was to be fetched) that failed or didn't
-// come, or one `approved` (approvedPlan()) doesn't hold. Empty when they may;
-// a failed optional one is just left out. As package_manager_ui holds its
-// own installs to the same approval.
-QString notAsApproved(const QVariantList& fetched, const QVariantList& planned,
-                      const QVariantList& approved);
-
-// `fetched` with each downloaded file (its `path`) copied into `dir`, and
-// `path` naming the copy: what is checked and installed then can't change
-// under another write to the downloader's path. Empty, with `error` set, if a
-// copy can't be made.
-QVariantList intoPrivateCopies(const QVariantList& fetched, const QString& dir, QString* error);
-
-// Why a fetched file, as package_manager's verifyPackage() read it, is not
-// the release `approved` holds: not valid, or not signed by the approved key
-// (signed at all, for one approved unsigned).
-QString signerChanged(const QVariantMap& verified, const QVariantList& approved, const QVariantMap& row);
 
 // Every key of the publisher `did` is: all of Logos's, old and revoked too,
 // for a Logos key; otherwise just `did`.
@@ -249,7 +239,6 @@ QVariantMap summary(const QList<Package>& packages, const QVariantList& trustedK
 // trusted or not, a signed one is Unknown.
 QList<Package> unchecked(QList<Package> packages);
 
-QString planIdentity(const QVariantList& resolved);
 QString keyNameFor(const QString& did);
 QString statusName(Status status);
 

@@ -1,7 +1,5 @@
 #include "AppsModel.h"
 
-#include "InstallRegistry.h"
-
 #include <logos/semver.hpp>
 
 #include <QSet>
@@ -179,62 +177,6 @@ QVariant AppsModel::data(const QModelIndex& index, int role) const
     case MissingDepsRole:      return r.missingDeps;
     case InstallStatusRole:    return static_cast<int>(r.installStatus);
     case InstallTypeRole:      return r.installType;
-    case ActionRole: {
-        if (InstallRegistry* reg = registryFor(r)) {
-            if (reg->isInFlight(r.name))
-                return QStringLiteral("installing");
-            if (reg->stage(r.name) == InstallStage::Installed)
-                return QStringLiteral("installed");
-        }
-        return r.action;
-    }
-    case ToVersionRole:        return r.toVersion;
-    case IsTopLevelRole:       return r.isTopLevel;
-    case ResolverErrorRole:    return r.resolverError;
-    case InstallStageRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg ? reg->stage(r.name) : static_cast<int>(InstallStage::None);
-    }
-    case InstallErrorRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg ? reg->error(r.name) : QString();
-    }
-    case DownloadReceivedRole: {
-        InstallRegistry* reg = registryFor(r);
-        return QVariant::fromValue(reg ? reg->downloadReceived(r.name) : quint64(0));
-    }
-    case DownloadTotalRole: {
-        InstallRegistry* reg = registryFor(r);
-        return QVariant::fromValue(reg ? reg->downloadTotal(r.name) : quint64(0));
-    }
-    case PlanDownloadReceivedRole: {
-        InstallRegistry* reg = registryFor(r);
-        return QVariant::fromValue(reg ? reg->planDownloadReceived(r.name) : quint64(0));
-    }
-    case PlanDownloadTotalRole: {
-        InstallRegistry* reg = registryFor(r);
-        return QVariant::fromValue(reg ? reg->planDownloadTotal(r.name) : quint64(0));
-    }
-    case PlanInstallStageRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg ? reg->planStage(r.name) : static_cast<int>(InstallStage::None);
-    }
-    case DownloadTransportRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg ? reg->downloadTransport(r.name) : QString();
-    }
-    case DownloadFellBackRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg && reg->downloadFellBack(r.name);
-    }
-    case PlanDownloadTransportRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg ? reg->planDownloadTransport(r.name) : QString();
-    }
-    case PlanDownloadFellBackRole: {
-        InstallRegistry* reg = registryFor(r);
-        return reg && reg->planDownloadFellBack(r.name);
-    }
     case HasInstallableVersionRole: return r.hasInstallableVersion;
     case NotAvailableReasonRole:    return r.notAvailableReason;
     }
@@ -256,10 +198,6 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {DependenciesRole,     "dependencies"},
         {ProvidesRole,         "provides"},
         {WebProvidesRole,      "webProvides"},
-        {DownloadTransportRole,     "downloadTransport"},
-        {DownloadFellBackRole,      "downloadFellBack"},
-        {PlanDownloadTransportRole, "planDownloadTransport"},
-        {PlanDownloadFellBackRole,  "planDownloadFellBack"},
         {InstalledVersionRole, "installedVersion"},
         {LatestVersionRole,    "latestVersion"},
         {HasUpdateRole,        "hasUpdate"},
@@ -267,34 +205,9 @@ QHash<int, QByteArray> AppsModel::roleNames() const
         {MissingDepsRole,      "missingDeps"},
         {InstallStatusRole,    "installStatus"},
         {InstallTypeRole,      "installType"},
-        {ActionRole,           "action"},
-        {ToVersionRole,        "toVersion"},
-        {IsTopLevelRole,       "isTopLevel"},
-        {ResolverErrorRole,    "resolverError"},
-        {InstallStageRole,     "installStage"},
-        {InstallErrorRole,     "installError"},
-        {DownloadReceivedRole,     "downloadReceived"},
-        {DownloadTotalRole,        "downloadTotal"},
-        {PlanDownloadReceivedRole, "planDownloadReceived"},
-        {PlanDownloadTotalRole,    "planDownloadTotal"},
-        {PlanInstallStageRole,     "planInstallStage"},
         {HasInstallableVersionRole, "hasInstallableVersion"},
         {NotAvailableReasonRole,    "notAvailableReason"},
     };
-}
-
-QStringList AppsModel::categories() const
-{
-    QStringList seen;
-    seen.append(QStringLiteral("All"));
-    for (const Row& r : m_rows) {
-        if (r.category.isEmpty()) continue;
-        QString c = r.category;
-        c[0] = c[0].toUpper();
-        if (!seen.contains(c)) seen.append(c);
-    }
-    std::sort(seen.begin() + 1, seen.end());   // keep "All" first
-    return seen;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -363,7 +276,18 @@ void AppsModel::recomputeInstallStatus(Row& r)
         const Row& depRow = m_rows[depIdx];
         if (depRow.versions.isEmpty()) continue;
 
-        const QString depRelease = depRow.latestVersion;
+        // The release installing the app would bring: the newest the app's
+        // range allows, not the newest (it may hold one back). None: nothing
+        // an install could change.
+        const std::string range = dep.value("version").toString().toStdString();
+        QVariantMap release;
+        for (const QVariant& rv : depRow.versions) {
+            const QVariantMap candidate = rv.toMap();
+            const QString version = candidate.value("manifest").toMap().value("version").toString();
+            if (logos::semver::satisfies(version.toStdString(), range)) { release = candidate; break; }
+        }
+        if (release.isEmpty()) continue;
+        const QString depRelease = release.value("manifest").toMap().value("version").toString();
         if (!depRelease.isEmpty() && !depRow.installedVersion.isEmpty()) {
             const int depCmp = versionCmp(depRow.installedVersion, depRelease);
             if (depCmp < 0) {
@@ -380,8 +304,7 @@ void AppsModel::recomputeInstallStatus(Row& r)
 
         // Same version (or no version to compare): a hash mismatch is
         // corruption, and only a reinstall repairs it.
-        const QString expectedDepHash =
-            depRow.versions.first().toMap().value("rootHash").toString();
+        const QString expectedDepHash = release.value("rootHash").toString();
         const QString installedDepHash = depRow.installedHash;
         if (expectedDepHash.isEmpty() || installedDepHash.isEmpty()) continue;
         if (expectedDepHash != installedDepHash
@@ -453,7 +376,6 @@ void AppsModel::setValidVariants(const QStringList& variants)
 {
     if (variants == m_validVariants) return;
     m_validVariants = variants;
-    emit hostVariantChanged();
     if (m_rows.isEmpty()) return;
 
     for (int i = 0; i < m_rows.size(); ++i) {
@@ -570,7 +492,6 @@ void AppsModel::replaceCatalog(const QVariantList& catalogRows)
             });
         }
     }
-    emit categoriesChanged();
 }
 
 // ── Mutation: local-only installed rows ────────────────────────────────────
@@ -588,12 +509,10 @@ void AppsModel::mergeLocalOnlyInstalled(const QVariantList& installedPackages)
     // Prune Local rows whose module got uninstalled. Catalog rows (non-
     // empty repositoryUrl) are replaceCatalog's job — untouched here.
     QList<int> toRemove;
-    bool categoriesTouched = false;
     for (int i = 0; i < m_rows.size(); ++i) {
         if (!m_rows[i].repositoryUrl.isEmpty()) continue;
         if (freshNames.contains(m_rows[i].name)) continue;
         toRemove.append(i);
-        if (!m_rows[i].category.isEmpty()) categoriesTouched = true;
     }
     for (int i = toRemove.size() - 1; i >= 0; --i) {
         const int idx = toRemove[i];
@@ -649,10 +568,7 @@ void AppsModel::mergeLocalOnlyInstalled(const QVariantList& installedPackages)
         m_indexByKey.insert(key(QString(), name), idx);
         m_indicesByName.insert(name, idx);
         endInsertRows();
-
-        if (!m_rows.last().category.isEmpty()) categoriesTouched = true;
     }
-    if (categoriesTouched) emit categoriesChanged();
 }
 
 // ── Mutation: on-disk state ────────────────────────────────────────────────
@@ -773,113 +689,6 @@ void AppsModel::setMissingDeps(const QString& name, const QStringList& missing)
         recomputeInstallStatus(r);
         const QModelIndex mi = index(idx);
         emit dataChanged(mi, mi, {MissingDepsRole, IsInstalledRole, InstallStatusRole});
-    }
-}
-
-// ── Wiring: live install state ────────────────────────────────────────────
-
-// The install registry is keyed by package NAME, but a name is not unique
-// across repositories — two repos can publish the same package, and this
-// model renders a row for each. Only the row whose repository the
-// operation targets may show its in-flight state; otherwise installing
-// from one repo animates the other repo's copy of the row too.
-//
-// Returns nullptr for a row the operation does not belong to, so callers
-// fall through to the same defaults they use when no registry is set.
-InstallRegistry* AppsModel::registryFor(const Row& r) const
-{
-    if (!m_installRegistry) return nullptr;
-    return m_installRegistry->belongsTo(r.name, r.repositoryUrl)
-               ? m_installRegistry : nullptr;
-}
-
-void AppsModel::setInstallRegistry(InstallRegistry* installRegistry)
-{
-    if (m_installRegistry == installRegistry) return;
-    if (m_installRegistry) m_installRegistry->disconnect(this);
-    m_installRegistry = installRegistry;
-    if (!m_installRegistry) return;
-
-    auto refresh = [this](const QString& name) {
-        const QList<int> roles{InstallStageRole, InstallErrorRole, ActionRole,
-                               PlanInstallStageRole};
-        for (int idx : m_indicesByName.values(name)) {
-            const QModelIndex mi = index(idx);
-            emit dataChanged(mi, mi, roles);
-        }
-    };
-    connect(m_installRegistry, &InstallRegistry::stageChanged, this,
-            [refresh](const QString& name, InstallStage::Value) { refresh(name); });
-    connect(m_installRegistry, &InstallRegistry::errorChanged, this,
-            [refresh](const QString& name, const QString&) { refresh(name); });
-    // Narrower role set than `refresh`: this fires several times a second
-    // per download, and re-evaluating ActionRole with it would churn every
-    // binding on the row for no reason.
-    connect(m_installRegistry, &InstallRegistry::planStageChanged, this,
-            [this](const QString& topLevel) {
-                const QList<int> roles{PlanInstallStageRole};
-                for (int idx : m_indicesByName.values(topLevel)) {
-                    const QModelIndex mi = index(idx);
-                    emit dataChanged(mi, mi, roles);
-                }
-            });
-    connect(m_installRegistry, &InstallRegistry::downloadProgressChanged, this,
-            [this](const QString& name) {
-                const QList<int> roles{DownloadReceivedRole, DownloadTotalRole,
-                                       PlanDownloadReceivedRole, PlanDownloadTotalRole,
-                                       PlanInstallStageRole,
-                                       DownloadTransportRole, DownloadFellBackRole,
-                                       PlanDownloadTransportRole, PlanDownloadFellBackRole};
-                for (int idx : m_indicesByName.values(name)) {
-                    const QModelIndex mi = index(idx);
-                    emit dataChanged(mi, mi, roles);
-                }
-            });
-}
-
-// ── Mutation: resolver overlay ─────────────────────────────────────────────
-
-void AppsModel::setResolverOverlay(const QList<ResolverRow>& rows)
-{
-    clearResolverOverlay();
-    // A package can appear in the overlay more than once — as a user-pinned
-    // top-level entry AND as a transitive dependency of another pinned package
-    // (resolved to the newest catalog version). Both map to the SAME row via
-    // rowOf(name, repo), so without a guard the transitive copy overwrites the
-    // pin and the version dropdown snaps back to the newest release. An explicit
-    // top-level entry is authoritative: once one has written a row, a later
-    // non-top-level duplicate of the same package must not clobber it.
-    // (Defensive — the resolver also no longer emits that duplicate.)
-    QSet<int> pinnedRows;
-    for (const ResolverRow& src : rows) {
-        const int idx = rowOf(src.name, src.repositoryUrl);
-        if (idx < 0) continue;
-        if (!src.isTopLevel && pinnedRows.contains(idx)) continue;
-        Row& r = m_rows[idx];
-        r.action        = src.action;
-        r.toVersion     = src.toVersion;
-        r.isTopLevel    = src.isTopLevel;
-        r.resolverError = src.resolverError;
-        if (src.isTopLevel) pinnedRows.insert(idx);
-        const QModelIndex mi = index(idx);
-        emit dataChanged(mi, mi,
-            {ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole});
-    }
-}
-
-void AppsModel::clearResolverOverlay()
-{
-    for (int i = 0; i < m_rows.size(); ++i) {
-        Row& r = m_rows[i];
-        if (r.action.isEmpty() && r.toVersion.isEmpty()
-            && !r.isTopLevel && r.resolverError.isEmpty())
-            continue;
-        r.action.clear();
-        r.toVersion.clear();
-        r.isTopLevel = false;
-        r.resolverError.clear();
-        const QModelIndex mi = index(i);
-        emit dataChanged(mi, mi, {ActionRole, ToVersionRole, IsTopLevelRole, ResolverErrorRole});
     }
 }
 

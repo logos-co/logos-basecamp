@@ -47,18 +47,7 @@ struct AppsModelRoles {
                                  //   state (Install/Launch/Upgrade/Downgrade/
                                  //   Reinstall in QML terms). PMUI mirror.
         InstallTypeRole,         // "embedded" | "user" | ""
-        ActionRole,            
-        ToVersionRole,
-        IsTopLevelRole,
-        ResolverErrorRole,
-        InstallStageRole,        // InstallStage::Value (int) — see InstallEnums.h
-        InstallErrorRole,        // failure message when InstallStage == Failed
         ProvidesRole,            // QStringList — intents this package can service
-        DownloadReceivedRole,    // bytes fetched so far; 0 unless downloading
-        DownloadTotalRole,       // bytes expected; 0 = size unknown
-        PlanDownloadReceivedRole,
-        PlanDownloadTotalRole,
-        PlanInstallStageRole,    // InstallStage of the whole install this row's app started.
         HasInstallableVersionRole, // bool — some version of this package is one
                                    //   THIS host could install (computeAvailability
                                    //   in AppsModel.cpp). True while the
@@ -67,10 +56,6 @@ struct AppsModelRoles {
                                  //   when the row is shown anyway.
         WebProvidesRole,         // QStringList — the provides entries that set
                                  //   "web": true (reachable from a basecamp:// link)
-        DownloadTransportRole,       // "logos" | "http" | "" — where this package's bytes come from
-        DownloadFellBackRole,        // bool — Logos Storage could not serve it, HTTP took over
-        PlanDownloadTransportRole,   // the same, for the plan's package on the wire now
-        PlanDownloadFellBackRole,
     };
 };
 

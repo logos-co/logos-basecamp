@@ -48,6 +48,9 @@ public:
     using AppOfModule = std::function<QString(const QString& module)>;
     // Whether the package `module` comes from shipped with Basecamp.
     using RequesterBundled = std::function<bool(const QString& module)>;
+    // The module Basecamp's own request for `intent` goes to, with no chooser,
+    // when it is one of those offered; "" for none.
+    using DefaultProvider = std::function<QString(const QString& intent)>;
 
     explicit IntentsModuleHost(Call call, QObject* parent = nullptr);
 
@@ -57,6 +60,7 @@ public:
     void setProviderStarter(ProviderStarter starter) { m_providerStarter = std::move(starter); }
     void setAppOfModule(AppOfModule appOf) { m_appOfModule = std::move(appOf); }
     void setRequesterBundled(RequesterBundled bundled) { m_requesterBundled = std::move(bundled); }
+    void setDefaultProvider(DefaultProvider provider) { m_defaultProvider = std::move(provider); }
 
     // Basecamp's own request, or a link's (`asLink`), through intents_module.
     // `done` gets the result envelope {ok, data, error} once it settles; it is
@@ -222,6 +226,7 @@ private:
     bool m_reclaimed = false;           // "claimed again" is said once ready
     QJsonArray m_heldWork;              // pulled before ready, handled once it is
     RequesterBundled m_requesterBundled;
+    DefaultProvider m_defaultProvider;
     // Which instance delayed work belongs to; a new one drops the old's.
     quint64 m_generation = 0;
     // Lost the presenter role: intents_module is not loaded again.

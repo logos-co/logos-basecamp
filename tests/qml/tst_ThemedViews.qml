@@ -7,7 +7,6 @@ import Logos.Theme
 import "../../src/Basecamp/Settings"
 import "../../src/Basecamp/Shell"
 import "../../src/Basecamp/Sidebar"
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
 // Regression guard for logos-basecamp#546: parts of the shell had hardcoded

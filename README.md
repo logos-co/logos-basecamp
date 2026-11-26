@@ -122,8 +122,8 @@ saving one reloads the shell in place: no rebuild, no restart. Loaded apps and
 backends keep running; the shell's QML state (scroll positions, open dialogs)
 resets. A save that does not compile is logged and the next good one recovers.
 
-Still needs a restart: the singletons `BasecampIcons`, `AppColors` and
-`DownloadFormat`. Still needs a build: a new QML file (add it to
+Still needs a restart: the singleton `BasecampIcons`. Still needs a build: a
+new QML file (add it to
 `src/CMakeLists.txt`), C++ changes, and the design system (`Logos.Theme`,
 `Logos.Controls`), which is compiled in. `LOGOS_QML_HOT_RELOAD=0` loads from
 `src/` without watching. For an app's QML rather than the shell's, see

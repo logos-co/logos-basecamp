@@ -234,10 +234,14 @@ TestCase {
 
     // The modules model resets whenever a module comes or goes, and every row
     // is made again: a row on its way out has no data, and the open detail
-    // must not read it.
-    function test_a_reset_under_an_open_detail_reads_no_gone_row() {
+    // must not read it. The apps' model too, as an install ends.
+    function test_a_reset_under_an_open_detail_reads_no_gone_row_data() {
+        return [{ tag: "modules", comp: moduleInspectorComp }, { tag: "apps", comp: appsInspectorComp }]
+    }
+
+    function test_a_reset_under_an_open_detail_reads_no_gone_row(data) {
         failOnWarning(/Cannot read property/)
-        const view = makeView(moduleInspectorComp, 1000)
+        const view = makeView(data.comp, 1000)
         view.openDetails("depsvc")
         const details = detailsOf(view)
         verify(details.panelOpen)

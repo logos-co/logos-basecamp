@@ -180,18 +180,25 @@ Anything else a provider returns is coerced to `failed` — free text in the cal
 
 **`unavailable` merges "nothing installed" with "denied" on purpose.** An app that could tell those apart would have an oracle for your installed-app list. Same reason the install offer never reports back: decline it and the caller gets the identical `unavailable` it would have got had no such package existed.
 
-**Some intents restrict who may ask.** A provider-side allow-list, declared in code beside the shell's own `provides` (`IntentRegistry::restrictIntentToRequesters`). Absent = unrestricted, which is every intent except two.
+**Some intents restrict who may ask.** A provider-side allow-list, declared in code beside the shell's own `provides` (`IntentRegistry::restrictIntentToRequesters`). Absent = unrestricted, which is every intent except the three package confirmations.
 
-It exists because attribution is not always enough. Showing who asked works when the user has context to judge against — they clicked something, and "Chat App wants to send funds" is a question they can answer. An *unsolicited* prompt to remove or downgrade one of your packages has no such context, and its correct answer is always no. A dialog whose right answer is unconditional can only cost you: it trains dismissal, and one mis-click is destructive and not undoable. So `basecamp.packages.confirm_uninstall` and `basecamp.packages.confirm_upgrade` are restricted to `package_manager_ui`, while `confirm_install` stays open — an app saying "you need X" is legitimate, and the shell already offers catalog installs an app's request provoked.
+It exists because attribution is not always enough. Showing who asked works when the user has context to judge against — they clicked something, and "Chat App wants to send funds" is a question they can answer. An *unsolicited* prompt to remove or downgrade one of your packages has no such context, and its correct answer is always no. A dialog whose right answer is unconditional can only cost you: it trains dismissal, and one mis-click is destructive and not undoable. So all three `basecamp.packages.confirm_*` are restricted to the installer apps (the `apps` and `packages` slots, `app/interfaces/DefaultApps.h`) and their backends. An app saying "you need X" is still legitimate: it asks for `packages.install`, App Manager shows X, and the person's click on Install there raises the confirmation. App Manager asks on the request itself only when Basecamp made it (the person's click there), so another app's request can't open a dialog worded as App Manager's.
 
 The install and upgrade confirmations resolve optional packages throughout the
 required dependency tree. Available options start checked; unavailable options
-are disabled. An approved response includes `data.optionalPackages`, the selected
+are disabled. A request may carry the requester's picks: `versions`, a version
+for any package the plan brings (name to version string), and `optional`,
+whether each optional package comes (name to bool). The gate resolves with
+them as pins: the versions of what the plan needs are fixed as picked, and the
+optional packages start as ticked and at the versions picked, still the
+person's to change. Entries of any other shape are dropped. App Manager
+sends what its details picked. An approved response includes
+`data.optionalPackages`, the selected
 resolver request objects with version, repository, artifact hash, and any signer
 pin preserved. The approved `plan` holds the checked packages and their required
-dependencies, each pinned as approved, and Package Manager UI installs exactly that
-plan; it reads `optionalPackages` only to let a checked optional fail without
-stopping the rest. Unchecked optionals remain outside the install plan.
+dependencies, each pinned as approved, and the installer apps install exactly
+that plan (basecamp-installer-common); a checked optional that fails is left out
+without stopping the rest. Unchecked optionals remain outside the install plan.
 
 Three properties are load-bearing. Denial answers `unavailable` **on the same floor** as "nothing provides it", so a refused app cannot learn the capability exists. An empty requester list is **refused**, not stored — it reads as "restricted to nobody" but would behave as unrestricted, so a typo must not silently open a destructive capability. And the list survives `rebuild()`, because it is code-declared policy rather than something read off disk.
 
@@ -327,14 +334,14 @@ What Basecamp does as the presenter:
 
 - **Claims the module** right after loading it, before any app loads, then declares the shell's own intents and the installed packages, an app's backend under the app's name and icon. It tells the module again when a package changes, an upgrade in place included, and sends again what the module didn't take: a second later, then twice as long each time, up to a minute, since a module that doesn't answer costs each attempt its timeout; work the module hands out meanwhile shows it answers again, and the next attempt goes at once. Nothing in Basecamp waits on the module: every call to it is asynchronous, except the claim at startup, before any window exists. It pulls no work from the module until it holds both. The catalogue stays in Basecamp: an install offer from the module names only the intent, and Basecamp finds what could be installed. A link to an intent that only an uninstalled package provides is refused by the module, and Basecamp offers that install itself.
 - **Decides when a request interrupts.** Every new request waits in the module, pending, until Basecamp opens it. By default (`bundled`) it opens one at once when what asks shipped with Basecamp, and any other only when the person clicked or pressed a key in the asking app within the last 2 seconds, one request per click. A core module has no screen to click in, so unless it ships with Basecamp its requests don't open (see the gaps below). Trusting a publisher lets its packages install, not interrupt. `--intents-attention interactive` waits for that click every time, for Basecamp's own packages too; `immediate` opens every request, and only developer builds (those with the QML inspector) take it. The chooser says who signed the package asking.
-- **Needs a new click after a hand-off.** The click that started a hand-off was in the requester, so a provider asks for anything needing approval once the person clicks in its own view: `packages.install` opens the package in Package Manager, and clicking Install there asks for the install dialog.
+- **Needs a new click after a hand-off.** The click that started a hand-off was in the requester, so a provider asks for anything needing approval once the person clicks in its own view: `packages.show` opens the package in Package Manager, and `packages.install`, from an app or a link, opens the app in App Manager; clicking Install there asks for the install dialog. Only Basecamp's own `packages.install` (the Welcome page's Install) asks for it at once.
 - **Starts what the person picks** before answering the chooser: an app is loaded and Basecamp waits for its backend (up to 45 seconds); a core module is loaded as the Module Inspector would. One that does not come up is answered anyway, and the request fails as `unavailable`.
 - **Does the rest of the work it is given**: the chooser, raising the provider's app when the module delivers to it (a module with no screen is not raised), the shell's own intents (the package confirmations and the rest, with the same dialogs as above), install offers, and the return to the requester on `completed`, with the guards in §8.
 - **Asks through the module itself.** The Welcome page's `packages.show` / `packages.install` and every `basecamp://` link go through `shell_request`, so Basecamp's own requests use one broker, the module. A link still asks under its own requester name and still faces the chooser.
 - **Claims the module** as soon as it loads, before anything else starts; one it can't claim is unloaded, and only the QML path runs.
 - **Shows one chooser at a time**, whichever broker asks, and never changes the one on screen: the next waits until it has closed.
 - **Closes a package confirmation whose request ended** (expired, its requester gone, the module restarted), so it can't block the next one or answer nobody (#570). It closes the dialog showing that request, by its ID, and the dialog answers nothing: a cancel goes by package name, and would cancel a retry for the same package.
-- **Restarts the module** if it stops, up to three times, and claims the new instance. Requests in flight fail; the apps' backends keep running. Past the third it stays off, and so does one Basecamp can't claim again: the Welcome page's Details and Install open the App Manager's dialog instead, and what apps and links ask through it fails.
+- **Restarts the module** if it stops, up to three times, and claims the new instance. Requests in flight fail; the apps' backends keep running. Past the third it stays off, and so does one Basecamp can't claim again: the Welcome page's Details and Install open the Package Manager and Applications sections instead, and what apps and links ask through it fails.
 
 Known gaps:
 

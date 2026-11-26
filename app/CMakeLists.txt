@@ -341,6 +341,7 @@ set(PROJECT_SOURCES
     IntentBroker.cpp
     IntentBridgeAdapter.cpp
     IntentChooserQueue.cpp
+    ConfirmationQueue.cpp
     intents/IntentsModuleHost.cpp
     UIPluginPresenter.cpp
     CoreModuleManager.cpp
@@ -351,7 +352,6 @@ set(PROJECT_SOURCES
     PackageCoordinator.cpp
     RepositorySource.cpp
     UninstallPlan.cpp
-    InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
     PluginLoader.cpp

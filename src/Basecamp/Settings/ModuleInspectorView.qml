@@ -29,7 +29,7 @@ Item {
     // Basecamp/Shell/ContentViews.qml. The Interface screen is the exception:
     // PluginInterfaceView still queries the backend for methods/events itself.
     // `searchText` is owned by SettingsView (one shared page-level search bar,
-    // styled like AppManagerView).
+    // styled like App Manager's).
     property var sourceModel: null
     property bool loading: false
     property string searchText: ""

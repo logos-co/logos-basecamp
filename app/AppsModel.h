@@ -5,19 +5,14 @@
 
 #include <QAbstractListModel>
 #include <QHash>
-#include <QPointer>
 #include <QString>
 #include <QVariantList>
 #include <QVariantMap>
 
-class InstallRegistry;
-
-// AppsModel — the single source of truth for every package the App Manager
-// (and Modules tab) cares about.
+// AppsModel — the catalogue and what is installed, for the welcome page's
+// search, the intent install offers and provider details.
 class AppsModel : public QAbstractListModel, public AppsModelRoles {
     Q_OBJECT
-    Q_PROPERTY(QStringList categories READ categories NOTIFY categoriesChanged)
-    Q_PROPERTY(QString hostVariant READ hostVariant NOTIFY hostVariantChanged)
 public:
     Q_ENUM(Roles)
 
@@ -35,16 +30,6 @@ public:
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
-
-    QStringList categories() const;
-
-    QString hostVariant() const { return m_validVariants.value(0); }
-
-signals:
-    void categoriesChanged();
-    void hostVariantChanged();
-
-public:
 
     // True once the manifest guarantees a conforming icon (>= 0.4.0). Static
     // and public so UIPluginManager's sidebar path uses the SAME rule — this
@@ -74,21 +59,9 @@ public:
                     const QString& iconUrl,
                     const QString& manifestVersion);
     void setMissingDeps(const QString& name, const QStringList& missing);
-    void setInstallRegistry(InstallRegistry* installRegistry);
 
     void beginBulkInstalledUpdate();
     void endBulkInstalledUpdate();
-
-    struct ResolverRow {
-        QString name;
-        QString repositoryUrl;
-        QString action;
-        QString toVersion;   
-        bool    isTopLevel = false;
-        QString resolverError; 
-    };
-    void setResolverOverlay(const QList<ResolverRow>& rows);
-    void clearResolverOverlay();
 
     QVariantMap rowDataByName(const QString& name,
                               const QString& repositoryUrl = {}) const;
@@ -124,14 +97,6 @@ private:
         QString installType;
         QStringList missingDeps;
         InstallStatus::Value installStatus = InstallStatus::NotInstalled;
-
-        // Resolver overlay (per dialog session). Live install state lives
-        // on m_installRegistry — see setInstallRegistry. Per-row InstallStageRole /
-        // InstallErrorRole / ActionRole derive from there at read time.
-        QString action;
-        QString toVersion;
-        bool    isTopLevel = false;
-        QString resolverError;
     };
 
     static QString key(const QString& repo, const QString& name);
@@ -140,16 +105,9 @@ private:
     void recomputeVersionDerivedFields(Row& r);
     void recomputeInstallStatus(Row& r);
 
-    // The registry, but only when its in-flight entry belongs to this
-    // row's repository. nullptr otherwise — see the .cpp for why.
-    InstallRegistry* registryFor(const Row& r) const;
-
     QStringList         m_validVariants;
     QList<Row>          m_rows;
     QHash<QString, int> m_indexByKey;     // (repo + "\n" + name) → row index
     QMultiHash<QString, int> m_indicesByName;
     bool m_inBulkInstalledUpdate = false;
-
-    // Source of truth for in-flight install state
-    QPointer<InstallRegistry> m_installRegistry;
 };

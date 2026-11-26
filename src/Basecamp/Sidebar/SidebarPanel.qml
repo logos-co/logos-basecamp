@@ -34,9 +34,10 @@ Control {
         // `section` is the shell section index (0 is the Workspace above).
         // Only those the host offers; a backend without the list offers all.
         readonly property var viewSections: [
-            { name: "Applications",    icon: BasecampIcons.dashboard, section: 1 },
+            { name: "Applications",    icon: BasecampIcons.dashboard, section: 1,
+              app: backend.sectionApps ? backend.sectionApps["1"] || "" : "" },
             { name: "Package Manager", icon: BasecampIcons.modules,   section: 2,
-              app: "package_manager_ui" },
+              app: backend.sectionApps ? backend.sectionApps["2"] || "" : "" },
             { name: "Settings",        icon: BasecampIcons.settings,  section: 3 }
         ].filter(function(item) {
             return !backend.availableSections || backend.availableSections.indexOf(item.section) >= 0

@@ -16,8 +16,8 @@ find_package(LogosDesignSystem CONFIG QUIET)
 
 enable_testing()
 
-# AppsModel and InstallRegistry are host-side; AppsFilterProxy and InstallEnums
-# live in the main_ui shell. This suite covers the seam, so it builds from both.
+# AppsModel is host-side; AppsFilterProxy and InstallEnums live in the main_ui
+# shell. This suite covers the seam, so it builds from both.
 set(BASECAMP_SRC   "${CMAKE_CURRENT_SOURCE_DIR}/../../app")
 set(BASECAMP_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/../../src")
 
@@ -28,13 +28,12 @@ endif()
 add_executable(qml_tests
     main.cpp
     ${BASECAMP_SRC}/AppsModel.cpp
-    ${BASECAMP_SRC}/InstallRegistry.cpp   # AppsModel depends on InstallRegistry
     ${BASECAMP_SHELL}/AppsFilterProxy.cpp
     ${BASECAMP_SHELL}/ModulesFilterProxy.cpp   # the Settings inspectors' tables
     ${BASECAMP_SHELL}/InstallEnums.cpp
     # AUTOMOC pairs a header with a .cpp of the same basename in the SAME
     # directory; InstallEnums.cpp is in src/ and its header in app/interfaces/,
-    # so it must be listed or the link fails on InstallStage/InstallStatus'
+    # so it must be listed or the link fails on InstallStatus'
     # staticMetaObject.
     ${BASECAMP_SRC}/interfaces/InstallEnums.h
 )
@@ -44,67 +43,46 @@ target_include_directories(qml_tests PRIVATE
     ${BASECAMP_SHELL}
     ${LOGOS_PACKAGE_HEADERS_INCLUDE}
 )
+# The shared installer files (Basecamp.Installer): plain JavaScript the shell
+# and the enum contract tests import, so built with or without the design system.
+set(INSTALLER_QML_FILES
+    ${BASECAMP_SHELL}/Basecamp/Installer/Availability.js
+    ${BASECAMP_SHELL}/Basecamp/Installer/Downloads.js
+    ${BASECAMP_SHELL}/Basecamp/Installer/MonogramColor.js
+    ${BASECAMP_SHELL}/Basecamp/Installer/Stages.js
+    ${BASECAMP_SHELL}/Basecamp/Installer/Types.js
+)
+foreach(js_file IN LISTS INSTALLER_QML_FILES)
+    get_filename_component(js_name "${js_file}" NAME)
+    set_source_files_properties("${js_file}" PROPERTIES QT_RESOURCE_ALIAS "${js_name}")
+endforeach()
+qt_add_qml_module(basecamp_installer_test_qml
+    URI Basecamp.Installer
+    VERSION 1.0
+    STATIC
+    RESOURCE_PREFIX /qt/qml
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Installer
+    QML_FILES ${INSTALLER_QML_FILES}
+)
+target_link_libraries(qml_tests PRIVATE
+    basecamp_installer_test_qml
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_installer_test_qmlplugin>
+)
+
 if(LogosDesignSystem_FOUND)
     target_link_libraries(qml_tests PRIVATE Logos::DesignSystem)
     target_compile_definitions(qml_tests PRIVATE HAVE_LOGOS_DESIGN_SYSTEM=1)
     message(STATUS "qml_tests: design system found — shell component tests enabled")
 
     # The Shell tests reach their components by directory import, which works
-    # because nothing under Basecamp/Shell/ is a singleton. AddApplicationDialog
-    # is not so lucky: it uses the AppColors and DownloadFormat singletons,
-    # registered by a CMake source-file property with no on-disk qmldir behind
-    # them, so a directory import cannot resolve either. Rebuilding just the
-    # four files it needs as a real Basecamp.AppManager module is what makes
-    # `import Basecamp.AppManager` work from a test.
-    #
-    # Basecamp.Backend, which they also import, is registered from main.cpp.
-    set(APPMANAGER_QML_DIR "${BASECAMP_SHELL}/Basecamp/AppManager")
-    set(APPMANAGER_QML_FILES
-        ${APPMANAGER_QML_DIR}/AddApplicationDialog.qml
-        ${APPMANAGER_QML_DIR}/PackageRowDelegate.qml
-        ${APPMANAGER_QML_DIR}/AppColors.qml
-        ${APPMANAGER_QML_DIR}/DownloadFormat.qml
-        ${APPMANAGER_QML_DIR}/AppGrid.qml
-        ${APPMANAGER_QML_DIR}/AppGridDelegate.qml
-        ${APPMANAGER_QML_DIR}/AppListDelegate.qml
-        ${APPMANAGER_QML_DIR}/AppContextMenu.qml
-        ${APPMANAGER_QML_DIR}/AppManagerView.qml
-        ${APPMANAGER_QML_DIR}/AppManagerPanelHeader.qml
-        ${APPMANAGER_QML_DIR}/AppRepoSection.qml
-    )
-    # Resource paths are computed relative to CMAKE_CURRENT_SOURCE_DIR, and
-    # these sit two directories up — without an alias each lands under a
-    # ../../ prefix the engine will not find.
-    foreach(qml_file IN LISTS APPMANAGER_QML_FILES)
-        get_filename_component(qml_name "${qml_file}" NAME)
-        set_source_files_properties("${qml_file}"
-            PROPERTIES QT_RESOURCE_ALIAS "${qml_name}")
-    endforeach()
-    set_source_files_properties(
-        ${APPMANAGER_QML_DIR}/AppColors.qml
-        ${APPMANAGER_QML_DIR}/DownloadFormat.qml
-        PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-
-    qt_add_qml_module(basecamp_appmanager_test_qml
-        URI Basecamp.AppManager
-        VERSION 1.0
-        STATIC
-        RESOURCE_PREFIX /qt/qml
-        OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/AppManager
-        QML_FILES ${APPMANAGER_QML_FILES}
-    )
-    target_link_libraries(basecamp_appmanager_test_qml PRIVATE Logos::DesignSystem)
-    # WHOLE_ARCHIVE: a STATIC qt_add_qml_module registers its types from a
-    # static initializer inside the *_qmlplugin archive. Let the linker collect
-    # it and there is no error, just an unresolvable import.
-    target_link_libraries(qml_tests PRIVATE
-        basecamp_appmanager_test_qml
-        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_test_qmlplugin>
-    )
+    # because nothing under Basecamp/Shell/ is a singleton. Basecamp.Backend,
+    # which they also import, is registered from main.cpp.
 
     # Basecamp.Common, for the install dialogs' trust notice and badges and the
-    # Settings inspectors' loading overlay: the same reasoning as
-    # Basecamp.AppManager above.
+    # Settings inspectors' loading overlay, imported as the module it is in
+    # production. The alias keeps each file at the module's root (they sit two
+    # directories up); WHOLE_ARCHIVE keeps the static plugin's registration,
+    # without which the import fails with no error.
     set(COMMON_QML_FILES
         ${BASECAMP_SHELL}/Basecamp/Common/EmptyView.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustNotice.qml
@@ -130,7 +108,7 @@ if(LogosDesignSystem_FOUND)
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_test_qmlplugin>
     )
     # Basecamp.Icons, the shell's own icons, and Basecamp.Common's EmptyView:
-    # what the App Manager and the welcome page import.
+    # what the welcome page imports.
     set(ICONS_DIR "${BASECAMP_SHELL}/Basecamp/Icons")
     set(ICONS_RESOURCES
         ${ICONS_DIR}/logos-lambda.svg

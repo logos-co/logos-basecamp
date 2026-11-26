@@ -781,23 +781,6 @@ private slots:
         QCOMPARE(s.value(QStringLiteral("blocked")).toBool(), true);
     }
 
-    // A verdict is about one plan: any row changing makes it another.
-    void aPlanIsIdentifiedByEveryRow()
-    {
-        const QVariantList plan{planRow(QStringLiteral("app"), QStringLiteral("1.0.0"), QStringLiteral("a")),
-                                planRow(QStringLiteral("dep"), QStringLiteral("2.0.0"), QStringLiteral("b"))};
-        QCOMPARE(planIdentity(plan), planIdentity(plan));
-        QVariantList otherHash = plan;
-        otherHash[1] = planRow(QStringLiteral("dep"), QStringLiteral("2.0.0"), QStringLiteral("c"));
-        QVERIFY(planIdentity(otherHash) != planIdentity(plan));
-        QVariantList otherRepo = plan;
-        QVariantMap moved = plan[1].toMap();
-        moved[QStringLiteral("repositoryUrl")] = QStringLiteral("https://elsewhere.example");
-        otherRepo[1] = moved;
-        QVERIFY(planIdentity(otherRepo) != planIdentity(plan));
-        QVERIFY(planIdentity({plan.first()}) != planIdentity(plan));
-    }
-
     void aPublisherIsTrustedUnderAStableSafeName()
     {
         QCOMPARE(keyNameFor(logosDid()), logosKeyName());
@@ -879,85 +862,6 @@ private slots:
         QCOMPARE(s.value(QStringLiteral("trustCoversAll")).toBool(), true);
         QCOMPARE(publisherKeys(logosDid(), rotated), (QStringList{kThirdDid, logosDid()}));
         QCOMPARE(publisherKeys(kOtherDid, rotated), QStringList{kOtherDid});
-    }
-
-    // What App Manager fetched installs only as approved: all of it or none,
-    // nothing outside the plan. A failed download used to install what had
-    // come before it.
-    void whatWasFetchedIsHeldToTheApproval()
-    {
-        QVariantMap optional = planRow(QStringLiteral("extra"), QStringLiteral("1.0.0"), QStringLiteral("e"));
-        optional.insert(QStringLiteral("optional"), true);
-        const QVariantList planned{planRow(QStringLiteral("app"), QStringLiteral("1.0.0"), QStringLiteral("a")),
-                                   planRow(QStringLiteral("dep"), QStringLiteral("2.0.0"), QStringLiteral("d")),
-                                   optional};
-        const QVariantList approved = planned;
-        const auto failed = [](QVariantMap row, const QString& why) {
-            row.insert(QStringLiteral("error"), why);
-            return row;
-        };
-        QCOMPARE(notAsApproved(planned, planned, approved), QString());
-        QCOMPARE(notAsApproved({planned[0], planned[1], failed(optional, QStringLiteral("gone"))}, planned, approved),
-                 QString());
-        QCOMPARE(notAsApproved({planned[0], failed(planned[1].toMap(), QStringLiteral("timed out"))}, planned, approved),
-                 QStringLiteral("dep: timed out"));
-        QVERIFY(notAsApproved({planned[0]}, planned, approved).startsWith(QStringLiteral("dep v2.0.0 could not be fetched")));
-        QVERIFY(notAsApproved({planRow(QStringLiteral("app"), QStringLiteral("1.0.0"), QStringLiteral("other")),
-                               planned[1]}, planned, approved)
-                    .startsWith(QStringLiteral("What this installs changed after you approved it (app v1.0.0)")));
-    }
-
-    // A fetched file is signed exactly as approved, or not installed: App
-    // Manager used to install whatever the downloader accepted.
-    void aFetchedFileIsSignedAsApproved()
-    {
-        QVariantMap signedRow = planRow(QStringLiteral("app"), QStringLiteral("1.0.0"), QStringLiteral("a"));
-        signedRow.insert(QStringLiteral("signer"), kOtherDid);
-        const QVariantMap looseRow = planRow(QStringLiteral("loose"), QStringLiteral("1.0.0"), QStringLiteral("l"));
-        const QVariantList approved{signedRow, looseRow};
-        QCOMPARE(signerChanged(verified(true, true, true, kOtherDid), approved, signedRow), QString());
-        QVERIFY(!signerChanged(verified(true, true, true, kThirdDid), approved, signedRow).isEmpty());
-        QVERIFY(!signerChanged(verified(false, false, true), approved, signedRow).isEmpty());
-        QVERIFY(!signerChanged(verified(true, false, true, kOtherDid), approved, signedRow).isEmpty());
-        QVERIFY(!signerChanged(verified(true, true, false, kOtherDid), approved, signedRow).isEmpty());
-        QVERIFY(!signerChanged({}, approved, signedRow).isEmpty());   // the check never ran
-        QCOMPARE(signerChanged(verified(false, false, true), approved, looseRow), QString());
-        QVERIFY(!signerChanged(verified(true, true, true, kOtherDid), approved, looseRow).isEmpty());
-    }
-
-    // What App Manager checks and installs is its own copy: a write to the
-    // downloader's path after the check used to change what was installed.
-    void aFetchedFileIsInstalledFromAPrivateCopy()
-    {
-        QTemporaryDir downloads, copies;
-        const QString path = downloads.filePath(QStringLiteral("cool-1.0.0.lgx"));
-        QFile file(path);
-        QVERIFY(file.open(QIODevice::WriteOnly));
-        file.write("approved");
-        file.close();
-        QVariantMap row = planRow(QStringLiteral("cool"), QStringLiteral("1.0.0"), QStringLiteral("r"));
-        row.insert(QStringLiteral("path"), path);
-        const QVariantMap unfetched = planRow(QStringLiteral("dep"), QStringLiteral("1.0.0"), QStringLiteral("d"));
-
-        QString error;
-        const QVariantList out = intoPrivateCopies({row, unfetched}, copies.path(), &error);
-        QCOMPARE(error, QString());
-        QCOMPARE(out.size(), 2);
-        const QString copy = out[0].toMap().value(QStringLiteral("path")).toString();
-        QVERIFY(copy.startsWith(copies.path()));
-        QCOMPARE(out[1].toMap(), unfetched);
-
-        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-        file.write("swapped");
-        file.close();
-        QFile installed(copy);
-        QVERIFY(installed.open(QIODevice::ReadOnly));
-        QCOMPARE(installed.readAll(), QByteArray("approved"));
-
-        // No copy, no install.
-        row.insert(QStringLiteral("path"), downloads.filePath(QStringLiteral("gone.lgx")));
-        QVERIFY(intoPrivateCopies({row}, copies.path(), &error).isEmpty());
-        QVERIFY(!error.isEmpty());
     }
 
     // A request is for a local file when it names one, not when it has no
@@ -1122,6 +1026,43 @@ private slots:
         QCOMPARE(asReplacement({QStringLiteral("intents_module"), QStringLiteral("1.0.0"), Status::Trusted,
                                 logosDid()}, {}, reserved).status,
                  Status::Trusted);
+    }
+
+    // Logos Storage comes with Basecamp, yet the person may update it from any
+    // publisher, as any package: it was Logos's only, so installing the
+    // Storage app, which brings the catalogue's build, was refused.
+    void storageUpdatesLikeAnyPackage()
+    {
+        const QStringList reserved = reservedNames(
+            {QStringLiteral("storage_module"), QStringLiteral("package_manager"),
+             QStringLiteral("capability_module")}, {});
+        QVERIFY(!reserved.contains(QStringLiteral("storage_module"), Qt::CaseInsensitive));
+        for (const char* name : {"package_manager", "capability_module", "intents_module"})
+            QVERIFY2(reserved.contains(QLatin1String(name)), name);
+
+        const QVariantMap bundledCopy{{QStringLiteral("installType"), QStringLiteral("embedded")}};
+        const Package unsignedStorage = asReplacement(
+            {QStringLiteral("storage_module"), QStringLiteral("3.0.2"), Status::Unsigned, {}},
+            bundledCopy, reserved);
+        QVERIFY(!unsignedStorage.reserved);
+        QCOMPARE(unsignedStorage.status, Status::Unsigned);
+        QCOMPARE(summary({unsignedStorage}, {}, QStringLiteral("storage_module"))
+                     .value(QStringLiteral("blocked")).toBool(), false);
+
+        const QList<Package> plan = judgePlan(
+            QStringLiteral("storage_ui"),
+            {planRow(QStringLiteral("storage_ui"), QStringLiteral("3.0.2"), QStringLiteral("a")),
+             planRow(QStringLiteral("storage_module"), QStringLiteral("3.0.2"), QStringLiteral("s"))},
+            [](const QVariantMap&) { return false; },
+            [](const QVariantMap& row) {
+                return QVariantList{release(row.value(QStringLiteral("name")).toString(),
+                                            row.value(QStringLiteral("version")).toString(),
+                                            row.value(QStringLiteral("rootHash")).toString(), kOtherDid)};
+            },
+            [](const QVariantMap&) { return QVariantMap{}; }, {kOtherDid}, reserved);
+        QCOMPARE(plan[1].name, QStringLiteral("storage_module"));
+        QVERIFY(!plan[1].reserved);
+        QCOMPARE(plan[1].status, Status::Trusted);
     }
 
     // The names Basecamp and the runtime call modules under: a package under
@@ -1299,6 +1240,35 @@ private slots:
                                {QStringLiteral("capability_module")}).status, Status::Invalid);
     }
 
+    // Basecamp's own Logos Storage is Logos's: another publisher's copy takes
+    // its place only asked, signed by a key the person trusts too. It used to
+    // install unasked: the bundled copy has no signer on record.
+    void replacingTheBundledCopyAsksUnlessLogosSignedIt()
+    {
+        const QVariantMap bundledCopy{{QStringLiteral("installType"), QStringLiteral("embedded")}};
+        const QVariantList keys{QVariantMap{{QStringLiteral("did"), kOtherDid},
+                                            {QStringLiteral("displayName"), QStringLiteral("Other")}}};
+        const Package trusted = asReplacement(
+            {QStringLiteral("storage_module"), QStringLiteral("3.0.2"), Status::Trusted, kOtherDid,
+             QStringLiteral("Other")},
+            bundledCopy, {});
+        QCOMPARE(trusted.replacesSignedBy, logosDid());
+        const QVariantMap s = summary({trusted}, keys, QStringLiteral("storage_module"));
+        QCOMPARE(s.value(QStringLiteral("needsPrompt")).toBool(), true);
+        QCOMPARE(s.value(QStringLiteral("canTrust")).toBool(), false);
+        QCOMPARE(s.value(QStringLiteral("byName")).toMap().value(QStringLiteral("storage_module")).toMap()
+                     .value(QStringLiteral("replaces")).toString(), logosName());
+        QCOMPARE(asReplacement({QStringLiteral("storage_module"), QStringLiteral("3.0.2"), Status::Unsigned, {}},
+                               bundledCopy, {}).replacesSignedBy, logosDid());
+
+        // Logos's, with any of its keys: nothing changes hands.
+        QVERIFY(asReplacement({QStringLiteral("storage_module"), {}, Status::Trusted, logosDid()}, bundledCopy, {})
+                    .replacesSignedBy.isEmpty());
+        const LogosKeys rotated{{kThirdDid, logosDid()}, {}};
+        QVERIFY(asReplacement({QStringLiteral("storage_module"), {}, Status::Trusted, logosDid()}, bundledCopy, {},
+                              rotated).replacesSignedBy.isEmpty());
+    }
+
     // A copy nobody signed can't be told to come from the publisher of what
     // replaces it, so only Logos takes its place unasked: a trusted key used to
     // replace another's unsigned app without a word.
@@ -1318,6 +1288,49 @@ private slots:
                      .value(QStringLiteral("replacesUnverified")).toBool(), true);
         QVERIFY(!asReplacement({QStringLiteral("app"), {}, Status::Trusted, logosDid()}, unsignedCopy, {})
                      .replacesUnverified);
+    }
+
+    // An unsigned release's manifest is outside its rootHash: the plan pins
+    // the file by the catalogue's digest, so what it declares can't change
+    // once approved. A signed one is pinned by its signature.
+    void anUnsignedReleaseIsPinnedByItsDigest()
+    {
+        const QVariantList resolved{planRow(QStringLiteral("loose"), QStringLiteral("1.0.0"), QStringLiteral("l")),
+                                    planRow(QStringLiteral("app"), QStringLiteral("2.0.0"), QStringLiteral("a"))};
+        const auto versionsOf = [](const QVariantMap& row) {
+            const QString name = row.value(QStringLiteral("name")).toString();
+            QVariantMap entry = release(name, row.value(QStringLiteral("version")).toString(),
+                                        row.value(QStringLiteral("rootHash")).toString(),
+                                        name == QLatin1String("app") ? logosDid() : QString());
+            entry[QStringLiteral("sha256")] = QStringLiteral("digest-of-") + name;
+            return QVariantList{entry};
+        };
+        const QList<Package> judged = judgePlan(
+            QStringLiteral("app"), resolved, [](const QVariantMap&) { return false; }, versionsOf,
+            [](const QVariantMap&) { return QVariantMap{}; }, {logosDid()});
+        const QVariantList plan = approvedPlan(QStringLiteral("app"), resolved, judged);
+        QCOMPARE(plan.at(0).toMap().value(QStringLiteral("sha256")).toString(), QStringLiteral("digest-of-loose"));
+        QVERIFY(!plan.at(1).toMap().contains(QStringLiteral("sha256")));
+    }
+
+    // Two files listed as one unsigned release: which comes isn't ours to
+    // guess. Signed, the signature pins it whichever file comes.
+    void twoFilesListedAsOneUnsignedReleaseAreUnknown()
+    {
+        QVariantMap one = release(QStringLiteral("loose"), QStringLiteral("1.0.0"), QStringLiteral("l"));
+        one[QStringLiteral("sha256")] = QStringLiteral("one");
+        QVariantMap two = one;
+        two[QStringLiteral("sha256")] = QStringLiteral("two");
+        QCOMPARE(fromCatalog(QStringLiteral("loose"), QStringLiteral("1.0.0"), QStringLiteral("l"), {one, two}, {})
+                     .status, Status::Unknown);
+        QCOMPARE(fromCatalog(QStringLiteral("loose"), QStringLiteral("1.0.0"), QStringLiteral("l"), {one, one}, {})
+                     .status, Status::Unsigned);
+        QVariantMap signedOne = release(QStringLiteral("app"), QStringLiteral("2.0.0"), QStringLiteral("a"), logosDid());
+        signedOne[QStringLiteral("sha256")] = QStringLiteral("one");
+        QVariantMap signedTwo = signedOne;
+        signedTwo[QStringLiteral("sha256")] = QStringLiteral("two");
+        QCOMPARE(fromCatalog(QStringLiteral("app"), QStringLiteral("2.0.0"), QStringLiteral("a"),
+                             {signedOne, signedTwo}, {logosDid()}).status, Status::Trusted);
     }
 
     // A release installs under its own manifest's name, which the download is

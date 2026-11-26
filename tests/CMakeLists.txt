@@ -126,7 +126,7 @@ foreach(test_src IN LISTS TEST_SOURCES)
     # AUTOMOC pairs a header with a .cpp of the same basename in the SAME
     # directory, and InstallEnums.cpp (src/) and its header (app/interfaces/)
     # are in different ones -- so the header rides along on every target to get
-    # InstallStage/InstallStatus' staticMetaObject. Elsewhere: a spare moc TU.
+    # InstallStatus' staticMetaObject. Elsewhere: a spare moc TU.
     add_executable(${test_name} ${test_src} ${_extra_srcs}
         ${BASECAMP_SRC}/interfaces/InstallEnums.h)
     target_include_directories(${test_name} PRIVATE

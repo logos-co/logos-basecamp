@@ -10,6 +10,55 @@
 
 namespace logos {
 
+// What an installer app chose with an install, from a confirm request's
+// params: the version of each package the plan brings (`versions`, name to
+// version) and which optional packages to take (`optional`, name to bool).
+// The resolver takes them as pins, so the plan Basecamp shows, and the person
+// approves, is the one picked. Malformed entries are dropped.
+struct InstallChoices {
+    QVariantMap pins;          // required: name -> version, the subject's own included
+    QVariantMap selection;     // optional: name -> taken
+    QVariantMap optionalPins;  // optional: name -> version
+};
+
+inline InstallChoices installChoicesFrom(const QVariantMap& params, const QString& subject,
+                                         const QString& subjectVersion)
+{
+    constexpr int kMaxEntries = 256;
+    constexpr int kMaxVersionLength = 64;
+    InstallChoices c;
+    c.pins.insert(subject, subjectVersion);
+    const QVariantMap optional = params.value(QStringLiteral("optional")).toMap();
+    int seen = 0;
+    for (auto it = optional.cbegin(); it != optional.cend() && seen < kMaxEntries; ++it, ++seen) {
+        if (it.key().isEmpty() || it.key() == subject || it.value().typeId() != QMetaType::Bool)
+            continue;
+        c.selection.insert(it.key(), it.value().toBool());
+    }
+    const QVariantMap versions = params.value(QStringLiteral("versions")).toMap();
+    seen = 0;
+    for (auto it = versions.cbegin(); it != versions.cend() && seen < kMaxEntries; ++it, ++seen) {
+        const QString version = it.value().typeId() == QMetaType::QString ? it.value().toString() : QString();
+        if (it.key().isEmpty() || it.key() == subject || version.isEmpty()
+            || version.size() > kMaxVersionLength)
+            continue;
+        (c.selection.contains(it.key()) ? c.optionalPins : c.pins).insert(it.key(), version);
+    }
+    return c;
+}
+
+// The requester's choices with what the person then changed in the dialog
+// over them: which optional packages come, and at what version. The versions
+// of what the plan needs stay the requester's.
+inline InstallChoices withDialogPicks(InstallChoices c, const QVariantMap& selection,
+                                      const QVariantMap& optionalPins)
+{
+    for (auto it = selection.cbegin(); it != selection.cend(); ++it) c.selection.insert(it.key(), it.value());
+    for (auto it = optionalPins.cbegin(); it != optionalPins.cend(); ++it)
+        c.optionalPins.insert(it.key(), it.value());
+    return c;
+}
+
 inline QVariantList selectedOptionalRequests(const QVariantList& offers,
                                             const QStringList& names,
                                             const QVariantMap& versionPins = {})

@@ -5,11 +5,9 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSet>
 #include <QUrl>
 
 #include <memory>
@@ -295,13 +293,17 @@ Package fromCatalog(const QString& name, const QString& version, const QString& 
             continue;
         const QVariantMap signature = entry.value(QStringLiteral("signature")).toMap();
         const QString did = signature.value(QStringLiteral("did")).toString();
+        const QString sha256 = entry.value(QStringLiteral("sha256")).toString();
         if (found) {
-            // Which of them the downloader takes is not ours to guess.
-            if (did != package.did) return Package{name, version, Status::Unknown};
+            // Which of them the downloader takes is not ours to guess; nor,
+            // unsigned, which file, as only its digest pins its manifest.
+            if (did != package.did || (did.isEmpty() && sha256 != package.sha256))
+                return Package{name, version, Status::Unknown};
             continue;
         }
         const QVariantMap signer = signature.value(QStringLiteral("signer")).toMap();
         package.did = did;
+        package.sha256 = sha256;
         package.signerName = signer.value(QStringLiteral("name")).toString();
         package.signerUrl = signer.value(QStringLiteral("url")).toString();
         found = true;
@@ -339,7 +341,15 @@ Package asReplacement(Package package, const QVariantMap& record, const QStringL
         package.reserved = true;
         return package;
     }
-    if (record.value(QStringLiteral("installType")).toString() != QLatin1String("user"))
+    const QString installType = record.value(QStringLiteral("installType")).toString();
+    // Basecamp's own copy, Logos Storage's the one any publisher may replace,
+    // is Logos's.
+    if (installType == QLatin1String("embedded")) {
+        if (!logos.dids.isEmpty() && !logos.dids.contains(package.did))
+            package.replacesSignedBy = logos.dids.first();
+        return package;
+    }
+    if (installType != QLatin1String("user"))
         return package;
     const QString had = record.value(QStringLiteral("signerDid")).toString();
     if (!isCanonicalDid(had)) {
@@ -368,7 +378,7 @@ QVariantMap installedRecordOf(const QVariantList& installed, const QString& name
 
 QStringList packageModuleCallers()
 {
-    return {QStringLiteral("core"), QStringLiteral("package_manager_ui_backend")};
+    return defaultapps::packageModuleCallers();
 }
 
 Package asInstall(Package package, const QString& type, const QVariantMap& record,
@@ -390,10 +400,17 @@ QStringList identityNames()
             QStringLiteral("logos_link")};
 }
 
+QStringList updatableBundledModules()
+{
+    return {QStringLiteral("storage_module")};
+}
+
 QStringList reservedNames(const QStringList& modules, const QStringList& apps)
 {
-    QStringList names = modules + packageModuleCallers();
-    names << QStringLiteral("intents_module");
+    QStringList names;
+    for (const QString& module : modules)
+        if (!updatableBundledModules().contains(module, Qt::CaseInsensitive)) names << module;
+    names << packageModuleCallers() << QStringLiteral("intents_module");
     for (const QString& app : apps)
         names << app << app + QStringLiteral("_backend");
     return names;
@@ -532,99 +549,15 @@ QVariantList approvedPlan(const QString& name, const QVariantList& resolved,
         if (!package.installed
             && (package.status == Status::Trusted || package.status == Status::Untrusted))
             request.insert(QStringLiteral("signer"), package.did);
+        // Unsigned, the file's digest is what pins its manifest: rootHash
+        // covers only the payload.
+        if (!package.installed && package.status == Status::Unsigned && !package.sha256.isEmpty())
+            request.insert(QStringLiteral("sha256"), package.sha256);
         if (row.value(QStringLiteral("optional")).toBool())
             request.insert(QStringLiteral("optional"), true);
         plan << request;
     }
     return plan;
-}
-
-namespace {
-
-QString releaseOf(const QVariantMap& row)
-{
-    return QStringList{row.value(QStringLiteral("name")).toString(),
-                       row.value(QStringLiteral("version")).toString(),
-                       row.value(QStringLiteral("rootHash")).toString(),
-                       row.value(QStringLiteral("repositoryUrl")).toString()}
-        .join(QChar(0x1f));
-}
-
-} // namespace
-
-QString notAsApproved(const QVariantList& fetched, const QVariantList& planned,
-                      const QVariantList& approved)
-{
-    QSet<QString> releases;
-    for (const QVariant& v : approved) releases.insert(releaseOf(v.toMap()));
-    QSet<QString> arrived;
-    QHash<QString, QString> failed;   // name -> why
-    for (const QVariant& v : fetched) {
-        const QVariantMap row = v.toMap();
-        const QString error = row.value(QStringLiteral("error")).toString();
-        if (!error.isEmpty()) {
-            failed.insert(row.value(QStringLiteral("name")).toString(), error);
-            continue;
-        }
-        if (!releases.contains(releaseOf(row)))
-            return QStringLiteral("What this installs changed after you approved it (%1 v%2), so nothing "
-                                  "was installed. Try again to review it.")
-                .arg(row.value(QStringLiteral("name")).toString(), row.value(QStringLiteral("version")).toString());
-        arrived.insert(releaseOf(row));
-    }
-    // All of it, or none: an optional package may be missing, nothing else.
-    for (const QVariant& v : planned) {
-        const QVariantMap row = v.toMap();
-        if (row.value(QStringLiteral("optional")).toBool() || arrived.contains(releaseOf(row))) continue;
-        const QString name = row.value(QStringLiteral("name")).toString();
-        if (failed.contains(name))
-            return QStringLiteral("%1: %2").arg(name, failed.value(name));
-        return QStringLiteral("%1 v%2 could not be fetched as approved, so nothing was installed. "
-                              "Try again to review it.")
-            .arg(name, row.value(QStringLiteral("version")).toString());
-    }
-    return {};
-}
-
-QString signerChanged(const QVariantMap& verified, const QVariantList& approved, const QVariantMap& row)
-{
-    QString signer;
-    for (const QVariant& v : approved)
-        if (releaseOf(v.toMap()) == releaseOf(row))
-            signer = v.toMap().value(QStringLiteral("signer")).toString();
-    // A check that did not run proves nothing either way.
-    const bool held = verified.value(QStringLiteral("packageValid")).toBool()
-        && (signer.isEmpty()
-                ? !verified.value(QStringLiteral("isSigned")).toBool()
-                : verified.value(QStringLiteral("isSigned")).toBool()
-                      && verified.value(QStringLiteral("signatureValid")).toBool()
-                      && verified.value(QStringLiteral("signerDid")).toString() == signer);
-    if (held) return {};
-    return QStringLiteral("%1 v%2 is not signed as you approved it, so nothing was installed. "
-                          "Try again to review it.")
-        .arg(row.value(QStringLiteral("name")).toString(), row.value(QStringLiteral("version")).toString());
-}
-
-QVariantList intoPrivateCopies(const QVariantList& fetched, const QString& dir, QString* error)
-{
-    QVariantList out;
-    int n = 0;
-    for (const QVariant& v : fetched) {
-        QVariantMap row = v.toMap();
-        const QString path = row.value(QStringLiteral("path")).toString();
-        if (!path.isEmpty()) {
-            const QString copy = QDir(dir).filePath(QStringLiteral("%1-%2").arg(++n)
-                                                        .arg(QFileInfo(path).fileName()));
-            if (!QFile::copy(path, copy)) {
-                if (error) *error = QStringLiteral("Couldn't make a private copy of %1 to install.")
-                                        .arg(row.value(QStringLiteral("name")).toString());
-                return {};
-            }
-            row.insert(QStringLiteral("path"), copy);
-        }
-        out.append(row);
-    }
-    return out;
 }
 
 QStringList publisherKeys(const QString& did, const LogosKeys& logos)
@@ -860,21 +793,6 @@ QList<Package> unchecked(QList<Package> packages)
         if (p.status == Status::Trusted || p.status == Status::Untrusted)
             p.status = Status::Unknown;
     return packages;
-}
-
-QString planIdentity(const QVariantList& resolved)
-{
-    QStringList rows;
-    for (const QVariant& v : resolved) {
-        const QVariantMap row = v.toMap();
-        rows << QStringList{row.value(QStringLiteral("name")).toString(),
-                            row.value(QStringLiteral("version")).toString(),
-                            row.value(QStringLiteral("rootHash")).toString(),
-                            row.value(QStringLiteral("repositoryUrl")).toString(),
-                            row.value(QStringLiteral("error")).toString()}
-                    .join(QChar(0x1f));
-    }
-    return rows.join(QChar(0x1e));
 }
 
 QString keyNameFor(const QString& did)

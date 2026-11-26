@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import Logos.Theme
 import Logos.Controls
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
 // Global dialog layer hosted in a transparent top-level QQuickWidget
@@ -39,7 +38,6 @@ Item {
                                   || installGateDialog.visible
                                   || installErrorDialog.visible
                                   || loadFailedDialog.visible
-                                  || addApplicationDialog.visible
                                   || intentChooserDialog.visible
                                   || intentInstallDialog.visible
     property string sidebarTooltipText: ""
@@ -55,7 +53,8 @@ Item {
     QtObject {
         id: _dialogDeps
         property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
-        property var fallbackColorFor: function(name) { return AppColors.colorForApp(name); }
+        // App Manager (ShellSection.AppManager's app).
+        readonly property string appsApp: backend.sectionApps ? backend.sectionApps["1"] || "" : ""
     }
 
     // Each dialog instance carries a mode-derived objectName (matching the
@@ -94,8 +93,7 @@ Item {
             else            backend.cancelPendingAction(plan.batch[0])
         }
         onCancelledWhileLoading: function(plan) {
-            // No module IPC has fired yet; just drop the local pending name.
-            backend.cancelPendingUninstallApp(plan.targetName)
+            backend.cancelPendingAction(plan.targetName)
         }
     }
 
@@ -110,24 +108,27 @@ Item {
         objectName: "confirmationDialog.upgradeCascade"
         mode: "upgradeCascade"
         displayNameLookup: _dialogDeps.displayNameLookup
+        appsApp: _dialogDeps.appsApp
         onContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames(), upgradeCascadeDialog.optionalPickedVersions)
         onTrustAndContinueClicked: (name) => backend.confirmUninstallCascade(name, upgradeCascadeDialog.selectedOptionalNames(), upgradeCascadeDialog.optionalPickedVersions, true)
         onCancelClicked: (name) => backend.cancelPendingAction(name)
-        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
+        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, selection, pins)
     }
 
-    // Install gate raised by package_manager_ui as `confirm_install` — the only
-    // install confirmation in the app, covering both catalog downloads and
-    // local .lgx picks. Confirm/cancel answer the intent so PMU installs (or
-    // aborts). Lists the resolved transitive dep changes.
+    // Install gate raised by App Manager or package_manager_ui as
+    // `confirm_install` — the only install confirmation in the app, covering
+    // both catalog downloads and local .lgx picks. Confirm/cancel answer the
+    // intent so the app installs (or aborts). Lists the resolved transitive dep
+    // changes.
     ConfirmationDialog {
         id: installGateDialog
         objectName: "confirmationDialog.installGate"
         mode: "installGate"
         displayNameLookup: _dialogDeps.displayNameLookup
+        appsApp: _dialogDeps.appsApp
         onContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames(), installGateDialog.optionalPickedVersions)
         onTrustAndContinueClicked: (name) => backend.confirmInstallGate(name, installGateDialog.selectedOptionalNames(), installGateDialog.optionalPickedVersions, true)
-        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, "", {}, selection, pins, true)
+        onOptionalPreviewRequested: (name, selection, pins) => backend.refreshOptionalPreview(name, selection, pins)
         onCancelClicked: (name) => backend.cancelInstallGate(name)
     }
 
@@ -137,7 +138,6 @@ Item {
     IntentInstallDialog {
         id: intentInstallDialog
         displayNameLookup: _dialogDeps.displayNameLookup
-        fallbackColorFor: _dialogDeps.fallbackColorFor
         onInstallRequested: function(providerName) {
             backend.beginIntentInstall(providerName);
         }
@@ -180,43 +180,6 @@ Item {
         objectName: "confirmationDialog.loadFailed"
         mode: "loadFailed"
         displayNameLookup: _dialogDeps.displayNameLookup
-    }
-
-    // The "Required Packages" view of the catalog, restricted to whatever the
-    // resolver last returned. requiredPackageEntries is BOUND to the backend
-    // property, replacing a host-side setRequiredPackages() write into an
-    // object the host should not have been holding.
-    AppsFilterProxy {
-        id: requiredPackagesProxy
-        sourceModel:            backend.appsModel
-        excludeMainUi:          false
-        installStateFilter:     ""
-        showUnavailable:        true
-        requiredPackageEntries: backend.requiredPackages
-    }
-
-    // App-Manager "Add Application" dialog.
-    AddApplicationDialog {
-        id: addApplicationDialog
-        requiredPackagesModel: requiredPackagesProxy
-        onClosed: backend.notifyAddApplicationDialogClosed()
-        onUninstallRequested: function(name, repositoryUrl) {
-            backend.uninstallApp(name, repositoryUrl)
-        }
-        onInstallRequested: function(name, repositoryUrl) {
-            addApplicationDialog.installStage = InstallStage.Downloading
-            backend.confirmCatalogInstall(name, repositoryUrl)
-        }
-        onTrustAndInstallRequested: function(name, repositoryUrl) {
-            addApplicationDialog.installStage = InstallStage.Downloading
-            backend.confirmCatalogInstall(name, repositoryUrl, true)
-        }
-        onLaunchRequested: function(name) {
-            backend.onAppLauncherClicked(name)
-        }
-        onVersionChangeRequested: function(name, repositoryUrl, versionPins, selection, optionalPins) {
-            backend.refreshOptionalPreview(name, repositoryUrl, versionPins, selection, optionalPins, false)
-        }
     }
 
     LogosToast {
@@ -318,14 +281,7 @@ Item {
                                                   depChangesResolved, requestId);
         }
 
-        // Each dialog hears only its own flow's verdict: another install of
-        // the same package is not about the plan this one shows.
-        function onInstallTrustUpdated(flow, name, trust) {
-            if (flow === "app") {
-                if (addApplicationDialog.visible && addApplicationDialog.metadata.name === name)
-                    addApplicationDialog.trust = trust;
-                return;
-            }
+        function onInstallTrustUpdated(name, trust) {
             if (installGateDialog.visible && installGateDialog.moduleName === name)
                 installGateDialog.trust = trust;
             if (upgradeCascadeDialog.visible && upgradeCascadeDialog.moduleName === name)
@@ -350,44 +306,6 @@ Item {
 
         function onStartupNoticeRequested(title, name, message) {
             loadFailedDialog.openWithLoadError(name, message, title);
-        }
-
-        function onRequestOpenAddApplicationDialog(metadata) {
-            if (!addApplicationDialog.visible) {
-                addApplicationDialog.openWith(metadata);
-            } else if (addApplicationDialog.metadata.name === metadata.name) {
-                // Version re-resolve while the same app's dialog is already open.
-                addApplicationDialog.metadata = metadata;
-                addApplicationDialog.trust = metadata.trust || ({});
-                addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
-            }
-        }
-
-        function onAddApplicationDataUpdated(metadata) {
-            if (!addApplicationDialog.visible) return;
-            if (addApplicationDialog.metadata.name !== metadata.name) return;
-            addApplicationDialog.metadata = metadata;
-            addApplicationDialog.trust = metadata.trust || ({});
-            addApplicationDialog.installStage = metadata.installStage || InstallStage.None;
-        }
-
-        function onCatalogInstallStageChanged(name, stage) {
-            if (!addApplicationDialog.visible) return;
-            if (addApplicationDialog.metadata.name !== name) return;
-            addApplicationDialog.installStage = stage;
-        }
-        // Capture the failure reason so the dialog can show why the install failed.
-        function onCatalogInstallFailed(name, error) {
-            if (!addApplicationDialog.visible) return;
-            if (addApplicationDialog.metadata.name !== name) return;
-            addApplicationDialog.installStage = InstallStage.Failed;
-            addApplicationDialog.installError = error;
-        }
-        function onCatalogInstallFinished(name) {
-            if (addApplicationDialog.visible
-                && addApplicationDialog.metadata.name === name) {
-                addApplicationDialog.markInstallComplete();
-            }
         }
     }
 }

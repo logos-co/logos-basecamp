@@ -152,8 +152,17 @@ class Basecamp {
     };
   }
 
+  // App Manager is an app: its view comes up on the first visit, and its
+  // backend reads the downloader for itself. Its notice, once it has.
   async appManager() {
     await this.section(1);
+    await waitUntil(() => this.find("appManager.downloadNotice"), 30000, "the App Manager");
+    const want = await this.basecampState();
+    await waitUntil(async () => {
+      const got = await this.json("appManager.view",
+        "({ source: backend ? backend.downloadSource : '', storage: backend ? backend.storageState : '' })");
+      return got.source === want.source && got.storage === want.storage;
+    }, 30000, "the App Manager to read the downloader");
     return this.json("appManager.downloadNotice", "({ shown: shown, title: title })");
   }
 
@@ -240,7 +249,10 @@ scenario("Storage only: the storage step runs, then no notice anywhere", async (
 scenario("Storage only, storage unloaded: both views say so", async (app) => {
   await app.advanced({ github: false, storage: true });
   await app.finishStorageStep();
-  await app.packageManager();  // loaded now: opening it later brings storage back
+  // Loaded now: opening either app later loads its backend's dependencies,
+  // and with them storage again.
+  await app.packageManager();
+  await app.appManager();
   await app.section(3);
   await app.unloadStorage();
   await app.waitForStorage("failed", 15000);
@@ -270,6 +282,7 @@ scenario("Both sources, storage down: only the Package Manager mentions it", asy
   await app.letsGo();
   await app.waitForStorage("running");
   await app.packageManager();
+  await app.appManager();
   await app.section(3);
   await app.unloadStorage();
   await app.waitForStorage("failed", 15000);

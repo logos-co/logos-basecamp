@@ -131,9 +131,11 @@ public:
     // icon gate on both the sidebar and App Manager paths.
     QString pluginManifestVersion(const QString& moduleName) const;
 
-    // main_ui, and package_manager_ui where it is the Package Manager section
-    // (HostProfile::packageManagerUiIsSection) — shell furniture, not apps.
+    // main_ui, and a default app where it is a section
+    // (HostProfile::sectionOfApp) — shell furniture, not apps.
     bool isShellInternalApp(const QString& name) const;
+    // The section `name` is shown as here, or -1 (HostProfile::sectionOfApp).
+    int sectionOfApp(const QString& name) const { return m_hostProfile.sectionOfApp(name); }
 
     // By value, not by reference: the registry rebuilds by clear-and-refill, so
     // a reference held across a refresh is a use-after-free waiting to happen.
@@ -351,8 +353,8 @@ private:
     static bool isBackendNameFor(const QString& appName, const QString& backend);
     PackageCoordinator*    m_packageCoordinator;    // not owned (sibling Qt child); nullable until setPackageCoordinator
 
-    // Load parked on dependencyDataReadyChanged; empty when idle. Mirrors
-    // PackageCoordinator::uninstallApp's deferral — last click wins.
+    // Load parked on dependencyDataReadyChanged; empty when idle. Last click
+    // wins.
     QString                 m_pendingGatedLoadName;
     QMetaObject::Connection m_pendingGatedLoadConn;
     bool                    m_startupAppsOpened = false;

@@ -1,4 +1,4 @@
-// srcdeps: AppsModel.cpp InstallEnums.cpp InstallRegistry.cpp
+// srcdeps: AppsModel.cpp InstallEnums.cpp
 //
 // Unit tests for AppsModel's per-row install-status compute. Built and
 // driven the same way the sandbox-test is — plain QtTest, standalone
@@ -14,7 +14,6 @@
 
 #include "AppsModel.h"
 #include "InstallEnums.h"
-#include "InstallRegistry.h"
 
 #include <QtTest/QtTest>
 #include <QVariantList>
@@ -23,34 +22,6 @@
 namespace {
 
 // ── DSL: small builders so each test reads like its scenario ──────────────
-
-// Bridge to the pre-InstallRegistry AppsModel API. Older tests called
-// model.setInstallStage(name, stage[, error]); today AppsModel reads stage
-// via a separate InstallRegistry. These helpers keep the tests readable
-// without touching the InstallRegistry contract line-by-line:
-//   - `stage(reg, name, InstallStage::Installing)` — begin() + setStage()
-//   - `stageFailed(reg, name, err)`                — begin() + fail()
-// InstallRegistry::setStage/fail no-op if the name isn't already begun,
-// so begin() first (using empty target strings — not part of the assertion).
-inline void stage(InstallRegistry& reg,
-                  const QString& name,
-                  InstallStage::Value s)
-{
-    reg.begin(name, /*targetVersion=*/QString(),
-                    /*targetHash=*/QString(),
-                    /*startedByTopLevel=*/name);
-    reg.setStage(name, s);
-}
-
-inline void stageFailed(InstallRegistry& reg,
-                        const QString& name,
-                        const QString& error)
-{
-    reg.begin(name, /*targetVersion=*/QString(),
-                    /*targetHash=*/QString(),
-                    /*startedByTopLevel=*/name);
-    reg.fail(name, error);
-}
 
 QVariantMap makeDep(const QString& name, const QString& version = {})
 {
@@ -385,6 +356,30 @@ private slots:
                  InstallStatus::UpgradeAvailable);
     }
 
+    // The app's range holds the dependency back: installing it changes
+    // nothing, so it isn't an update. It was one for good while the newest
+    // release was what counted.
+    void dependencyHeldBackByItsRangeLeavesParentInstalled()
+    {
+        AppsModel model;
+        QVariantMap lez = makeCatalogRow("repo1", "lez_core", "0.5.1", "H_051");
+        QVariantList versions = lez.value("versions").toList();
+        versions.append(makeCatalogRow("repo1", "lez_core", "0.4.3", "H_043").value("versions").toList().first());
+        lez.insert("versions", versions);
+        model.replaceCatalog({
+            makeCatalogRow("repo1", "token_ui", "1.0.0", "H_ui", { makeDep("lez_core", "0.4.3") }),
+            lez,
+        });
+        model.markInstalled("token_ui", "1.0.0", "H_ui");
+        model.markInstalled("lez_core", "0.4.3", "H_043");
+        QCOMPARE(statusOf(model, "lez_core", "repo1"), InstallStatus::UpgradeAvailable);
+        QCOMPARE(statusOf(model, "token_ui", "repo1"), InstallStatus::Installed);
+
+        // The range's newest is what counts, hash included.
+        model.markInstalled("lez_core", "0.4.3", "H_043_TAMPERED");
+        QCOMPARE(statusOf(model, "token_ui", "repo1"), InstallStatus::DifferentHash);
+    }
+
     // Dependency ahead of the catalog → downgrade, mirroring the parent's own
     // newer-version case.
     void newerDependencyMakesParentDowngradeable()
@@ -716,72 +711,6 @@ private slots:
                  InstallStatus::Installed);
     }
 
-    // ── Regression: setResolverOverlay must pin (repo, name) ────────────
-    // Bug: with two repos publishing the same name, the second open of the
-    // Add Application dialog left the clicked repo's rows with action=""
-    // because setResolverOverlay used single-arg rowOf(name) and always
-    // landed on the first-inserted row. PackageRowDelegate defaults action
-    // empty → "Installed" badge, so the dialog showed "Installed" tags on
-    // BOTH dep rows for a fresh install in repo2.
-    void resolverOverlayPinsByRepo()
-    {
-        AppsModel model;
-        model.replaceCatalog({
-            makeCatalogRow("repo1", "wallet_ui",     "1.0", "H_ui1",
-                           { makeDep("wallet_module") }),
-            makeCatalogRow("repo1", "wallet_module", "1.0", "H_mod1"),
-            makeCatalogRow("repo2", "wallet_ui",     "1.0", "H_ui2",
-                           { makeDep("wallet_module") }),
-            makeCatalogRow("repo2", "wallet_module", "1.0", "H_mod2"),
-        });
-
-        // Simulate the SECOND open of the dialog: click on repo2's tile.
-        // The resolver result targets (wallet_ui, repo2) and
-        // (wallet_module, repo2).
-        AppsModel::ResolverRow top;
-        top.name          = "wallet_ui";
-        top.repositoryUrl = "repo2";
-        top.action        = "install";
-        top.toVersion     = "1.0";
-        top.isTopLevel    = true;
-        AppsModel::ResolverRow dep;
-        dep.name          = "wallet_module";
-        dep.repositoryUrl = "repo2";
-        dep.action        = "install";
-        dep.toVersion     = "1.0";
-        model.setResolverOverlay({top, dep});
-
-        // The action role must land on the repo2 rows so the dialog reads
-        // "Install", not the default "Installed".
-        int actionRole = -1, nameRole = -1, repoRole = -1;
-        const auto& roles = model.roleNames();
-        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
-            if      (it.value() == "action")        actionRole = it.key();
-            else if (it.value() == "name")          nameRole   = it.key();
-            else if (it.value() == "repositoryUrl") repoRole   = it.key();
-        }
-        QVERIFY(actionRole >= 0 && nameRole >= 0 && repoRole >= 0);
-
-        auto actionFor = [&](const QString& name, const QString& repo) {
-            const int n = model.rowCount();
-            for (int i = 0; i < n; ++i) {
-                const QModelIndex idx = model.index(i);
-                if (model.data(idx, nameRole).toString() != name) continue;
-                if (model.data(idx, repoRole).toString() != repo) continue;
-                return model.data(idx, actionRole).toString();
-            }
-            return QString();
-        };
-
-        QCOMPARE(actionFor("wallet_ui",     "repo2"), QStringLiteral("install"));
-        QCOMPARE(actionFor("wallet_module", "repo2"), QStringLiteral("install"));
-        // repo1 rows must stay clean — the dialog's filter pins to repo2,
-        // so repo1's rows are off-screen; their action being empty is fine,
-        // but they must NOT be carrying the overlay either.
-        QCOMPARE(actionFor("wallet_ui",     "repo1"), QString());
-        QCOMPARE(actionFor("wallet_module", "repo1"), QString());
-    }
-
     // ── Catalog icon: only resolvable URLs are accepted ─────────────────
     // The catalog's `icon` is historically a bare filename relative to the
     // installed package root ("modules.png"), which QML cannot load. Letting
@@ -1034,109 +963,6 @@ private slots:
                  QStringLiteral("file:///path/to/icon.png"));
     }
 
-    // ── Regression: per-row install stage isolation on partial failure ─
-    // When the install loop reports row A success then row B failure,
-    // each row's installStage must reflect ONLY its own outcome — no
-    // cross-row contamination, even though they belong to the same
-    // top-level session.
-    void installStageIsolatedAcrossRowsOnPartialFailure()
-    {
-        AppsModel model;
-        InstallRegistry reg;
-        model.setInstallRegistry(&reg);
-        model.replaceCatalog({
-            makeCatalogRow("repo1", "module_a", "1.0", "H_a"),
-            makeCatalogRow("repo1", "module_b", "1.0", "H_b"),
-        });
-
-        // Simulate installResultsSequential's per-row stage transitions.
-        stage(reg, "module_a", InstallStage::Installing);
-        stage(reg, "module_a", InstallStage::Installed);
-        stage(reg, "module_b", InstallStage::Installing);
-        stageFailed(reg, "module_b", "package_manager returned no path");
-
-        int stageRole = -1, errorRole = -1, nameRole = -1;
-        const auto& roles = model.roleNames();
-        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
-            if      (it.value() == "installStage")  stageRole = it.key();
-            else if (it.value() == "installError")  errorRole = it.key();
-            else if (it.value() == "name")          nameRole  = it.key();
-        }
-        QVERIFY(stageRole >= 0 && errorRole >= 0 && nameRole >= 0);
-
-        auto rowFor = [&](const QString& name) {
-            const int n = model.rowCount();
-            for (int i = 0; i < n; ++i) {
-                const QModelIndex idx = model.index(i);
-                if (model.data(idx, nameRole).toString() != name) continue;
-                return idx;
-            }
-            return QModelIndex();
-        };
-
-        QCOMPARE(static_cast<InstallStage::Value>(
-                    model.data(rowFor("module_a"), stageRole).toInt()),
-                 InstallStage::Installed);
-        QCOMPARE(model.data(rowFor("module_a"), errorRole).toString(),
-                 QString());
-        QCOMPARE(static_cast<InstallStage::Value>(
-                    model.data(rowFor("module_b"), stageRole).toInt()),
-                 InstallStage::Failed);
-        QCOMPARE(model.data(rowFor("module_b"), errorRole).toString(),
-                 QStringLiteral("package_manager returned no path"));
-    }
-
-    // ── Regression: coordinator clears sticky installStage on resolver
-    // overlay apply ────────────────────────────────────────────────────
-    //
-    // Without this, a row left at InstallStage::Installed from a previous
-    // install session keeps reading "Installed" in PackageRowDelegate's
-    // stage switch on the next dialog open, masking a fresh action like
-    // Upgrade or Reinstall.
-    void resolverOverlayClearsStickyInstallStage()
-    {
-        AppsModel model;
-        InstallRegistry reg;
-        model.setInstallRegistry(&reg);
-        model.replaceCatalog({
-            makeCatalogRow("repo1", "wallet_module", "1.0", "H_mod"),
-        });
-        stage(reg, "wallet_module", InstallStage::Installed);
-
-        int stageRole = -1, nameRole = -1, repoRole = -1;
-        const auto& roles = model.roleNames();
-        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
-            if      (it.value() == "installStage")  stageRole = it.key();
-            else if (it.value() == "name")          nameRole  = it.key();
-            else if (it.value() == "repositoryUrl") repoRole  = it.key();
-        }
-        QVERIFY(stageRole >= 0 && nameRole >= 0 && repoRole >= 0);
-
-        auto stageFor = [&](const QString& name, const QString& repo) {
-            const int n = model.rowCount();
-            for (int i = 0; i < n; ++i) {
-                const QModelIndex idx = model.index(i);
-                if (model.data(idx, nameRole).toString() != name) continue;
-                if (model.data(idx, repoRole).toString() != repo) continue;
-                return static_cast<InstallStage::Value>(
-                    model.data(idx, stageRole).toInt());
-            }
-            return InstallStage::None;
-        };
-
-        QCOMPARE(stageFor("wallet_module", "repo1"), InstallStage::Installed);
-
-        AppsModel::ResolverRow rr;
-        rr.name          = "wallet_module";
-        rr.repositoryUrl = "repo1";
-        rr.action        = "reinstall";
-        rr.toVersion     = "1.0";
-        model.setResolverOverlay({rr});
-        reg.clear("wallet_module");
-
-        QCOMPARE(stageFor("wallet_module", "repo1"), InstallStage::None);
-    }
-
     // ── Regression: dep-walk needs the DEP'S installedHash populated.
     // Reproduces the runtime bug where wallet_module (a core module, not a
     // UI plugin) never had its installedHash set on the AppsModel row, so
@@ -1284,40 +1110,6 @@ private slots:
         QCOMPARE(spy.count(), 0);
     }
 
-    void clearResolverOverlay_resets_action_and_isTopLevel()
-    {
-        AppsModel model;
-        model.replaceCatalog({
-            makeCatalogRow("repo1", "wallet_ui", "1.0", "H"),
-        });
-        AppsModel::ResolverRow rr;
-        rr.name = "wallet_ui"; rr.repositoryUrl = "repo1";
-        rr.action = "install"; rr.toVersion = "1.0"; rr.isTopLevel = true;
-        model.setResolverOverlay({rr});
-
-        int actionRole = -1, isTopRole = -1, nameRole = -1;
-        const auto& roles = model.roleNames();
-        for (auto it = roles.cbegin(); it != roles.cend(); ++it) {
-            if      (it.value() == "action")     actionRole = it.key();
-            else if (it.value() == "isTopLevel") isTopRole  = it.key();
-            else if (it.value() == "name")       nameRole   = it.key();
-        }
-        const QModelIndex idx = [&]{
-            for (int i = 0; i < model.rowCount(); ++i) {
-                const QModelIndex mi = model.index(i);
-                if (model.data(mi, nameRole).toString() == "wallet_ui") return mi;
-            }
-            return QModelIndex{};
-        }();
-        QVERIFY(idx.isValid());
-        QCOMPARE(model.data(idx, actionRole).toString(), QStringLiteral("install"));
-        QCOMPARE(model.data(idx, isTopRole).toBool(),    true);
-
-        model.clearResolverOverlay();
-        QCOMPARE(model.data(idx, actionRole).toString(), QString());
-        QCOMPARE(model.data(idx, isTopRole).toBool(),    false);
-    }
-
     void recomputeInstallStatus_emptyCatalogVersion_falls_back_to_Installed()
     {
         // Catalog row exists but has no usable version data (older publishers,
@@ -1337,23 +1129,19 @@ private slots:
     void emptyCatalog_zero_rows_no_crash()
     {
         AppsModel model;
-        InstallRegistry reg;
-        model.setInstallRegistry(&reg);
         model.replaceCatalog({});
         QCOMPARE(model.rowCount(), 0);
         // Mutators against empty model are no-ops — no row for AppsModel to
-        // mutate, and stage() through the registry has no matching row so
-        // the InstallStageRole read still yields None.
+        // mutate.
         model.markInstalled("anything", "1.0", "H");
         model.setMissingDeps("anything", { "x" });
-        stage(reg, "anything", InstallStage::Installed);
         QCOMPARE(model.rowCount(), 0);
     }
 
     // ── Role-name contract ────────────────────────────────────────────
-    // QML reads roles by NAME (e.g. `model.installStatus`, `appRow.action`),
-    // so renaming any of these silently breaks every binding. Locks the
-    // exact string each role serialises to.
+    // QML reads roles by NAME (e.g. `model.installStatus`), so renaming any
+    // of these silently breaks every binding. Locks the exact string each
+    // role serialises to.
     void roleNames_stable()
     {
         AppsModel model;
@@ -1364,8 +1152,8 @@ private slots:
             "name", "repositoryUrl", "displayName", "description", "category",
             "type", "iconUrl", "supportsFullBleedIcon", "versions", "dependencies", "installedVersion",
             "latestVersion", "hasUpdate", "isInstalled", "missingDeps",
-            "installStatus", "installType", "action", "toVersion",
-            "isTopLevel", "resolverError", "installStage", "installError",
+            "installStatus", "installType", "provides", "webProvides",
+            "hasInstallableVersion", "notAvailableReason",
         };
         for (const QByteArray& r : required)
             QVERIFY2(seen.contains(r), qPrintable("missing role: " + r));
@@ -1663,8 +1451,7 @@ private slots:
     // it — not the LGX manifest, not the downloader's catalog synthesis. With
     // full-bleed icons on a fixed theme-grey plate there is no author-
     // controlled tile colour to carry, so the role was removed rather than
-    // left as a permanently-empty field. The hash-derived monogram colour
-    // (AppColors.colorForApp) is computed in QML and needs no model role.
+    // left as a permanently-empty field.
     void replaceCatalog_hasNoColorRole()
     {
         AppsModel model;

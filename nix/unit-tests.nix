@@ -14,7 +14,7 @@ pkgs.stdenv.mkDerivation {
   ];
   buildInputs = [
     pkgs.qt6.qtbase
-    pkgs.qt6.qtdeclarative   # Qt::Qml — InstallStage.h includes <QtQml/qqml.h>
+    pkgs.qt6.qtdeclarative   # Qt::Qml — InstallEnums.h includes <QtQml/qqml.h>
     # log_sink_test / logging_config_test declare these as `// libdeps:`.
     pkgs.spdlog
     pkgs.yaml-cpp

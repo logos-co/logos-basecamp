@@ -188,6 +188,68 @@ private slots:
                                          installed, "storage_ui").isEmpty());
     }
 
+    // App Manager's picks, from a confirm request: each package's version
+    // becomes a pin, an optional package's goes with its selection, and the
+    // subject keeps the version the request names.
+    void installChoicesSplitRequiredAndOptionalPins()
+    {
+        const QVariantMap params = QJsonDocument::fromJson(R"({
+            "name": "wallet_ui", "version": "2.0.0",
+            "versions": {"signer": "1.0.0", "token_list": "0.1.0", "wallet_ui": "9.9.9"},
+            "optional": {"token_list": true, "rln": false}
+        })").object().toVariantMap();
+        const logos::InstallChoices c = logos::installChoicesFrom(params, "wallet_ui", "2.0.0");
+        QCOMPARE(c.pins, (QVariantMap{{"wallet_ui", "2.0.0"}, {"signer", "1.0.0"}}));
+        QCOMPARE(c.selection, (QVariantMap{{"token_list", true}, {"rln", false}}));
+        QCOMPARE(c.optionalPins, (QVariantMap{{"token_list", "0.1.0"}}));
+    }
+
+    // Nothing picked: the subject alone, as before the picks.
+    void installChoicesWithNothingPickedPinOnlyTheSubject()
+    {
+        const logos::InstallChoices c = logos::installChoicesFrom({{"name", "chat"}}, "chat", "1.0.0");
+        QCOMPARE(c.pins, (QVariantMap{{"chat", "1.0.0"}}));
+        QVERIFY(c.selection.isEmpty());
+        QVERIFY(c.optionalPins.isEmpty());
+    }
+
+    // What isn't a name to a version string, or a name to a bool, is dropped.
+    void malformedInstallChoicesAreDropped()
+    {
+        const QVariantMap params = QJsonDocument::fromJson(R"({
+            "versions": {"a": 1, "b": "", "": "1.0.0", "c": ["1.0.0"], "d": "1.0.0"},
+            "optional": {"e": "yes", "f": 1, "g": true}
+        })").object().toVariantMap();
+        const logos::InstallChoices c = logos::installChoicesFrom(params, "app", "1.0.0");
+        QCOMPARE(c.pins, (QVariantMap{{"app", "1.0.0"}, {"d", "1.0.0"}}));
+        QCOMPARE(c.selection, (QVariantMap{{"g", true}}));
+        // Not maps at all.
+        const logos::InstallChoices none = logos::installChoicesFrom(
+            {{"versions", "1.0.0"}, {"optional", true}}, "app", "1.0.0");
+        QCOMPARE(none.pins, (QVariantMap{{"app", "1.0.0"}}));
+        QVERIFY(none.selection.isEmpty());
+        // A version no catalog could have.
+        const logos::InstallChoices longVersion = logos::installChoicesFrom(
+            {{"versions", QVariantMap{{"a", QString(65, QChar('1'))}}}}, "app", "1.0.0");
+        QVERIFY(!longVersion.pins.contains("a"));
+    }
+
+    // In Basecamp's dialog the person may still change the optional
+    // packages, over what the requester picked; not what the plan needs.
+    void dialogPicksGoOverTheRequesters()
+    {
+        const QVariantMap params = QJsonDocument::fromJson(R"({
+            "versions": {"zk": "0.9.0", "libp2p": "1.0.0"},
+            "optional": {"rln": false, "libp2p": true}
+        })").object().toVariantMap();
+        const logos::InstallChoices c = logos::withDialogPicks(
+            logos::installChoicesFrom(params, "chat_ui", "1.0.0"),
+            {{"libp2p", false}}, {{"rln", "0.10.0"}});
+        QCOMPARE(c.selection, (QVariantMap{{"rln", false}, {"libp2p", false}}));
+        QCOMPARE(c.optionalPins, (QVariantMap{{"libp2p", "1.0.0"}, {"rln", "0.10.0"}}));
+        QCOMPARE(c.pins, (QVariantMap{{"chat_ui", "1.0.0"}, {"zk", "0.9.0"}}));
+    }
+
     // Optional fields are omitted rather than sent empty — an empty
     // repositoryUrl would scope the resolver to a repo that does not exist.
     void emptyOptionalFieldsAreOmitted()

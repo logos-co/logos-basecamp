@@ -29,7 +29,7 @@ export function platformVariant() {
   return variant;
 }
 
-function manifestFor({ name, displayName, version, type, dependencies, description }) {
+function manifestFor({ name, displayName, version, type, dependencies, optionalDependencies = [], description }) {
   const manifest = {
     author: "",
     category: "testing",
@@ -44,6 +44,7 @@ function manifestFor({ name, displayName, version, type, dependencies, descripti
     version,
   };
   if (type === "ui_qml") manifest.view = "Main.qml";
+  if (optionalDependencies.length > 0) manifest.optional_dependencies = optionalDependencies;
   return manifest;
 }
 
@@ -96,6 +97,7 @@ export function makeLgx(opts) {
     displayName = name,
     type = "ui_qml",
     dependencies = [],
+    optionalDependencies = [],
     description = `basecamp test fixture package (${name})`,
     lgx = LGX_CLI,
     variant = platformVariant(),
@@ -108,7 +110,7 @@ export function makeLgx(opts) {
       `"nix build 'github:logos-co/logos-package#lgx' -o result-lgx" ` +
       `or set LGX_CLI`);
   }
-  const spec = { name, displayName, version, type, dependencies, description };
+  const spec = { name, displayName, version, type, dependencies, optionalDependencies, description };
 
   const work = join(tmpdir(), `lgx-build-${process.pid}-${name}-${version}`);
   const seed = join(work, "seed");

@@ -9,6 +9,7 @@
 // the shell is the only provider), so an entry that mutated state would be an
 // unconsented action reachable by anything that can raise an intent.
 
+#include "DefaultApps.h"
 #include "ShellIntents.h"
 #include "IntentRegistry.h"
 #include "LogosIntent.h"
@@ -82,7 +83,7 @@ void TestShellIntents::testNavigationIntentsAreNavigationOnly()
         QVERIFY2(!ShellIntents::kPackageConfirmIntents.contains(intent),
                  qPrintable(QStringLiteral("%1 is a confirm intent and must not "
                                            "be chooser-exempt").arg(intent)));
-        QVERIFY2(!ShellIntents::kRestrictedToPackageManagerUi.contains(intent),
+        QVERIFY2(!logos::defaultapps::restrictedIntents().contains(intent),
                  qPrintable(QStringLiteral("%1 is restricted and must not be "
                                            "chooser-exempt").arg(intent)));
     }
@@ -107,7 +108,7 @@ void TestShellIntents::testWebReachableIntentsAreASafeSubset()
         QVERIFY2(!ShellIntents::kPackageConfirmIntents.contains(intent),
                  qPrintable(QStringLiteral("%1 is a confirm intent and must not "
                                            "be web-reachable").arg(intent)));
-        QVERIFY2(!ShellIntents::kRestrictedToPackageManagerUi.contains(intent),
+        QVERIFY2(!logos::defaultapps::restrictedIntents().contains(intent),
                  qPrintable(QStringLiteral("%1 is restricted and must not be "
                                            "web-reachable").arg(intent)));
 
@@ -257,8 +258,8 @@ void TestShellIntents::testModuleDeclarationMatchesTheRegistration()
 }
 
 // confirm_install too: the module lets any package that declares a shell
-// intent ask for it, so each confirm intent names who may: the Package
-// Manager's backend, which asks for the app.
+// intent ask for it, so each confirm intent names who may: the installer
+// apps' backends, which ask for their apps (DefaultApps.h).
 void TestShellIntents::testModuleDeclarationRestrictsEveryConfirmIntent()
 {
     const QJsonObject restricted = ShellIntents::moduleDeclaration(
@@ -266,7 +267,8 @@ void TestShellIntents::testModuleDeclarationRestrictsEveryConfirmIntent()
         .value(QStringLiteral("restricted")).toObject();
     for (const QString& confirm : ShellIntents::kPackageConfirmIntents)
         QCOMPARE(strings(restricted.value(confirm)),
-                 QStringList{QStringLiteral("package_manager_ui_backend")});
+                 (QStringList{QStringLiteral("app_manager_ui_backend"),
+                              QStringLiteral("package_manager_ui_backend")}));
     for (const QString& web : ShellIntents::kWebReachableIntents)
         QVERIFY2(!ShellIntents::kPackageConfirmIntents.contains(web), qPrintable(web));
 }

@@ -4,6 +4,7 @@
 
 #include <QWidget>
 #include <QHBoxLayout>
+#include <QList>
 #include <QPointer>
 #include <QStackedWidget>
 
@@ -57,7 +58,6 @@ private slots:
     // content still receive clicks, intercepting when one is.
     void onOverlayActiveChanged(bool active);
     void onSidebarTooltipRequested(const QString& text, qreal y);
-    void onAddApplicationDialogRequested(const QVariantMap& metadata);
     void onOnboardingFinished();
     void onOnlineChanged();
     void closeOfflineToast();
@@ -70,7 +70,6 @@ private:
     void wireSidebar(QObject* sidebarRoot);
     QQuickWidget* makeAppStoppedPanel(const QString& name);
     bool offersSection(int section) const;
-    void applyAppManagerSearch(const QString& query);
     void invokeOpenApp(const QString& name, const QString& repositoryUrl);
     void setupUi();
 
@@ -83,18 +82,29 @@ private:
     // Workspace (QDockWidget-based, replaces the old QMdiArea workspace)
     WorkspaceArea* m_workspaceArea;
 
-    // QPointer, not a raw pointer: this widget is owned by the HOST side, which
-    // deleteLater()s it on unload (UIPluginManager::unloadUiModuleImpl and
-    // ::teardownUiPluginWidget both do). As a raw pointer it was read at four
-    // sites after the widget had been freed, and `!m_pmuiWidget` stayed false
-    // forever, so the Package Manager section could never reload. Same guard the
-    // host applies to its own widget maps.
-    QPointer<QWidget> m_pmuiWidget;
-    // Shown in the Package Manager page's place while its backend is stopped.
-    QPointer<QWidget> m_pmuiStoppedPanel;
+    // A default app shown as a section (DefaultApps.h): its page of the content
+    // stack, the app's widget once it arrives.
+    struct SectionPage {
+        int section;
+        int stackIndex;
+        QString app;
+        // QPointer, not a raw pointer: this widget is owned by the HOST side,
+        // which deleteLater()s it on unload (UIPluginManager::unloadUiModuleImpl
+        // and ::teardownUiPluginWidget both do). As a raw pointer it was read
+        // after the widget had been freed and never became null again, so the
+        // section could never reload. Same guard the host applies to its own
+        // widget maps.
+        QPointer<QWidget> widget;
+        // Shown in the page's place while the app's backend is stopped.
+        QPointer<QWidget> stoppedPanel;
+    };
+    SectionPage* pageForSection(int section);
+    SectionPage* pageForApp(const QString& app);
+    SectionPage* pageForWidget(const QWidget* widget);
+    QList<SectionPage> m_sectionPages;
     bool m_suppressNextNavToApps = false;
 
-    // Content views (QML for Dashboard, Modules, PackageManager, Settings)
+    // Content views (QML for Settings)
     QQuickWidget* m_contentWidget;
 
     // Full-window overlay for the dependency-aware dialogs

@@ -1,10 +1,9 @@
-// srcdeps: AppsModel.cpp AppsFilterProxy.cpp InstallEnums.cpp InstallRegistry.cpp
+// srcdeps: AppsModel.cpp AppsFilterProxy.cpp InstallEnums.cpp
 //
-// Unit tests for AppsFilterProxy's filter chain. Lives in this test target
-// alongside apps_model_test.cpp; both link the same AppsModel + AppsFilterProxy
-// sources. The filter proxy was previously only exercised indirectly through
-// QML, which let the multi-repo / case-sensitivity / install-state edge cases
-// drift without warning. These tests pin each filter behaviour directly.
+// Unit tests for AppsFilterProxy's filter chain, the welcome page's search.
+// Lives in this test target alongside apps_model_test.cpp; both link the same
+// AppsModel + AppsFilterProxy sources. These tests pin each filter behaviour
+// directly.
 
 #include "AppsFilterProxy.h"
 #include "AppsModel.h"
@@ -44,8 +43,7 @@ QVariantMap row(const QString& name,
                 const QString& repo,
                 const QString& version,
                 const QString& rootHash,
-                const QString& type = "ui_qml",
-                const QString& category = "")
+                const QString& type = "ui_qml")
 {
     QVariantMap manifest;
     manifest.insert("version", version);
@@ -58,27 +56,8 @@ QVariantMap row(const QString& name,
     r.insert("name",          name);
     r.insert("repositoryUrl", repo);
     r.insert("type",          type);
-    r.insert("category",      category);
     r.insert("versions",      QVariantList{ entry });
     return r;
-}
-
-// Mirrors makeInstalledPackage from apps_model_test.cpp — kept small since
-// only the local-only-merge test uses it here.
-QVariantMap installed(const QString& name,
-                      const QString& version,
-                      const QString& rootHash,
-                      const QString& category = {})
-{
-    QVariantMap hashes;
-    hashes.insert("root", rootHash);
-    QVariantMap pkg;
-    pkg.insert("name",        name);
-    pkg.insert("version",     version);
-    pkg.insert("hashes",      hashes);
-    pkg.insert("installType", "user");
-    if (!category.isEmpty()) pkg.insert("category", category);
-    return pkg;
 }
 
 } // namespace
@@ -114,25 +93,6 @@ private slots:
         QCOMPARE(m_proxy->rowCount(), 3);
     }
 
-    // ── categoryFilter ─────────────────────────────────────────────────
-    void categoryFilter_case_insensitive_with_first_letter_capitalised()
-    {
-        m_model->replaceCatalog({
-            row("a", "r", "1.0", "H1", "ui_qml", "wallet"),
-            row("b", "r", "1.0", "H2", "ui_qml", "Wallet"),  // capitalised
-            row("c", "r", "1.0", "H3", "ui_qml", "chat"),
-        });
-        // Implementation capitalises first letter before comparing, so the
-        // filter value "Wallet" matches both lower- and upper-case rows.
-        m_proxy->setCategoryFilter("Wallet");
-        QCOMPARE(m_proxy->rowCount(), 2);
-        // "All" + "" both mean no filter.
-        m_proxy->setCategoryFilter("All");
-        QCOMPARE(m_proxy->rowCount(), 3);
-        m_proxy->setCategoryFilter("");
-        QCOMPARE(m_proxy->rowCount(), 3);
-    }
-
     // ── searchText ─────────────────────────────────────────────────────
     void searchText_case_insensitive_substring_on_name()
     {
@@ -149,23 +109,6 @@ private slots:
         QCOMPARE(m_proxy->rowCount(), 3);
     }
 
-    // ── installStateFilter ─────────────────────────────────────────────
-    void installStateFilter_installed_versus_notInstalled()
-    {
-        m_model->replaceCatalog({
-            row("a", "r", "1.0", "H1"),
-            row("b", "r", "1.0", "H2"),
-        });
-        m_model->markInstalled("a", "1.0", "H1");
-
-        m_proxy->setInstallStateFilter("installed");
-        QCOMPARE(m_proxy->rowCount(), 1);
-        m_proxy->setInstallStateFilter("notInstalled");
-        QCOMPARE(m_proxy->rowCount(), 1);
-        m_proxy->setInstallStateFilter("all");
-        QCOMPARE(m_proxy->rowCount(), 2);
-    }
-
     // ── excludeMainUi ──────────────────────────────────────────────────
     void excludeMainUi_hides_only_the_main_ui_row()
     {
@@ -179,68 +122,17 @@ private slots:
         QCOMPARE(m_proxy->rowCount(), 2);
     }
 
-    // ── repositoryUrlFilter ────────────────────────────────────────────
-    void repositoryUrlFilter_pins_to_a_single_repo()
-    {
-        m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1"),
-            row("wallet_ui", "https://repo2", "1.0", "H2"),
-            row("chat_ui",   "https://repo1", "1.0", "H3"),
-        });
-        m_proxy->setRepositoryUrlFilter("https://repo1");
-        QCOMPARE(m_proxy->rowCount(), 2);
-        m_proxy->setRepositoryUrlFilter("https://repo2");
-        QCOMPARE(m_proxy->rowCount(), 1);
-        m_proxy->setRepositoryUrlFilter("");
-        QCOMPARE(m_proxy->rowCount(), 3);
-    }
-
-    // ── requiredPackages ───────────────────────────────────────────────
-    // Locks the (name, repo) pinning contract used by the Add Application
-    // dialog. An empty repo on an entry means "any repo's row for this
-    // name passes" (resolver-fallback); a non-empty repo pins to exactly
-    // that (repo, name) row.
-    void requiredPackages_pinned_repo_matches_exact_pair()
-    {
-        m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1"),
-            row("wallet_ui", "https://repo2", "1.0", "H2"),
-        });
-        m_proxy->setRequiredPackages({
-            QVariantMap{ {"name", "wallet_ui"},
-                         {"repositoryUrl", "https://repo2"} },
-        });
-        QCOMPARE(m_proxy->rowCount(), 1);
-        // It really is the repo2 row, not repo1.
-        const QModelIndex mi = m_proxy->index(0, 0);
-        QCOMPARE(m_proxy->data(mi, AppsModel::RepositoryUrlRole).toString(),
-                 QStringLiteral("https://repo2"));
-    }
-
-    void requiredPackages_empty_repo_matches_any_repo()
-    {
-        m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1"),
-            row("wallet_ui", "https://repo2", "1.0", "H2"),
-        });
-        m_proxy->setRequiredPackages({
-            QVariantMap{ {"name", "wallet_ui"}, {"repositoryUrl", ""} },
-        });
-        QCOMPARE(m_proxy->rowCount(), 2);
-    }
-
     // ── filters compose AND-wise ───────────────────────────────────────
     void filters_compose_AND_not_OR()
     {
         m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1", "ui_qml", "wallet"),
-            row("wallet_ui", "https://repo2", "1.0", "H2", "ui_qml", "wallet"),
-            row("chat_ui",   "https://repo1", "1.0", "H3", "ui_qml", "chat"),
+            row("wallet_ui",     "r", "1.0", "H1", "ui_qml"),
+            row("wallet_module", "r", "1.0", "H2", "core"),
+            row("chat_ui",       "r", "1.0", "H3", "ui_qml"),
         });
         m_proxy->setTypeFilter("ui_qml");
-        m_proxy->setCategoryFilter("Wallet");
-        m_proxy->setRepositoryUrlFilter("https://repo1");
-        QCOMPARE(m_proxy->rowCount(), 1);   // (wallet_ui, repo1, wallet)
+        m_proxy->setSearchText("wallet");
+        QCOMPARE(m_proxy->rowCount(), 1);   // (wallet_ui, ui_qml)
     }
 
     // ── BUG-013: search must match the VISIBLE fields, not just name ──
@@ -289,53 +181,6 @@ private slots:
         m_proxy->setSearchText("");
     }
 
-    // ── matchLocalOnly — the "Local" repo section's filter ───────────
-    // AppManagerView's Local group binds one AppsFilterProxy with
-    // matchLocalOnly=true. Semantics: accepts rows whose repositoryUrl is
-    // empty (the marker for a synthetic Local row) and rejects everything
-    // else — including rows that repositoryUrlFilter would otherwise let
-    // through.
-    void matchLocalOnly_accepts_only_empty_repositoryUrl_rows()
-    {
-        m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1"),
-            row("chat_ui",   "https://repo2", "1.0", "H2"),
-        });
-        m_model->mergeLocalOnlyInstalled({
-            installed("orphan_mod", "0.9", "H_orphan"),
-        });
-        QCOMPARE(m_proxy->rowCount(), 3);   // no filter — all through
-
-        m_proxy->setMatchLocalOnly(true);
-        QCOMPARE(m_proxy->rowCount(), 1);   // only the local row
-        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), AppsModel::NameRole).toString(),
-                 QStringLiteral("orphan_mod"));
-
-        // Turning it back off restores the full set.
-        m_proxy->setMatchLocalOnly(false);
-        QCOMPARE(m_proxy->rowCount(), 3);
-    }
-
-    void matchLocalOnly_overrides_repositoryUrlFilter()
-    {
-        m_model->replaceCatalog({
-            row("wallet_ui", "https://repo1", "1.0", "H1"),
-        });
-        m_model->mergeLocalOnlyInstalled({
-            installed("orphan_mod", "0.9", "H_orphan"),
-        });
-        // Configure the two filters in a way that would conflict if both
-        // applied: repositoryUrlFilter pins to repo1, matchLocalOnly wants
-        // empty repos. matchLocalOnly must win — the guard in the .cpp
-        // branches through the m_matchLocalOnly path before consulting
-        // m_repositoryUrlFilter.
-        m_proxy->setRepositoryUrlFilter("https://repo1");
-        m_proxy->setMatchLocalOnly(true);
-        QCOMPARE(m_proxy->rowCount(), 1);
-        QCOMPARE(m_proxy->data(m_proxy->index(0, 0), AppsModel::NameRole).toString(),
-                 QStringLiteral("orphan_mod"));
-    }
-
     // ── visibleCount stays in sync with rowCount ──────────────────────
     // QML bindings consume visibleCount; if it drifts the "Loading…"
     // collapse / "(N)" badge breaks. The proxy emits visibleCountChanged
@@ -352,14 +197,13 @@ private slots:
         QCOMPARE(m_proxy->visibleCount(), 1);
     }
 
-    // ── showUnavailable ────────────────────────────────────────────────
+    // ── unavailable rows ───────────────────────────────────────────────
     //
-    // Availability is its own axis, AND-ed with the rest. Defaults to hiding,
-    // because catalogs are published per OS/arch and build flavor and a host
-    // the catalog barely covers was otherwise shown mostly apps it can never
-    // install.
+    // Availability is its own axis, AND-ed with the rest, and hides: catalogs
+    // are published per OS/arch and build flavor, and a host the catalog
+    // barely covers was otherwise shown mostly apps it can never install.
 
-    void showUnavailable_defaultsToHidingForeignPlatformRows()
+    void unavailable_hidesForeignPlatformRows()
     {
         m_model->setValidVariants({"linux-x86_64"});
         m_model->replaceCatalog({
@@ -370,23 +214,10 @@ private slots:
         QCOMPARE(nameAt(0), QStringLiteral("mine"));
     }
 
-    void showUnavailable_addsThemBack()
-    {
-        m_model->setValidVariants({"linux-x86_64"});
-        m_model->replaceCatalog({
-            variantRow("mine",    "r", {"linux-x86_64"}),
-            variantRow("foreign", "r", {"windows-x86_64"}),
-        });
-        QSignalSpy spy(m_proxy.get(), &AppsFilterProxy::showUnavailableChanged);
-        m_proxy->setShowUnavailable(true);
-        QCOMPARE(spy.count(), 1);
-        QCOMPARE(m_proxy->visibleCount(), 2);
-    }
-
     // Installed rows are exempt whatever the catalog now says: a catalog that
     // drops our variant after the fact must not take the app's uninstall path
     // with it.
-    void showUnavailable_neverHidesAnInstalledRow()
+    void unavailable_neverHidesAnInstalledRow()
     {
         m_model->setValidVariants({"linux-x86_64"});
         m_model->replaceCatalog({variantRow("gone", "r", {"windows-x86_64"})});
@@ -396,27 +227,11 @@ private slots:
         QCOMPARE(m_proxy->visibleCount(), 1);
     }
 
-    // The install-plan proxy in OverlayDialogs opts out this way. Hiding a
-    // required package from the plan would omit the very reason the install
-    // is about to fail.
-    void showUnavailable_composesWithTheInstallStateFilter()
-    {
-        m_model->setValidVariants({"linux-x86_64"});
-        m_model->replaceCatalog({
-            variantRow("mine",    "r", {"linux-x86_64"}),
-            variantRow("foreign", "r", {"windows-x86_64"}),
-        });
-        m_proxy->setShowUnavailable(true);
-        m_proxy->setInstallStateFilter("notInstalled");
-        // Both are uninstalled; availability did not eat the state filter.
-        QCOMPARE(m_proxy->visibleCount(), 2);
-    }
-
     // A locally-installed app has NO catalog row, so it publishes no variants
     // and computes as unavailable. It must still be listed — this is the case
     // that broke every sideloaded app when the exemption was missing from the
     // grid/list delegates, leaving their tiles inert and unlaunchable.
-    void showUnavailable_localOnlyInstalledAppStaysListed()
+    void unavailable_localOnlyInstalledAppStaysListed()
     {
         m_model->setValidVariants({"linux-x86_64"});
         QVariantMap installed;
@@ -433,33 +248,10 @@ private slots:
         QCOMPARE(nameAt(0), QStringLiteral("sideloaded"));
     }
 
-    // App Manager stacks proxies: the per-repo and Local sections chain off
-    // the view's top proxy. Each link applies its OWN filter, so a chained
-    // proxy left at the hiding default undoes the parent's decision and the
-    // user sees nothing after asking to show unavailable. The chained ones opt
-    // out (showUnavailable: true) and let the parent decide once.
-    void showUnavailable_chainedProxyMustNotReapplyTheFilter()
-    {
-        m_model->setValidVariants({"linux-x86_64"});
-        m_model->replaceCatalog({variantRow("foreign", "r", {"windows-x86_64"})});
-        m_proxy->setShowUnavailable(true);
-        QCOMPARE(m_proxy->visibleCount(), 1);
-
-        // A section proxy over it, at the default: re-filters the row away.
-        AppsFilterProxy chained;
-        chained.setExcludeMainUi(false);
-        chained.setSourceModel(m_proxy.get());
-        QCOMPARE(chained.visibleCount(), 0);
-
-        // Opted out, as the App Manager's section proxies are.
-        chained.setShowUnavailable(true);
-        QCOMPARE(chained.visibleCount(), 1);
-    }
-
     // The variant list lands on its own round trip, after the catalog. The
     // proxy must re-filter when it does, or the grid keeps showing rows the
     // model has since marked unavailable.
-    void showUnavailable_refiltersWhenTheVariantListArrivesLate()
+    void unavailable_refiltersWhenTheVariantListArrivesLate()
     {
         m_model->replaceCatalog({variantRow("foreign", "r", {"windows-x86_64"})});
         QCOMPARE(m_proxy->visibleCount(), 1);   // permissive until it answers

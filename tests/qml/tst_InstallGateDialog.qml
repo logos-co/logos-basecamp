@@ -3,7 +3,6 @@ import QtTest
 
 // Directory import, not `import Basecamp.Shell` — see tst_IntentInstallDialog.
 import "../../src/Basecamp/Shell"
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
 // The install gate is a CONSENT screen: what it lists is what the user is
@@ -30,9 +29,6 @@ TestCase {
         ConfirmationDialog {}
     }
 
-    Component { id: appDialogComp; AddApplicationDialog {} }
-    SignalSpy { id: installSpy; signalName: "installRequested" }
-    SignalSpy { id: previewSpy; signalName: "versionChangeRequested" }
     SignalSpy { id: gatePreviewSpy; signalName: "optionalPreviewRequested" }
     SignalSpy { id: gateCancelSpy; signalName: "cancelClicked" }
 
@@ -86,37 +82,6 @@ TestCase {
             ] }
     }
 
-    // The install executes the last preview, so the preview request is what carries the choice.
-    function test_app_optional_version_pick_is_previewed_separately_from_required_pins() {
-        var dlg = appDialogComp.createObject(testCase)
-        installSpy.target = dlg
-        installSpy.clear()
-        dlg.openWith({name: "chat", selectedVersion: "0.3.0",
-            optionalPackages: [selectableOptional()]})
-        tryVerify(function() { return !!findChild(dlg.contentItem, "packageRow.version.storage_module") })
-        var combo = findChild(dlg.contentItem, "packageRow.version.storage_module")
-        compare(combo.displayText, "v.0.3.0")
-        compare(combo.count, 2)
-        previewSpy.target = dlg
-        previewSpy.clear()
-        combo.activated(1)
-        compare(combo.displayText, "v.0.2.0")
-        compare(previewSpy.count, 1)
-        compare(previewSpy.signalArguments[0][4].storage_module, "0.2.0")
-        verify(previewSpy.signalArguments[0][2].storage_module === undefined)
-        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
-        dlg.metadata = Object.assign({}, dlg.metadata, {resolutionPending: false})
-        mouseClick(findChild(dlg.footer, "addApplicationDialog.primaryButton"))
-        compare(installSpy.count, 1)
-        compare(installSpy.signalArguments[0][0], "chat")
-        waitForRendering(testCase)
-        var checkbox = findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module")
-        mouseClick(checkbox)
-        compare(checkbox.checked, false)
-        compare(previewSpy.signalArguments[1][3].storage_module, false)
-        dlg.destroy()
-    }
-
     function test_gate_optional_version_picker_uses_resolved_version_and_resets() {
         var dlg = dialogComp.createObject(testCase)
         dlg.openWithInstallGate("delivery_module", "0.3.0", [selectableOptional()], "", true)
@@ -132,96 +97,40 @@ TestCase {
         dlg.destroy()
     }
 
-    function test_app_reresolution_drops_optional_versions_that_no_longer_satisfy_constraints() {
-        var dlg = appDialogComp.createObject(testCase)
-        installSpy.target = dlg
-        installSpy.clear()
-        dlg.openWith({name: "chat", selectedVersion: "0.3.0",
-            optionalPackages: [selectableOptional()]})
+    // The requester's pick for an optional is what the dialog shows and
+    // answers with: it showed the newest while the plan held the pick.
+    function test_an_optional_starts_at_the_version_the_requester_picked() {
+        var dlg = dialogComp.createObject(testCase)
+        var offer = selectableOptional()
+        offer.requestedVersion = "0.2.0"
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [offer], "app_manager_ui", true)
         tryVerify(function() { return !!findChild(dlg.contentItem, "packageRow.version.storage_module") })
-        findChild(dlg.contentItem, "packageRow.version.storage_module").activated(1)
-        var updated = selectableOptional()
-        updated.versions = [updated.versions[0]]
-        dlg.metadata = {name: "chat", selectedVersion: "0.3.0", optionalPackages: [updated]}
+        compare(findChild(dlg.contentItem, "packageRow.version.storage_module").displayText, "v.0.2.0")
+        compare(dlg.optionalPickedVersions.storage_module, "0.2.0")
+        dlg.close()
+        // A version it doesn't have, or the source can't serve, is no pick.
+        offer.requestedVersion = "9.9.9"
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [offer], "app_manager_ui", true)
+        compare(dlg.optionalPickedVersions.storage_module, undefined)
         tryCompare(findChild(dlg.contentItem, "packageRow.version.storage_module"), "displayText", "v.0.3.0")
-        previewSpy.target = dlg
-        previewSpy.clear()
-        dlg.refreshPreview()
-        compare(previewSpy.count, 1)
-        verify(previewSpy.signalArguments[0][4].storage_module === undefined)
-        dlg.destroy()
-    }
-
-    function test_app_preview_selects_only_checked_available_optionals() {
-        var dlg = appDialogComp.createObject(testCase)
-        verify(dlg)
-        installSpy.target = dlg
-        installSpy.clear()
-        var metadata = { name: "chat", repositoryUrl: "https://repo/", selectedVersion: "0.3.0",
-            optionalPackages: [
-                { name: "storage_module", version: "0.3.0" },
-                { name: "missing_module", error: "no candidate" }
-            ] }
-        dlg.openWith(metadata)
-        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
-        dlg.metadata = Object.assign({}, metadata, {resolutionPending: true})
-        compare(primary.enabled, false)
-        dlg.metadata = metadata
-        compare(primary.enabled, true)
-        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.missing_module") })
-        var available = findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module")
-        var unavailable = findChild(dlg.contentItem, "addApplicationDialog.optional.missing_module")
-        verify(available)
-        verify(unavailable)
-        compare(available.checked, true)
-        compare(unavailable.checked, false)
-        compare(unavailable.enabled, false)
-        previewSpy.target = dlg
-        previewSpy.clear()
-        // The optional rows exist before the dialog is first laid out; a click
-        // before that lands where the list will be, not where it is.
-        var list = findChild(dlg.contentItem, "addApplicationDialog.requiredPackages")
-        tryVerify(function() { return list.height > 0 })
-        mouseClick(available)
-        compare(primary.enabled, false)
-        compare(previewSpy.count, 1)
-        compare(previewSpy.signalArguments[0][3].storage_module, false)
-        verify(previewSpy.signalArguments[0][3].missing_module === undefined)
-        dlg.metadata = metadata
-        mouseClick(findChild(dlg.footer, "addApplicationDialog.primaryButton"))
-        compare(installSpy.count, 1)
+        dlg.close()
+        offer.requestedVersion = "0.2.0"
+        offer.versions[1].sourceAvailable = false
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [offer], "app_manager_ui", true)
+        compare(dlg.optionalPickedVersions.storage_module, undefined)
         dlg.destroy()
     }
 
     function test_package_that_comes_only_with_an_optional_has_no_checkbox() {
-        var dlg = appDialogComp.createObject(testCase)
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", optionalPackages: [
-            { name: "rln", version: "0.10.0", action: "install" },
+        var dlg = dialogComp.createObject(testCase)
+        dlg.openWithInstallGate("chat", "1.0.0", [
+            { name: "rln", optional: true, version: "0.10.0", action: "install" },
             { name: "lez_rln", toVersion: "4.2.1", action: "install", optional: true,
-              requiredFor: ["rln"], description: "Required by RLN Module" }] })
-        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.rln") })
-        verify(findChild(dlg.contentItem, "addApplicationDialog.optional.rln").visible)
-        var child = findChild(dlg.contentItem, "addApplicationDialog.optional.lez_rln")
+              requiredFor: ["rln"], description: "Required by RLN Module" }], "", true)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.optional.rln") })
+        verify(findChild(dlg.contentItem, "confirmationDialog.optional.rln").visible)
+        var child = findChild(dlg.contentItem, "confirmationDialog.optional.lez_rln")
         verify(!child || !child.visible)
-        dlg.destroy()
-    }
-
-    function test_installed_app_lists_optionals_and_installs_pending_changes() {
-        var dlg = appDialogComp.createObject(testCase)
-        var installed = { name: "storage_module", version: "0.2.0", installedVersion: "0.2.0",
-            action: "installed", selected: true }
-        var notInstalled = { name: "rln", version: "1.0.0", action: "install", selected: false }
-        var metadata = { name: "chat", repositoryUrl: "https://repo/", installStatus: InstallStatus.Installed,
-            isInstalled: true, optionalPackages: [installed, notInstalled] }
-        dlg.openWith(metadata)
-        tryVerify(function() { return !!findChild(dlg.contentItem, "addApplicationDialog.optional.rln") })
-        verify(findChild(dlg.contentItem, "addApplicationDialog.optionalPackages").visible)
-        compare(findChild(dlg.contentItem, "addApplicationDialog.optional.storage_module").checked, true)
-        compare(findChild(dlg.contentItem, "addApplicationDialog.optional.rln").checked, false)
-        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
-        compare(primary.text, "Launch")
-        dlg.metadata = Object.assign({}, metadata, {optionalChangesPending: true})
-        compare(primary.text, "Install")
         dlg.destroy()
     }
 
@@ -368,6 +277,29 @@ TestCase {
         dlg.close()
         dlg.openWithInstallGate("chat", "1.0.0", [], "evil_ui", false)
         verify(line.text.indexOf("which is not part of Logos") !== -1, line.text)
+        dlg.destroy()
+    }
+
+    // App Manager's requests are the person's own clicks there: an app, and no
+    // word of who asked. Anyone else's keep both.
+    function test_app_manager_asks_in_simpler_words() {
+        var dlg = dialogComp.createObject(testCase, { appsApp: "app_manager_ui" })
+        verify(dlg)
+        dlg.openWithInstallGate("chat", "1.0.0", [], "app_manager_ui", true)
+        tryCompare(dlg, "opened", true)
+        compare(dlg.title, "Install App?")
+        compare(requesterLineOf(dlg).visible, false)
+        dlg.close()
+        tryCompare(dlg, "visible", false)
+        dlg.openWithUpgrade("chat", "2.0.0", 1, [], [], [], "app_manager_ui", true)
+        tryCompare(dlg, "opened", true)
+        compare(dlg.title, "Downgrade App?")
+        dlg.close()
+        tryCompare(dlg, "visible", false)
+        dlg.openWithInstallGate("chat", "1.0.0", [], "package_manager_ui", true)
+        tryCompare(dlg, "opened", true)
+        compare(dlg.title, "Install Package?")
+        compare(requesterLineOf(dlg).visible, true)
         dlg.destroy()
     }
 

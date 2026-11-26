@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtTest
 
 import Logos.Theme
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
 // Directory import, not `import Basecamp.Shell` — see tst_IntentInstallDialog.

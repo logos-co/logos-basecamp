@@ -16,7 +16,6 @@
   "appsLoading": false,
   "modulesLoading": false,
   "repositoriesLoading": false,
-  "requiredPackages": [],
   "launcherApps": [
     { "name": "package_manager_ui", "displayName": "Package Manager", "iconUrl": "", "hasMissingDeps": false }
   ],

@@ -1,9 +1,8 @@
 #include "MainContainer.h"
+#include "DefaultApps.h"
 #include "ShellSections.h"
 #include "ShellDevQml.h"
 #include "ThemeColours.h"
-#include "AppsFilterProxy.h"
-#include "InstallEnums.h"
 #include "ShortcutBridge.h"
 #include <ThemeManager.h>
 #include "WorkspaceArea.h"
@@ -29,20 +28,23 @@
 
 namespace {
 constexpr int kAppsStackIndex     = 0;  // WorkspaceArea (QDockWidget-based)
-constexpr int kContentStackIndex  = 1;  // ContentViews.qml (App Manager + Settings)
-constexpr int kModulesStackIndex  = 2;  // package_manager_ui (sandboxed QQuickWidget)
+constexpr int kContentStackIndex  = 1;  // ContentViews.qml (Settings)
+// Then a page per section app (DefaultApps.h), from 2: the Package Manager's,
+// then App Manager's.
 
-// The Package Manager page before package_manager_ui arrives -- and again after
-// it goes away. Built in two places, so it lives here: the stack must keep all
-// three pages at all times, because every section switch below indexes into it
-// by constant.
-QWidget* makePmuiPlaceholder(QWidget* parent)
+// A section app's page before its widget arrives -- and again after it goes
+// away. Built in two places, so it lives here: the stack keeps every page at
+// all times, because every section switch below indexes into it.
+QWidget* makeSectionPlaceholder(int section, QWidget* parent)
 {
     QWidget* ph = new QWidget(parent);
     ph->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     QVBoxLayout* phLayout = new QVBoxLayout(ph);
     phLayout->setAlignment(Qt::AlignCenter);
-    QLabel* loadingLabel = new QLabel(QStringLiteral("Loading Package Manager…"), ph);
+    QLabel* loadingLabel = new QLabel(section == ShellSection::AppManager
+                                          ? QStringLiteral("Loading App Manager…")
+                                          : QStringLiteral("Loading Package Manager…"),
+                                      ph);
     loadingLabel->setAlignment(Qt::AlignCenter);
     ThemeColours::bind(loadingLabel, [loadingLabel] {
         loadingLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 14px;")
@@ -141,16 +143,15 @@ MainContainer::MainContainer(IShellHost* host, QWidget* parent)
                                   "requestPackageInstall",
                                   Q_ARG(QString, name));
     });
-    connect(m_host->backendObject(),
-            SIGNAL(requestOpenAddApplicationDialog(QVariantMap)),
-            this, SLOT(onAddApplicationDialogRequested(QVariantMap)));
     connect(m_workspaceArea, &WorkspaceArea::showAllResultsRequested, this,
             [this](const QString& typeValue, const QString& query) {
+        // Apps: App Manager, asked to search for them.
+        if (typeValue != QStringLiteral("core")
+            && QMetaObject::invokeMethod(m_host->backendObject(), "searchApps", Q_ARG(QString, query)))
+            return;
         m_host->setCurrentSectionIndex(typeValue == QStringLiteral("core")
                                            ? ShellSection::PackageManager
                                            : ShellSection::AppManager);
-        if (typeValue != QStringLiteral("core"))
-            applyAppManagerSearch(query);
     });
 
     qDebug() << "MainContainer created";
@@ -168,14 +169,6 @@ void MainContainer::wireSidebar(QObject* sidebarRoot)
             this, SLOT(onSidebarTooltipRequested(QString, qreal)));
 }
 
-void MainContainer::onAddApplicationDialogRequested(const QVariantMap& metadata)
-{
-    if (m_host->currentSectionIndex() == ShellSection::AppManager) return;
-
-    m_host->setCurrentSectionIndex(ShellSection::AppManager);
-    applyAppManagerSearch(metadata.value(QStringLiteral("name")).toString());
-}
-
 void MainContainer::invokeOpenApp(const QString& name,
                                   const QString& repositoryUrl)
 {
@@ -184,19 +177,10 @@ void MainContainer::invokeOpenApp(const QString& name,
                                    Q_ARG(QString, repositoryUrl),
                                    Q_ARG(QVariantMap, QVariantMap()),
                                    // allowFastLaunch: launch when installed,
-                                   // fall through to the install dialog if not.
+                                   // App Manager on it if not.
                                    Q_ARG(bool, true))) {
         qCritical() << "openApp(QString,QString,QVariantMap,bool) not found on"
                     << "the backend — welcome-page app tiles will do nothing.";
-    }
-}
-
-void MainContainer::applyAppManagerSearch(const QString& query)
-{
-    if (!m_contentWidget) return;
-    if (QObject* contentRoot = m_contentWidget->rootObject()) {
-        QMetaObject::invokeMethod(contentRoot, "applyAppSearch",
-                                  Q_ARG(QVariant, QVariant(query)));
     }
 }
 
@@ -267,10 +251,14 @@ void MainContainer::setupUi()
         });
     m_contentStack->addWidget(m_contentWidget);
 
-    // Index 2: placeholder for package_manager_ui — shows a centered
-    // "Loading…" label until PMUI's QQuickWidget arrives via the
-    // pluginWindowRequested intercept
-    m_contentStack->addWidget(makePmuiPlaceholder(m_contentStack));
+    // From index 2: a page per section app, a centered "Loading…" label
+    // until its QQuickWidget arrives via the pluginWindowRequested intercept.
+    for (const int section : {int(ShellSection::PackageManager), int(ShellSection::AppManager)}) {
+        const auto* app = logos::defaultapps::appInSection(section);
+        if (!app) continue;
+        m_sectionPages.append({section, m_contentStack->count(), app->app, {}, {}});
+        m_contentStack->addWidget(makeSectionPlaceholder(section, m_contentStack));
+    }
 
     // === OFFLINE TOAST (QML) ===
     // Over the content, outside the layout so nothing moves; only its own
@@ -509,34 +497,54 @@ void MainContainer::onSectionIndexChanged(int index)
     qDebug() << "MainContainer: Active section index changed to" << sectionIndex;
 
     //   0 (Workspace)        → WorkspaceArea (QDockWidget-based)
-    //   1 (Applications)     → ContentViews.qml (App Manager view)
-    //   2 (Package Manager)  → package_manager_ui (preloaded in background)
-    //   3 (Settings)         → ContentViews.qml (StackLayout picks the page)
+    //   1 (Applications)     → app_manager_ui, loaded on first visit
+    //   2 (Package Manager)  → package_manager_ui, loaded on first visit
+    //   3 (Settings)         → ContentViews.qml
     switch (sectionIndex) {
     case ShellSection::Workspace:
         m_contentStack->setCurrentIndex(kAppsStackIndex);
         break;
-    case ShellSection::AppManager:
-        m_contentStack->setCurrentIndex(kContentStackIndex);
-        break;
-    case ShellSection::PackageManager:
-        if (!m_pmuiWidget) {
-            m_host->loadUiModule(QStringLiteral("package_manager_ui"));
-        }
-        m_contentStack->setCurrentIndex(kModulesStackIndex);
-        break;
     case ShellSection::Settings:
         m_contentStack->setCurrentIndex(kContentStackIndex);
         break;
-    default: break;
+    default:
+        if (SectionPage* page = pageForSection(sectionIndex)) {
+            if (!page->widget) m_host->loadUiModule(page->app);
+            m_contentStack->setCurrentIndex(page->stackIndex);
+        }
+        break;
     }
+}
+
+MainContainer::SectionPage* MainContainer::pageForSection(int section)
+{
+    for (SectionPage& page : m_sectionPages) {
+        if (page.section == section) return &page;
+    }
+    return nullptr;
+}
+
+MainContainer::SectionPage* MainContainer::pageForApp(const QString& app)
+{
+    for (SectionPage& page : m_sectionPages) {
+        if (page.app == app) return &page;
+    }
+    return nullptr;
+}
+
+MainContainer::SectionPage* MainContainer::pageForWidget(const QWidget* widget)
+{
+    for (SectionPage& page : m_sectionPages) {
+        if (widget && page.widget == widget) return &page;
+    }
+    return nullptr;
 }
 
 void MainContainer::onNavigateToApps()
 {
-    // Suppressed exactly once after package_manager_ui is folded into the
-    // content stack — that path installs the pane itself and must not also
-    // bounce the user to the Apps view.
+    // Suppressed exactly once after a section app is folded into the content
+    // stack — that path installs the pane itself and must not also bounce the
+    // user to the Apps view.
     if (m_suppressNextNavToApps) {
         m_suppressNextNavToApps = false;
         return;
@@ -548,17 +556,17 @@ void MainContainer::onNavigateToApps()
 
 void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& title)
 {
-    // package_manager_ui is not a dock: it becomes the Package Manager page of
-    // the content stack, replacing the placeholder that sits there at startup.
+    // A section app is not a dock: it becomes its section's page of the
+    // content stack, replacing the placeholder that sits there at startup.
     // Only where that section exists — a host without it (standalone mode)
     // docks it like any other app.
-    if (title == QStringLiteral("package_manager_ui") && !m_pmuiWidget
-        && offersSection(ShellSection::PackageManager)) {
-        m_pmuiWidget = widget;
-        QWidget* placeholder = m_contentStack->widget(kModulesStackIndex);
+    SectionPage* page = pageForApp(title);
+    if (page && !page->widget && offersSection(page->section)) {
+        page->widget = widget;
+        QWidget* placeholder = m_contentStack->widget(page->stackIndex);
         const bool showing = placeholder && m_contentStack->currentWidget() == placeholder;
         widget->setParent(m_contentStack);
-        m_contentStack->insertWidget(kModulesStackIndex, widget);
+        m_contentStack->insertWidget(page->stackIndex, widget);
         if (showing) m_contentStack->setCurrentWidget(widget);
         if (placeholder) {
             m_contentStack->removeWidget(placeholder);
@@ -573,7 +581,7 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
         // Standalone mode opening it as the app under development: show it.
         if (QObject* backend = m_host->backendObject();
             backend && backend->property("currentVisibleApp").toString() == title)
-            m_host->setCurrentSectionIndex(ShellSection::PackageManager);
+            m_host->setCurrentSectionIndex(page->section);
         return;
     }
 
@@ -588,28 +596,28 @@ void MainContainer::onPluginWindowRequested(QWidget* widget, const QString& titl
 
 void MainContainer::onPluginWindowRemoveRequested(QWidget* widget)
 {
-    if (widget && widget == m_pmuiWidget) {
+    if (SectionPage* page = pageForWidget(widget)) {
         // Removing the page on screen lets the stack show whichever is next;
-        // keep the Package Manager page on screen across a reload (Reopen).
+        // keep the section's page on screen across a reload (Reopen).
         QWidget* current = m_contentStack->currentWidget();
         const bool showing = current == widget
-            || (m_pmuiStoppedPanel && current == m_pmuiStoppedPanel);
-        if (m_pmuiStoppedPanel) {
-            m_contentStack->removeWidget(m_pmuiStoppedPanel);
-            m_pmuiStoppedPanel->deleteLater();
-            m_pmuiStoppedPanel = nullptr;
+            || (page->stoppedPanel && current == page->stoppedPanel);
+        if (page->stoppedPanel) {
+            m_contentStack->removeWidget(page->stoppedPanel);
+            page->stoppedPanel->deleteLater();
+            page->stoppedPanel = nullptr;
         }
-        // package_manager_ui is the Package Manager PAGE, not a dock, so it must
-        // not reach removePluginDock() -- but it cannot simply be left in the
-        // stack either: the host deleteLater()s it the moment this returns.
-        // Taking a page out without putting one back leaves a two-page stack
-        // that every `setCurrentIndex(kModulesStackIndex)` then indexes past the
-        // end of, and the section is dead for the rest of the session.
+        // A section app is its section's PAGE, not a dock, so it must not
+        // reach removePluginDock() -- but it cannot simply be left in the stack
+        // either: the host deleteLater()s it the moment this returns. Taking a
+        // page out without putting one back shifts every page after it, and
+        // `setCurrentIndex(page->stackIndex)` then shows the wrong one or
+        // indexes past the end: the section is dead for the rest of the session.
         m_contentStack->removeWidget(widget);
-        QWidget* placeholder = makePmuiPlaceholder(m_contentStack);
-        m_contentStack->insertWidget(kModulesStackIndex, placeholder);
+        QWidget* placeholder = makeSectionPlaceholder(page->section, m_contentStack);
+        m_contentStack->insertWidget(page->stackIndex, placeholder);
         if (showing) m_contentStack->setCurrentWidget(placeholder);
-        m_pmuiWidget = nullptr;
+        page->widget = nullptr;
         return;
     }
     if (m_workspaceArea && widget)
@@ -631,8 +639,8 @@ QQuickWidget* MainContainer::makeAppStoppedPanel(const QString& name)
     const QString label = m_host->displayNameFor(name);
     root->setProperty("appId", name);
     root->setProperty("appName", label.isEmpty() ? name : label);
-    // The Package Manager page cannot be closed, only reloaded.
-    root->setProperty("closable", name != QStringLiteral("package_manager_ui"));
+    // A section's page cannot be closed, only reloaded.
+    root->setProperty("closable", !pageForApp(name));
     connect(root, SIGNAL(reopenRequested(QString)), this, SLOT(onStoppedAppReopenRequested(QString)));
     connect(root, SIGNAL(closeRequested(QString)), this, SLOT(onStoppedAppCloseRequested(QString)));
     return panel;
@@ -646,9 +654,9 @@ void MainContainer::onAppStopped(QWidget* widget, const QString& name)
     }
     QQuickWidget* panel = makeAppStoppedPanel(name);
 
-    if (widget == m_pmuiWidget) {
+    if (SectionPage* page = pageForWidget(widget)) {
         const int index = m_contentStack->indexOf(widget);
-        if (index < 0 || m_pmuiStoppedPanel) {
+        if (index < 0 || page->stoppedPanel) {
             panel->deleteLater();
             return;
         }
@@ -657,7 +665,7 @@ void MainContainer::onAppStopped(QWidget* widget, const QString& name)
         m_contentStack->insertWidget(index, panel);
         m_contentStack->removeWidget(widget);
         if (showing) m_contentStack->setCurrentWidget(panel);
-        m_pmuiStoppedPanel = panel;
+        page->stoppedPanel = panel;
         return;
     }
 
@@ -685,8 +693,8 @@ void MainContainer::onPresentAppRequested(QWidget* widget)
 
     // Hoisted into the content stack, not docked, so "to the front" means
     // selecting its section rather than raising a tab.
-    if (widget == m_pmuiWidget) {
-        m_host->setCurrentSectionIndex(ShellSection::PackageManager);
+    if (SectionPage* page = pageForWidget(widget)) {
+        m_host->setCurrentSectionIndex(page->section);
         return;
     }
 

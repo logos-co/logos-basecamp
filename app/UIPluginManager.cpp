@@ -297,8 +297,7 @@ void UIPluginManager::loadUiModule(const QString& moduleName)
     // asked yet", and the tiles are published before the dependency fan-out
     // runs (PackageCoordinator.cpp: uiPluginsFetched precedes
     // refreshDependencyInfo). Reading through that window fails OPEN, so park
-    // the load until the data exists. Same shape as
-    // PackageCoordinator::uninstallApp; last click wins.
+    // the load until the data exists; last click wins.
     if (m_packageCoordinator && !m_packageCoordinator->dependencyDataReady()) {
         qDebug() << "UI module" << moduleName
                  << "deferred: dependency data not ready";
@@ -420,7 +419,9 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                 qw->rootContext()->contextProperty(QStringLiteral("logos"))
                     .value<QObject*>());
             if (bridge) {
-                if (name == QStringLiteral("package_manager_ui")) {
+                const auto* defaultApp = logos::defaultapps::appNamed(name);
+                if (defaultApp && defaultApp->app == name
+                    && defaultApp->slot == logos::defaultapps::Slot::Packages) {
                     QObject* replica = bridge->module(name);
                     if (replica) {
                         // String-based connects resolve against the replica's
@@ -795,8 +796,7 @@ void UIPluginManager::refreshUiModules()
 bool UIPluginManager::isShellInternalApp(const QString& name) const
 {
     if (name == "main_ui") return true;
-    if (name == "package_manager_ui") return m_hostProfile.packageManagerUiIsSection();
-    return false;
+    return m_hostProfile.isSectionApp(name);
 }
 
 // One row shape, built once. launcherApps() and recentlyClosedApps() both use

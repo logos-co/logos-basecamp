@@ -1,11 +1,11 @@
 # Basecamp's own apps run only from its bundle (app/utils/BuiltInApps.h), end
 # to end against the real core and package manager. tests/builtin-apps-tests.mjs
-# plants copies of Package Manager in a fresh user dir and drives the app, once
-# per scenario:
+# plants copies of Package Manager and App Manager in a fresh user dir and
+# drives the app, once per scenario:
 #
 #   moved  copies planted before start and while it runs are moved aside, and
-#          the backend that runs is Basecamp's own;
-#   stuck  copies that cannot be moved stay, and Package Manager is refused.
+#          the backends that run are Basecamp's own;
+#   stuck  copies that cannot be moved stay, and both apps are refused.
 #
 # The log gates below then check what Basecamp told the user, which the test
 # itself cannot read.
@@ -64,11 +64,16 @@ pkgs.runCommand "logos-basecamp-builtin-apps-test" {
   said moved 2 "package_manager_ui comes with Basecamp, so only Basecamp's own copy runs. The copy that was in"
   said moved 2 "package_manager_ui_backend comes with Basecamp, so only Basecamp's own copy runs. The copy that was in"
   said moved 1 "Basecamp stopped what was running under that name"
+  said moved 2 "app_manager_ui comes with Basecamp, so only Basecamp's own copy runs. The copy that was in"
+  said moved 2 "app_manager_ui_backend comes with Basecamp, so only Basecamp's own copy runs. The copy that was in"
 
   scenario stuck
   said stuck 1 "package_manager_ui comes with Basecamp, so only Basecamp's own copy runs. The copy in"
   said stuck 1 "package_manager_ui_backend comes with Basecamp, so only Basecamp's own copy runs. The copy in"
   said stuck 1 'Refusing to load "package_manager_ui"'
+  said stuck 1 "app_manager_ui comes with Basecamp, so only Basecamp's own copy runs. The copy in"
+  said stuck 1 "app_manager_ui_backend comes with Basecamp, so only Basecamp's own copy runs. The copy in"
+  said stuck 1 'Refusing to load "app_manager_ui"'
 
   echo "Built-in apps test passed (moved, stuck)"
 ''

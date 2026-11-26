@@ -13,7 +13,8 @@
 , appBin ? "${appPkg}/bin/LogosBasecamp", timeoutSec ? 900 }:
 
 pkgs.runCommand "logos-basecamp-lifecycle-test" {
-  nativeBuildInputs = [ pkgs.coreutils pkgs.nodejs ]
+  # openssl: the local HTTPS repository's certificate (tests/fixtures/https-repo.mjs).
+  nativeBuildInputs = [ pkgs.coreutils pkgs.nodejs pkgs.openssl ]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
       pkgs.qt6.qtbase   # provides the offscreen platform plugin
       pkgs.libGL
@@ -45,6 +46,8 @@ pkgs.runCommand "logos-basecamp-lifecycle-test" {
   ''}
 
   export LOGOS_QT_MCP="${logosQtMcp}"
+  # Trusted next to the local repository's certificate.
+  export LOGOS_TEST_CA_BUNDLE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
 
   set -o pipefail
   echo "Running logos-basecamp lifecycle tests (timeout: ${toString timeoutSec}s)..."

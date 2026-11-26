@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
 import Logos.Theme
-import Basecamp.AppManager
 import Basecamp.Common
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
@@ -116,27 +115,35 @@ LogosWarningDialog {
         optionalPreviewRequested(moduleName, optionalSelection, optionalPickedVersions);
     }
 
+    // Whether `p` can be installed at `version`, from a source that serves it.
+    function offersVersion(p, version) {
+        return !p.error && !!version && (version === p.version
+            || (p.versions || []).some(function(v) {
+                return v && v.manifest && v.manifest.version === version && v.sourceAvailable !== false;
+            }));
+    }
+
     onOptionalPackagesChanged: {
         var picks = {};
         optionalPackages.forEach(function(p) {
-            const picked = optionalPickedVersions[p.name];
-            if (!p.error && picked && (picked === p.version
-                || (p.versions || []).some(function(v) {
-                    return v && v.manifest && v.manifest.version === picked;
-                }))) picks[p.name] = picked;
+            if (offersVersion(p, optionalPickedVersions[p.name])) picks[p.name] = optionalPickedVersions[p.name];
         });
         optionalPickedVersions = picks;
     }
 
+    // Each optional as the requester asked: ticked or not, and at the version
+    // it picked (`requestedVersion`), which is what the plan resolved with.
     function resetOptionalSelection() {
         var selected = {};
+        var picks = {};
         for (var i = 0; i < optionalPackages.length; ++i) {
             var offer = optionalPackages[i];
             if (!offer.error && !offer.requiredFor) selected[offer.name] = offer.selected !== false;
+            if (offersVersion(offer, offer.requestedVersion)) picks[offer.name] = offer.requestedVersion;
         }
         resolutionPending = false;
         optionalSelection = selected;
-        optionalPickedVersions = ({});
+        optionalPickedVersions = picks;
     }
 
     // The backend's default (`selected`) until the user toggles the row.
@@ -170,6 +177,12 @@ LogosWarningDialog {
     // merely attributes; a warning on every ordinary operation is noise that
     // teaches the user to skip the one that matters.
     property bool requesterBundled: false
+    // App Manager, the Apps slot's app (DefaultApps.h): its requests are the
+    // person's own clicks there, so the dialog speaks of an app and says
+    // nothing of who asked.
+    property string appsApp: ""
+    readonly property bool appWording: root.requesterName.length > 0
+                                       && root.requesterName === root.appsApp
 
     property var displayNameLookup: function(name) { return name; }
 
@@ -254,12 +267,12 @@ LogosWarningDialog {
         if (root.mode === "unloadCascade")
             return "Unload Dependent Modules?";
         if (root.mode === "upgradeCascade") {
-            if (root.upgradeModeKind === 1) return "Downgrade Package?";
-            if (root.upgradeModeKind === 2) return "Reinstall Package?";
-            return "Upgrade Package?";
+            if (root.upgradeModeKind === 1) return root.appWording ? "Downgrade App?" : "Downgrade Package?";
+            if (root.upgradeModeKind === 2) return root.appWording ? "Reinstall App?" : "Reinstall Package?";
+            return root.appWording ? "Upgrade App?" : "Upgrade Package?";
         }
         if (root.mode === "installGate")
-            return "Install Package?";
+            return root.appWording ? "Install App?" : "Install Package?";
         if (root.mode === "installError")
             return "Install Failed";
         if (root.mode === "loadFailed")
@@ -446,7 +459,7 @@ LogosWarningDialog {
         LogosText {
             objectName: "confirmationDialog.requester"
             Layout.fillWidth: true
-            visible: root.requesterName.length > 0
+            visible: root.requesterName.length > 0 && !root.appWording
             wrapMode: Text.Wrap
             // Payload-adjacent and attacker-influenced on the open
             // confirm_install intent: never let a name render as markup.

@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import Logos.Theme
 
 // Directory import, not `import Basecamp.Shell`: the shell's QML is compiled
 // into main_ui as a qt_add_qml_module, so there is no importable module here —
@@ -337,12 +338,11 @@ TestCase {
     }
 
     // The tile falls back to a monogram for every candidate: these are catalog
-    // packages, so there is never artwork. The tint arrives by injection —
-    // the dialog imports no feature module to get it.
-    function test_candidates_get_a_monogram_tile_from_the_injected_colour() {
-        var dlg = dialogComp.createObject(testCase, {
-            fallbackColorFor: function (name) { return "#123456"; }
-        });
+    // packages, so there is never artwork. It has no colour of its own, as the
+    // sidebar's tiles have none.
+    function test_candidates_get_a_monogram_tile_with_no_colour_of_its_own() {
+        var dlg = dialogComp.createObject(testCase, {});
+        compare(dlg.fallbackColorFor, undefined, "no colour can be handed to it");
         dlg.openWith("probe.echo", ["probe_ui", "other_ui"], [
             { moduleName: "probe_ui", displayName: "Probe", repositoryUrl: "" },
             { moduleName: "other_ui", displayName: "Other", repositoryUrl: "" }
@@ -357,7 +357,8 @@ TestCase {
 
         verify(tile.showsMonogram, "no artwork for a catalog package, so a monogram");
         verify(tile.monogram.length > 0, "the monogram is not blank");
-        compare(String(tile.fallbackColor), "#123456", "uses the injected colour");
+        verify(Qt.colorEqual(tile.fallbackColor, Theme.palette.surfaceRaised),
+               "the theme's colour: " + tile.fallbackColor);
         verify(tile.width > 0 && tile.width === tile.height, "square, not collapsed");
         verify(tile.width >= 20 && tile.width <= 32,
                "sized within its row, got " + tile.width);
