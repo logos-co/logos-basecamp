@@ -1,4 +1,4 @@
-// srcdeps: ShellIntents.cpp IntentRegistry.cpp
+// srcdeps: ShellIntents.cpp IntentRegistry.cpp utils/ManifestFile.cpp
 //
 // The default-app table: every grant a default app holds comes from its slot's
 // row, and the shell's restrictions are the table's.
