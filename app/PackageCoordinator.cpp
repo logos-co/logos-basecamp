@@ -397,30 +397,6 @@ QString PackageCoordinator::displayNameFor(const QString& name) const
 // Gated uninstall — entry points
 // ---------------------------------------------------------------------------
 
-void PackageCoordinator::uninstallUiModule(const QString& moduleName)
-{
-    qDebug() << "uninstallUiModule:" << moduleName;
-
-    // Main UI is protected — uninstalling it would brick Basecamp. Every
-    // other "is this uninstallable?" check (embedded-refusal, unknown-module)
-    // now lives in the package_manager module itself, so there's no duplicate
-    // gating here. This guard stays local because "don't kill your own UI"
-    // is a Basecamp concern, not a package-lifecycle concern.
-    if (moduleName == QStringLiteral("main_ui")) {
-        qWarning() << "Refusing to uninstall main_ui";
-        return;
-    }
-
-    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
-}
-
-void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
-{
-    // Same flow as uninstallUiModule — removal is type-agnostic.
-    qDebug() << "uninstallCoreModule:" << moduleName;
-    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
-}
-
 // ---------------------------------------------------------------------------
 // Uninstall plan — compose (what to remove) and explain (why the rest stays)
 // ---------------------------------------------------------------------------
@@ -568,7 +544,6 @@ QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
         {QStringLiteral("removable"),  removable},
         {QStringLiteral("kept"),       kept},
         {QStringLiteral("dependents"), dependents},
-        // Empty when the shell itself asked (Settings → Modules / Apps).
         {QStringLiteral("requester"),  requesterName},
         {QStringLiteral("requesterBundled"), requesterIsBundled(requesterName)},
         {QStringLiteral("requesterDisplayName"),
@@ -837,28 +812,6 @@ QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) con
     }
     row.insert("versions", versions);
     return row;
-}
-
-void PackageCoordinator::beginLocalUninstall(const QStringList& names,
-                                             const QString& kind)
-{
-    if (names.isEmpty()) return;
-    if (m_pendingAction.op != PendingOp::None) {
-        qWarning() << "beginLocalUninstall: a confirmation is already open — ignoring";
-        return;
-    }
-    const bool multi = names.size() > 1;
-
-    // No intentRequestId: we asked ourselves, so the removal is ours to do.
-    m_pendingAction = multi
-        ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, {}}
-        : PendingAction{PendingOp::UninstallCascade, names.first(), {}, {}};
-
-    // Empty requester — the dialog says nothing about who asked, because the
-    // user is the one who clicked.
-    emit uninstallPlanRequested(
-        buildPlanPayload(names, dependentsOfBatch(names), kind, multi));
-    m_lastRequestedTargets.clear();
 }
 
 void PackageCoordinator::performLocalRemoval(const QStringList& names)

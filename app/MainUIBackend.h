@@ -273,10 +273,6 @@ public slots:
     // The welcome page's "show all" for apps: App Manager, searching for `query`.
     Q_INVOKABLE void searchApps(const QString& query);
 
-    // Uninstall flow — delegated to PackageCoordinator.
-    Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
-    Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
-
     // Cascade confirmation flow. Local unload cascade lives on
     // UIPluginManager; uninstall/upgrade cascade lives on PackageCoordinator.
     // cancelPendingAction fans out to both so the un-involved one no-ops.
@@ -404,7 +400,7 @@ signals:
                                    const QVariantList& blockers,
                                    const QString& summary);
     void unloadCascadeConfirmationRequested(const QString& name, const QStringList& loadedDependents);
-    // Single uninstall-confirmation trigger for all four initiators — pure
+    // The one uninstall confirmation, for one package or several — a pure
     // re-emit of PackageCoordinator::uninstallPlanRequested, whose comment
     // documents the payload.
     void uninstallPlanRequested(const QVariantMap& plan);

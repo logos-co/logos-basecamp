@@ -33,13 +33,12 @@ class UIPluginManager;
 // Scope:
 //   * Package scanning (getInstalledPackagesAsync, getInstalledUiPluginsAsync)
 //     and the derived installType / missing-deps / dependents caches.
-//   * Servicing the three `basecamp.packages.confirm_*` intents raised by
-//     package_manager_ui: draw the dialog, run the cascade-unload, answer. The
-//     answer IS the permission — PMU removes nothing until it arrives, so the
-//     unload has always finished first. Basecamp initiates no install of its
-//     own here; PMU owns that, including local .lgx picks.
-//   * The shell's own uninstall dialogs (Settings → Modules / Apps), which
-//     carry no intent and so perform the removal themselves.
+//   * Servicing the three `basecamp.packages.confirm_*` intents raised by the
+//     installer apps (App Manager, Package Manager): draw the dialog, run the
+//     cascade-unload, answer. The answer IS the permission — the requester
+//     removes nothing until it arrives, so the unload has always finished
+//     first. Basecamp installs nothing itself; the installer apps do, Package
+//     Manager's local .lgx picks included.
 //   * Pending-action state for the cascade (one slot).
 //
 // What it does NOT do:
@@ -154,13 +153,6 @@ public slots:
                              const QString& repositoryUrl,
                              const QVariantMap& versionPins = QVariantMap(),
                              bool allowFastLaunch = true);
-
-    // Shell-initiated uninstall (Settings → Modules / Apps). These raise the
-    // confirm dialog directly — the shell is both asker and decider here, so
-    // there is no intent. uninstallUiModule additionally refuses "main_ui"
-    // because uninstalling it would brick Basecamp.
-    Q_INVOKABLE void uninstallUiModule(const QString& moduleName);
-    Q_INVOKABLE void uninstallCoreModule(const QString& moduleName);
 
     // Cascade confirmation — called from QML once the user OKs the uninstall
     // or upgrade dialog. Unloads, then answers the intent recorded on the
@@ -331,9 +323,7 @@ private:
 
     // The id is ALWAYS paired with its subject and answered only via
     // finishIntent(id, …). Answering "whatever is pending" would let a click on
-    // one dialog approve a different request — the shell's own uninstall dialog
-    // takes no id at all, so it would otherwise silently approve an app's
-    // in-flight install.
+    // one dialog approve a different request.
     QString m_pendingInstallRequestId;
     QString m_pendingInstallName;
 
@@ -359,10 +349,6 @@ private:
     QVariantList optionalRowsWithChildren(const QVariantList& offerRows, const QVariantList& changes) const;
 
     IntentResponder m_intentResponder;
-
-    // Open the confirm dialog for a shell-initiated removal (Settings →
-    // Modules / Apps). No intent: we asked ourselves, so we also do the work.
-    void beginLocalUninstall(const QStringList& names, const QString& kind);
 
     // Remove each name. Only after the cascade-unload has run.
     void performLocalRemoval(const QStringList& names);

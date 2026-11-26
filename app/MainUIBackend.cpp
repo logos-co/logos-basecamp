@@ -228,7 +228,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
            this,              &MainUIBackend::presentAppRequested);
 
     // Forward PackageCoordinator dialog signals. One uninstallPlanRequested
-    // serves all four initiators — see buildPlanPayload.
+    // serves one package or several — see buildPlanPayload.
     reemit(m_packageCoordinator, &PackageCoordinator::uninstallPlanRequested,
            this,             &MainUIBackend::uninstallPlanRequested);
     reemit(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
@@ -1175,8 +1175,6 @@ void MainUIBackend::beginIntentInstall(const QString& providerName)
 QString MainUIBackend::displayNameFor(const QString& n) const {
     return m_packageCoordinator ? m_packageCoordinator->displayNameFor(n) : n;
 }
-void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }
-void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
 void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }

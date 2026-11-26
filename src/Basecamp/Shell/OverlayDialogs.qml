@@ -79,7 +79,7 @@ Item {
         onCancelClicked: (name) => backend.cancelPendingAction(name)
     }
 
-    // The one uninstall confirmation — all four initiators arrive here.
+    // The one uninstall confirmation, for one package or several.
     UninstallDialog {
         id: uninstallDialog
         objectName: "uninstallDialog"
