@@ -20,15 +20,22 @@ ConfirmationQueue::Request install(const char* id, const QString& requester, con
     return {QLatin1String(id), kInstall, {{QStringLiteral("name"), name}}, requester};
 }
 
-QVariantMap plan(const QString& name, const QString& version)
+QVariantMap plan(const QString& name, const QString& version, const QString& rootHash = {})
 {
     return {{QStringLiteral("plan"),
-             QVariantList{QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("version"), version}}}}};
+             QVariantList{QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("version"), version},
+                                      {QStringLiteral("rootHash"), rootHash}}}}};
 }
 
-QVariantList installed(const QString& name, const QString& version)
+QVariantMap installedOne(const QString& name, const QString& version, const QString& rootHash = {})
 {
-    return {QVariantMap{{QStringLiteral("name"), name}, {QStringLiteral("version"), version}}};
+    return {{QStringLiteral("name"), name}, {QStringLiteral("version"), version},
+            {QStringLiteral("hashes"), QVariantMap{{QStringLiteral("root"), rootHash}}}};
+}
+
+QVariantList installed(const QString& name, const QString& version, const QString& rootHash = {})
+{
+    return {installedOne(name, version, rootHash)};
 }
 
 struct Shown {
@@ -188,8 +195,10 @@ private slots:
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
     }
 
-    // Its app stopped: nothing is making the change any more.
-    void theAppStoppingEndsItsChange()
+    // The app that asked is done with it: it said how the change ended (a
+    // failed install too), or it closed or stopped. A failed change used to
+    // hold every other confirmation until the timeout.
+    void theAppBeingDoneWithItsChangeEndsIt()
     {
         ConfirmationQueue q;
         Shown shown;
@@ -197,12 +206,66 @@ private slots:
         q.submit(install("a", kAppManager, "wallet"));
         q.answered("a", true, plan("wallet", "1.0.0"));
         q.submit(install("b", kPackageManager, "chat"));
-        q.requesterStopped(kPackageManager);
-        q.requesterStopped({});
+        q.changeEnded(kPackageManager);
+        q.changeEnded({});
         QCOMPARE(shown.ids, QStringList{"a"});
-        q.requesterStopped(kAppManager);
+        q.changeEnded(kAppManager);
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
         QVERIFY(q.changing().isEmpty());
+    }
+
+    // A reinstall keeps its version: it is made once its own release is on
+    // disk, not by the copy it replaces.
+    void aReinstallIsMadeOnceItsOwnReleaseIsThere()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0", "new"));
+        q.submit(install("b", kPackageManager, "chat"));
+        q.installedChanged(installed("wallet", "1.0.0", "old"));
+        QCOMPARE(shown.ids, QStringList{"a"});
+        q.installedChanged(installed("wallet", "1.0.0", "new"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+    }
+
+    // An optional package that fails is left out while the rest installs, so
+    // the change is made without it.
+    void anOptionalPackageLeftOutHoldsNothing()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        QVariantMap approved = plan("wallet", "1.0.0");
+        QVariantList rows = approved.value(QStringLiteral("plan")).toList();
+        rows << QVariantMap{{QStringLiteral("name"), QStringLiteral("extra")},
+                            {QStringLiteral("version"), QStringLiteral("1.0.0")},
+                            {QStringLiteral("optional"), true}};
+        approved[QStringLiteral("plan")] = rows;
+        q.answered("a", true, approved);
+        q.submit(install("b", kPackageManager, "chat"));
+        q.installedChanged(installed("wallet", "1.0.0"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+    }
+
+    // Files installed or removed, whichever package: the change is moving.
+    void anyPackageInstalledHoldsTheChange()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.setChangeTimeout(1000);
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(install("b", kPackageManager, "chat"));
+        for (int i = 0; i < 5; ++i) {
+            QTest::qWait(300);
+            q.activity();
+        }
+        QCOMPARE(shown.ids, QStringList{"a"});
+        QTRY_COMPARE_WITH_TIMEOUT(shown.ids, (QStringList{"a", "b"}), 5000);
     }
 
     void aWithdrawnRequestLeavesTheQueue()

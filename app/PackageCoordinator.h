@@ -247,6 +247,8 @@ signals:
     void installedPackagesRead(const QVariantList& packages);
     // A package's download moving, or done (package_downloader's events).
     void packageOnItsWay(const QString& name);
+    // A package's files installed or removed (package_manager's events).
+    void packageFilesChanged();
     void uninstallPlanRequested(const QVariantMap& plan);
     void dependencyDataReadyChanged();
 

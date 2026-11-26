@@ -17,7 +17,7 @@ ConfirmationQueue::ConfirmationQueue(QObject* parent)
     m_changeTimer->setSingleShot(true);
     connect(m_changeTimer, &QTimer::timeout, this, [this]() {
         qWarning().noquote() << "ConfirmationQueue: nothing of the change" << m_change.requester
-                             << "was approved for is on its way; showing the next anyway";
+                             << "was approved for is moving; showing the next anyway";
         endChange();
         next();
     });
@@ -47,13 +47,18 @@ void ConfirmationQueue::answered(const QString& id, bool approved, const QVarian
         } else {
             for (const QVariant& v : answer.value(QStringLiteral("plan")).toList()) {
                 const QVariantMap row = v.toMap();
+                // An optional package may fail and be left out; the rest goes on.
+                if (row.value(QStringLiteral("optional")).toBool()) continue;
                 change.installs.insert(row.value(QStringLiteral("name")).toString(),
-                                       row.value(QStringLiteral("version")).toString());
+                                       {row.value(QStringLiteral("version")).toString(),
+                                        row.value(QStringLiteral("rootHash")).toString()});
             }
-            // A local file: the package it names.
+            // A local file: the package it names, as approved.
             if (change.installs.isEmpty())
                 change.installs.insert(request.params.value(QStringLiteral("name")).toString(),
-                                       request.params.value(QStringLiteral("version")).toString());
+                                       {request.params.value(QStringLiteral("version")).toString(),
+                                        answer.value(QStringLiteral("file")).toMap()
+                                            .value(QStringLiteral("rootHash")).toString()});
         }
         change.installs.remove(QString());
         if (!change.installs.isEmpty() || !change.removes.isEmpty()) {
@@ -90,11 +95,18 @@ void ConfirmationQueue::installedChanged(const QVariantList& installed)
 
 void ConfirmationQueue::progressed(const QString& name)
 {
-    if (m_change.requester.isEmpty() || !m_change.installs.contains(name)) return;
+    if (m_change.requester.isEmpty()
+        || !(m_change.installs.contains(name) || m_change.removes.contains(name)))
+        return;
     m_changeTimer->start(m_changeTimeoutMs);
 }
 
-void ConfirmationQueue::requesterStopped(const QString& requester)
+void ConfirmationQueue::activity()
+{
+    if (!m_change.requester.isEmpty()) m_changeTimer->start(m_changeTimeoutMs);
+}
+
+void ConfirmationQueue::changeEnded(const QString& requester)
 {
     if (requester.isEmpty() || requester != m_change.requester) return;
     endChange();
@@ -103,20 +115,24 @@ void ConfirmationQueue::requesterStopped(const QString& requester)
 
 bool ConfirmationQueue::madeOn(const QVariantList& installed) const
 {
-    QHash<QString, QString> versions;
+    QHash<QString, Release> onDisk;
     for (const QVariant& v : installed) {
         const QVariantMap package = v.toMap();
-        versions.insert(package.value(QStringLiteral("name")).toString(),
-                        package.value(QStringLiteral("version")).toString());
+        onDisk.insert(package.value(QStringLiteral("name")).toString(),
+                      {package.value(QStringLiteral("version")).toString(),
+                       package.value(QStringLiteral("hashes")).toMap().value(QStringLiteral("root")).toString()});
     }
     for (auto it = m_change.installs.cbegin(); it != m_change.installs.cend(); ++it) {
-        const auto found = versions.constFind(it.key());
-        if (found == versions.cend()) return false;
-        const QString version = it.value().toString();
-        if (!version.isEmpty() && found.value() != version) return false;
+        const auto found = onDisk.constFind(it.key());
+        if (found == onDisk.cend()) return false;
+        const Release& want = it.value();
+        if (!want.version.isEmpty() && found->version != want.version) return false;
+        // A release can come again under its version: a reinstall is made
+        // once its own contents are there.
+        if (!want.rootHash.isEmpty() && found->rootHash != want.rootHash) return false;
     }
     for (const QString& name : m_change.removes) {
-        if (versions.contains(name)) return false;
+        if (onDisk.contains(name)) return false;
     }
     return true;
 }

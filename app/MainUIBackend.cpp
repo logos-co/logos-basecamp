@@ -151,6 +151,16 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             m_confirmations, &ConfirmationQueue::installedChanged);
     connect(m_packageCoordinator, &PackageCoordinator::packageOnItsWay,
             m_confirmations, &ConfirmationQueue::progressed);
+    connect(m_packageCoordinator, &PackageCoordinator::packageFilesChanged,
+            m_confirmations, &ConfirmationQueue::activity);
+    connect(m_uiPluginManager, &UIPluginManager::installerChangeEnded,
+            m_confirmations, &ConfirmationQueue::changeEnded);
+    // The app making a change closed: nothing is making it any more.
+    connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged, this, [this]() {
+        const QString changing = m_confirmations->changing();
+        if (!changing.isEmpty() && !m_uiPluginManager->isUiAppLoaded(changing))
+            m_confirmations->changeEnded(changing);
+    });
     // The platform's own backend: by features alone Qt can pick glib, which
     // outside Linux never sees the connection go.
     if (QNetworkInformation::loadDefaultBackend()) {
@@ -465,7 +475,7 @@ void MainUIBackend::wireIntents()
     connect(m_uiPluginManager, &UIPluginManager::appBackendStopped,
             this, [this](const QString& name, QWidget* widget) {
                 m_intentBroker->onAppUnavailable(name);
-                m_confirmations->requesterStopped(name);
+                m_confirmations->changeEnded(name);
                 emit appStopped(widget, name);
             });
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
@@ -544,9 +554,11 @@ void MainUIBackend::wireIntents()
                const QVariantMap& params, const QString& requesterName) {
             return deliverShellIntent(dispatchId, intent, params, requesterName);
         });
+    // The confirmation lets go of it before the queue shows the next, which
+    // it would otherwise refuse as one already open.
     m_shellEndpoint->setOnEnded([this](const QString& dispatchId) {
-        m_confirmations->withdrawn(dispatchId);
         if (m_packageCoordinator) m_packageCoordinator->shellIntentEnded(dispatchId);
+        m_confirmations->withdrawn(dispatchId);
     });
     m_intentBroker->registerEndpoint(QStringLiteral("main_ui"), m_shellEndpoint.get());
 
@@ -718,8 +730,8 @@ void MainUIBackend::wireIntentsModule()
             m_chooserQueue, &IntentChooserQueue::withdraw);
     connect(m_intentsHost, &IntentsModuleHost::shellDeliveryEnded, this,
             [this](const QString& id) {
-                m_confirmations->withdrawn(id);
                 if (m_packageCoordinator) m_packageCoordinator->shellIntentEnded(id);
+                m_confirmations->withdrawn(id);
             });
     // Someone else may hold it now: it does not keep running.
     connect(m_intentsHost, &IntentsModuleHost::presenterRoleLost, this, [this]() {

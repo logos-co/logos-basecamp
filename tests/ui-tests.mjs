@@ -3179,8 +3179,10 @@ test("intents: cancelling also returns the user to the caller", async (app) => {
 });
 
 // A package confirmation whose request ended closes, so it can't answer nobody
-// or refuse the next one (#570). Here its requester goes away while it is up.
-test("intents: a package confirmation closes when its request ends", async (app) => {
+// or refuse the next one (#570). Here its requester goes away while it is up,
+// with another installer's confirmation waiting behind it: that one shows. It
+// used to be refused, the closed one still holding Basecamp's gate.
+test("intents: a package confirmation closes when its request ends, and the next one shows", async (app) => {
   // Only the installer apps may ask (app/interfaces/DefaultApps.h): Package
   // Manager's screen asks here.
   await app.click("Package Manager", sidebarSection);
@@ -3198,8 +3200,23 @@ test("intents: a package confirmation closes when its request ends", async (app)
 
   const welcome = await findByObjectName(app.inspector, "welcomePage.greeting");
   if (!welcome) throw new Error("no welcomePage.greeting to reach the backend through");
+  // App Manager asks too; it waits behind the confirmation on screen.
+  await evalOn(app, welcome.id, '(backend.setCurrentActiveSectionIndex(1), "applications")');
+  let appManager = null;
+  await app.waitFor(async () => {
+    appManager = await findByObjectName(app.inspector, "appManager");
+    if (!appManager) throw new Error("App Manager's view is not up yet");
+  }, { timeout: 30000, interval: 500, description: "App Manager's view" });
+  await evalOn(app, appManager.id, '(logos.request("basecamp.packages.confirm_install", ' +
+                                   '{ name: "probe_next" }, function () {}), "sent")');
+  const gate = await findByObjectName(app.inspector, "confirmationDialog.installGate");
   await evalOn(app, welcome.id, '(backend.unloadUiModule("package_manager_ui"), "unloaded")');
   try {
+    await app.waitFor(async () => {
+      const shown = await evalOn(app, gate.id, "visible ? moduleName : ''");
+      if (shown !== "probe_next") throw new Error(`the gate shows ${JSON.stringify(shown)}`);
+    }, { timeout: 15000, interval: 250, description: "the waiting confirmation to show" });
+    await evalOn(app, gate.id, '(close(), "closed")');
     await app.waitFor(async () => {
       if ((await visibilityOf(app, "confirmationDialog.installGate")) !== false)
         throw new Error("the confirmation is still up");

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -13,9 +14,9 @@ class QTimer;
 // One approved package change at a time, whichever app asks: a
 // basecamp.packages.confirm_* waits while another's dialog is on screen, and
 // once approved, while that change is still being made. The change is made
-// once package_manager shows it on disk, the app that made it asks again (an
-// installer app asks only after its last change ended) or stops, or a while
-// has passed with nothing of it on its way.
+// once package_manager shows it on disk, the app that made it says how it
+// ended, asks again (an installer app asks only after its last change ended),
+// closes or stops, or a while has passed with nothing of it moving.
 class ConfirmationQueue : public QObject {
     Q_OBJECT
 public:
@@ -32,8 +33,8 @@ public:
     explicit ConfirmationQueue(QObject* parent = nullptr);
 
     void setBegin(Begin begin) { m_begin = std::move(begin); }
-    // How long an approved change may go with nothing of it on its way
-    // before the next is shown anyway.
+    // How long an approved change may go with nothing of it moving before the
+    // next is shown anyway.
     void setChangeTimeout(int ms) { m_changeTimeoutMs = ms; }
 
     // Shown now, or once the ones before it are through.
@@ -44,11 +45,14 @@ public:
     void withdrawn(const QString& id);
     // package_manager's installed packages, after a change.
     void installedChanged(const QVariantList& installed);
-    // A package on its way, its download moving: the change it is in waits
-    // on, however long that takes.
+    // A package of the change moving (its download, or its files installed or
+    // removed): the change waits on, however long that takes.
     void progressed(const QString& name);
-    // The app that asked stopped, and with it the change it was making.
-    void requesterStopped(const QString& requester);
+    // Something installed or removed, whichever package: the change waits on.
+    void activity();
+    // The app that asked is done with its change: it said how the change
+    // ended, or it closed or stopped.
+    void changeEnded(const QString& requester);
 
     QString onScreen() const { return m_onScreen.id; }
     int waiting() const { return int(m_waiting.size()); }
@@ -56,9 +60,14 @@ public:
     QString changing() const { return m_change.requester; }
 
 private:
+    // As approved; "" is any.
+    struct Release {
+        QString version;
+        QString rootHash;
+    };
     struct Change {
         QString requester;
-        QVariantMap installs;   // name -> version; "" any
+        QHash<QString, Release> installs;
         QStringList removes;
     };
 
@@ -67,7 +76,9 @@ private:
     bool madeOn(const QVariantList& installed) const;
 
     Begin m_begin;
-    int m_changeTimeoutMs = 10 * 60 * 1000;
+    // Past the downloader's own 60 s stall timeout: a stalled download has
+    // failed, and stopped moving, by then.
+    int m_changeTimeoutMs = 2 * 60 * 1000;
     Request m_onScreen;
     QList<Request> m_waiting;
     Change m_change;

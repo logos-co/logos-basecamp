@@ -420,6 +420,15 @@ void UIPluginManager::onPluginLoaded(const QString& name, QWidget* widget,
                     .value<QObject*>());
             if (bridge) {
                 const auto* defaultApp = logos::defaultapps::appNamed(name);
+                QObject* appsReplica = defaultApp && defaultApp->app == name
+                        && defaultApp->slot == logos::defaultapps::Slot::Apps
+                    ? bridge->module(name) : nullptr;
+                if (appsReplica
+                    && !connect(appsReplica, SIGNAL(finished(QString,int,QString)),
+                                this, SLOT(onAppManagerFinished(QString,int,QString)))) {
+                    qCritical() << name << "replica signal finished(...) not found"
+                                << "- its confirmations' changes end only by their timeout.";
+                }
                 if (defaultApp && defaultApp->app == name
                     && defaultApp->slot == logos::defaultapps::Slot::Packages) {
                     QObject* replica = bridge->module(name);
@@ -464,13 +473,25 @@ void UIPluginManager::onPluginLoadFailed(const QString& name, const QString& err
     emit pluginLoadFailedNotice(name, error);
 }
 
+void UIPluginManager::onAppManagerFinished(const QString&, int, const QString&)
+{
+    if (const auto* app = logos::defaultapps::appInSlot(logos::defaultapps::Slot::Apps))
+        emit installerChangeEnded(app->app);
+}
+
 void UIPluginManager::onPmuiInstallProgress(int progressType, const QString& packageName,
                                             int completed, int total, bool success,
                                             const QString& error)
 {
-    Q_UNUSED(progressType);
     Q_UNUSED(completed);
     Q_UNUSED(total);
+    // package_manager_ui.rep's ProgressType: how its request ended.
+    constexpr int kCompleted = 4;
+    constexpr int kProgressFailed = 5;
+    if (progressType == kCompleted || progressType == kProgressFailed) {
+        if (const auto* app = logos::defaultapps::appInSlot(logos::defaultapps::Slot::Packages))
+            emit installerChangeEnded(app->app);
+    }
     // `success` discriminates, not the error string — progress emits reuse it
     // for non-error status text ("Upgrading X…").
     if (success) {

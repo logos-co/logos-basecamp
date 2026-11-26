@@ -197,6 +197,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module file installed:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             if (m_coreModuleManager) m_coreModuleManager->refresh();
             // Also rescan UI plugin metadata — a newly installed core module
@@ -209,6 +210,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("uiPluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "UI plugin file installed:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             fetchUiPluginMetadata();
         });
@@ -222,6 +224,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("corePluginUninstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module uninstalled:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             if (m_coreModuleManager) m_coreModuleManager->refresh();
             fetchUiPluginMetadata();
@@ -231,6 +234,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("uiPluginUninstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "UI plugin uninstalled:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             fetchUiPluginMetadata();
         });
