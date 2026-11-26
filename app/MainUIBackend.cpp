@@ -561,8 +561,9 @@ void MainUIBackend::wireIntents()
     // so it never has to know one exists.
     if (m_packageCoordinator) {
         m_packageCoordinator->setIntentResponder(
-            [this](const QString& requestId, bool ok, const QString& error, const QVariant& data) {
-                return respondToShellIntent(requestId, ok, data, error);
+            [this](const QString& requestId, bool ok, const QString& error, const QVariant& data,
+                   std::function<void(bool)> heard) {
+                answerShellIntent(requestId, ok, data, error, std::move(heard));
             });
     }
 
@@ -606,7 +607,8 @@ void MainUIBackend::wireIntents()
         m_linkRequests->setSubmitter([this](const QString& requestId, const QString& intent,
                                             const QVariantMap& params) {
             QPointer<LinkRequestCoordinator> links(m_linkRequests);
-            return m_intentsHost->shellRequest(intent, params, /*asLink=*/true,
+            // A refusal comes back as a `failed` result, like any other.
+            m_intentsHost->shellRequest(intent, params, /*asLink=*/true,
                 [this, links, requestId, intent](const QVariantMap& envelope) {
                     // Nothing installed publishes it to the web; a package not installed yet may.
                     if (envelope.value(QStringLiteral("error")).toString() == QStringLiteral("not_declared")
@@ -617,6 +619,7 @@ void MainUIBackend::wireIntents()
                     }
                     if (links) links->resultArrived(requestId, envelope);
                 });
+            return true;
         });
     }
 
@@ -878,6 +881,12 @@ void MainUIBackend::rebuildInstallableProviders()
 bool MainUIBackend::respondToShellIntent(const QString& requestId, bool ok,
                                          const QVariant& data, const QString& error)
 {
+    return answerShellIntent(requestId, ok, data, error, {});
+}
+
+bool MainUIBackend::answerShellIntent(const QString& requestId, bool ok, const QVariant& data,
+                                      const QString& error, std::function<void(bool)> heard)
+{
     // `data` is an untyped QVariant, so QML hands over the QJSValue wrapper
     // untouched — and a QJSValue is engine-bound, hence non-canonical, so the
     // broker would drop the response and mint `failed` at a caller that did
@@ -888,9 +897,11 @@ bool MainUIBackend::respondToShellIntent(const QString& requestId, bool ok,
                         : data;
 
     if (m_intentsHost && m_intentsHost->ownsShellDelivery(requestId))
-        return m_intentsHost->respondShell(requestId, ok, flat, error);
-    if (!m_intentBroker || !m_shellEndpoint) return false;
-    return m_intentBroker->submitResponse(m_shellEndpoint.get(), requestId, ok, flat, error);
+        return m_intentsHost->respondShell(requestId, ok, flat, error, std::move(heard));
+    const bool taken = m_intentBroker && m_shellEndpoint
+        && m_intentBroker->submitResponse(m_shellEndpoint.get(), requestId, ok, flat, error);
+    if (heard) heard(taken);
+    return taken;
 }
 
 void MainUIBackend::resolveIntentChooser(const QString& dispatchId,
@@ -1039,14 +1050,18 @@ void MainUIBackend::askPackageManager(const QString& intent, const QString& pack
                                     .arg(intent, packageName);
         orElse();
     };
-    // Nothing it knows provides it, or it is gone; a cancel is the person's answer.
-    const bool asked = m_intentsHost && m_intentsHost->shellRequest(
+    if (!m_intentsHost) {
+        fallBack();
+        return;
+    }
+    // Refused, nothing it knows provides it, or it is gone; a cancel is the
+    // person's answer.
+    m_intentsHost->shellRequest(
         intent, {{QStringLiteral("name"), packageName}}, /*asLink=*/false,
         [fallBack](const QVariantMap& result) {
             const QString error = result.value(QStringLiteral("error")).toString();
             if (error == QLatin1String("unavailable") || error == QLatin1String("failed")) fallBack();
         });
-    if (!asked) fallBack();
 }
 
 void MainUIBackend::intentChooserClosed(const QString& dispatchId)

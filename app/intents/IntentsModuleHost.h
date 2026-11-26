@@ -32,9 +32,10 @@ class QWidget;
 class IntentsModuleHost : public QObject {
     Q_OBJECT
 public:
-    // A synchronous call to intents_module, as the host. Returns its JSON reply,
-    // or "" when the call failed.
-    using Call = std::function<QString(const QString& method, const QVariantList& args)>;
+    // A call to intents_module, as the host. Nothing waits for it: `reply`
+    // gets its JSON answer, or "" when the call failed, once.
+    using Reply = std::function<void(const QString& reply)>;
+    using Call = std::function<void(const QString& method, const QVariantList& args, Reply reply)>;
     // One of the shell's own intents, delivered: how many handlers took it. 0
     // answers `unavailable`. The answer comes later, through respondShell().
     using ShellProvider = std::function<int(const QString& id, const QString& intent,
@@ -58,12 +59,12 @@ public:
     void setRequesterBundled(RequesterBundled bundled) { m_requesterBundled = std::move(bundled); }
 
     // Basecamp's own request, or a link's (`asLink`), through intents_module.
-    // `done` gets the result envelope {ok, data, error} once it settles, or
-    // failed if the module restarts first. False when refused at once, or
-    // before the module holds the shell's declaration and what is installed;
-    // `done` is not called then.
+    // `done` gets the result envelope {ok, data, error} once it settles; it is
+    // `failed` when the module refuses it, restarts first, or doesn't hold the
+    // shell's declaration and what is installed. While those are on their way
+    // to it, the request waits for them to land.
     using ResultFn = std::function<void(const QVariantMap& envelope)>;
-    bool shellRequest(const QString& intent, const QVariantMap& params, bool asLink, ResultFn done = {});
+    void shellRequest(const QString& intent, const QVariantMap& params, bool asLink, ResultFn done = {});
 
     // "bundled" (the default): a request from what ships with Basecamp opens
     // at once, any other only when the person just clicked in the asking
@@ -72,7 +73,9 @@ public:
     // for developer builds only (intentsAttentionFor()). What doesn't open
     // waits in the pending list.
     void setAttention(const QString& attention) { m_attention = attention; }
-    bool claim();
+    // `done` says whether Basecamp holds the presenter role; at once when it
+    // already does.
+    void claim(std::function<void(bool claimed)> done = {});
     bool isClaimed() const { return !m_secret.isEmpty(); }
     // Claimed, and the module took the shell's declaration and what is
     // installed. Both are sent again until it does: after 1 s, then twice as
@@ -133,9 +136,11 @@ public:
     void setStartTimeoutMs(int ms) { m_startTimeoutMs = ms; }
 
     bool ownsShellDelivery(const QString& id) const { return m_shellDeliveries.contains(id); }
-    // Answers a delivery to the shell, once. False when the module did not take
-    // it: the request already ended, and nobody heard the answer.
-    bool respondShell(const QString& id, bool ok, const QVariant& data, const QString& error);
+    // Answers a delivery to the shell, once. False when it is none the shell
+    // owes. `taken` learns whether the module took the answer: false when the
+    // request already ended, or the module went first, and nobody heard it.
+    bool respondShell(const QString& id, bool ok, const QVariant& data, const QString& error,
+                      std::function<void(bool taken)> taken = {});
 
     // Auto-return timings, as in IntentBroker; tests shorten them.
     void setReturnDwellFloorMs(int ms) { m_dwellFloorMs = ms; }
@@ -158,7 +163,9 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    QJsonObject callJson(const QString& method, const QVariantList& args) const;
+    // Answered once by `then`, or by `dropped` if the instance goes first.
+    void callJson(const QString& method, const QVariantList& args,
+                  std::function<void(const QJsonObject& reply)> then = {}, std::function<void()> dropped = {});
     // The app a module is the backend of, else empty; nameFor() falls back to the module.
     QString appOf(const QString& module) const;
     QString nameFor(const QString& module) const;
@@ -166,11 +173,16 @@ private:
     void start(const QString& provider, std::function<void()> done);
     void startApp(const QString& app, std::function<void()> done);
     void finishStart(const QString& app);
-    bool answer(const QString& workId, const QJsonObject& answer);
+    void answer(const QString& workId, const QJsonObject& answer, std::function<void(bool taken)> taken = {});
     void take(const QJsonArray& items);
     void handle(const QJsonObject& item);
     void forgetInstance();
+    void reclaim();
+    void sendShellRequest(const QString& intent, const QVariantMap& params, bool asLink, ResultFn done);
+    void failWaitingRequests();
     void sync();
+    void syncStep(const QString& method, const QString& payload, quint64 version, const quint64* current,
+                  bool* acked);
     void maybeReturn(const QJsonObject& completed);
     bool mayReturn(const QString& requester, const QString& provider) const;
     void noteReturn();
@@ -195,11 +207,18 @@ private:
     QStringList m_installedRevisions;   // each package's metadata.json, as it was sent
     bool m_installedSent = false;
     bool m_installedAcked = false;
+    quint64 m_shellVersion = 0;         // which declaration, so an older one's ack doesn't count
+    quint64 m_installedVersion = 0;
+    bool m_syncing = false;             // a sync call in flight; the next step waits for it
     QTimer* m_syncTimer = nullptr;
     int m_syncRetryMs = 1000;
     int m_syncRetryCapMs = 60 * 1000;
     int m_syncDelayMs = 1000;           // before the next attempt, if this one fails
     bool m_workWaiting = false;         // pulled once ready
+    bool m_pulling = false;             // a next_work in flight
+    bool m_pullAgain = false;           // asked for while one was
+    QHash<quint64, std::function<void()>> m_inFlight;   // call -> who hears if the instance goes first
+    quint64 m_nextCall = 0;
     bool m_reclaimed = false;           // "claimed again" is said once ready
     QJsonArray m_heldWork;              // pulled before ready, handled once it is
     RequesterBundled m_requesterBundled;
@@ -208,6 +227,13 @@ private:
     // Lost the presenter role: intents_module is not loaded again.
     bool m_gaveUp = false;
     QHash<QString, ResultFn> m_shellRequests;   // handle -> who waits for its result
+    struct ShellAsk {
+        QString intent;
+        QVariantMap params;
+        bool asLink = false;
+        ResultFn done;
+    };
+    QList<ShellAsk> m_asksWaiting;              // until the sync on its way lands
     QHash<QString, QString> m_backends;          // app -> its running backend
 
     QHash<const QObject*, QString> m_appOfView;  // watched view -> its app

@@ -20,6 +20,9 @@
 #include <QTest>
 #include <QWidget>
 
+#include <memory>
+#include <optional>
+
 #ifndef Q_OS_WIN
 #include <sys/stat.h>
 #endif
@@ -42,38 +45,53 @@ public:
     int handles = 0;
     int refuseSetInstalled = 0;   // this many set_installed fail, as a call that times out
     int refuseDeclareShell = 0;   // and declare_shell
+    bool defer = false;           // replies wait for release(), as over IPC
+    QList<std::function<void()>> waiting;
 
     // A new instance: unclaimed, and the old secret means nothing to it.
     void restart() { secret.clear(); }
 
     IntentsModuleHost::Call call()
     {
-        return [this](const QString& method, const QVariantList& args) {
-            sent.append({method, args});
-            const QJsonObject refused{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("refused")}};
-            QJsonObject r{{QStringLiteral("ok"), true}};
-            if (method == QStringLiteral("claim")) {
-                if (!secret.isEmpty()) return reply(refused);
-                secret = QStringLiteral("s%1").arg(++claims);
-                r[QStringLiteral("secret")] = secret;
-                return reply(r);
-            }
-            if (secret.isEmpty() || args.value(0).toString() != secret) return reply(refused);
-            if (method == QStringLiteral("set_installed") && refuseSetInstalled > 0) {
-                --refuseSetInstalled;
-                return QString();
-            }
-            if (method == QStringLiteral("declare_shell") && refuseDeclareShell > 0) {
-                --refuseDeclareShell;
-                return QString();
-            }
-            if (method == QStringLiteral("shell_request")) r[QStringLiteral("handle")] = QStringLiteral("h%1").arg(++handles);
-            if (method == QStringLiteral("next_work")) {
-                r[QStringLiteral("items")] = work;
-                work = QJsonArray();
-            }
-            return reply(r);
+        return [this](const QString& method, const QVariantList& args, IntentsModuleHost::Reply done) {
+            const QString text = answerTo(method, args);
+            if (defer) waiting.append([done, text]() { done(text); });
+            else done(text);
         };
+    }
+
+    // The replies held back, oldest first, and any the calls they cause make.
+    void release()
+    {
+        while (!waiting.isEmpty()) waiting.takeFirst()();
+    }
+
+    QString answerTo(const QString& method, const QVariantList& args)
+    {
+        sent.append({method, args});
+        const QJsonObject refused{{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("refused")}};
+        QJsonObject r{{QStringLiteral("ok"), true}};
+        if (method == QStringLiteral("claim")) {
+            if (!secret.isEmpty()) return reply(refused);
+            secret = QStringLiteral("s%1").arg(++claims);
+            r[QStringLiteral("secret")] = secret;
+            return reply(r);
+        }
+        if (secret.isEmpty() || args.value(0).toString() != secret) return reply(refused);
+        if (method == QStringLiteral("set_installed") && refuseSetInstalled > 0) {
+            --refuseSetInstalled;
+            return QString();
+        }
+        if (method == QStringLiteral("declare_shell") && refuseDeclareShell > 0) {
+            --refuseDeclareShell;
+            return QString();
+        }
+        if (method == QStringLiteral("shell_request")) r[QStringLiteral("handle")] = QStringLiteral("h%1").arg(++handles);
+        if (method == QStringLiteral("next_work")) {
+            r[QStringLiteral("items")] = work;
+            work = QJsonArray();
+        }
+        return reply(r);
     }
 
     QList<Sent> calls(const QString& method) const
@@ -228,10 +246,33 @@ QJsonObject present(const char* dispatch, const QString& provider = QStringLiter
                                   {QStringLiteral("dispatch"), QLatin1String(dispatch)}});
 }
 
+// claim(), from a module that answers at once.
+bool claimNow(IntentsModuleHost& host)
+{
+    bool claimed = false;
+    host.claim([&claimed](bool ok) { claimed = ok; });
+    return claimed;
+}
+
+// Whether shellRequest() was taken: false when it was refused before it
+// returned. A result that comes later goes to `done`.
+bool asks(IntentsModuleHost& host, const QString& intent, const QVariantMap& params = {}, bool asLink = false,
+          IntentsModuleHost::ResultFn done = {})
+{
+    auto inCall = std::make_shared<bool>(true);
+    auto refused = std::make_shared<bool>(false);
+    host.shellRequest(intent, params, asLink, [inCall, refused, done](const QVariantMap& envelope) {
+        if (*inCall) *refused = true;
+        else if (done) done(envelope);
+    });
+    *inCall = false;
+    return !*refused;
+}
+
 // Claimed, and the module holds the shell and what is installed.
 void makeReady(IntentsModuleHost& host)
 {
-    host.claim();
+    claimNow(host);
     host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
     host.setInstalled(QJsonArray());
 }
@@ -323,6 +364,15 @@ private slots:
     void aFailedReloadLeavesNothingToAsk();
     void aFailedReloadSaysWhetherItIsTriedAgain();
     void aModuleThatCantBeClaimedAgainIsGivenUp();
+
+    void nothingWaitsForTheModule();
+    void onePullAtATime();
+    void aNewerListWhileOneIsOnItsWayGoesNext();
+    void aRequestOnItsWayFailsWhenTheModuleGoes();
+    void anAnswerIsHeardOnceTheModuleTakesIt();
+    void anAnswerOnItsWayIsNotHeardWhenTheModuleGoes();
+    void aRequestWhileTheListIsOnItsWayWaitsForIt();
+    void aRequestWaitingForARefusedListFails();
 };
 
 // When to interrupt the person is Basecamp's own business: the module is not told.
@@ -331,8 +381,8 @@ void TestIntentsModuleHost::claimsWithNoOptionsAndSendsTheSecret()
     FakeModule m;
     IntentsModuleHost host(m.call());
     host.setAttention(QStringLiteral("interactive"));
-    QVERIFY(host.claim());
-    QVERIFY(host.claim());
+    QVERIFY(claimNow(host));
+    QVERIFY(claimNow(host));
     const QList<Sent> claims = m.calls(QStringLiteral("claim"));
     QCOMPARE(claims.size(), 1);
     QVERIFY(claims[0].args.isEmpty());
@@ -347,7 +397,7 @@ void TestIntentsModuleHost::basecampsOwnRequestGoesThroughTheModule()
     IntentsModuleHost host(m.call());
     makeReady(host);
     QVariantMap got;
-    QVERIFY(host.shellRequest(QStringLiteral("wallet.send"), {{QStringLiteral("to"), QStringLiteral("x")}},
+    QVERIFY(asks(host, QStringLiteral("wallet.send"), {{QStringLiteral("to"), QStringLiteral("x")}},
                               /*asLink=*/true, [&](const QVariantMap& envelope) { got = envelope; }));
     const QList<Sent> sent = m.calls(QStringLiteral("shell_request"));
     QCOMPARE(sent.size(), 1);
@@ -418,7 +468,7 @@ void TestIntentsModuleHost::aRestartFailsBasecampsOwnRequestsInFlight()
     IntentsModuleHost host(m.call());
     makeReady(host);
     QVariantMap got;
-    QVERIFY(host.shellRequest(QStringLiteral("packages.show"), {}, false,
+    QVERIFY(asks(host, QStringLiteral("packages.show"), {}, false,
                               [&](const QVariantMap& envelope) { got = envelope; }));
     m.restart();
     host.restarted();
@@ -444,7 +494,7 @@ void TestIntentsModuleHost::whichAppABackendIsStaysInBasecamp()
 {
     FakeModule m;
     IntentsModuleHost host(m.call());
-    QVERIFY(host.claim());
+    QVERIFY(claimNow(host));
     host.registerBackend(QStringLiteral("wallet"), QStringLiteral("wallet_backend"));
     host.appReady(QStringLiteral("wallet"));
     host.unregisterBackend(QStringLiteral("wallet"));
@@ -458,7 +508,7 @@ void TestIntentsModuleHost::nothingIsSentBeforeTheClaim()
     host.setInstalled(QJsonArray());
     host.declareShell(QJsonObject());
     host.pullWork();
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
     QVERIFY(m.sent.isEmpty());
 }
 
@@ -1159,7 +1209,7 @@ void TestIntentsModuleHost::aRestartedModuleIsClaimedAndToldEverythingAgain()
     FakeModule m;
     IntentsModuleHost host(m.call());
     QSignalSpy dismissed(&host, &IntentsModuleHost::chooserDismissed);
-    host.claim();
+    claimNow(host);
     host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
     host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("wallet")}}});
     backendsUp(host);
@@ -1227,7 +1277,7 @@ void TestIntentsModuleHost::aStoppedModuleIsLoadedAgainAtMostThreeTimes()
 {
     FakeModule m;
     IntentsModuleHost host(m.call());
-    host.claim();
+    claimNow(host);
     QVERIFY(!host.takeReload(/*moduleRunning=*/true));
 
     QVERIFY(host.takeReload(false));
@@ -1248,7 +1298,7 @@ void TestIntentsModuleHost::nothingIsLoadedAgainOnceShutdownBegan()
 {
     FakeModule m;
     IntentsModuleHost host(m.call());
-    host.claim();
+    claimNow(host);
     QVERIFY(host.takeReload(false));
     host.shutdown();
     m.restart();
@@ -1270,13 +1320,13 @@ void TestIntentsModuleHost::pastTheLastReloadNothingIsAskedOfIt()
         host.reloadFinished(true);
     }
     QVariantMap got;
-    QVERIFY(host.shellRequest(QStringLiteral("packages.show"), {}, false,
+    QVERIFY(asks(host, QStringLiteral("packages.show"), {}, false,
                               [&](const QVariantMap& envelope) { got = envelope; }));
     QVERIFY(!host.takeReload(false));
     QVERIFY(!host.isClaimed());
     QCOMPARE(got.value(QStringLiteral("error")).toString(), QStringLiteral("failed"));
     const qsizetype sent = m.sent.size();
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
     host.pullWork();
     QCOMPARE(m.sent.size(), sent);
 }
@@ -1288,14 +1338,14 @@ void TestIntentsModuleHost::aFailedReloadLeavesNothingToAsk()
     IntentsModuleHost host(m.call());
     makeReady(host);
     QVariantMap got;
-    QVERIFY(host.shellRequest(QStringLiteral("packages.show"), {}, false,
+    QVERIFY(asks(host, QStringLiteral("packages.show"), {}, false,
                               [&](const QVariantMap& envelope) { got = envelope; }));
     QVERIFY(host.takeReload(false));
     m.restart();
     host.reloadFinished(false);
     QVERIFY(!host.isClaimed());
     QCOMPARE(got.value(QStringLiteral("error")).toString(), QStringLiteral("failed"));
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
 }
 
 // A failed reload is tried again on the next change to what runs, within the
@@ -1324,13 +1374,13 @@ void TestIntentsModuleHost::basecampAsksNothingBeforeTheModuleHoldsItsShell()
 {
     FakeModule m;
     IntentsModuleHost host(m.call());
-    QVERIFY(host.claim());
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(claimNow(host));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
     host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
     host.setInstalled(QJsonArray());
     QVERIFY(host.isReady());
-    QVERIFY(host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(asks(host, QStringLiteral("packages.show"), {}, false));
 }
 
 // A call that failed leaves the module behind: it is sent again until taken.
@@ -1371,7 +1421,7 @@ void TestIntentsModuleHost::aDeclarationWhileARetryIsDueWaitsForIt()
     m.refuseDeclareShell = 1;
     IntentsModuleHost host(m.call());
     host.setSyncRetryMs(50);
-    QVERIFY(host.claim());
+    QVERIFY(claimNow(host));
     host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
     host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("wallet")}}});
     host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
@@ -1741,7 +1791,161 @@ void TestIntentsModuleHost::aModuleThatCantBeClaimedAgainIsGivenUp()
     QCOMPARE(lost.size(), 1);
     QVERIFY(!host.isClaimed());
     QVERIFY(!host.takeReload(false));
-    QVERIFY(!host.shellRequest(QStringLiteral("packages.show"), {}, false));
+    QVERIFY(!asks(host, QStringLiteral("packages.show"), {}, false));
+}
+
+// Basecamp never waits on the module: a call goes out and Basecamp carries
+// on, and what it was for happens when the answer comes back.
+void TestIntentsModuleHost::nothingWaitsForTheModule()
+{
+    FakeModule m;
+    m.defer = true;
+    IntentsModuleHost host(m.call());
+    bool claimed = false;
+    host.claim([&claimed](bool ok) { claimed = ok; });
+    QVERIFY(!claimed);
+    QCOMPARE(m.methods(), QStringList{QStringLiteral("claim")});
+    m.release();
+    QVERIFY(claimed);
+    host.declareShell(QJsonObject{{QStringLiteral("name"), QStringLiteral("main_ui")}});
+    host.setInstalled(QJsonArray());
+    QVERIFY(!host.isReady());
+    m.release();
+    QVERIFY(host.isReady());
+}
+
+// One next_work at a time: one asked for meanwhile goes once it is back.
+void TestIntentsModuleHost::onePullAtATime()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    host.setAttention(QStringLiteral("immediate"));
+    makeReady(host);
+    m.defer = true;
+    host.pullWork();
+    host.pullWork();
+    host.pullWork();
+    QCOMPARE(m.calls(QStringLiteral("next_work")).size(), 1);
+    m.work.append(pending("w1"));
+    m.release();
+    QCOMPARE(m.calls(QStringLiteral("next_work")).size(), 2);
+    QCOMPARE(m.opened(), QStringList{QStringLiteral("w1")});
+}
+
+// A list set while the last is on its way goes after it: the older one's
+// answer doesn't count for the newer.
+void TestIntentsModuleHost::aNewerListWhileOneIsOnItsWayGoesNext()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    makeReady(host);
+    m.defer = true;
+    host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("wallet")}}});
+    host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("signer")}}});
+    QCOMPARE(m.calls(QStringLiteral("set_installed")).size(), 2);
+    QVERIFY(!host.isReady());
+    m.release();
+    const QList<Sent> lists = m.calls(QStringLiteral("set_installed"));
+    QCOMPARE(lists.size(), 3);
+    QVERIFY(lists.last().args.value(1).toString().contains(QStringLiteral("signer")));
+    QVERIFY(host.isReady());
+}
+
+// The module goes while Basecamp's own request is on its way: whoever waits
+// hears it failed, and the answer that comes late changes nothing.
+void TestIntentsModuleHost::aRequestOnItsWayFailsWhenTheModuleGoes()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    makeReady(host);
+    m.defer = true;
+    QVariantMap got;
+    int heard = 0;
+    host.shellRequest(QStringLiteral("packages.show"), {}, false, [&](const QVariantMap& envelope) {
+        got = envelope;
+        ++heard;
+    });
+    QCOMPARE(heard, 0);
+    QVERIFY(host.takeReload(false));
+    host.reloadFinished(false);
+    QCOMPARE(heard, 1);
+    QCOMPARE(got.value(QStringLiteral("error")).toString(), QStringLiteral("failed"));
+    m.release();
+    QCOMPARE(heard, 1);
+}
+
+void TestIntentsModuleHost::anAnswerIsHeardOnceTheModuleTakesIt()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    host.setShellProvider([](const QString&, const QString&, const QVariantMap&, const QString&) { return 1; });
+    makeReady(host);
+    m.work.append(deliverConfirm("w1"));
+    host.pullWork();
+    m.defer = true;
+    std::optional<bool> heard;
+    QVERIFY(host.respondShell(QStringLiteral("w1"), true, QVariant(), QString(),
+                              [&heard](bool taken) { heard = taken; }));
+    QVERIFY(!heard.has_value());
+    m.release();
+    QVERIFY(heard.has_value() && *heard);
+}
+
+// So that Basecamp finishes the job itself: nobody heard the answer.
+void TestIntentsModuleHost::anAnswerOnItsWayIsNotHeardWhenTheModuleGoes()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    host.setShellProvider([](const QString&, const QString&, const QVariantMap&, const QString&) { return 1; });
+    makeReady(host);
+    m.work.append(deliverConfirm("w1"));
+    host.pullWork();
+    m.defer = true;
+    std::optional<bool> heard;
+    QVERIFY(host.respondShell(QStringLiteral("w1"), true, QVariant(), QString(),
+                              [&heard](bool taken) { heard = taken; }));
+    QVERIFY(host.takeReload(false));
+    host.reloadFinished(false);
+    QVERIFY(heard.has_value() && !*heard);
+    m.release();
+    QVERIFY(heard.has_value() && !*heard);
+}
+
+// A link that launched Basecamp goes right after the installed list: while
+// the list is on its way, the request waits for it, then goes.
+void TestIntentsModuleHost::aRequestWhileTheListIsOnItsWayWaitsForIt()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    makeReady(host);
+    m.defer = true;
+    host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("wallet")}}});
+    QVariantMap got;
+    host.shellRequest(QStringLiteral("basecamp.apps.open"), {}, /*asLink=*/true,
+                      [&got](const QVariantMap& envelope) { got = envelope; });
+    QVERIFY(got.isEmpty());
+    QVERIFY(m.calls(QStringLiteral("shell_request")).isEmpty());
+    m.release();
+    QCOMPARE(m.calls(QStringLiteral("shell_request")).size(), 1);
+    QVERIFY(got.isEmpty());   // asked; its result comes as work
+}
+
+// ...and fails, as it always did, when the module refuses the list.
+void TestIntentsModuleHost::aRequestWaitingForARefusedListFails()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    makeReady(host);
+    m.defer = true;
+    m.refuseSetInstalled = 1;
+    host.setInstalled(QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("wallet")}}});
+    QVariantMap got;
+    host.shellRequest(QStringLiteral("packages.show"), {}, false,
+                      [&got](const QVariantMap& envelope) { got = envelope; });
+    QVERIFY(got.isEmpty());
+    m.release();
+    QCOMPARE(got.value(QStringLiteral("error")).toString(), QStringLiteral("failed"));
+    QVERIFY(m.calls(QStringLiteral("shell_request")).isEmpty());
 }
 
 QTEST_MAIN(TestIntentsModuleHost)
