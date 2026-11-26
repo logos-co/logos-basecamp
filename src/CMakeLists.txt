@@ -122,7 +122,6 @@ qt_add_qml_module(basecamp_installer_qml
     QML_FILES
         Basecamp/Installer/Availability.js
         Basecamp/Installer/Downloads.js
-        Basecamp/Installer/MonogramColor.js
         Basecamp/Installer/Stages.js
         Basecamp/Installer/Types.js
 )

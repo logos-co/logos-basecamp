@@ -48,7 +48,6 @@ target_include_directories(qml_tests PRIVATE
 set(INSTALLER_QML_FILES
     ${BASECAMP_SHELL}/Basecamp/Installer/Availability.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Downloads.js
-    ${BASECAMP_SHELL}/Basecamp/Installer/MonogramColor.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Stages.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Types.js
 )
