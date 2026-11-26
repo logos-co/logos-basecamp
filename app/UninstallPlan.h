@@ -80,4 +80,8 @@ struct Plan {
 Plan composeFrom(const Input& in);  // orphan-expanding
 Plan explainOf  (const Input& in);  // narration (orphans land in Kept as Unused)
 
+// The targets nothing may remove: built in (embedded), or Basecamp's own
+// (protected). A request naming one is refused before anything unloads.
+QStringList irremovable(const Input& in);
+
 }  // namespace uninstallplan

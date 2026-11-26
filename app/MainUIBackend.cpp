@@ -140,12 +140,10 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
         m_coreModuleManager->setInstalledModulesRoot(LogosBasecampPaths::modulesDirectory());
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
-    // A confirmation it can't show at all is answered here: nobody else will.
+    // It shows each one, or answers it at once.
     m_confirmations->setBegin([this](const ConfirmationQueue::Request& r) {
-        if (m_packageCoordinator->beginPackageConfirmation(r.id, r.intent, r.params, r.requester))
-            return true;
-        respondToShellIntent(r.id, false, QVariant(), QStringLiteral("unavailable"));
-        return false;
+        m_packageCoordinator->beginPackageConfirmation(r.id, r.intent, r.params, r.requester);
+        return true;
     });
     connect(m_packageCoordinator, &PackageCoordinator::installedPackagesRead,
             m_confirmations, &ConfirmationQueue::installedChanged);

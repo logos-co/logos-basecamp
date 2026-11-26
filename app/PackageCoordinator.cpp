@@ -621,7 +621,7 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
     }
     const QVariantMap answer = gateAnswer(moduleName, optionalNames, optionalVersionPins);
     const QString requestId = m_pendingAction.intentRequestId;
-    if (!m_pendingAction.isUpgrade || requestId.isEmpty()) {
+    if (!m_pendingAction.isUpgrade) {
         runUninstallCascade(moduleName, answer);
         return;
     }
@@ -893,7 +893,7 @@ QStringList PackageCoordinator::dependentsOfBatch(const QStringList& names) cons
     return out;
 }
 
-bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
+void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
                                                   const QString& intent,
                                                   const QVariantMap& params,
                                                   const QString& requesterName)
@@ -909,7 +909,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
     if (busy) {
         qWarning() << "PackageCoordinator: confirmation in flight, refusing" << intent;
         finishIntent(dispatchId, false, logos::intent::errFailed());
-        return true;   // answered — do NOT let the broker time it out too
+        return;   // answered — do NOT let the broker time it out too
     }
 
     const QString name    = params.value(QStringLiteral("name")).toString();
@@ -921,7 +921,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
     if (intent == QLatin1String("basecamp.packages.confirm_install")) {
         if (name.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
         // A fresh install unloads nothing, so there is no cascade and no
         // PendingAction — the dialog's answer is the whole flow.
@@ -940,13 +940,13 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
                 // The dialog opens on what is known so far; the rest follows.
                 if (m_gateTrust.name == name) emitTrust();
             });
-        return true;
+        return;
     }
 
     if (intent == QLatin1String("basecamp.packages.confirm_upgrade")) {
         if (name.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
         const int mode = params.value(QStringLiteral("mode")).toInt();
         const QStringList installedDeps = dependentsOfBatch({name});
@@ -967,7 +967,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
                                                         requesterIsBundled(requesterName), dispatchId);
                 if (m_gateTrust.name == name) emitTrust();
             });
-        return true;
+        return;
     }
 
     if (intent == QLatin1String("basecamp.packages.confirm_uninstall")) {
@@ -978,7 +978,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         }
         if (names.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
 
         // Held at once, so a cancel or a withdrawal finds it. The plan is read
@@ -986,7 +986,7 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         m_pendingAction = {PendingOp::UninstallCascade, names.first(), {}, dispatchId};
         if (m_dependencyDataReady || !m_logosAPI) {
             planUninstall(dispatchId, names, requesterName);
-            return true;
+            return;
         }
         QVariantMap loading = buildLoadingPayload(
             names.first(), removesAnApp(names, requesterName) ? QStringLiteral("app") : QStringLiteral("packages"));
@@ -1000,12 +1000,11 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
             if (self && self->m_pendingAction.intentRequestId == dispatchId)
                 self->planUninstall(dispatchId, names, requesterName);
         });
-        return true;
+        return;
     }
 
     qWarning() << "PackageCoordinator: unhandled package intent" << intent;
     finishIntent(dispatchId, false, logos::intent::errFailed());
-    return true;
 }
 
 bool PackageCoordinator::installsNewestReleases(const QString& requesterName)
@@ -1023,6 +1022,16 @@ bool PackageCoordinator::removesAnApp(const QStringList& names, const QString& r
 void PackageCoordinator::planUninstall(const QString& dispatchId, const QStringList& names,
                                        const QString& requesterName)
 {
+    // Built in, or Basecamp's own: nothing removes it, and the cascade would
+    // unload it first.
+    const QStringList irremovable = uninstallplan::irremovable(planInput(names));
+    if (!irremovable.isEmpty()) {
+        qWarning() << "PackageCoordinator:" << irremovable << "can't be removed — refusing confirm_uninstall";
+        m_pendingAction = {};
+        emit confirmationWithdrawn(dispatchId);
+        finishIntent(dispatchId, false, logos::intent::errBadRequest());
+        return;
+    }
     // An app the `apps` slot removes takes with it what only that app needed.
     const bool app = removesAnApp(names, requesterName);
     const QStringList batch = app ? uninstallplan::composeFrom(planInput(names)).batch : names;

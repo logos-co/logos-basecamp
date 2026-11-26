@@ -125,10 +125,9 @@ public:
     { m_intentResponder = std::move(responder); }
 
     // Entry point for the three `basecamp.packages.confirm_*` intents. Opens the
-    // matching dialog and takes ownership of answering `dispatchId`. Returns
-    // false when the request cannot be shown at all, so the broker can fail it
-    // closed rather than park it behind a dialog that never appeared.
-    bool beginPackageConfirmation(const QString& dispatchId,
+    // matching dialog, or answers at once when it can't (another is open, the
+    // request is malformed), and owns answering `dispatchId` either way.
+    void beginPackageConfirmation(const QString& dispatchId,
                                   const QString& intent,
                                   const QVariantMap& params,
                                   const QString& requesterName);
@@ -156,7 +155,7 @@ public slots:
 
     // Cascade confirmation — called from QML once the user OKs the uninstall
     // or upgrade dialog. Unloads, then answers the intent recorded on the
-    // pending action (or removes locally when there is none).
+    // pending action.
     Q_INVOKABLE void confirmUninstallCascade(const QString& moduleName, const QStringList& optionalNames = {}, const QVariantMap& optionalVersionPins = {}, bool trustPublishers = false);
 
     // Settings → Trusted Publishers. Deleting one, Logos too, changes future
@@ -331,9 +330,8 @@ private:
 
     // Answer `requestId`; `heard` learns whether the broker accepted it. False
     // means the requester is gone or the dispatch already ended, which is the
-    // signal to finish the job locally rather than assume PMU will. Empty id
-    // -> false, no call: that is how a shell-initiated flow is told it owns
-    // the removal.
+    // signal to finish the job locally rather than assume PMU will. An empty
+    // id is nobody's: false, no call.
     void finishIntent(const QString& requestId, bool ok, const QString& error = QString(),
                       const QVariant& data = QVariant(), std::function<void(bool heard)> heard = {});
 
