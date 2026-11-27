@@ -619,6 +619,8 @@ private:
         { return repositoryUrl + QLatin1Char('\n') + name; }
 
     QHash<QString, QString> m_repoByName;
+    // repositoryUrl → the name the catalogue shows for it.
+    QHash<QString, QString> m_repoDisplayNameByUrl;
     QVariantList m_installedPackagesCache;
     // package_manager's record of the installed `name`, or empty.
     QVariantMap installedRecord(const QString& name) const;
@@ -704,6 +706,9 @@ private:
                       const QStringList& plannedOn = {});
     void emitTrust();
     void assessPlanTrust(const QString& name, const QVariantList& resolved);
+    // The plan's dependencies its app's repository doesn't provide, for the
+    // dialog (utils/OutsideDependencies.h); logs the build each is bound to.
+    QVariantList outsideDependencies(const QString& name, const QVariantList& resolved) const;
     void assessLocalFileTrust(const QString& name, const QString& version, const QString& path);
     // A confirm_install / confirm_upgrade's assessment, started before its
     // dialog opens.

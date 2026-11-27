@@ -900,6 +900,12 @@ LogosWarningDialog {
             Layout.topMargin: Theme.spacing.small
             trust: d.trustApplies ? root.trust : ({})
         }
+
+        OutsideDependencyNotice {
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing.small
+            dependencies: d.trustApplies ? (root.trust.outsideDependencies || []) : []
+        }
     }
 
     onClosed: {

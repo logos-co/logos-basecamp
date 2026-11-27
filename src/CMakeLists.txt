@@ -92,6 +92,7 @@ qt_add_qml_module(basecamp_common_qml
         Basecamp/Common/LoadingOverlay.qml
         Basecamp/Common/EmptyView.qml
         Basecamp/Common/InstallTrustNotice.qml
+        Basecamp/Common/OutsideDependencyNotice.qml
         Basecamp/Common/InstallTrustLine.qml
         Basecamp/Common/InstallTrustMark.qml
 )

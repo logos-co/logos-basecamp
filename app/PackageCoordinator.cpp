@@ -10,6 +10,7 @@
 #include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/InstallTrust.h"
+#include "utils/OutsideDependencies.h"
 #include "utils/ReplaceImpact.h"
 #include "utils/PublisherKeyring.h"
 #include "ShellIntents.h"
@@ -1403,6 +1404,7 @@ void PackageCoordinator::buildCatalogIndexes(const QVariantList& catalog)
 {
     QHash<QString, QVariantList> versionsByRepoAndName;
     QHash<QString, QString>      repoByName;
+    QHash<QString, QString>      repoDisplayNameByUrl;
     versionsByRepoAndName.reserve(catalog.size());
     repoByName.reserve(catalog.size());
     for (const QVariant& v : catalog) {
@@ -1413,9 +1415,15 @@ void PackageCoordinator::buildCatalogIndexes(const QVariantList& catalog)
         versionsByRepoAndName.insert(catalogKey(repo, name),
                                      row.value("versions").toList());
         repoByName.insert(name, repo);
+        if (!repoDisplayNameByUrl.contains(repo)) {
+            QString shown = row.value("repositoryDisplayName").toString();
+            if (shown.isEmpty()) shown = row.value("repositoryName").toString();
+            repoDisplayNameByUrl.insert(repo, shown.isEmpty() ? repo : shown);
+        }
     }
     m_versionsByRepoAndName = std::move(versionsByRepoAndName);
     m_repoByName            = std::move(repoByName);
+    m_repoDisplayNameByUrl  = std::move(repoDisplayNameByUrl);
 }
 
 void PackageCoordinator::populateAppsModel(
@@ -2681,11 +2689,39 @@ void PackageCoordinator::assessPlanTrust(const QString& name, const QVariantList
                 logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, resolved));
             QStringList plannedOn{name};
             for (const QVariant& v : resolved) plannedOn << v.toMap().value(QStringLiteral("name")).toString();
-            self->publishTrust(epoch, self->trustSummary(name, packages),
+            QVariantMap trust = self->trustSummary(name, packages);
+            trust.insert(QStringLiteral("outsideDependencies"), self->outsideDependencies(name, resolved));
+            self->publishTrust(epoch, trust,
                                {{QStringLiteral("plan"),
                                  logos::trust::approvedPlan(name, resolved, packages)}},
                                plannedOn);
         });
+    });
+}
+
+QVariantList PackageCoordinator::outsideDependencies(const QString& name, const QVariantList& resolved) const
+{
+    // The repository the plan takes the package itself from.
+    QString appRepository;
+    for (const QVariant& v : resolved) {
+        const QVariantMap row = v.toMap();
+        if (row.value(QStringLiteral("topLevel")).toBool() && row.value(QStringLiteral("name")).toString() == name) {
+            appRepository = row.value(QStringLiteral("repositoryUrl")).toString();
+            break;
+        }
+    }
+    const QList<logos::outside::Dependency> deps = logos::outside::boundDependencies(
+        name, resolved,
+        [this, &appRepository](const QString& n) {
+            return m_versionsByRepoAndName.contains(catalogKey(appRepository, n));
+        },
+        [this](const QString& n) {
+            return qMakePair(m_installedVersionByName.value(n), m_installedHashByName.value(n));
+        });
+    for (const QString& line : logos::outside::logLines(name, appRepository, deps))
+        qInfo().noquote() << "PackageCoordinator:" << line;
+    return logos::outside::forDialog(deps, [this](const QString& url) {
+        return m_repoDisplayNameByUrl.value(url, url);
     });
 }
 

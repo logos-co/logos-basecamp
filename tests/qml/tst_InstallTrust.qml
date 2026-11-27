@@ -165,6 +165,31 @@ TestCase {
         compare(confirm.enabled, true)
     }
 
+    // basecamp#333: what the app's repository doesn't provide is said, the
+    // installed copy it will use or the repository it comes from.
+    function test_says_what_its_repository_doesnt_provide() {
+        var dlg = openGate("muster_ui", [change("wallet")])
+        var t = signedByLogos(["muster_ui", "wallet"])
+        dlg.trust = t
+        verify(!shown(dlg.contentItem, "outsideDependencies"))
+
+        t = signedByLogos(["muster_ui", "wallet"])
+        t.outsideDependencies = [
+            { name: "lez_core", version: "0.4.0", installed: true, repository: "" },
+            { name: "wallet", version: "1.0.0", installed: false, repository: "Logos official" }]
+        dlg.trust = t
+        tryVerify(function() { return shown(dlg.contentItem, "outsideDependencies") })
+        var notice = findChild(dlg.contentItem, "outsideDependencies")
+        compare(notice.message.split("\n"), [
+            "This needs “lez_core”, which its repository doesn't provide. It will use the copy already installed (0.4.0).",
+            "This needs “wallet”, which its repository doesn't provide. It will be installed from Logos official."])
+        compare(notice.severity, LogosNotice.Warning)
+        // It informs; it doesn't hold the install back.
+        var confirm = findChild(dlg.footer, "confirmationDialog.installGate.confirm")
+        compare(confirm.enabled, true)
+        compare(confirm.text, "Install")
+    }
+
     // Every package gets its badge on its own row; the summary under them says
     // what is wrong once.
     function test_each_row_says_who_signed_it() {

@@ -86,6 +86,7 @@ if(LogosDesignSystem_FOUND)
     set(COMMON_QML_FILES
         ${BASECAMP_SHELL}/Basecamp/Common/EmptyView.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustNotice.qml
+        ${BASECAMP_SHELL}/Basecamp/Common/OutsideDependencyNotice.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustLine.qml
         ${BASECAMP_SHELL}/Basecamp/Common/InstallTrustMark.qml
         ${BASECAMP_SHELL}/Basecamp/Common/LoadingOverlay.qml
