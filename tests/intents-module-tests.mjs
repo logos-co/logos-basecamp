@@ -260,6 +260,17 @@ test("intents_module: Basecamp's own request nothing provides falls back to its 
   await waitForVisibleApp(app, "intent_module_requester", "the requester to be back in front");
 });
 
+// The welcome page's search for apps too: it used to be dropped unsaid.
+test("intents_module: Basecamp's search nothing provides falls back to its section", async (app) => {
+  await shellEval(app, `(backend.searchApps("hello query"), "sent")`);
+  await app.waitFor(async () => {
+    if (!sessionLog().includes("intents_module did not take apps.search for hello query; showing its section"))
+      throw new Error("no fallback yet");
+  }, { timeout: 10000, interval: 250, description: "the fallback" });
+  await click(app, "sidebar.app.intent_module_requester");
+  await waitForVisibleApp(app, "intent_module_requester", "the requester to be back in front");
+});
+
 // After the others: it takes the person away from the requester.
 test("intents_module: Basecamp provides its own intents through it", async (app) => {
   await click(app, "requester.openSettings");
@@ -294,6 +305,12 @@ test("intents_module: once it stays down, Basecamp's own requests fall back to t
   }, { timeout: 10000, interval: 250, description: "the fallback" });
   const shown = await textOf(app, "provider.request");
   if (shown.includes("bye_pkg")) throw new Error(`the provider was asked anyway: ${shown}`);
+
+  await shellEval(app, `(backend.searchApps("bye query"), "sent")`);
+  await app.waitFor(async () => {
+    if (!sessionLog().includes("intents_module did not take apps.search for bye query; showing its section"))
+      throw new Error("no fallback yet");
+  }, { timeout: 10000, interval: 250, description: "the search's fallback" });
 });
 
 await run();

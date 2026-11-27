@@ -1060,18 +1060,20 @@ void MainUIBackend::requestPackageInstall(const QString& packageName, const QStr
 void MainUIBackend::searchApps(const QString& query)
 {
     setCurrentActiveSectionIndex(ShellSection::AppManager);
-    if (query.isEmpty() || !m_intentsHost) return;
-    m_intentsHost->shellRequest(QStringLiteral("apps.search"), {{QStringLiteral("query"), query}},
-                                /*asLink=*/false);
+    if (query.isEmpty()) return;
+    // Its section is in front already; the query reaches App Manager only
+    // through intents_module.
+    askInstallerApp(QStringLiteral("apps.search"), {{QStringLiteral("query"), query}}, []() {});
 }
 
 void MainUIBackend::askInstallerApp(const QString& intent, const QVariantMap& params,
                                     std::function<void()> orElse)
 {
-    const QString packageName = params.value(QStringLiteral("name")).toString();
-    const auto fallBack = [intent, packageName, orElse]() {
+    const QString subject =
+        params.value(QStringLiteral("name"), params.value(QStringLiteral("query"))).toString();
+    const auto fallBack = [intent, subject, orElse]() {
         qWarning().noquote() << QStringLiteral("intents_module did not take %1 for %2; showing its section")
-                                    .arg(intent, packageName);
+                                    .arg(intent, subject);
         orElse();
     };
     if (!m_intentsHost) {

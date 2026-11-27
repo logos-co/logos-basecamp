@@ -271,7 +271,8 @@ public slots:
     // asks for Basecamp's gate, from `repositoryUrl` when it was picked from
     // one. Without intents_module, its section.
     Q_INVOKABLE void requestPackageInstall(const QString& packageName, const QString& repositoryUrl = {});
-    // The welcome page's "show all" for apps: App Manager, searching for `query`.
+    // The welcome page's "show all" for apps: App Manager, searching for
+    // `query`. Without intents_module, its section alone.
     Q_INVOKABLE void searchApps(const QString& query);
 
     // Cascade confirmation flow. Local unload cascade lives on
@@ -500,9 +501,10 @@ private:
     // requester: false when it was gone, or its request had ended.
     bool answerShellIntent(const QString& requestId, bool ok, const QVariant& data, const QString& error,
                            std::function<void(bool heard)> heard);
-    // packages.install / packages.show to the installer apps (App Manager,
-    // Package Manager), which answer only through intents_module; `params`
-    // name the package. `orElse` when nothing can take it.
+    // packages.install / packages.show / apps.search to the installer apps
+    // (App Manager, Package Manager), which answer only through
+    // intents_module; `params` name the package, or the query. `orElse` when
+    // nothing can take it.
     void askInstallerApp(const QString& intent, const QVariantMap& params,
                          std::function<void()> orElse);
     void showPackageDetailsFallback(const QString& packageName);
