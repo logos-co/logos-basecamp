@@ -128,6 +128,8 @@ class MainUIBackend : public QObject {
     // talking to anything.
     Q_PROPERTY(bool isMockBackend READ isMockBackend CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
+    // The user dir this instance uses (default or --user-dir). See Dashboard view.
+    Q_PROPERTY(QString userDirectory READ userDirectory CONSTANT)
 
     // Package repositories
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
@@ -185,6 +187,7 @@ public:
     bool devHost() const;
     bool isMockBackend() const;
     QVariantList buildCommits() const;
+    QString userDirectory() const;
 
     QVariantList repositories() const;
     QVariantList trustedPublishers() const;
@@ -227,6 +230,8 @@ public slots:
 
     // Friendly module label, resolved from the catalog with fallback to `name`.
     Q_INVOKABLE QString displayNameFor(const QString& moduleName) const;
+    // Shows userDirectory in the system file manager; false if it couldn't.
+    Q_INVOKABLE bool openUserDirectory() const;
 
     // ── Intents ─────────────────────────────────────────────────────────
     //

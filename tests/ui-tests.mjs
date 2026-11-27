@@ -1782,6 +1782,24 @@ test("settings: Dashboard shows version, build type and commit list", async (app
        description: "Dashboard to render version, build type and commit rows" });
 });
 
+// --- Settings — Dashboard names the user dir this instance uses ---
+//
+// The button is not clicked: it would open the host's file manager.
+
+test("settings: Dashboard shows the user directory and its Open button", async (app) => {
+  await openSettingsEntry(app, "Dashboard");
+  const path = await requireObject(app, "dashboard.userDirectory");
+  const expected = assertType(await evalOn(app, path.id, "backend.userDirectory"),
+                              "string", "backend.userDirectory");
+  if (expected.length === 0) throw new Error("backend.userDirectory is empty");
+  await app.waitFor(async () => {
+    assertEq(await evalOn(app, path.id, "text"), expected, "dashboard.userDirectory text");
+    assertEq(await evalOn(app, path.id, "visible"), true, "dashboard.userDirectory visible");
+  }, { timeout: 10000, interval: 500, description: "Dashboard to show the user directory" });
+  const button = await requireObject(app, "dashboard.openUserDirectory");
+  assertEq(await evalOn(app, button.id, "visible"), true, "dashboard.openUserDirectory visible");
+});
+
 // --- Settings (A17) — Apps Inspector search filters the table ---
 //
 // settings.searchField is the Settings page's search (LogosSections'), shared

@@ -25,6 +25,7 @@ Rectangle {
     property string buildVersion:        ""
     property bool   portableBuild:       false
     property var    buildCommits:        []
+    property string userDirectory:       ""
 
     signal repositoryRefreshRequested()
     signal repositoryAddRequested(string url)
@@ -32,6 +33,7 @@ Rectangle {
     signal repositoryEnabledRequested(string url, bool enabled)
     signal downloadSourceRequested(string source)
     signal repositoriesBecameVisible()
+    signal openUserDirectoryRequested()
 
     signal trustedPublisherRemoveRequested(string keyName)
     signal trustedPublishersRefreshRequested()
@@ -56,6 +58,7 @@ Rectangle {
 
     function showThemeInstallResult(result) { appearanceView.showInstallResult(result) }
     function showThemeRemoveResult(result)  { appearanceView.showRemoveResult(result) }
+    function reportOpenUserDirectoryFailed() { dashboardView.reportOpenUserDirectoryFailed() }
     function reportPublisherFailure(message) {
         trustedPublishersView.reportFailure(message)
     }
@@ -132,9 +135,13 @@ Rectangle {
 
             // 0 — Dashboard.
             DashboardView {
+                id: dashboardView
                 buildVersion:  root.buildVersion
                 portableBuild: root.portableBuild
                 buildCommits:  root.buildCommits
+                userDirectory: root.userDirectory
+
+                onOpenUserDirectoryRequested: root.openUserDirectoryRequested()
             }
 
             // 1 — Apps Inspector (UI plugins).

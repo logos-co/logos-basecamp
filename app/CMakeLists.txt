@@ -305,6 +305,8 @@ set(PROJECT_SOURCES
     utils/ManifestFile.cpp
     utils/PublisherKeyring.h
     utils/PublisherKeyring.cpp
+    utils/RevealInFileManager.h
+    utils/RevealInFileManager.cpp
     utils/StandaloneMode.h
     utils/StandaloneMode.cpp
     utils/DependencyBlocker.h

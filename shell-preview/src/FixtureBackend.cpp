@@ -27,6 +27,7 @@ QString FixtureBackend::buildVersion() const { return m_fixture.value("buildVers
 bool FixtureBackend::isPortableBuild() const { return m_fixture.value("isPortableBuild").toBool(); }
 bool FixtureBackend::isMockBackend() const { return m_fixture.value("isMockBackend").toBool(); }
 QVariantList FixtureBackend::buildCommits() const { return m_fixture.value("buildCommits").toArray().toVariantList(); }
+QString FixtureBackend::userDirectory() const { return m_fixture.value("userDirectory").toString(); }
 QVariantList FixtureBackend::repositories() const { return m_fixture.value("repositories").toArray().toVariantList(); }
 bool FixtureBackend::repositoriesLoading() const { return m_fixture.value("repositoriesLoading").toBool(); }
 QString FixtureBackend::downloadSource() const { return m_fixture.value("downloadSource").toString(QStringLiteral("any")); }
@@ -229,4 +230,10 @@ void FixtureBackend::onAppLauncherClicked(const QString& appName)
 {
     Q_UNUSED(appName);
     qInfo() << "FixtureBackend: onAppLauncherClicked — fixture build, no effect";
+}
+
+bool FixtureBackend::openUserDirectory() const
+{
+    qInfo() << "FixtureBackend: openUserDirectory — fixture build, no effect";
+    return false;
 }

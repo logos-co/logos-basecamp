@@ -49,6 +49,7 @@ TestCase {
             coreModulesModel: modulesModel,
             downloadSource: "any",
             buildVersion: "0.2.0-rc3",
+            userDirectory: "/Users/someone-with-a-long-name/Library/Application Support/Logos/LogosBasecampDev",
             buildCommits: ["logos-basecamp", "logos-package-manager-module", "nix-bundle-logos-module-install"]
                 .map(name => ({ name: name, commit: "9c3ba855aa976516ca6aff2031d8731aec827ad0" })),
             repositories: [
@@ -229,6 +230,33 @@ TestCase {
         verify(shown(search(view)))
     }
 
+    SignalSpy { id: openUserDirectorySpy; signalName: "openUserDirectoryRequested" }
+
+    // The Dashboard names the user dir in use and opens it; when the file
+    // manager won't, it says so, until the next try.
+    function test_dashboard_shows_and_opens_the_user_directory() {
+        const view = makeView(1200, filled())
+        compare(findChild(view, "dashboard.userDirectory").text, filled().userDirectory)
+        openUserDirectorySpy.target = view
+        openUserDirectorySpy.clear()
+        const failed = findChild(view, "dashboard.openUserDirectoryFailed")
+        verify(!failed.visible)
+
+        mouseClick(findChild(view, "dashboard.openUserDirectory"))
+        compare(openUserDirectorySpy.count, 1)
+        view.reportOpenUserDirectoryFailed()
+        verify(failed.visible)
+
+        mouseClick(findChild(view, "dashboard.openUserDirectory"))
+        compare(openUserDirectorySpy.count, 2)
+        verify(!failed.visible)
+    }
+
+    function test_dashboard_without_a_user_directory_hides_it() {
+        const view = makeView(1200)
+        verify(!findChild(view, "dashboard.openUserDirectory").visible)
+    }
+
     function test_show_repositories_opens_its_section() {
         const view = makeView(1200)
         view.showRepositories()
@@ -264,7 +292,7 @@ TestCase {
 
     // What each section must still show, inside its card.
     readonly property var mustShow: [
-        [], [], [],
+        ["dashboard.userDirectory", "dashboard.openUserDirectory"], [], [],
         ["appearance.addButton"],
         ["repositories.refreshButton", "repositories.addButton",
          "repositories.enableSwitch.https://example.org/community/logos-repo.json",

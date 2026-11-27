@@ -465,7 +465,7 @@ sections:
           path: build/links/winjob.py
           language: python
           content: |
-            import ctypes, subprocess
+            import ctypes, re, subprocess
             from ctypes import wintypes
 
 
@@ -524,9 +524,15 @@ sections:
                     self.log.close()
 
 
-            def read(path):
+            # liblogos' lines (module output among them) share stderr with Qt's, and
+            # on Windows one can land inside a Qt line: cut them out before matching.
+            _LIBLOGOS_LINE = re.compile(r"\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+\] \[[^\]\n]*\] [^\n]*\n+")
+
+
+            def read(path, raw=False):
                 with open(path, encoding="utf-8", errors="replace") as f:
-                    return f.read()
+                    text = f.read()
+                return text if raw else _LIBLOGOS_LINE.sub("", text)
 
       - title: "On Windows: register, then run the command the registry holds"
         platform: [windows]
@@ -594,7 +600,7 @@ sections:
                     print("REGISTERED_COMMAND_DELIVERED_THE_URL")
                 else:
                     print("REGISTERED_COMMAND_DROPPED_THE_URL")
-                    print(log[-3000:])
+                    print(read(r"build\links\fromentry.log", raw=True)[-3000:])
             finally:
                 reg("delete", "HKCU\\" + key, "/f")
                 if had_handler:
@@ -889,7 +895,7 @@ sections:
                     time.sleep(1)
                 if not first.running():
                     print("FIRST_INSTANCE_DIED")
-                    print(read(first_log)[-3000:])
+                    print(read(first_log, raw=True)[-3000:])
                     sys.exit(1)
 
                 # What the shell runs when the link is clicked.
@@ -920,7 +926,7 @@ sections:
                     print("FIRST_INSTANCE_HANDLED_THE_LINK")
                 else:
                     print("FIRST_INSTANCE_NEVER_SAW_THE_LINK")
-                    print(log[-3000:])
+                    print(read(first_log, raw=True)[-3000:])
                 if "for intent basecamp.apps.launch" in log:
                     print("FIRST_INSTANCE_GOT_THE_RIGHT_INTENT")
             finally:
