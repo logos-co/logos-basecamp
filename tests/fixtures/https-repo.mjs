@@ -6,12 +6,13 @@
 // Needs the openssl CLI to make the certificate; serveRepository() throws
 // without it.
 
+import { createHash } from "node:crypto";
 import { createServer } from "node:https";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-import { readLgxManifest } from "./lgx.mjs";
+import { readLgxManifest, readLgxSignature } from "./lgx.mjs";
 
 // The public certificates the app keeps trusting: SSL_CERT_FILE replaces the
 // trusted set rather than adding to it.
@@ -55,9 +56,11 @@ function makeCertificate(dir) {
 // { url (its logos-repo.json), env (for spawnBasecamp), requests (every path
 // asked for, in order), republish(lgxPath) (serves it in place of the package
 // of its name), close() }. `opts.stall`: paths it never answers, a download
-// that stays on its way.
+// that stays on its way; `opts.hold`: paths answered only once release(path)
+// is called, a download that is on its way until then.
 export async function serveRepository(dir, packages, opts = {}) {
-  const { name = "local-test-repo", displayName = "Local Test Repo", stall = [] } = opts;
+  const { name = "local-test-repo", displayName = "Local Test Repo", stall = [], hold = [] } = opts;
+  const held = new Map();
   const www = join(dir, "www");
   mkdirSync(www, { recursive: true });
   const { key, cert } = makeCertificate(dir);
@@ -67,6 +70,13 @@ export async function serveRepository(dir, packages, opts = {}) {
     const asked = decodeURIComponent(new URL(req.url, "https://x").pathname);
     requests.push(asked);
     if (stall.includes(asked)) return;
+    if (hold.includes(asked) && held.get(asked) !== "released") {
+      held.set(asked, [...(held.get(asked) || []), () => serve(asked, res)]);
+      return;
+    }
+    serve(asked, res);
+  });
+  const serve = (asked, res) => {
     const path = resolve(www, "." + asked);
     if (!path.startsWith(www + "/") || !existsSync(path)) {
       res.writeHead(404);
@@ -75,7 +85,7 @@ export async function serveRepository(dir, packages, opts = {}) {
     }
     res.writeHead(200);
     res.end(readFileSync(path));
-  });
+  };
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   const base = `https://127.0.0.1:${server.address().port}`;
 
@@ -83,11 +93,15 @@ export async function serveRepository(dir, packages, opts = {}) {
     const file = basename(lgxPath);
     copyFileSync(lgxPath, join(www, file));
     const manifest = readLgxManifest(lgxPath);
-    return {
-      name: manifest.name,
-      repositoryUrl: `${base}/logos-repo.json`,
-      versions: [{ rootHash: manifest.hashes?.root ?? "", url: `${base}/${file}`, manifest }],
-    };
+    const version = { rootHash: manifest.hashes?.root ?? "", url: `${base}/${file}`, manifest };
+    // A signed package is listed as a catalog lists one: who signed it, and
+    // the whole file's digest.
+    const signature = readLgxSignature(lgxPath);
+    if (signature) {
+      version.signature = signature;
+      version.sha256 = createHash("sha256").update(readFileSync(lgxPath)).digest("hex");
+    }
+    return { name: manifest.name, repositoryUrl: `${base}/logos-repo.json`, versions: [version] };
   };
   // Several packages of one name are its versions, newest first, as the
   // catalog lists them.
@@ -118,6 +132,11 @@ export async function serveRepository(dir, packages, opts = {}) {
       const row = rowFor(lgxPath);
       rows[rows.findIndex((r) => r.name === row.name)] = row;
       writeIndex();
+    },
+    release: (path) => {
+      const waiting = held.get(path);
+      held.set(path, "released");
+      if (Array.isArray(waiting)) waiting.forEach((answer) => answer());
     },
     close: () => new Promise((done) => {
       server.close(done);

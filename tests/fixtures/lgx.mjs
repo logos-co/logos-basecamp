@@ -3,7 +3,7 @@
 // hashes. Core-module fixtures are manifest-level only, not loadable binaries.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, cpSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, mkdtempSync, cpSync, chmodSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
@@ -139,6 +139,26 @@ export function makeLgx(opts) {
 
   rmSync(work, { recursive: true, force: true });
   return outFile;
+}
+
+// A signing key named `name` in `dir`, as `lgx keygen` makes one: its DID.
+export function makeSigningKey(dir, name, lgx = LGX_CLI) {
+  execFileSync(lgx, ["keygen", "--name", name, "--output-dir", dir], { stdio: "ignore" });
+  return readFileSync(join(dir, `${name}.did`), "utf-8").trim();
+}
+
+// `lgxPath` signed with the key `key` in `keysDir`, by `signer` as it names
+// itself.
+export function signLgx(lgxPath, { keysDir, key, signer, lgx = LGX_CLI }) {
+  execFileSync(lgx, ["sign", lgxPath, "--key", key, "--keys-dir", keysDir, "--name", signer],
+               { stdio: "ignore" });
+  return lgxPath;
+}
+
+// The package's manifest.sig, as a catalog lists it; null when unsigned.
+export function readLgxSignature(lgxPath, lgx = LGX_CLI) {
+  const out = execFileSync(lgx, ["signature", lgxPath], { encoding: "utf-8" });
+  return out.trim() ? JSON.parse(out) : null;
 }
 
 // Valid tar, corrupt manifest — deliberately NOT run through lgx (it would refuse).

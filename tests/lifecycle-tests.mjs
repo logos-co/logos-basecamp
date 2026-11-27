@@ -48,7 +48,7 @@ import {
   waitForExit,
   waitForPort,
 } from "./fixtures/harness.mjs";
-import { makeLgx, makeLifecycleFixtures, writeInstalledPlugin } from "./fixtures/lgx.mjs";
+import { makeLgx, makeLifecycleFixtures, makeSigningKey, signLgx, writeInstalledPlugin } from "./fixtures/lgx.mjs";
 import { serveRepository } from "./fixtures/https-repo.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1251,6 +1251,174 @@ results.push(await runTest("install offer: Package Manager shows a package an of
     }, { timeout: 30000, interval: 300, description: "Package Manager to show row_module" });
   }, packageRow.skip ? { skip: packageRow.skip } : { env: packageRow.repo.env }));
 if (packageRow.repo) await packageRow.repo.close();
+
+// B16. A second Install while the first is still on its way waits its turn:
+// App Manager says it is queued, Basecamp asks nothing and nothing of it is
+// fetched. Once the first is in, Basecamp's gate asks about it, offering to
+// trust its publisher before anything of it downloads. It used to say it was
+// installing, as if Basecamp had been skipped.
+let queued;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-queued-"));
+  const keysDir = join(dir, "keys");
+  mkdirSync(keysDir);
+  makeSigningKey(keysDir, "xavier");
+  const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
+                                         variant: process.env.LGX_VARIANT, ...extra });
+  queued = { repo: await serveRepository(dir, [
+    lgx("first_app", { displayName: "First App", dependencies: ["first_module"] }),
+    lgx("first_module", { type: "core" }),
+    signLgx(lgx("second_app", { displayName: "Second App" }), { keysDir, key: "xavier", signer: "Xavier" }),
+  ], { name: "queued-repo", displayName: "Queued Repo", hold: ["/first_module-1.0.0.lgx"] }) };
+} catch (e) {
+  queued = { skip: `no signed local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("queued: a second Install waits its turn, then Basecamp asks about it",
+  async ({ app, userDir }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(queued.repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const fetched = (name) => queued.repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const badgeOf = async (name) => app.evalOn(await app.requireObject(`appManager.app.${name}`), `(() => {
+      const find = (n) => { if (!n) return null; if (n.objectName === "appGridStateBadge") return n;
+        for (let i = 0; i < n.children.length; ++i) { const f = find(n.children[i]); if (f) return f; }
+        return null; };
+      const badge = find(this);
+      return badge && badge.visible ? badge.text : ""; })()`);
+
+    // The first: approved, and on its way until the repository lets it through.
+    let tile = await app.requireObject("appManager.app.first_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 300, description: "first_app's gate to open" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "first_app's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 15000);
+    await app.waitFor(async () => {
+      assertEq(fetched("first_module") > 0, true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "first_module's download to start" });
+
+    // The second, meanwhile: queued, and nothing asked or fetched.
+    tile = await app.requireObject("appManager.app.second_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    const action = await app.requireObject("appManager.details.action");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(action, "text"), "Queued", "the details' state");
+      assertEq(await badgeOf("second_app"), "Queued", "second_app's tile");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
+    assertEq(await app.evalOn(gate, "visible"), false, `${INSTALL_GATE} visible while the first is on its way`);
+    assertEq(fetched("second_app"), 0, "second_app fetched while queued");
+
+    // Its turn: Basecamp asks, and offers to trust Xavier, before any of it downloads.
+    queued.repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+      assertEq(await app.evalOn(gate, "moduleName"), "second_app", "the gate's package");
+    }, { timeout: 30000, interval: 300, description: "second_app's gate to open" });
+    const trustAndConfirm = await app.requireObject(`${INSTALL_GATE}.trustAndConfirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(trustAndConfirm, "visible && enabled"), true, "Trust & install offered");
+    }, { timeout: 30000, interval: 300, description: "second_app's trust check" });
+    assertEq(fetched("second_app"), 0, "second_app fetched before Basecamp answered");
+
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    await expectAbsent(app, "sidebar.app.second_app", 3000);
+    assertEq(fetched("second_app"), 0, "second_app fetched after a cancel");
+    if (existsSync(join(userDir, "plugins", "second_app"))) throw new Error("second_app installed after a cancel");
+  }, queued.skip ? { skip: queued.skip } : { env: queued.repo.env }));
+if (queued.repo) await queued.repo.close();
+
+// B17. Trusting one publisher trusts only that one: after "Trust & install"
+// for Acme's app, Globex's app, which App Manager says nobody trusts yet,
+// still has Basecamp's gate ask and offer to trust Globex before anything of
+// it downloads; a cancel installs and fetches nothing. Acme's other app then
+// reads as trusted in App Manager's details.
+let twoPublishers;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-publishers-"));
+  const keysDir = join(dir, "keys");
+  mkdirSync(keysDir);
+  const signed = (name, displayName, key, signer) => {
+    if (!existsSync(join(keysDir, `${key}.jwk`))) makeSigningKey(keysDir, key);
+    return signLgx(makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0", displayName,
+                             variant: process.env.LGX_VARIANT }), { keysDir, key, signer });
+  };
+  twoPublishers = { repo: await serveRepository(dir, [
+    signed("acme_app", "Acme App", "acme", "Acme"),
+    signed("acme_tool", "Acme Tool", "acme", "Acme"),
+    signed("globex_app", "Globex App", "globex", "Globex"),
+  ], { name: "publishers-repo", displayName: "Publishers Repo" }) };
+} catch (e) {
+  twoPublishers = { skip: `no signed local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("two publishers: trusting one, the gate still asks about the other",
+  async ({ app, userDir, note }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(twoPublishers.repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const fetched = (name) =>
+      JSON.stringify(twoPublishers.repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")));
+    const openDetails = async (name, line) => {
+      const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+      await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(await app.requireObject("appManager.details.name"), "text"),
+                 name === "acme_app" ? "Acme App" : name === "acme_tool" ? "Acme Tool" : "Globex App",
+                 "the details shown");
+        assertEq(await app.evalOn(await app.requireObject("trust.lineWords"), "text"), line,
+                 `${name}'s signer line`);
+      }, { timeout: 30000, interval: 300, description: `${name}'s details to say who signed it` });
+    };
+    const openGate = async (name) => {
+      await clickDetailsInstall(app);
+      const gate = await app.requireObject(INSTALL_GATE);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+        assertEq(await app.evalOn(gate, "moduleName"), name, "the gate's package");
+      }, { timeout: 30000, interval: 300, description: `the install gate to open for ${name}` });
+      const trustAndConfirm = await app.requireObject(`${INSTALL_GATE}.trustAndConfirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(trustAndConfirm, "visible && enabled"), true, "Trust & install offered");
+      }, { timeout: 30000, interval: 300, description: `the gate's trust check for ${name}` });
+      note(`${name}: ${(await gateTexts(app, gate)).body}`);
+      return trustAndConfirm;
+    };
+
+    // Acme's app: asked, Acme trusted, installed.
+    await openDetails("acme_app", "Signed by a publisher you don't trust yet");
+    const trustAcme = await openGate("acme_app");
+    assertEq(fetched("acme_app"), "[]", "acme_app fetched before Basecamp answered");
+    await app.send("callMethod", { objectId: trustAcme.id, method: "clicked" });
+    await waitGateHidden(app, 15000);
+    await app.requireObject("sidebar.app.acme_app", 60000);
+
+    // Globex's app, nobody trusts: still asked, offered for trust, nothing fetched.
+    await openDetails("globex_app", "Signed by a publisher you don't trust yet");
+    await openGate("globex_app");
+    assertEq(fetched("globex_app"), "[]", "globex_app fetched before Basecamp answered");
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    await expectAbsent(app, "sidebar.app.globex_app", 3000);
+    assertEq(fetched("globex_app"), "[]", "globex_app fetched after a cancel");
+    if (existsSync(join(userDir, "plugins", "globex_app"))) throw new Error("globex_app installed after a cancel");
+
+    // Acme is trusted now, in App Manager's details too.
+    await openDetails("acme_tool", "Signed by Acme");
+  }, twoPublishers.skip ? { skip: twoPublishers.skip } : { env: twoPublishers.repo.env }));
+if (twoPublishers.repo) await twoPublishers.repo.close();
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
