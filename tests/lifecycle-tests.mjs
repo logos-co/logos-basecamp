@@ -949,6 +949,105 @@ results.push(await runTest("fresh plan: a removal let through after an install i
   }, fresh.skip ? { skip: fresh.skip } : { env: fresh.repo.env }));
 if (fresh.repo) await fresh.repo.close();
 
+// B10. An install that replaces a package that is open: the gate names it
+// as running, and approving unloads it before the installer swaps the files.
+// The extracted gate used to replace the package under it. (What runs on it
+// stops too: replace_impact_test; an app here can't run on another app.)
+let swap = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-swap-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, file, version, extra = {}) => makeLgx({
+    outFile: join(lgxDir, file), name, version, variant: process.env.LGX_VARIANT, ...extra });
+  swap = { repo: await serveRepository(join(dir, "repo"), [
+    pkg("shared_dep", "shared_dep-1.0.0.lgx", "1.0.0"),
+    pkg("shared_dep", "shared_dep-2.0.0.lgx", "2.0.0"),
+    pkg("uses_shared", "uses_shared.lgx", "1.0.0", { dependencies: ["shared_dep"] }),
+    pkg("needs_new", "needs_new.lgx", "1.0.0",
+        { dependencies: [{ name: "shared_dep", version: ">=2.0.0" }] }),
+  ]) };
+} catch (e) {
+  swap = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("swap: an install that replaces an open package unloads it first",
+  async ({ app }) => {
+    const { repo } = swap;
+    const fetched = () => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const isLoaded = (name) => app.evalOn(greeting,
+      `JSON.stringify(backend.launcherApps.filter(a => a.name === ${JSON.stringify(name)}).map(a => a.isLoaded))`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const confirm = async (name) => {
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+      }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+      const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+      }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+      await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    };
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    // uses_shared, on shared_dep 1.0.0 as picked in its details.
+    const usesTile = await app.requireObject("appManager.app.uses_shared", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: usesTile.id, method: "clicked" });
+    const dep = () => app.requireObject("appManager.details.package.shared_dep", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await dep(), "row.version"), "2.0.0", "shared_dep's newest, before a pick");
+    }, { timeout: 30000, interval: 300, description: "shared_dep in the details" });
+    await pickVersion(app, await dep(), "1.0.0");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await dep(), "row.version"), "1.0.0", "shared_dep at the version picked");
+    }, { timeout: 30000, interval: 300, description: "the pick to show" });
+    await clickDetailsInstall(app);
+    await confirm("uses_shared");
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.uses_shared", 60000);
+
+    await app.evalOn(greeting, '(backend.loadUiModule("shared_dep"), "loaded")');
+    await app.waitFor(async () => {
+      assertEq(await isLoaded("shared_dep"), "[true]", "shared_dep open");
+    }, { timeout: 30000, interval: 300, description: "shared_dep to open" });
+
+    // needs_new takes shared_dep to 2.0.0 under it.
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const newTile = await app.requireObject("appManager.app.needs_new", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: newTile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "needs_new", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for needs_new" });
+    await app.waitFor(async () => {
+      // Every dialog has a list by that name: the gate's.
+      const running = await app.evalOn(gate, `(() => {
+        const find = (node) => {
+          if (!node) return null;
+          if (node.objectName === "confirmationDialog.running") return node;
+          const kids = node.children;
+          for (let i = 0; kids && i < kids.length; i += 1) {
+            const found = find(kids[i]);
+            if (found) return found;
+          }
+          return null;
+        };
+        const list = find(contentItem);
+        return JSON.stringify(list ? list.model : null);
+      })()`);
+      assertEq(running, JSON.stringify(["shared_dep"]), "what the gate says stops");
+    }, { timeout: 30000, interval: 300, description: "the gate to name shared_dep" });
+    await confirm("needs_new");
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.needs_new", 60000);
+    assertEq(await isLoaded("shared_dep"), "[false]", "shared_dep, unloaded for the swap");
+    if (!fetched().includes("/shared_dep-2.0.0.lgx"))
+      throw new Error(`shared_dep 2.0.0 was not fetched: ${JSON.stringify(fetched())}`);
+  }, swap.skip ? { skip: swap.skip } : { env: swap.repo.env }));
+if (swap.repo) await swap.repo.close();
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;

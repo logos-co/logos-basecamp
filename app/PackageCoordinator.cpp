@@ -10,6 +10,7 @@
 #include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/InstallTrust.h"
+#include "utils/ReplaceImpact.h"
 #include "utils/PublisherKeyring.h"
 #include "ShellIntents.h"
 
@@ -655,6 +656,8 @@ void PackageCoordinator::runUninstallCascade(const QString& moduleName, const QV
         if (!selfDefer) return;
 
         cascadeUnloadForPackage(moduleName);
+        // An upgrade swaps what its plan replaces too.
+        if (isUpgrade) unloadReplaced(moduleName, approved);
 
         // Answering is what tells the requester it may now remove files. If
         // nobody heard — no intent, or a dispatch that already ended, including
@@ -1083,7 +1086,13 @@ void PackageCoordinator::confirmInstallGate(const QString& name, const QStringLi
             self->refuseConfirmed(requestId, name, refused);
             return;
         }
-        self->finishIntent(requestId, true, QString(), answer);
+        // What it replaces stops first, off the click stack: the installer
+        // swaps the files under it once it hears.
+        QMetaObject::invokeMethod(self, [self, name, requestId, answer]() {
+            if (!self) return;
+            self->unloadReplaced(name, answer);
+            self->finishIntent(requestId, true, QString(), answer);
+        }, Qt::QueuedConnection);
     });
 }
 
@@ -2230,7 +2239,31 @@ QVariantList PackageCoordinator::gatePreviewChanges(const QVariantList& resolved
         if (!row.value("optional").toBool() && !row.contains("requiredFor")) changes.append(row);
     }
     changes.append(optionalRowsWithChildren(m_pendingOptionalPackages, all));
-    return changes;
+    return withReplaceImpact(changes);
+}
+
+QVariantList PackageCoordinator::withReplaceImpact(const QVariantList& rows) const
+{
+    const QSet<QString> running = loadedNames();
+    return logos::replace::withCloses(rows, [this, &running](const QString& name) {
+        return logos::replace::closedBy(name, m_dependentsByModule.value(name),
+                                        [&running](const QString& n) { return running.contains(n); });
+    });
+}
+
+void PackageCoordinator::unloadReplaced(const QString& name, const QVariantMap& answer)
+{
+    QVariantList plan = answer.value(QStringLiteral("plan")).toList();
+    // A local file is the package it names.
+    if (plan.isEmpty()) plan << QVariantMap{{QStringLiteral("name"), name}};
+    const QStringList replaced = logos::replace::replacedBy(plan, [this](const QVariantMap& row) {
+        const QString n = row.value(QStringLiteral("name")).toString();
+        if (!m_installedNameSet.contains(n) || n == QLatin1String("main_ui")) return false;
+        const QString hash = row.value(QStringLiteral("rootHash")).toString();
+        return m_installedVersionByName.value(n) != row.value(QStringLiteral("version")).toString()
+            || (!hash.isEmpty() && m_installedHashByName.value(n) != hash);
+    });
+    for (const QString& r : replaced) cascadeUnloadForPackage(r);
 }
 
 void PackageCoordinator::refreshOptionalPreview(const QString& name,

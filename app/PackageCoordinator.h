@@ -354,6 +354,12 @@ private:
     void endGatePreview(const QString& name);
     QVariantMap optionalPackageRow(const QVariantMap& offer) const;
     QVariantList gatePreviewChanges(const QVariantList& resolved);
+    // `rows` with `closes` on each that replaces an installed release: what
+    // replacing it stops (utils/ReplaceImpact.h).
+    QVariantList withReplaceImpact(const QVariantList& rows) const;
+    // Unloads what an approved install or upgrade of `name` replaces, and
+    // what runs on it, before the answer lets the installer swap the files.
+    void unloadReplaced(const QString& name, const QVariantMap& answer);
     QVariantList optionalRowsWithChildren(const QVariantList& offerRows, const QVariantList& changes) const;
 
     IntentResponder m_intentResponder;

@@ -121,6 +121,27 @@ TestCase {
         dlg.destroy()
     }
 
+    // What the install stops shows before it is approved: what runs on a
+    // package it replaces, for the rows that install. The gate used to say
+    // nothing, and the package was replaced under them.
+    function test_the_gate_names_what_replacing_a_package_stops() {
+        var dlg = dialogComp.createObject(testCase)
+        const upgrade = { name: "signer", displayName: "Signer", action: "upgrade",
+                          fromVersion: "1.0.0", toVersion: "2.0.0", closes: ["wallet_ui"] }
+        var offer = selectableOptional()
+        offer.action = "upgrade"
+        offer.closes = ["chat_ui", "wallet_ui"]
+        offer.selected = false
+        dlg.openWithInstallGate("delivery_module", "0.3.0", [upgrade, offer], "app_manager_ui", true)
+        tryVerify(function() { return !!findChild(dlg.contentItem, "confirmationDialog.running") })
+        const running = findChild(dlg.contentItem, "confirmationDialog.running")
+        tryCompare(running, "count", 1)
+        verify(running.visible)
+        dlg.optionalSelection = ({ storage_module: true })
+        tryCompare(running, "count", 2)
+        dlg.destroy()
+    }
+
     function test_package_that_comes_only_with_an_optional_has_no_checkbox() {
         var dlg = dialogComp.createObject(testCase)
         dlg.openWithInstallGate("chat", "1.0.0", [

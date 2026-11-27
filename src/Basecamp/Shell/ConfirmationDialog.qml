@@ -203,6 +203,24 @@ LogosWarningDialog {
         id: d
 
         readonly property bool trustApplies: root.mode === "installGate" || root.mode === "upgradeCascade"
+        // What the change stops while it swaps files: what runs on the package
+        // it upgrades (loadedItems), and what each package it replaces stops
+        // (a row's `closes`), for the rows that install: an optional one when
+        // ticked, or when one that needs it is.
+        readonly property var running: {
+            const names = (root.loadedItems || []).slice()
+            const add = function(c) {
+                (c.closes || []).forEach(function(n) { if (names.indexOf(n) < 0) names.push(n) })
+            }
+            root.mandatoryChanges.forEach(add)
+            const ticked = root.selectedOptionalNames()
+            root.optionalPackages.forEach(function(p) {
+                if (ticked.indexOf(p.name) >= 0
+                    || (p.requiredFor || []).some(function(n) { return ticked.indexOf(n) >= 0 }))
+                    add(p)
+            })
+            return names
+        }
         readonly property bool trustHolds: d.trustApplies
                                            && (root.trust.pending === true || root.trust.blocked === true)
         readonly property bool trustAsks: d.trustApplies && !d.trustHolds && root.trust.needsPrompt === true
@@ -543,7 +561,7 @@ LogosWarningDialog {
                     // pre-existing copy bug). If nothing is currently
                     // running on top of the module, the head sentence
                     // stands on its own.
-                    if (root.loadedItems.length === 0)
+                    if (d.running.length === 0)
                         return head;
                     return head + " The modules below are running on top of it and "
                                 + "will be unloaded for the swap — they keep working "
@@ -566,6 +584,11 @@ LogosWarningDialog {
                             ? " Choose optional packages below."
                             : " No other packages need to change.");
                     }
+                    // What runs on a package it replaces stops for the swap.
+                    if (d.running.length > 0)
+                        return iHead + " Installing it also applies the dependency "
+                                     + "changes listed below. The modules below are running "
+                                     + "on ones it replaces and will be unloaded for the swap.";
                     return iHead + " Installing it also applies the dependency "
                                  + "changes listed below:";
                 }
@@ -683,7 +706,7 @@ LogosWarningDialog {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 8
-            visible: root.mode === "upgradeCascade" && root.loadedItems.length > 0
+            visible: d.trustApplies && d.running.length > 0
 
             LogosText {
                 Layout.fillWidth: true
@@ -707,7 +730,7 @@ LogosWarningDialog {
                     objectName: "confirmationDialog.running"
                     anchors.fill: parent
                     anchors.margins: 8
-                    model: root.loadedItems
+                    model: d.running
                     clip: true
                     delegate: LogosText {
                         width: ListView.view ? ListView.view.width : 0
