@@ -17,7 +17,7 @@
 # .gcno and therefore do NOT appear in the report as 0% — the percentage here
 # is "coverage of the code under unit test", not of all of app/. Adding a
 # source to tests/CMakeLists.txt is what pulls it into the denominator.
-{ pkgs, src, logosPackageHeaders, logosPackageLib, logosPackageManagerLibrary, logosViewModuleRuntimeSrc, logosDesignSystem
+{ pkgs, src, basecampInstallerCommon, logosPackageHeaders, logosPackageLib, logosPackageManagerLibrary, logosViewModuleRuntimeSrc, logosDesignSystem
 , failUnderLine ? 0, failUnderBranch ? 0 }:
 
 let
@@ -64,6 +64,7 @@ pkgs.stdenv.mkDerivation {
       -DLGX_ROOT="${logosPackageLib}" \
       -DLOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}" \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT="${logosViewModuleRuntimeSrc}" \
+      -DBASECAMP_INSTALLER_COMMON_DIR="${basecampInstallerCommon}" \
       -DCMAKE_PREFIX_PATH="${logosDesignSystem}" \
       -DCMAKE_CXX_FLAGS="--coverage -fprofile-update=atomic" \
       -DCMAKE_EXE_LINKER_FLAGS="--coverage"

@@ -49,6 +49,7 @@ set(INSTALLER_QML_FILES
     ${BASECAMP_SHELL}/Basecamp/Installer/Availability.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Downloads.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Stages.js
+    ${BASECAMP_SHELL}/Basecamp/Installer/Trust.js
     ${BASECAMP_SHELL}/Basecamp/Installer/Types.js
 )
 foreach(js_file IN LISTS INSTALLER_QML_FILES)

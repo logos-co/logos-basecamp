@@ -123,6 +123,7 @@ qt_add_qml_module(basecamp_installer_qml
         Basecamp/Installer/Availability.js
         Basecamp/Installer/Downloads.js
         Basecamp/Installer/Stages.js
+        Basecamp/Installer/Trust.js
         Basecamp/Installer/Types.js
 )
 

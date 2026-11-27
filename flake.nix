@@ -187,6 +187,8 @@
         logosPackageManagerUI = logos-package-manager-ui.packages.${system}.default;
         logosAppManagerUI = logos-app-manager-ui.packages.${system}.default;
         logosDesignSystem = logos-design-system.packages.${system}.default;
+        # Its source: the shared JavaScript, and the trust judge the app compiles in.
+        basecampInstallerCommon = basecamp-installer-common.packages.${buildSystem}.default;
         logosViewModuleRuntime = logos-view-module-runtime.packages.${system}.default;
         # logos-qt-mcp is the QML inspector used by the UI test harness: source
         # plus a JS test framework, so Windows takes the build system's copy and
@@ -217,7 +219,7 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosAppManagerUI, logosCapabilityModule, logosIntentsModule, logosModulesStateModule, logosDesignSystem, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
+      packages = forAllSystems ({ pkgs, system, logosSdk, logosSdkBuild, logosProtocolPkg, logosQtHost, logosQtSdk, logosModule, logosLiblogos, logosLiblogosPortable, logosPackageManagerLibrary, logosPackageManagerModule, logosPackageManagerModuleLib, logosPackageManagerModuleLibPortable, logosPackageDownloaderModule, logosPackageDownloaderModuleLib, logosStorageModuleLib, logosPackageLib, logosPackageHeaders, logosPackageManagerUI, logosAppManagerUI, logosCapabilityModule, logosIntentsModule, logosModulesStateModule, logosDesignSystem, basecampInstallerCommon, logosViewModuleRuntime, logosQtMcp, installDev, installPortable, dirBundler, buildPkgs, ... }:
         let
           # Common configuration
           common = import ./nix/default.nix {
@@ -276,7 +278,7 @@
 
           # App package (development build)
           app = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             installedModules = installedDev;
           };
@@ -285,7 +287,7 @@
           # so a module developer without the binary cache does not build the
           # downloader, storage or the package-manager UI.
           appStandalone = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             installedModules = map installDev [
               logosPackageManagerModuleLib
@@ -308,7 +310,7 @@
             inherit pkgs common src mainUIPlugin;
           };
           appMock = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosLiblogos logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             # The SAME plugins the real dev build stages. PMUI is real code
             # loaded from disk here — only the modules it talks to are faked —
@@ -321,7 +323,7 @@
           # App package (distributed build for DMG/AppImage)
           # Uses portable-compiled liblogos for portable variant selection
           appDistributed = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -333,7 +335,7 @@
           # shipped bundles are (portable liblogos, portable module variants,
           # no /nix/store references after bundling).
           appMockPortable = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -344,7 +346,7 @@
 
           # Distributed build with inspector enabled (for macOS integration tests)
           appDistributedWithInspector = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = installedDistributed;
@@ -356,7 +358,7 @@
           # loads, portable variants, inspector on (developers and UI tests
           # drive it). Bundled below as app-standalone-portable.
           appStandalonePortable = import ./nix/app.nix {
-            inherit pkgs common src logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
+            inherit pkgs common src basecampInstallerCommon logosModule logosSdk logosProtocolPkg logosQtHost logosQtSdk logosDesignSystem logosViewModuleRuntime logosPackageManagerModule logosPackageDownloaderModule logosPackageHeaders buildInfo logosSdkBuild;
             inherit logosQtMcp mainUIPlugin;
             logosLiblogos = logosLiblogosPortable;
             installedModules = map installPortable [
@@ -877,7 +879,7 @@
           # shape as sandbox-test — standalone QtTest project, no app launch,
           # no IPC. Build: nix build .#unit-tests
           unit-tests = import ./nix/unit-tests.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
+            inherit pkgs src basecampInstallerCommon logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
           };
 
@@ -892,7 +894,7 @@
           # the test plan phases land to make it a gate.
           # Build: nix build .#coverage -L && open result/coverage.html
           coverage = import ./nix/coverage.nix {
-            inherit pkgs src logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
+            inherit pkgs src basecampInstallerCommon logosPackageHeaders logosPackageLib logosPackageManagerLibrary logosDesignSystem;
             logosViewModuleRuntimeSrc = logos-view-module-runtime;
             failUnderLine = 0;
           };

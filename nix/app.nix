@@ -3,7 +3,7 @@
 # producing a Basecamp that serves fixture data and contains no Logos runtime.
 # Exposed only via the .#app-mock output — never from a release target.
 # See mock/README.md.
-{ pkgs, common, src, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
+{ pkgs, common, src, basecampInstallerCommon, logosModule, logosLiblogos, logosSdk, logosSdkBuild ? logosSdk, logosProtocolPkg, logosQtHost, logosQtSdk, logosDesignSystem, logosViewModuleRuntime, logosPackageManagerModule, logosPackageDownloaderModule, logosPackageHeaders, buildInfo, logosQtMcp ? null, mainUIPlugin, installedModules ? [], portable ? false, enableInspector ? true , useMockBackend ? false }:
 
 let
   # webkitgtk became ABI-versioned; pick the newest available while staying
@@ -647,6 +647,7 @@ pkgs.stdenv.mkDerivation rec {
       -DLOGOS_QT_SDK_ROOT=${logosQtSdk} \
       -DLOGOS_PROTOCOL_ROOT=${logosProtocolPkg} \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT=${logosViewModuleRuntime} \
+      -DBASECAMP_INSTALLER_COMMON_DIR=${basecampInstallerCommon} \
       -DLogosDesignSystem_DIR=${logosDesignSystem}/lib/cmake/LogosDesignSystem \
       -DLOGOS_DISTRIBUTED_BUILD=${if portable then "ON" else "OFF"} \
       -DLOGOS_PORTABLE_BUILD=${if portable then "ON" else "OFF"} \
