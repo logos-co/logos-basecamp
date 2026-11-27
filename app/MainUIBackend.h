@@ -265,11 +265,16 @@ public slots:
     // package (packages.show) rather than a summary in a dialog.
     Q_INVOKABLE void showPackageDetails(const QString& packageName);
 
-    // "Install this package" from outside the apps — the welcome page's
-    // result tiles, intent install offers and deep links. Hands off to App
-    // Manager (packages.install, its default), which shows the package and
-    // asks for Basecamp's gate, from `repositoryUrl` when it was picked from
-    // one. Without intents_module, its section.
+    // "Install this app" from outside the apps — the welcome page's app
+    // tiles, intent install offers and deep links (openApp()). Hands off to
+    // App Manager (apps.install), which shows the app and asks for Basecamp's
+    // gate, from `repositoryUrl` when it was picked from one. Without
+    // intents_module, its section.
+    Q_INVOKABLE void requestAppInstall(const QString& appName, const QString& repositoryUrl = {});
+    // "Install this package", for one that isn't an app: the welcome page's
+    // Packages row. Package Manager (packages.install) shows it, and the
+    // person's Install there asks for the gate, as before App Manager left
+    // Basecamp. Without intents_module, its section.
     Q_INVOKABLE void requestPackageInstall(const QString& packageName, const QString& repositoryUrl = {});
     // The welcome page's "show all" for apps: App Manager, searching for
     // `query`. Without intents_module, its section alone.
@@ -501,8 +506,8 @@ private:
     // requester: false when it was gone, or its request had ended.
     bool answerShellIntent(const QString& requestId, bool ok, const QVariant& data, const QString& error,
                            std::function<void(bool heard)> heard);
-    // packages.install / packages.show / apps.search to the installer apps
-    // (App Manager, Package Manager), which answer only through
+    // apps.install / apps.search / packages.install / packages.show to the
+    // installer apps (App Manager, Package Manager), which answer only through
     // intents_module; `params` name the package, or the query. `orElse` when
     // nothing can take it.
     void askInstallerApp(const QString& intent, const QVariantMap& params,

@@ -256,8 +256,17 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
             this, [this](const QString& name) {
         m_uiPluginManager->onAppLauncherClicked(name);
     }, Qt::QueuedConnection);
-    connect(m_packageCoordinator, &PackageCoordinator::appManagerRequested,
-            this, &MainUIBackend::requestPackageInstall, Qt::QueuedConnection);
+    // An app goes to App Manager, any other package to Package Manager.
+    connect(m_packageCoordinator, &PackageCoordinator::installRequested,
+            this, [this](const QString& name, const QString& repositoryUrl) {
+        const QString type = m_appsModel
+            ? m_appsModel->rowDataByName(name, repositoryUrl).value(QStringLiteral("type")).toString()
+            : QString();
+        if (logos::defaultapps::installSlotFor(type) == logos::defaultapps::Slot::Apps)
+            requestAppInstall(name, repositoryUrl);
+        else
+            requestPackageInstall(name, repositoryUrl);
+    }, Qt::QueuedConnection);
 
     // Package repositories — pure re-emits so QML binding to backend.*
     reemit(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
@@ -1045,15 +1054,26 @@ void MainUIBackend::showPackageDetails(const QString& packageName)
     });
 }
 
+void MainUIBackend::requestAppInstall(const QString& appName, const QString& repositoryUrl)
+{
+    if (appName.isEmpty()) return;
+    QVariantMap params{{QStringLiteral("name"), appName}};
+    // Two repositories can list it: the one its tile came from.
+    if (!repositoryUrl.isEmpty()) params.insert(QStringLiteral("repositoryUrl"), repositoryUrl);
+    QPointer<MainUIBackend> self(this);
+    askInstallerApp(QStringLiteral("apps.install"), params, [self]() {
+        if (self) self->setCurrentActiveSectionIndex(ShellSection::AppManager);
+    });
+}
+
 void MainUIBackend::requestPackageInstall(const QString& packageName, const QString& repositoryUrl)
 {
     if (packageName.isEmpty()) return;
     QVariantMap params{{QStringLiteral("name"), packageName}};
-    // Two repositories can list it: the one its tile came from.
     if (!repositoryUrl.isEmpty()) params.insert(QStringLiteral("repositoryUrl"), repositoryUrl);
     QPointer<MainUIBackend> self(this);
     askInstallerApp(QStringLiteral("packages.install"), params, [self]() {
-        if (self) self->setCurrentActiveSectionIndex(ShellSection::AppManager);
+        if (self) self->setCurrentActiveSectionIndex(ShellSection::PackageManager);
     });
 }
 
@@ -1182,11 +1202,11 @@ void MainUIBackend::showPackageDetailsFallback(const QString&)
 
 void MainUIBackend::beginIntentInstall(const QString& providerName)
 {
-    // The normal install path: App Manager, then Basecamp's gate. Being
+    // The normal install path: its installer app, then Basecamp's gate. Being
     // prompted by an intent buys no shortcut past the confirmation the user
     // would see anywhere else — it is the same install, started for a
     // different reason.
-    requestPackageInstall(providerName);
+    if (m_packageCoordinator) m_packageCoordinator->openApp(providerName, {}, /*allowFastLaunch=*/false);
 }
 
 QString MainUIBackend::displayNameFor(const QString& n) const {

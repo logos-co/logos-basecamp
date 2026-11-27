@@ -86,7 +86,15 @@ export function writePayload(payloadDir, spec) {
     writeFileSync(join(payloadDir, "Main.qml"), qmlViewFor(spec));
     writeFileSync(join(payloadDir, "qmldir"),
       `module com.logos.module.${spec.name}\n`);
+  } else {
+    // What lgx names as its main; nothing loads it.
+    writeFileSync(join(payloadDir, mainFileOf(spec)), "placeholder\n");
   }
+}
+
+// A package that isn't a QML app names its plugin file as its main.
+function mainFileOf(spec) {
+  return `${spec.name}_plugin.so`;
 }
 
 export function makeLgx(opts) {
@@ -125,7 +133,8 @@ export function makeLgx(opts) {
   // Plain ustar — the LGX reader doesn't speak pax extended headers.
   execFileSync("tar",
     ["--format", "ustar", "-C", seed, "-czf", outFile, "manifest.json", "variants"]);
-  execFileSync(lgx, ["add", outFile, "--variant", variant, "--files", payload, "-y"]);
+  execFileSync(lgx, ["add", outFile, "--variant", variant, "--files", payload, "-y",
+                    ...(type === "ui_qml" ? [] : ["--main", mainFileOf(spec)])]);
   if (verify) execFileSync(lgx, ["verify", outFile]);
 
   rmSync(work, { recursive: true, force: true });

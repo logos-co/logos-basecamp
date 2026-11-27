@@ -56,6 +56,7 @@ inline const QStringList kWebReachableIntents = {
 inline const QStringList kShellUses = {
     QStringLiteral("packages.show"),
     QStringLiteral("packages.install"),
+    QStringLiteral("apps.install"),
     QStringLiteral("apps.search"),
 };
 

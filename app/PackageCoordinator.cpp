@@ -2077,10 +2077,11 @@ void PackageCoordinator::openApp(const QString& name,
     if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
 
     // A bundled app has no catalog row before the catalog is fetched, so the
-    // fast path gets a second look. Anything else is App Manager's to show.
+    // fast path gets a second look. Anything else is its installer app's to
+    // show.
     whenCatalogLoaded([this, name, repositoryUrl, allowFastLaunch]() {
         if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
-        emit appManagerRequested(name, repositoryUrl);
+        emit installRequested(name, repositoryUrl);
     });
 }
 

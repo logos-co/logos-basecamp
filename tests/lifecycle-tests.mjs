@@ -775,8 +775,8 @@ results.push(await runTest("leave: Applications and Package Manager start afresh
     }
   }));
 
-// B7. Basecamp's own request to install an app (the Welcome page's Install,
-// requestPackageInstall) reaches App Manager through intents_module under
+// B7. Basecamp's own request to install an app (a Welcome page tile,
+// openApp: apps.install) reaches App Manager through intents_module under
 // Basecamp's name, main_ui: the only requester App Manager asks the gate for
 // on the request itself. The app's details come up in Applications, and the
 // gate asks as App Manager's. Another app's request only shows the app (App
@@ -798,7 +798,7 @@ results.push(await runTest("own request: Basecamp's Install shows the app in App
     await app.requireObject("appManager.app.test_qml_only", APP_MANAGER_WAIT_MS);
     await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
 
-    await app.evalOn(greeting, `backend.requestPackageInstall("test_qml_only")`);
+    await app.evalOn(greeting, `(backend.openApp("test_qml_only", "", true), "sent")`);
     const gate = await app.requireObject(INSTALL_GATE);
     await app.waitFor(async () => {
       assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
@@ -1200,6 +1200,57 @@ results.push(await runTest("closed mid-install: closing App Manager lets the nex
     });
   }, closing.skip ? { skip: closing.skip } : { env: closing.repo.env }));
 if (closing.repo) await closing.repo.close();
+
+// B14. A package that isn't an app, from the Welcome page's Packages row:
+// Package Manager shows it (packages.install), and the person's Install there
+// asks for the gate, as before App Manager left Basecamp. It went to App
+// Manager, which shows only apps, and nothing came up.
+let packageRow = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-package-row-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  packageRow = { repo: await serveRepository(join(dir, "repo"), [makeLgx({
+    outFile: join(lgxDir, "row_module.lgx"), name: "row_module", version: "1.0.0",
+    type: "core", variant: process.env.LGX_VARIANT })]) };
+} catch (e) {
+  packageRow = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("package row: Package Manager shows a package from the Welcome page",
+  async ({ app }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(packageRow.repo.url)})`);
+
+    // What the row does for a package that isn't installed.
+    await app.evalOn(greeting, '(root.packageInstallRequested("row_module"), "sent")');
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, "backend.currentActiveSectionIndex"), 2, "the section in front");
+      const header = await app.requireObject("pmui.header", 10000);
+      assertEq(await app.evalOn(header, "searchText"), "row_module", "Package Manager's search");
+    }, { timeout: 30000, interval: 300, description: "Package Manager to show row_module" });
+  }, packageRow.skip ? { skip: packageRow.skip } : { env: packageRow.repo.env }));
+
+// B15. An install offer for a package that isn't an app (beginIntentInstall,
+// which openApp routes by the package's type): Package Manager shows it too.
+results.push(await runTest("install offer: Package Manager shows a package an offer names",
+  async ({ app }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(packageRow.repo.url)})`);
+    // Something else in its search first, so the offer is what fills it.
+    await openPackageManager(app);
+    const header = await app.requireObject("pmui.header", APP_MANAGER_WAIT_MS);
+    await app.evalOn(header, "openSearch('zzz')");
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+
+    await app.evalOn(greeting, '(backend.beginIntentInstall("row_module"), "sent")');
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, "backend.currentActiveSectionIndex"), 2, "the section in front");
+      assertEq(await app.evalOn(header, "searchText"), "row_module", "Package Manager's search");
+    }, { timeout: 30000, interval: 300, description: "Package Manager to show row_module" });
+  }, packageRow.skip ? { skip: packageRow.skip } : { env: packageRow.repo.env }));
+if (packageRow.repo) await packageRow.repo.close();
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;

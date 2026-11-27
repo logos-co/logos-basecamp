@@ -27,8 +27,9 @@ struct DefaultApp {
     // Its backend may call package_manager and package_downloader.
     bool callsPackageModules = false;
     // The intents Basecamp's own requests go to it for, when it provides
-    // them, with no chooser: the welcome page's Install and "show all" go to
-    // App Manager.
+    // them, with no chooser: an app's Install and "show all" go to App
+    // Manager, a package's Install and Details to Package Manager, as before
+    // App Manager left Basecamp.
     QStringList defaultFor;
 };
 
@@ -45,9 +46,9 @@ inline const QList<DefaultApp>& table()
                                   QStringLiteral("basecamp.packages.confirm_upgrade")};
         return QList<DefaultApp>{
             {Slot::Apps, QStringLiteral("app_manager_ui"), ShellSection::AppManager, confirm,
-             false, true, {QStringLiteral("packages.install"), QStringLiteral("apps.search")}},
+             false, true, {QStringLiteral("apps.install"), QStringLiteral("apps.search")}},
             {Slot::Packages, QStringLiteral("package_manager_ui"), ShellSection::PackageManager, confirm,
-             true, true, {QStringLiteral("packages.show")}},
+             true, true, {QStringLiteral("packages.show"), QStringLiteral("packages.install")}},
         };
     }();
     return rows;
@@ -138,6 +139,14 @@ inline QStringList packageModuleCallers(const QList<DefaultApp>& rows = table())
         if (row.callsPackageModules) out << backendOf(row.app);
     }
     return out;
+}
+
+// The slot whose app installs a package of `type`: an app is App Manager's,
+// anything else Package Manager's. A name no catalog knows yet is taken for
+// an app, as a basecamp://app link names one.
+inline Slot installSlotFor(const QString& type)
+{
+    return type.isEmpty() || type == QLatin1String("ui_qml") ? Slot::Apps : Slot::Packages;
 }
 
 // The backend Basecamp's own request for `intent` goes to without a chooser

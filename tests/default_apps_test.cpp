@@ -69,16 +69,29 @@ private slots:
         }
     }
 
-    // Basecamp's own Install goes to App Manager, its Details to Package Manager.
+    // An app's Install and search go to App Manager; a package's Install
+    // and Details to Package Manager, as before App Manager left Basecamp.
+    // A package's Install went to App Manager, which shows only apps.
     void basecampsOwnRequestsHaveADefaultProvider()
     {
-        QCOMPARE(defaultProviderFor(QStringLiteral("packages.install")),
+        QCOMPARE(defaultProviderFor(QStringLiteral("apps.install")),
                  QStringLiteral("app_manager_ui_backend"));
         QCOMPARE(defaultProviderFor(QStringLiteral("apps.search")),
                  QStringLiteral("app_manager_ui_backend"));
+        QCOMPARE(defaultProviderFor(QStringLiteral("packages.install")),
+                 QStringLiteral("package_manager_ui_backend"));
         QCOMPARE(defaultProviderFor(QStringLiteral("packages.show")),
                  QStringLiteral("package_manager_ui_backend"));
         QVERIFY(defaultProviderFor(QStringLiteral("wallet.send")).isEmpty());
+    }
+
+    // An app installs through App Manager, any other package through
+    // Package Manager; a name no catalog knows yet is an app's.
+    void anAppInstallsThroughAppManagerAndAnyOtherPackageThroughPackageManager()
+    {
+        QVERIFY(installSlotFor(QStringLiteral("ui_qml")) == Slot::Apps);
+        QVERIFY(installSlotFor(QString()) == Slot::Apps);
+        QVERIFY(installSlotFor(QStringLiteral("core")) == Slot::Packages);
     }
 
     void theShellRestrictsWhatTheTableRestricts()
