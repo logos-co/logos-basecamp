@@ -8,6 +8,8 @@ namespace logos::trust { struct Package; class PublisherKeyring; }
 
 #include "InstallEnums.h"
 #include "utils/HostProfile.h"
+#include "utils/FreshReads.h"
+#include "utils/PlanBasis.h"
 #include "UninstallPlan.h"
 
 #include <QDateTime>
@@ -340,13 +342,9 @@ private:
                       const QVariant& data = QVariant(), std::function<void(bool heard)> heard = {});
 
     QVariantList m_pendingOptionalPackages;
-    // Which read of the installed packages is the newest (refreshDependencyInfo()).
-    int m_installedReadGeneration = 0;
-    struct FreshReadWaiter {
-        int generation = 0;
-        std::function<void()> then;
-    };
-    QList<FreshReadWaiter> m_freshReadWaiters;
+    // The reads of the installed packages (refreshDependencyInfo()), newest
+    // first, and the confirmations waiting for one.
+    logos::FreshReads m_freshReads;
     QString m_pendingPreviewName, m_pendingPreviewRepo;
     bool m_pendingPreviewNewest = false;
     // What the requester picked: its versions stay fixed while the person
@@ -525,12 +523,12 @@ private:
     // Reads the installed packages and their dependencies into the caches;
     // false when package_manager isn't there to ask.
     bool refreshDependencyInfo();
-    // Runs `then` once a read that started after this call is in the caches
-    // (installedPackagesRead), or failed; at once when no read can start. So a
-    // confirmation is planned on what is installed when it arrived, whatever
-    // let it through the queue.
-    void afterFreshRead(std::function<void()> then);
-    void freshReadDone(int generation);
+    // Runs `then(true)` once a read that started after this call is in the
+    // caches (installedPackagesRead), so a confirmation is planned on what is
+    // installed when it arrived, whatever let it through the queue; `then(false)`
+    // when that read failed, or none can start: nothing is planned on what was
+    // known before.
+    void afterFreshRead(std::function<void(bool read)> then);
 
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;
@@ -627,26 +625,31 @@ private:
 
     // ── Approved for later ──────────────────────────────────────────────
     // An install or upgrade whose app can hold an approval until its turn
-    // (`waits`), approved while another change is being made, is answered
-    // {ticket}, and nothing is unloaded. Handed back at its turn (`ticket`), it
-    // is answered with what was approved, once every package it was planned
-    // over is still installed as it was; otherwise the person is asked again.
+    // (`waits`), approved while another change is being made, or shown while
+    // one was, is answered {ticket}, and nothing is unloaded. Handed back at
+    // its turn (`ticket`), it is answered with what was approved, on a fresh
+    // read, once every package it was planned over is still installed as it
+    // was and nothing new depends on one; otherwise the person is asked again.
     struct Ticket {
         QString requester;
         QString intent;
         QVariantMap request;               // name, version, repositoryUrl, mode
         QVariantMap answer;                // as approved
-        QHash<QString, QString> plannedOn; // releaseOf() each, as it was planned
+        logos::planbasis::Basis basis;     // releaseOf() each, as it was planned
         QDateTime expires;
     };
     QHash<QString, Ticket> m_tickets;
     std::function<bool()> m_changeInFlight;
-    // The install or upgrade on screen: who asked, what, and what was
-    // installed when it was planned.
+    // The install or upgrade on screen: who asked, what, what was installed
+    // and what depended on what when it was planned, and whether a change was
+    // being made then.
     QString m_gateRequester;
     QString m_gateIntent;
     QVariantMap m_gateParams;
     QVariantList m_gateInstalled;
+    QMap<QString, QStringList> m_gateDependents;
+    bool m_gateDuringChange = false;
+    void snapshotGateBasis();
     // `name`'s release in `installed` (package_manager's records), "" if none.
     static QString releaseOf(const QVariantList& installed, const QString& name);
     // A ticket for the install or upgrade on screen, approved now with
@@ -724,6 +727,8 @@ private:
                            const QVariantMap& optionalVersionPins) const;
     // Unloads, then answers the pending uninstall or upgrade with `answer`.
     void runUninstallCascade(const QString& moduleName, const QVariantMap& answer);
+    // Refuses `requestId`: what is installed could not be read for it.
+    void refuseUnread(const QString& requestId, const QString& name);
     // Answers a confirmed package_manager_ui request that may not go ahead.
     void refuseConfirmed(const QString& requestId, const QString& name, const QString& reason);
 

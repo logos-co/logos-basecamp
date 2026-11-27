@@ -1511,16 +1511,20 @@ async function approveGate(app, gate, name) {
   await waitGateHidden(app, 15000);
 }
 
-// first_app, its first_module held on its way, and second_app.
-async function heldFirstRepo(prefix) {
+// first_app, its first_module held on its way, and second_app; `more`
+// ({name: {displayName, dependencies, type}}) adds packages, or replaces one.
+async function heldFirstRepo(prefix, more = {}) {
   const dir = mkdtempSync(join(tmpdir(), `basecamp-lifecycle-${prefix}-`));
   const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
                                          variant: process.env.LGX_VARIANT, ...extra });
-  return serveRepository(dir, [
-    lgx("first_app", { displayName: "First App", dependencies: ["first_module"] }),
-    lgx("first_module", { type: "core" }),
-    lgx("second_app", { displayName: "Second App" }),
-  ], { name: `${prefix}-repo`, displayName: "Held Repo", hold: ["/first_module-1.0.0.lgx"] });
+  const packages = {
+    first_app: { displayName: "First App", dependencies: ["first_module"] },
+    first_module: { type: "core" },
+    second_app: { displayName: "Second App" },
+    ...more,
+  };
+  return serveRepository(dir, Object.entries(packages).map(([name, extra]) => lgx(name, extra)),
+                         { name: `${prefix}-repo`, displayName: "Held Repo", hold: ["/first_module-1.0.0.lgx"] });
 }
 
 // B19. Package Manager's own queue through the same gate: a second Install
@@ -1613,6 +1617,135 @@ results.push(await runTest("across apps: Package Manager's Install waits for App
     assertEq(gateShown, false, "Basecamp asking again once App Manager's change was made");
   }, acrossApps.skip ? { skip: acrossApps.skip } : { env: acrossApps.repo.env }));
 if (acrossApps.repo) await acrossApps.repo.close();
+
+// B21. Cancelling an install that waited its turn ends no change: App
+// Manager's first install still downloads, so Package Manager's Install is
+// approved for later and fetches nothing until it is in. The cancel used to
+// say App Manager's change ended, and Package Manager's install started
+// beside the first.
+let cancelQueued;
+try {
+  cancelQueued = { repo: await heldFirstRepo("cancel-queued", { third_app: { displayName: "Third App" } }) };
+} catch (e) {
+  cancelQueued = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("cancel queued: cancelling a waiting install keeps the change before it",
+  async ({ app, userDir }) => {
+    const { repo } = cancelQueued;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const { gate } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    await openPackageManager(app);
+    const store = await installFromPackageManager(app, "third_app");
+    await approveGate(app, gate, "third_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "third_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "third_app to say it is queued" });
+    for (const start = Date.now(); Date.now() - start < 5000;) {
+      assertEq(fetched("third_app"), 0, "third_app fetched during App Manager's change");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.requireObject("sidebar.app.third_app", 60000);
+    assertEq(fetched("second_app"), 0, "second_app fetched after its cancel");
+    if (existsSync(join(userDir, "plugins", "second_app"))) throw new Error("second_app installed after its cancel");
+  }, cancelQueued.skip ? { skip: cancelQueued.skip } : { env: cancelQueued.repo.env }));
+if (cancelQueued.repo) await cancelQueued.repo.close();
+
+// B22. Approved once the change before it is made, on a plan made while it
+// was: Package Manager's second_app needs shared_module, which App Manager's
+// first_app brings. Its dialog opens while that downloads, the first comes
+// in meanwhile, and the approval made after is checked again: shared_module
+// is installed now, so the person is asked again, on what is there. It used
+// to go ahead on the plan the dialog was opened with.
+let doneWhileOpen;
+try {
+  doneWhileOpen = { repo: await heldFirstRepo("done-while-open", {
+    first_app: { displayName: "First App", dependencies: ["first_module", "shared_module"] },
+    second_app: { displayName: "Second App", dependencies: ["shared_module"] },
+    shared_module: { type: "core" },
+  }) };
+} catch (e) {
+  doneWhileOpen = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("done while open: an approval made after the change before it is checked again",
+  async ({ app, log }) => {
+    const { repo } = doneWhileOpen;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const tile = await app.requireObject("appManager.app.first_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "App Manager's download to start" });
+
+    await openPackageManager(app);
+    await installFromPackageManager(app, "second_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for second_app" });
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "second_app's dialog still open");
+    // Asked again at once, maybe before the gate is seen hidden: the log says.
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "second_app's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await app.waitFor(async () => {
+      assertEq(/changed since second_app was approved; asking again/.test(log()), true, "asked again");
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the gate asking again");
+    }, { timeout: 30000, interval: 300, description: "Basecamp to ask about second_app again" });
+    await approveGate(app, gate, "second_app");
+    await app.requireObject("sidebar.app.second_app", 60000);
+  }, doneWhileOpen.skip ? { skip: doneWhileOpen.skip } : { env: doneWhileOpen.repo.env }));
+if (doneWhileOpen.repo) await doneWhileOpen.repo.close();
+
+// B23. Approved for its turn, then something that depends on a package its
+// plan replaces turns up on disk: second_app's plan upgrades shared_module,
+// and other_module, installed meanwhile, runs on it. The person was never
+// told the plan closes it, or may break it, so at its turn Basecamp asks
+// again. Only the planned packages' own releases used to be compared.
+let newDependent;
+try {
+  newDependent = { repo: await heldFirstRepo("new-dependent", {
+    second_app: { displayName: "Second App", dependencies: ["shared_module"] },
+    shared_module: { type: "core" },
+  }) };
+} catch (e) {
+  newDependent = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("new dependent: an approval for later is asked again once something new runs on its plan",
+  async ({ app, userDir }) => {
+    const { repo } = newDependent;
+    const { gate, approve } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+    await approve();
+    writeInstalledPlugin(userDir, { name: "other_module", type: "core", version: "1.0.0",
+                                    dependencies: ["shared_module"] });
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the gate asking again");
+    }, { timeout: 30000, interval: 300, description: "Basecamp to ask about second_app again" });
+    await approveGate(app, gate, "second_app");
+    await app.requireObject("sidebar.app.second_app", 60000);
+  }, newDependent.skip ? { skip: newDependent.skip }
+     : { env: newDependent.repo.env,
+         seed: (userDir) => writeInstalledPlugin(userDir, { name: "shared_module", type: "core", version: "0.9.0" }) }));
+if (newDependent.repo) await newDependent.repo.close();
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;

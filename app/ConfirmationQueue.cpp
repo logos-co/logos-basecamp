@@ -51,7 +51,7 @@ void ConfirmationQueue::answered(const QString& id, bool approved, const QVarian
     m_onScreen = {};
     // Approved for later: nothing changes until its ticket is handed back.
     if (approved && !data.toMap().contains(QStringLiteral("ticket"))) {
-        Change change{request.requester, {}, {}};
+        Change change{request.id, request.requester, {}, {}};
         const QVariantMap answer = data.toMap();
         if (request.intent == kConfirmUninstall) {
             // What the answer names: an app goes with what only it needed.
@@ -59,10 +59,11 @@ void ConfirmationQueue::answered(const QString& id, bool approved, const QVarian
                 ? answer.value(QStringLiteral("names")).toStringList()
                 : request.params.value(QStringLiteral("names")).toStringList();
         } else {
+            // Optional packages too: one still installing is part of the
+            // change. One that fails is left out, and its app says the change
+            // ended.
             for (const QVariant& v : answer.value(QStringLiteral("plan")).toList()) {
                 const QVariantMap row = v.toMap();
-                // An optional package may fail and be left out; the rest goes on.
-                if (row.value(QStringLiteral("optional")).toBool()) continue;
                 change.installs.insert(row.value(QStringLiteral("name")).toString(),
                                        {row.value(QStringLiteral("version")).toString(),
                                         row.value(QStringLiteral("rootHash")).toString()});
@@ -120,7 +121,14 @@ void ConfirmationQueue::activity()
     if (!m_change.requester.isEmpty()) m_changeTimer->start(m_changeTimeoutMs);
 }
 
-void ConfirmationQueue::changeEnded(const QString& requester)
+void ConfirmationQueue::changeEnded(const QString& change)
+{
+    if (change.isEmpty() || change != m_change.id) return;
+    endChange();
+    next();
+}
+
+void ConfirmationQueue::requesterGone(const QString& requester)
 {
     if (requester.isEmpty() || requester != m_change.requester) return;
     endChange();

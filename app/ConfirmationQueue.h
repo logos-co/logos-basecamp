@@ -17,10 +17,11 @@ class QTimer;
 // upgrade whose app can hold an approval until its turn (`waits`) is shown
 // while a change is made, and approved for later: an answer with a `ticket`
 // starts no change; the request handing it back goes ahead once the change
-// before it is made. The change is made once package_manager shows it on
-// disk, the app that made it says how it ended, asks again (an installer app
-// asks only after its last change ended, but for one that can wait), closes
-// or stops, or a while has passed with nothing of it moving.
+// before it is made. The change is made once package_manager shows all of it
+// on disk, the app that made it says that change ended (by the request's id,
+// which the answer carries as `change`), asks again (an installer app asks
+// only after its last change ended, but for one that can wait), closes or
+// stops, or a while has passed with nothing of it moving.
 class ConfirmationQueue : public QObject {
     Q_OBJECT
 public:
@@ -55,9 +56,11 @@ public:
     void progressed(const QString& name);
     // Something installed or removed, whichever package: the change waits on.
     void activity();
-    // The app that asked is done with its change: it said how the change
-    // ended, or it closed or stopped.
-    void changeEnded(const QString& requester);
+    // The app making change `change` (the id of the request approving it)
+    // says it ended.
+    void changeEnded(const QString& change);
+    // The app that asked closed or stopped: its change, if any, is over.
+    void requesterGone(const QString& requester);
 
     QString onScreen() const { return m_onScreen.id; }
     int waiting() const { return int(m_waiting.size()); }
@@ -71,6 +74,7 @@ private:
         QString rootHash;
     };
     struct Change {
+        QString id;
         QString requester;
         QHash<QString, Release> installs;
         QStringList removes;

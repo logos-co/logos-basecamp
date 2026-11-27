@@ -158,7 +158,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged, this, [this]() {
         const QString changing = m_confirmations->changing();
         if (!changing.isEmpty() && !m_uiPluginManager->isUiAppLoaded(changing))
-            m_confirmations->changeEnded(changing);
+            m_confirmations->requesterGone(changing);
     });
     // The platform's own backend: by features alone Qt can pick glib, which
     // outside Linux never sees the connection go.
@@ -483,7 +483,7 @@ void MainUIBackend::wireIntents()
     connect(m_uiPluginManager, &UIPluginManager::appBackendStopped,
             this, [this](const QString& name, QWidget* widget) {
                 m_intentBroker->onAppUnavailable(name);
-                m_confirmations->changeEnded(name);
+                m_confirmations->requesterGone(name);
                 emit appStopped(widget, name);
             });
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,

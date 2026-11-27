@@ -219,9 +219,9 @@ signals:
 
     // Failures filtered out of package_manager_ui's installationProgressUpdated.
     void packageInstallFailedNotice(const QString& packageName, const QString& errorMessage);
-    // An installer app (the default apps' Apps or Packages slot) said how its
-    // request ended, done or failed.
-    void installerChangeEnded(const QString& app);
+    // An installer app (a default app that may ask for package changes) says
+    // the change Basecamp approved as `change` ended, however it ended.
+    void installerChangeEnded(const QString& change);
 
     // Plugin-window coordination — consumed by WorkspaceArea via
     // MainUIBackend's forwarders.
@@ -249,8 +249,6 @@ private slots:
     void onPmuiInstallProgress(int progressType, const QString& packageName,
                                int completed, int total, bool success,
                                const QString& error);
-    // App Manager's finished(name, outcome, error): its request ended.
-    void onAppManagerFinished(const QString& name, int outcome, const QString& error);
 
     // Consume the uiPluginsFetched signal from PackageCoordinator. Replaces the
     // old in-class getInstalledUiPluginsAsync call — PackageCoordinator owns the

@@ -276,10 +276,10 @@ private slots:
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
     }
 
-    // The app that asked is done with it: it said how the change ended (a
-    // failed install too), or it closed or stopped. A failed change used to
-    // hold every other confirmation until the timeout.
-    void theAppBeingDoneWithItsChangeEndsIt()
+    // The app making it says that change ended (a failed install too), by
+    // the id of the request that approved it. A failed change used to hold
+    // every other confirmation until the timeout.
+    void theAppEndingItsChangeEndsIt()
     {
         ConfirmationQueue q;
         Shown shown;
@@ -287,12 +287,49 @@ private slots:
         q.submit(install("a", kAppManager, "wallet"));
         q.answered("a", true, plan("wallet", "1.0.0"));
         q.submit(install("b", kPackageManager, "chat"));
-        q.changeEnded(kPackageManager);
+        q.changeEnded(QStringLiteral("b"));
         q.changeEnded({});
         QCOMPARE(shown.ids, QStringList{"a"});
-        q.changeEnded(kAppManager);
+        q.changeEnded(QStringLiteral("a"));
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
         QVERIFY(q.changing().isEmpty());
+    }
+
+    // Another request of the same app ending is not its change ending: App
+    // Manager cancelling an install that waited its turn, while its first
+    // still downloads, used to let Package Manager's change start beside it.
+    void anotherRequestOfTheSameAppEndingHoldsTheChange()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(canWait("b", kAppManager, "chat"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+        q.answered("b", false, {});
+        q.changeEnded(QStringLiteral("b"));
+        q.submit(install("c", kPackageManager, "notes"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+        QCOMPARE(q.changing(), kAppManager);
+        q.changeEnded(QStringLiteral("a"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b", "c"}));
+    }
+
+    // The app that asked closed or stopped: nothing is making its change.
+    void theAppGoingEndsItsChange()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(install("b", kPackageManager, "chat"));
+        q.requesterGone(kPackageManager);
+        q.requesterGone({});
+        QCOMPARE(shown.ids, QStringList{"a"});
+        q.requesterGone(kAppManager);
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
     }
 
     // A reinstall keeps its version: it is made once its own release is on
@@ -311,9 +348,10 @@ private slots:
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
     }
 
-    // An optional package that fails is left out while the rest installs, so
-    // the change is made without it.
-    void anOptionalPackageLeftOutHoldsNothing()
+    // An optional package still installing is part of the change: it used to
+    // end once the required ones were on disk. One that fails is left out,
+    // and its app says the change ended.
+    void anOptionalPackageStillInstallingHoldsTheChange()
     {
         ConfirmationQueue q;
         Shown shown;
@@ -328,7 +366,19 @@ private slots:
         q.answered("a", true, approved);
         q.submit(install("b", kPackageManager, "chat"));
         q.installedChanged(installed("wallet", "1.0.0"));
+        QCOMPARE(shown.ids, QStringList{"a"});
+        q.installedChanged({installedOne("wallet", "1.0.0"), installedOne("extra", "1.0.0")});
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+
+        ConfirmationQueue failed;
+        Shown shownAfterFailure;
+        failed.setBegin(shownAfterFailure.begin());
+        failed.submit(install("a", kAppManager, "wallet"));
+        failed.answered("a", true, approved);
+        failed.submit(install("b", kPackageManager, "chat"));
+        failed.installedChanged(installed("wallet", "1.0.0"));
+        failed.changeEnded(QStringLiteral("a"));
+        QCOMPARE(shownAfterFailure.ids, (QStringList{"a", "b"}));
     }
 
     // Files installed or removed, whichever package: the change is moving.
