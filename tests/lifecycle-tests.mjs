@@ -1566,8 +1566,9 @@ if (pmQueued.repo) await pmQueued.repo.close();
 
 // B20. Each installer has its own queue; Basecamp's is the one they share.
 // Package Manager's Install while App Manager's is on its way is asked about
-// at once, but approved for later: nothing of it is fetched until App
-// Manager's change is on disk, and then it installs without asking again.
+// at once, but approved for later: it says Queued, nothing of it is fetched
+// until App Manager's change is on disk, and then it installs without
+// asking again.
 let acrossApps;
 try {
   acrossApps = { repo: await heldFirstRepo("across-apps") };
@@ -1592,8 +1593,13 @@ results.push(await runTest("across apps: Package Manager's Install waits for App
     }, { timeout: 30000, interval: 300, description: "App Manager's download to start" });
 
     await openPackageManager(app);
-    await installFromPackageManager(app, "second_app");
+    const store = await installFromPackageManager(app, "second_app");
     await approveGate(app, gate, "second_app");
+    // Waiting, it says so: its row said Install, and Install did nothing.
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "second_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
     for (const start = Date.now(); Date.now() - start < 5000;) {
       assertEq(fetched("second_app"), 0, "second_app fetched during App Manager's change");
       await new Promise((r) => setTimeout(r, 250));
