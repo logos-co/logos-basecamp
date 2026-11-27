@@ -175,11 +175,10 @@ void MainContainer::invokeOpenApp(const QString& name,
     if (!QMetaObject::invokeMethod(m_host->backendObject(), "openApp",
                                    Q_ARG(QString, name),
                                    Q_ARG(QString, repositoryUrl),
-                                   Q_ARG(QVariantMap, QVariantMap()),
                                    // allowFastLaunch: launch when installed,
                                    // App Manager on it if not.
                                    Q_ARG(bool, true))) {
-        qCritical() << "openApp(QString,QString,QVariantMap,bool) not found on"
+        qCritical() << "openApp(QString,QString,bool) not found on"
                     << "the backend — welcome-page app tiles will do nothing.";
     }
 }

@@ -147,10 +147,9 @@ public slots:
                                            const QVariantMap& optionalVersionPins);
 
     // Launches `name` when it is installed (and `allowFastLaunch`); otherwise
-    // asks for App Manager on it (appManagerRequested).
+    // asks for App Manager on it, from `repositoryUrl` (appManagerRequested).
     Q_INVOKABLE void openApp(const QString& name,
                              const QString& repositoryUrl,
-                             const QVariantMap& versionPins = QVariantMap(),
                              bool allowFastLaunch = true);
 
     // Cascade confirmation — called from QML once the user OKs the uninstall
@@ -241,7 +240,7 @@ signals:
 
     void launchAppRequested(const QString& name);
     // Not installed, or asked for its details: App Manager shows it.
-    void appManagerRequested(const QString& name);
+    void appManagerRequested(const QString& name, const QString& repositoryUrl);
     // package_manager's installed packages, once a refresh has read them and
     // their dependencies, and every cache holds them.
     void installedPackagesRead(const QVariantList& packages);

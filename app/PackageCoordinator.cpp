@@ -2070,7 +2070,6 @@ QVariantList PackageCoordinator::computeDepChanges(
 
 void PackageCoordinator::openApp(const QString& name,
                                  const QString& repositoryUrl,
-                                 const QVariantMap& versionPins,
                                  bool allowFastLaunch)
 {
     if (!m_logosAPI || name.isEmpty()) return;
@@ -2081,7 +2080,7 @@ void PackageCoordinator::openApp(const QString& name,
     // fast path gets a second look. Anything else is App Manager's to show.
     whenCatalogLoaded([this, name, repositoryUrl, allowFastLaunch]() {
         if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
-        emit appManagerRequested(name);
+        emit appManagerRequested(name, repositoryUrl);
     });
 }
 

@@ -61,7 +61,7 @@ public:
     Q_INVOKABLE void cancelPendingAction(const QString& moduleName);
     Q_INVOKABLE void confirmInstallGate(const QString& name);
     Q_INVOKABLE void cancelInstallGate(const QString& name);
-    Q_INVOKABLE void openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins = QVariantMap(), bool allowFastLaunch = true);
+    Q_INVOKABLE void openApp(const QString& name, const QString& repositoryUrl, bool allowFastLaunch = true);
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
     Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);

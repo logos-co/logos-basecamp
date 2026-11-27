@@ -738,7 +738,7 @@ test("open app: opening an installed app presents it once", async (app) => {
   if (!probe) throw new Error("the presentAppRequested probe was not created");
 
   await evalOn(app, welcome.id,
-    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, "", ({}), true)`);
+    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, "", true)`);
   await app.waitFor(async () => {
     if ((await evalOn(app, probe.id, "presented")) < 1) throw new Error("not presented yet");
   }, { timeout: 10000, interval: 250, description: "fixture A to be presented" });

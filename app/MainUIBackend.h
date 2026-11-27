@@ -268,8 +268,9 @@ public slots:
     // "Install this package" from outside the apps — the welcome page's
     // result tiles, intent install offers and deep links. Hands off to App
     // Manager (packages.install, its default), which shows the package and
-    // asks for Basecamp's gate. Without intents_module, its section.
-    Q_INVOKABLE void requestPackageInstall(const QString& packageName);
+    // asks for Basecamp's gate, from `repositoryUrl` when it was picked from
+    // one. Without intents_module, its section.
+    Q_INVOKABLE void requestPackageInstall(const QString& packageName, const QString& repositoryUrl = {});
     // The welcome page's "show all" for apps: App Manager, searching for `query`.
     Q_INVOKABLE void searchApps(const QString& query);
 
@@ -295,7 +296,6 @@ public slots:
     // PackageCoordinator.
     Q_INVOKABLE void openApp(const QString& name,
                              const QString& repositoryUrl,
-                             const QVariantMap& versionPins = QVariantMap(),
                              bool allowFastLaunch = true);
 
     // Settings → Trusted Publishers (PackageCoordinator).
@@ -501,9 +501,9 @@ private:
     bool answerShellIntent(const QString& requestId, bool ok, const QVariant& data, const QString& error,
                            std::function<void(bool heard)> heard);
     // packages.install / packages.show to the installer apps (App Manager,
-    // Package Manager), which answer only through intents_module. `orElse`
-    // when nothing can take it.
-    void askInstallerApp(const QString& intent, const QString& packageName,
+    // Package Manager), which answer only through intents_module; `params`
+    // name the package. `orElse` when nothing can take it.
+    void askInstallerApp(const QString& intent, const QVariantMap& params,
                          std::function<void()> orElse);
     void showPackageDetailsFallback(const QString& packageName);
     int beginAppLaunch(const QString& dispatchId, const QVariantMap& params);

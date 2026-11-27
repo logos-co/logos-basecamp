@@ -85,9 +85,9 @@ void FixtureBackend::cancelInstallGate(const QString& name)
     qInfo() << "FixtureBackend: cancelInstallGate — fixture build, no effect";
 }
 
-void FixtureBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
+void FixtureBackend::openApp(const QString& name, const QString& repositoryUrl, bool allowFastLaunch)
 {
-    Q_UNUSED(name); Q_UNUSED(repositoryUrl); Q_UNUSED(versionPins); Q_UNUSED(allowFastLaunch);
+    Q_UNUSED(name); Q_UNUSED(repositoryUrl); Q_UNUSED(allowFastLaunch);
     qInfo() << "FixtureBackend: openApp — fixture build, no effect";
 }
 

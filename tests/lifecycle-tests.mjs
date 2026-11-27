@@ -34,7 +34,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
   assertResponsive,
@@ -1047,6 +1047,61 @@ results.push(await runTest("swap: an install that replaces an open package unloa
       throw new Error(`shared_dep 2.0.0 was not fetched: ${JSON.stringify(fetched())}`);
   }, swap.skip ? { skip: swap.skip } : { env: swap.repo.env }));
 if (swap.repo) await swap.repo.close();
+
+// B11. Two repositories list the app: one picked from the second (a welcome
+// page tile's openApp, with its repository) is the second's in App Manager,
+// and installs from there. Basecamp used to drop the repository, and App
+// Manager showed the app from the first.
+let twoRepos = null;
+try {
+  const first = await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-first-")),
+                                      [FIXTURES.A_0_1_1], { name: "first-repo", displayName: "First Repo" });
+  const second = await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-second-")),
+                                       [FIXTURES.A_0_1_1], { name: "second-repo", displayName: "Second Repo" });
+  // One trust file for both certificates.
+  const trust = join(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-trust-")), "trust.pem");
+  writeFileSync(trust, readFileSync(first.env.SSL_CERT_FILE, "utf-8") + "\n"
+                       + readFileSync(second.env.SSL_CERT_FILE, "utf-8"));
+  twoRepos = { first, second, env: { SSL_CERT_FILE: trust } };
+} catch (e) {
+  twoRepos = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("two repositories: an app picked from the second installs from it",
+  async ({ app }) => {
+    const { first, second } = twoRepos;
+    const fetched = (repo) => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(first.url)})`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(second.url)})`);
+    const urls = JSON.stringify([first.url, second.url]);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, `${urls}.every(u => backend.repositories.some(r => r.url === u))`),
+               true, "both repositories added");
+    }, { timeout: 30000, interval: 300, description: "both repositories" });
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(1)");
+    await app.requireObject("appManager.app.test_qml_only", APP_MANAGER_WAIT_MS);
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+
+    await app.evalOn(greeting, `(backend.openApp("test_qml_only", ${JSON.stringify(second.url)}, true), "sent")`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "test_qml_only", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for test_qml_only" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.test_qml_only", 60000);
+    assertEq(JSON.stringify(fetched(first)), "[]", "what the first repository served");
+    assertEq(fetched(second).length, 1, `what the second repository served (${JSON.stringify(fetched(second))})`);
+  }, twoRepos.skip ? { skip: twoRepos.skip } : { env: twoRepos.env }));
+if (twoRepos.first) {
+  await twoRepos.first.close();
+  await twoRepos.second.close();
+}
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;

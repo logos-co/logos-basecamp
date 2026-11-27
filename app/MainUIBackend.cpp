@@ -1039,16 +1039,20 @@ void MainUIBackend::showPackageDetails(const QString& packageName)
     // favour of the generic path. Adding a second would be walking backwards.
     // This also means the shell dogfoods the mechanism it asks apps to use.
     QPointer<MainUIBackend> self(this);
-    askInstallerApp(QStringLiteral("packages.show"), packageName, [self, packageName]() {
+    askInstallerApp(QStringLiteral("packages.show"), {{QStringLiteral("name"), packageName}},
+                    [self, packageName]() {
         if (self) self->showPackageDetailsFallback(packageName);
     });
 }
 
-void MainUIBackend::requestPackageInstall(const QString& packageName)
+void MainUIBackend::requestPackageInstall(const QString& packageName, const QString& repositoryUrl)
 {
     if (packageName.isEmpty()) return;
+    QVariantMap params{{QStringLiteral("name"), packageName}};
+    // Two repositories can list it: the one its tile came from.
+    if (!repositoryUrl.isEmpty()) params.insert(QStringLiteral("repositoryUrl"), repositoryUrl);
     QPointer<MainUIBackend> self(this);
-    askInstallerApp(QStringLiteral("packages.install"), packageName, [self]() {
+    askInstallerApp(QStringLiteral("packages.install"), params, [self]() {
         if (self) self->setCurrentActiveSectionIndex(ShellSection::AppManager);
     });
 }
@@ -1061,9 +1065,10 @@ void MainUIBackend::searchApps(const QString& query)
                                 /*asLink=*/false);
 }
 
-void MainUIBackend::askInstallerApp(const QString& intent, const QString& packageName,
+void MainUIBackend::askInstallerApp(const QString& intent, const QVariantMap& params,
                                     std::function<void()> orElse)
 {
+    const QString packageName = params.value(QStringLiteral("name")).toString();
     const auto fallBack = [intent, packageName, orElse]() {
         qWarning().noquote() << QStringLiteral("intents_module did not take %1 for %2; showing its section")
                                     .arg(intent, packageName);
@@ -1076,7 +1081,7 @@ void MainUIBackend::askInstallerApp(const QString& intent, const QString& packag
     // Refused, nothing it knows provides it, or it is gone; a cancel is the
     // person's answer.
     m_intentsHost->shellRequest(
-        intent, {{QStringLiteral("name"), packageName}}, /*asLink=*/false,
+        intent, params, /*asLink=*/false,
         [fallBack](const QVariantMap& result) {
             const QString error = result.value(QStringLiteral("error")).toString();
             if (error == QLatin1String("unavailable") || error == QLatin1String("failed")) fallBack();
@@ -1193,8 +1198,8 @@ void MainUIBackend::refreshOptionalPreview(const QString& n, const QVariantMap& 
 { m_packageCoordinator->refreshOptionalPreview(n, selection, optionalPins); }
 void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
-void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
-{ m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
+void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, bool allowFastLaunch)
+{ m_packageCoordinator->openApp(name, repositoryUrl, allowFastLaunch); }
 void MainUIBackend::refreshTrustedPublishers()                  { m_packageCoordinator->refreshTrustedPublishers(); }
 void MainUIBackend::removeTrustedPublisher(const QString& keyName) { m_packageCoordinator->removeTrustedPublisher(keyName); }
 QStringList MainUIBackend::installedFromPublisher(const QString& did) const
