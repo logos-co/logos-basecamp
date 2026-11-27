@@ -1485,6 +1485,129 @@ results.push(await runTest("asked again: what an approval for later was planned 
   }, changedUnder.skip ? { skip: changedUnder.skip } : { env: changedUnder.repo.env }));
 if (changedUnder.repo) await changedUnder.repo.close();
 
+// Package Manager's Install for `name`: its details opened by name, then
+// their row's action, as the person's click on it.
+async function installFromPackageManager(app, name) {
+  const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+  await app.waitFor(async () => {
+    await app.evalOn(store, `showDetailsForName(${JSON.stringify(name)})`);
+    assertEq(await app.evalOn(store, `selectedRow ? selectedRow.name : ""`), name, "the open package");
+  }, { timeout: 30000, interval: 300, description: `Package Manager to list ${name}` });
+  // 0: PackageManagerUi.Install.
+  await app.evalOn(store, "(runSelectedAction(0), 'sent')");
+  return store;
+}
+
+// Waits for the install gate to ask about `name`, then approves it.
+async function approveGate(app, gate, name) {
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+  }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+  const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+  }, { timeout: 30000, interval: 300, description: `${name}'s trust check` });
+  await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+  await waitGateHidden(app, 15000);
+}
+
+// first_app, its first_module held on its way, and second_app.
+async function heldFirstRepo(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), `basecamp-lifecycle-${prefix}-`));
+  const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
+                                         variant: process.env.LGX_VARIANT, ...extra });
+  return serveRepository(dir, [
+    lgx("first_app", { displayName: "First App", dependencies: ["first_module"] }),
+    lgx("first_module", { type: "core" }),
+    lgx("second_app", { displayName: "Second App" }),
+  ], { name: `${prefix}-repo`, displayName: "Held Repo", hold: ["/first_module-1.0.0.lgx"] });
+}
+
+// B19. Package Manager's own queue through the same gate: a second Install
+// while its first is on its way is asked about at once, waits Queued with
+// nothing fetched, and installs at its turn without asking again. B16 is App
+// Manager's; this is Package Manager's wiring of the same library.
+let pmQueued;
+try {
+  pmQueued = { repo: await heldFirstRepo("pm-queued") };
+} catch (e) {
+  pmQueued = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("Package Manager queued: a second Install is asked about at once and installs in turn",
+  async ({ app }) => {
+    const { repo } = pmQueued;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await openPackageManager(app);
+    const gate = await app.requireObject(INSTALL_GATE);
+
+    await installFromPackageManager(app, "first_app");
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "the first's download to start" });
+
+    const store = await installFromPackageManager(app, "second_app");
+    await approveGate(app, gate, "second_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "second_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
+    assertEq(fetched("second_app"), 0, "second_app fetched while queued");
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    const { gateShown } = await installedNotingTheGate(app, gate, "second_app");
+    assertEq(gateShown, false, "Basecamp asking again at its turn");
+  }, pmQueued.skip ? { skip: pmQueued.skip } : { env: pmQueued.repo.env }));
+if (pmQueued.repo) await pmQueued.repo.close();
+
+// B20. Each installer has its own queue; Basecamp's is the one they share.
+// Package Manager's Install while App Manager's is on its way is asked about
+// at once, but approved for later: nothing of it is fetched until App
+// Manager's change is on disk, and then it installs without asking again.
+let acrossApps;
+try {
+  acrossApps = { repo: await heldFirstRepo("across-apps") };
+} catch (e) {
+  acrossApps = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("across apps: Package Manager's Install waits for App Manager's change",
+  async ({ app, userDir }) => {
+    const { repo } = acrossApps;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const tile = await app.requireObject("appManager.app.first_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "App Manager's download to start" });
+
+    await openPackageManager(app);
+    await installFromPackageManager(app, "second_app");
+    await approveGate(app, gate, "second_app");
+    for (const start = Date.now(); Date.now() - start < 5000;) {
+      assertEq(fetched("second_app"), 0, "second_app fetched during App Manager's change");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (existsSync(join(userDir, "plugins", "second_app")))
+      throw new Error("second_app installed during App Manager's change");
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    const { gateShown } = await installedNotingTheGate(app, gate, "second_app");
+    assertEq(gateShown, false, "Basecamp asking again once App Manager's change was made");
+  }, acrossApps.skip ? { skip: acrossApps.skip } : { env: acrossApps.repo.env }));
+if (acrossApps.repo) await acrossApps.repo.close();
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;
