@@ -188,9 +188,10 @@ private slots:
                                          installed, "storage_ui").isEmpty());
     }
 
-    // App Manager's picks, from a confirm request: each package's version
-    // becomes a pin, an optional package's goes with its selection, and the
-    // subject keeps the version the request names.
+    // App Manager's picks, from a confirm request: each package's version is
+    // its optional row's, should Basecamp's plan offer one, and a pin unless
+    // the request calls the package optional; the subject keeps the version
+    // the request names.
     void installChoicesSplitRequiredAndOptionalPins()
     {
         const QVariantMap params = QJsonDocument::fromJson(R"({
@@ -201,7 +202,7 @@ private slots:
         const logos::InstallChoices c = logos::installChoicesFrom(params, "wallet_ui", "2.0.0");
         QCOMPARE(c.pins, (QVariantMap{{"wallet_ui", "2.0.0"}, {"signer", "1.0.0"}}));
         QCOMPARE(c.selection, (QVariantMap{{"token_list", true}, {"rln", false}}));
-        QCOMPARE(c.optionalPins, (QVariantMap{{"token_list", "0.1.0"}}));
+        QCOMPARE(c.optionalPins, (QVariantMap{{"token_list", "0.1.0"}, {"signer", "1.0.0"}}));
     }
 
     // Nothing picked: the subject alone, as before the picks.
@@ -246,8 +247,21 @@ private slots:
             logos::installChoicesFrom(params, "chat_ui", "1.0.0"),
             {{"libp2p", false}}, {{"rln", "0.10.0"}});
         QCOMPARE(c.selection, (QVariantMap{{"rln", false}, {"libp2p", false}}));
-        QCOMPARE(c.optionalPins, (QVariantMap{{"libp2p", "1.0.0"}, {"rln", "0.10.0"}}));
+        QCOMPARE(c.optionalPins, (QVariantMap{{"libp2p", "1.0.0"}, {"rln", "0.10.0"}, {"zk", "0.9.0"}}));
         QCOMPARE(c.pins, (QVariantMap{{"chat_ui", "1.0.0"}, {"zk", "0.9.0"}}));
+    }
+
+    // The requester can't know what Basecamp's plan needs: a package it
+    // picked a version of as one the app needs, which the dialog shows as
+    // optional, is not pinned once the person changes the optional packages.
+    void aPackageTheDialogShowsAsOptionalLosesItsPin()
+    {
+        const logos::InstallChoices c = logos::withDialogPicks(
+            logos::installChoicesFrom({{"versions", QVariantMap{{"rln", "1.0.0"}}}}, "chat_ui", "1.0.0"),
+            {{"rln", false}}, {});
+        QCOMPARE(c.pins, (QVariantMap{{"chat_ui", "1.0.0"}}));
+        QCOMPARE(c.selection, (QVariantMap{{"rln", false}}));
+        QCOMPARE(c.optionalPins, (QVariantMap{{"rln", "1.0.0"}}));
     }
 
     // Optional fields are omitted rather than sent empty — an empty
