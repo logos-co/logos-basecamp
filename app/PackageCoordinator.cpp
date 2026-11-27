@@ -21,6 +21,7 @@
 #include <QPointer>
 #include <QThreadPool>
 #include <QTimer>
+#include <QUuid>
 
 #include <memory>
 
@@ -636,6 +637,13 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
             self->refuseConfirmed(requestId, moduleName, refused);
             return;
         }
+        const QString ticket = self->approveForLater(moduleName, answer);
+        if (!ticket.isEmpty()) {
+            self->endGatePreview(moduleName);
+            self->m_pendingAction = {};
+            self->finishIntent(requestId, true, QString(), QVariantMap{{QStringLiteral("ticket"), ticket}});
+            return;
+        }
         self->runUninstallCascade(moduleName, answer);
     });
 }
@@ -912,11 +920,26 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         return;   // answered — do NOT let the broker time it out too
     }
 
+    const bool installOrUpgrade = intent == QLatin1String("basecamp.packages.confirm_install")
+                               || intent == QLatin1String("basecamp.packages.confirm_upgrade");
+    // Approved earlier, for its turn: it goes ahead, or the person is asked
+    // again.
+    if (installOrUpgrade && !params.value(QStringLiteral("ticket")).toString().isEmpty()) {
+        goAhead(dispatchId, intent, params, requesterName);
+        return;
+    }
+
     const QString name    = params.value(QStringLiteral("name")).toString();
     const QString version = params.value(QStringLiteral("version")).toString();
     m_pendingOptionalPackages.clear();
     m_pendingPreviewName.clear();
     ++m_gatePreviewEpoch;
+    if (installOrUpgrade) {
+        m_gateRequester = requesterName;
+        m_gateIntent = intent;
+        m_gateParams = params;
+        m_gateInstalled.clear();
+    }
 
     if (intent == QLatin1String("basecamp.packages.confirm_install")) {
         if (name.isEmpty()) {
@@ -932,6 +955,7 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         QPointer<PackageCoordinator> self(this);
         afterFreshRead([self, name, version, params, requesterName, dispatchId]() {
             if (!self || self->m_pendingInstallRequestId != dispatchId) return;
+            self->m_gateInstalled = self->m_installedPackagesCache;
             const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
             const bool localFile = logos::trust::requestsLocalFile(params);
             self->beginConfirmationTrust(name, version, localFile, params, requesterName);
@@ -962,6 +986,7 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         QPointer<PackageCoordinator> self(this);
         afterFreshRead([self, name, version, params, requesterName, dispatchId]() {
             if (!self || self->m_pendingAction.intentRequestId != dispatchId) return;
+            self->m_gateInstalled = self->m_installedPackagesCache;
             const int mode = params.value(QStringLiteral("mode")).toInt();
             const QStringList installedDeps = self->dependentsOfBatch({name});
             const QStringList loadedDeps = self->m_uiPluginManager
@@ -1084,6 +1109,11 @@ void PackageCoordinator::confirmInstallGate(const QString& name, const QStringLi
         self->endGatePreview(name);
         if (!refused.isEmpty()) {
             self->refuseConfirmed(requestId, name, refused);
+            return;
+        }
+        const QString ticket = self->approveForLater(name, answer);
+        if (!ticket.isEmpty()) {
+            self->finishIntent(requestId, true, QString(), QVariantMap{{QStringLiteral("ticket"), ticket}});
             return;
         }
         // What it replaces stops first, off the click stack: the installer
@@ -2422,14 +2452,126 @@ int PackageCoordinator::beginTrust(const QString& name)
     return m_gateTrust.epoch;
 }
 
-void PackageCoordinator::publishTrust(int epoch, const QVariantMap& trust, const QVariantMap& approval)
+void PackageCoordinator::publishTrust(int epoch, const QVariantMap& trust, const QVariantMap& approval,
+                                      const QStringList& plannedOn)
 {
     if (m_gateTrust.epoch != epoch) return;
     // A gate answered or cancelled is over, and so is what it was told.
     if (gateDispatchId(m_gateTrust.name) != m_gateTrust.about) return;
     m_gateTrust.trust = trust;
     m_gateTrust.approval = approval;
+    // Each app's backend too: a package by that name would block the app.
+    m_gateTrust.plannedOn.clear();
+    for (const QString& planned : plannedOn) {
+        if (planned.isEmpty()) continue;
+        m_gateTrust.plannedOn << planned << planned + QStringLiteral("_backend");
+    }
+    m_gateTrust.plannedOn.removeDuplicates();
     emitTrust();
+}
+
+// ── Approved for later ───────────────────────────────────────────────────
+
+namespace {
+
+// Long enough for the change before it to download, short enough that a
+// forgotten approval doesn't wait for good.
+constexpr int kTicketLifetimeSecs = 60 * 60;
+
+}  // namespace
+
+QString PackageCoordinator::releaseOf(const QVariantList& installed, const QString& name)
+{
+    const QVariantMap record = logos::trust::installedRecordOf(installed, name);
+    if (record.isEmpty()) return {};
+    return record.value(QStringLiteral("version")).toString() + QLatin1Char('\x01')
+         + record.value(QStringLiteral("hashes")).toMap().value(QStringLiteral("root")).toString();
+}
+
+QString PackageCoordinator::approveForLater(const QString& name, const QVariantMap& answer)
+{
+    if (!m_gateParams.value(QStringLiteral("waits")).toBool() || !m_changeInFlight || !m_changeInFlight())
+        return {};
+    // Nothing to hold it to without what it was planned over.
+    if (m_gateTrust.name != name || m_gateTrust.plannedOn.isEmpty()) return {};
+    Ticket ticket;
+    ticket.requester = m_gateRequester;
+    ticket.intent = m_gateIntent;
+    for (const char* key : {"name", "version", "repositoryUrl", "mode"})
+        ticket.request.insert(QLatin1String(key), m_gateParams.value(QLatin1String(key)));
+    ticket.answer = answer;
+    for (const QString& planned : m_gateTrust.plannedOn)
+        ticket.plannedOn.insert(planned, releaseOf(m_gateInstalled, planned));
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    ticket.expires = now.addSecs(kTicketLifetimeSecs);
+    // Those never handed back go.
+    for (auto it = m_tickets.begin(); it != m_tickets.end();)
+        it = it->expires < now ? m_tickets.erase(it) : std::next(it);
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_tickets.insert(id, ticket);
+    qInfo().noquote() << "PackageCoordinator:" << name << "approved for later, after the change being made";
+    return id;
+}
+
+void PackageCoordinator::goAhead(const QString& dispatchId, const QString& intent,
+                                 const QVariantMap& params, const QString& requesterName)
+{
+    const Ticket held = m_tickets.take(params.value(QStringLiteral("ticket")).toString());
+    QVariantMap again = params;
+    again.remove(QStringLiteral("ticket"));
+    const QString name = again.value(QStringLiteral("name")).toString();
+    const auto same = [&held, &again](const char* key) {
+        return held.request.value(QLatin1String(key)) == again.value(QLatin1String(key));
+    };
+    // Not this request's approval, or one too old: asked again, as any request.
+    if (held.requester.isEmpty() || held.requester != requesterName || held.intent != intent
+        || !same("name") || !same("version") || !same("repositoryUrl") || !same("mode")
+        || held.expires < QDateTime::currentDateTimeUtc()) {
+        qInfo().noquote() << "PackageCoordinator: no approval to go ahead with for" << name << "; asking";
+        beginPackageConfirmation(dispatchId, intent, again, requesterName);
+        return;
+    }
+    const bool install = intent == QLatin1String("basecamp.packages.confirm_install");
+    // Held at once, as a dialog's request is: a withdrawal finds it.
+    if (install) {
+        m_pendingInstallRequestId = dispatchId;
+        m_pendingInstallName = name;
+    } else {
+        m_pendingAction = {PendingOp::UninstallCascade, name, {}, dispatchId, /*isUpgrade=*/true};
+    }
+    QPointer<PackageCoordinator> self(this);
+    afterFreshRead([self, dispatchId, intent, again, requesterName, held, name, install]() {
+        if (!self) return;
+        if (install ? self->m_pendingInstallRequestId != dispatchId
+                    : self->m_pendingAction.intentRequestId != dispatchId)
+            return;
+        // What it was planned over changed: the person decides again.
+        for (auto it = held.plannedOn.cbegin(); it != held.plannedOn.cend(); ++it) {
+            if (releaseOf(self->m_installedPackagesCache, it.key()) == it.value()) continue;
+            qInfo().noquote() << "PackageCoordinator:" << it.key() << "changed since" << name
+                              << "was approved; asking again";
+            if (install) {
+                self->m_pendingInstallRequestId.clear();
+                self->m_pendingInstallName.clear();
+            } else {
+                self->m_pendingAction = {};
+            }
+            self->beginPackageConfirmation(dispatchId, intent, again, requesterName);
+            return;
+        }
+        if (!install) {
+            self->runUninstallCascade(name, held.answer);
+            return;
+        }
+        self->m_pendingInstallRequestId.clear();
+        self->m_pendingInstallName.clear();
+        // What it replaces stops first, as at once.
+        QMetaObject::invokeMethod(self, [self, name, dispatchId, answer = held.answer]() {
+            if (!self) return;
+            self->unloadReplaced(name, answer);
+            self->finishIntent(dispatchId, true, QString(), answer);
+        }, Qt::QueuedConnection);
+    });
 }
 
 void PackageCoordinator::emitTrust()
@@ -2465,9 +2607,12 @@ void PackageCoordinator::assessPlanTrust(const QString& name, const QVariantList
                 },
                 logos::trust::trustedDids(self->m_publisherKeyring->keys()),
                 logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, resolved));
+            QStringList plannedOn{name};
+            for (const QVariant& v : resolved) plannedOn << v.toMap().value(QStringLiteral("name")).toString();
             self->publishTrust(epoch, self->trustSummary(name, packages),
                                {{QStringLiteral("plan"),
-                                 logos::trust::approvedPlan(name, resolved, packages)}});
+                                 logos::trust::approvedPlan(name, resolved, packages)}},
+                               plannedOn);
         });
     });
 }
@@ -2545,7 +2690,7 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
                             self->installedRecord(name + QStringLiteral("_backend")),
                             logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, {}));
                         self->publishTrust(epoch, self->trustSummary(name, {package}),
-                                           {{QStringLiteral("file"), file}});
+                                           {{QStringLiteral("file"), file}}, {name});
                     }, Qt::QueuedConnection);
                 });
             });

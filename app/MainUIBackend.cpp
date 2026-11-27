@@ -145,6 +145,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
         m_packageCoordinator->beginPackageConfirmation(r.id, r.intent, r.params, r.requester);
         return true;
     });
+    m_packageCoordinator->setChangeInFlight([this]() { return !m_confirmations->changing().isEmpty(); });
     connect(m_packageCoordinator, &PackageCoordinator::installedPackagesRead,
             m_confirmations, &ConfirmationQueue::installedChanged);
     connect(m_packageCoordinator, &PackageCoordinator::packageOnItsWay,

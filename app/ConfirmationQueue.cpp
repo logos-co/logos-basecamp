@@ -6,7 +6,18 @@
 
 namespace {
 
+const QString kConfirmInstall = QStringLiteral("basecamp.packages.confirm_install");
+const QString kConfirmUpgrade = QStringLiteral("basecamp.packages.confirm_upgrade");
 const QString kConfirmUninstall = QStringLiteral("basecamp.packages.confirm_uninstall");
+
+// Shown while another change is made, as its app holds what is approved
+// until its turn.
+bool canWait(const ConfirmationQueue::Request& request)
+{
+    return (request.intent == kConfirmInstall || request.intent == kConfirmUpgrade)
+        && request.params.value(QStringLiteral("waits")).toBool()
+        && !request.params.contains(QStringLiteral("ticket"));
+}
 
 }  // namespace
 
@@ -25,8 +36,10 @@ ConfirmationQueue::ConfirmationQueue(QObject* parent)
 
 void ConfirmationQueue::submit(const Request& request)
 {
-    // An installer app asks again only once its last change has ended.
-    if (!m_change.requester.isEmpty() && m_change.requester == request.requester) endChange();
+    // An installer app asks again only once its last change has ended, but
+    // for a request that can wait.
+    if (!m_change.requester.isEmpty() && m_change.requester == request.requester && !canWait(request))
+        endChange();
     m_waiting.append(request);
     next();
 }
@@ -36,7 +49,8 @@ void ConfirmationQueue::answered(const QString& id, bool approved, const QVarian
     if (id.isEmpty() || id != m_onScreen.id) return;
     const Request request = m_onScreen;
     m_onScreen = {};
-    if (approved) {
+    // Approved for later: nothing changes until its ticket is handed back.
+    if (approved && !data.toMap().contains(QStringLiteral("ticket"))) {
         Change change{request.requester, {}, {}};
         const QVariantMap answer = data.toMap();
         if (request.intent == kConfirmUninstall) {
@@ -145,8 +159,14 @@ void ConfirmationQueue::endChange()
 
 void ConfirmationQueue::next()
 {
-    while (m_onScreen.id.isEmpty() && m_change.requester.isEmpty() && !m_waiting.isEmpty()) {
-        m_onScreen = m_waiting.takeFirst();
+    while (m_onScreen.id.isEmpty()) {
+        // The first that may be shown: any once nothing is being made, one
+        // that can wait whatever is.
+        int at = -1;
+        for (int i = 0; i < m_waiting.size() && at < 0; ++i)
+            if (m_change.requester.isEmpty() || canWait(m_waiting.at(i))) at = i;
+        if (at < 0) return;
+        m_onScreen = m_waiting.takeAt(at);
         const Request request = m_onScreen;
         m_beginning = true;
         const bool shown = m_begin && m_begin(request);

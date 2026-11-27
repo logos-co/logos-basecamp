@@ -10,6 +10,7 @@ namespace logos::trust { struct Package; class PublisherKeyring; }
 #include "utils/HostProfile.h"
 #include "UninstallPlan.h"
 
+#include <QDateTime>
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
@@ -123,6 +124,9 @@ public:
                                                const QVariant& data, std::function<void(bool heard)> heard)>;
     void setIntentResponder(IntentResponder responder)
     { m_intentResponder = std::move(responder); }
+    // Whether an approved change is being made now (ConfirmationQueue): one
+    // approved meanwhile is approved for later.
+    void setChangeInFlight(std::function<bool()> inFlight) { m_changeInFlight = std::move(inFlight); }
 
     // Entry point for the three `basecamp.packages.confirm_*` intents. Opens the
     // matching dialog, or answers at once when it can't (another is open, the
@@ -620,6 +624,36 @@ private:
     QVariantList m_installedPackagesCache;
     // package_manager's record of the installed `name`, or empty.
     QVariantMap installedRecord(const QString& name) const;
+
+    // ── Approved for later ──────────────────────────────────────────────
+    // An install or upgrade whose app can hold an approval until its turn
+    // (`waits`), approved while another change is being made, is answered
+    // {ticket}, and nothing is unloaded. Handed back at its turn (`ticket`), it
+    // is answered with what was approved, once every package it was planned
+    // over is still installed as it was; otherwise the person is asked again.
+    struct Ticket {
+        QString requester;
+        QString intent;
+        QVariantMap request;               // name, version, repositoryUrl, mode
+        QVariantMap answer;                // as approved
+        QHash<QString, QString> plannedOn; // releaseOf() each, as it was planned
+        QDateTime expires;
+    };
+    QHash<QString, Ticket> m_tickets;
+    std::function<bool()> m_changeInFlight;
+    // The install or upgrade on screen: who asked, what, and what was
+    // installed when it was planned.
+    QString m_gateRequester;
+    QString m_gateIntent;
+    QVariantMap m_gateParams;
+    QVariantList m_gateInstalled;
+    // `name`'s release in `installed` (package_manager's records), "" if none.
+    static QString releaseOf(const QVariantList& installed, const QString& name);
+    // A ticket for the install or upgrade on screen, approved now with
+    // `answer`; "" when it is to go ahead now.
+    QString approveForLater(const QString& name, const QVariantMap& answer);
+    void goAhead(const QString& dispatchId, const QString& intent, const QVariantMap& params,
+                 const QString& requesterName);
     // The names only Logos may install under (reservedNames()).
     QStringList m_bundledNames;
     QSet<QString>            m_installedNameSet;
@@ -654,6 +688,8 @@ private:
         // What confirming it holds the requester to: {plan: approvedPlan()}
         // or {file: fileIdentity()}.
         QVariantMap approval;
+        // Every package it was planned over, and each app's backend.
+        QStringList plannedOn;
     };
     TrustVerdict m_gateTrust;
     logos::trust::PublisherKeyring* m_publisherKeyring = nullptr;
@@ -661,7 +697,8 @@ private:
     // The dispatch id of the confirmation on screen for `name`, or empty.
     QString gateDispatchId(const QString& name) const;
     int  beginTrust(const QString& name);
-    void publishTrust(int epoch, const QVariantMap& trust, const QVariantMap& approval = {});
+    void publishTrust(int epoch, const QVariantMap& trust, const QVariantMap& approval = {},
+                      const QStringList& plannedOn = {});
     void emitTrust();
     void assessPlanTrust(const QString& name, const QVariantList& resolved);
     void assessLocalFileTrust(const QString& name, const QString& version, const QString& path);

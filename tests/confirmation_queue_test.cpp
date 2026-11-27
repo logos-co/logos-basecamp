@@ -20,6 +20,20 @@ ConfirmationQueue::Request install(const char* id, const QString& requester, con
     return {QLatin1String(id), kInstall, {{QStringLiteral("name"), name}}, requester};
 }
 
+// An install whose app holds an approval until its turn.
+ConfirmationQueue::Request canWait(const char* id, const QString& requester, const QString& name)
+{
+    return {QLatin1String(id), kInstall, {{QStringLiteral("name"), name}, {QStringLiteral("waits"), true}},
+            requester};
+}
+
+// Handing back the ticket it was approved with for later.
+ConfirmationQueue::Request goingAhead(const char* id, const QString& requester, const QString& name)
+{
+    return {QLatin1String(id), kInstall, {{QStringLiteral("name"), name}, {QStringLiteral("ticket"), "t1"}},
+            requester};
+}
+
 QVariantMap plan(const QString& name, const QString& version, const QString& rootHash = {})
 {
     return {{QStringLiteral("plan"),
@@ -96,6 +110,73 @@ private slots:
         q.answered("a", true, plan("wallet", "1.0.0"));
         q.submit(install("b", kAppManager, "chat"));
         QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+    }
+
+    // Asked about while its own app's change is made: shown at once, and
+    // approved for later, which starts no change and ends none.
+    void anInstallThatCanWaitIsShownWhileAChangeIsMade()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(canWait("b", kAppManager, "chat"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+        QCOMPARE(q.changing(), kAppManager);
+        q.answered("b", true, QVariantMap{{QStringLiteral("ticket"), QStringLiteral("t1")}});
+        QCOMPARE(q.changing(), kAppManager);
+        q.installedChanged(installed("wallet", "1.0.0"));
+        QVERIFY(q.changing().isEmpty());
+    }
+
+    // Handing its ticket back, it goes ahead once the change before it is made.
+    void aTicketHandedBackWaitsForTheChange()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kPackageManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(goingAhead("b", kAppManager, "chat"));
+        QCOMPARE(shown.ids, QStringList{"a"});
+        q.installedChanged(installed("wallet", "1.0.0"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+    }
+
+    // Only an install or upgrade that says it can wait: an uninstall waits.
+    void onlyAnInstallThatCanWaitIsShownWhileAChangeIsMade()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        q.submit(install("b", kPackageManager, "chat"));
+        q.submit({QStringLiteral("c"), kUninstall,
+                  {{QStringLiteral("names"), QStringList{"old"}}, {QStringLiteral("waits"), true}},
+                  kPackageManager});
+        QCOMPARE(shown.ids, QStringList{"a"});
+        QCOMPARE(q.waiting(), 2);
+    }
+
+    // It never takes the place of a dialog on screen, but it goes ahead of one
+    // the change holds.
+    void oneThatCanWaitWaitsForTheDialogOnScreenOnly()
+    {
+        ConfirmationQueue q;
+        Shown shown;
+        q.setBegin(shown.begin());
+        q.submit(install("a", kAppManager, "wallet"));
+        q.submit(canWait("b", kAppManager, "chat"));
+        QCOMPARE(shown.ids, QStringList{"a"});
+        q.answered("a", true, plan("wallet", "1.0.0"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b"}));
+        q.answered("b", true, QVariantMap{{QStringLiteral("ticket"), QStringLiteral("t1")}});
+        q.submit(install("c", kPackageManager, "notes"));
+        q.submit(canWait("d", kPackageManager, "maps"));
+        QCOMPARE(shown.ids, (QStringList{"a", "b", "d"}));
+        QCOMPARE(q.waiting(), 1);
     }
 
     void anUninstallIsMadeOnceItIsGone()

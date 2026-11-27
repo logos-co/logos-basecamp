@@ -13,10 +13,14 @@ class QTimer;
 
 // One approved package change at a time, whichever app asks: a
 // basecamp.packages.confirm_* waits while another's dialog is on screen, and
-// once approved, while that change is still being made. The change is made
-// once package_manager shows it on disk, the app that made it says how it
-// ended, asks again (an installer app asks only after its last change ended),
-// closes or stops, or a while has passed with nothing of it moving.
+// once approved, while that change is still being made. An install or
+// upgrade whose app can hold an approval until its turn (`waits`) is shown
+// while a change is made, and approved for later: an answer with a `ticket`
+// starts no change; the request handing it back goes ahead once the change
+// before it is made. The change is made once package_manager shows it on
+// disk, the app that made it says how it ended, asks again (an installer app
+// asks only after its last change ended, but for one that can wait), closes
+// or stops, or a while has passed with nothing of it moving.
 class ConfirmationQueue : public QObject {
     Q_OBJECT
 public:
@@ -39,7 +43,8 @@ public:
 
     // Shown now, or once the ones before it are through.
     void submit(const Request& request);
-    // Its answer: approved with `data` ({plan} or {file}), or not.
+    // Its answer: approved with `data` ({plan}, {file}, {names}, or {ticket}
+    // for later), or not.
     void answered(const QString& id, bool approved, const QVariant& data);
     // Its request ended unanswered: dropped if waiting, ended if on screen.
     void withdrawn(const QString& id);

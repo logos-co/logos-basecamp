@@ -313,7 +313,9 @@ export function installFixture(userDir, manifest, payloadDir, opts = {}) {
     // Plain ustar — the LGX reader doesn't speak pax extended headers.
     execFileSync("tar", ["--format", "ustar", "-C", seed, "-czf", pkg, "manifest.json", "variants"]);
     const add = ["add", pkg, "--variant", variant, "--files", payload, "-y"];
-    const main = Object.values(manifest.main || {})[0];
+    // A package that isn't a QML app names its plugin file, as makeLgx's do.
+    const main = Object.values(manifest.main || {})[0]
+      || (manifest.type === "ui_qml" ? "" : mainFileOf(manifest));
     if (main) add.push("--main", main);
     execFileSync(lgx, add);
     execFileSync(lgx, ["extract", pkg, "-v", variant, "-o", out]);
