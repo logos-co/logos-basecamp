@@ -1660,14 +1660,19 @@ void PackageCoordinator::refreshDownloadSource()
     LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
-    withDownloaderStarted([this, dlClient]() {
+    withDownloaderStarted([this]() {
         QPointer<PackageCoordinator> self(this);
-        dlClient->invokeRemoteMethodAsync(
-            "package_downloader", "getDownloadSource", QVariantList{},
-            [self](QVariant result) {
+        LogosModules(m_logosAPI).package_downloader.getDownloadSourceAsyncResult(
+            [self](logos::AsyncResult<QString> result) {
                 if (!self) return;
+                // One that didn't answer leaves the selector as it was.
+                if (!result.ok()) {
+                    qWarning() << "PackageCoordinator: package_downloader.getDownloadSource:"
+                               << QString::fromStdString(result.error.message);
+                    return;
+                }
                 // A downloader without the method answers nothing: stays empty.
-                const QString source = result.toString();
+                const QString source = result.value;
                 if (source == QStringLiteral("http")) self->releaseStorageIfUnused();
                 if (source == self->m_downloadSource) return;
                 self->m_downloadSource = source;
@@ -1744,11 +1749,12 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
     // Before start(), which saves it: under "http" the node then never comes
     // up. A downloader that predates that refuses it, and gets it once started.
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "setDownloadSource", QVariantList{source},
-        [self, source](QVariant result) {
+    LogosModules(m_logosAPI).package_downloader.setDownloadSourceAsyncResult(
+        source,
+        [self, source](logos::AsyncResult<QVariantMap> result) {
             if (!self) return;
-            const bool saved = result.toMap().value("success").toBool();
+            // Not saved, or no answer: set again once the downloader runs.
+            const bool saved = result.ok() && result.value.value("success").toBool();
             self->withDownloaderStarted([self, source, saved]() {
                 if (!self) return;
                 if (saved) self->refreshDownloadSource();
@@ -1762,10 +1768,9 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
 // starts the node itself.
 void PackageCoordinator::requestStorage()
 {
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
-    dlClient->invokeRemoteMethodAsync("package_downloader", "startStorage", QVariantList{},
-                                      [](QVariant) {});
+    if (!downloaderClient()) return;
+    LogosModules(m_logosAPI).package_downloader.startStorageAsyncResult(
+        [](logos::AsyncResult<QVariantMap>) {});
 }
 
 void PackageCoordinator::retryStorage()
@@ -1778,13 +1783,12 @@ void PackageCoordinator::retryStorage()
 
     // A restart, not just the reload: a start that never answered holds the
     // downloader in "starting", and it waits that out rather than start twice.
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
+    if (!downloaderClient()) return;
 
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "stop", QVariantList{},
-        [self](QVariant) {
+    // Answered or not, it starts again.
+    LogosModules(m_logosAPI).package_downloader.stopAsyncResult(
+        [self](logos::AsyncResult<QVariantMap>) {
             if (!self) return;
             self->m_downloaderStarted = false;
             self->withDownloaderStarted([self]() {
@@ -1795,17 +1799,15 @@ void PackageCoordinator::retryStorage()
 
 void PackageCoordinator::refreshStorageState()
 {
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
+    if (!downloaderClient()) return;
 
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "getStorageState", QVariantList{},
-        [self](QVariant result) {
+    LogosModules(m_logosAPI).package_downloader.getStorageStateAsyncResult(
+        [self](logos::AsyncResult<QVariantMap> result) {
             if (!self) return;
-            // A downloader without the method answers nothing: stays empty.
-            const QVariantMap r = result.toMap();
-            if (r.isEmpty()) return;
+            // No answer, or a downloader without the method: stays as it was.
+            const QVariantMap r = result.value;
+            if (!result.ok() || r.isEmpty()) return;
             const QString state = r.value("state").toString();
             self->setStorageState(state, r.value("error").toString());
 
