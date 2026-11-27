@@ -28,10 +28,12 @@ Item {
         // A refused source snaps the selector back to the real one.
         if (operation === "setDownloadSource" && !success) d.pendingDownloadSource = ""
         if (success) {
-            d.lastError = ""
+            // A read clears only what a read raised, not a refused change.
+            if (operation !== "list" || d.lastErrorFromList) d.lastError = ""
             if (operation === "add") d.newRepoUrl = ""
             return
         }
+        d.lastErrorFromList = operation === "list"
         d.lastError = error.length > 0 ? error : qsTr("Operation failed")
     }
 
@@ -39,6 +41,7 @@ Item {
         id: d
         property string newRepoUrl: ""
         property string lastError: ""
+        property bool lastErrorFromList: false
         property string pendingRemoveUrl: ""
 
         readonly property var downloadSourceValues: ["any", "logos", "http"]

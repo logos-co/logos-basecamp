@@ -41,6 +41,27 @@ TestCase {
         compare(removeSpy.count, 1)
     }
 
+    // A read that failed leaves the rows shown and says why; the next read
+    // that works clears it, but not a change the downloader refused.
+    function test_a_failed_read_keeps_the_rows_and_says_why() {
+        var view = createTemporaryObject(viewComp, testCase, { repositories: [
+            { url: "https://added/", displayName: "Added", enabled: true }] })
+        var banner = findChild(view, "repositories.errorBanner")
+        var why = "Couldn't read the repositories: package_downloader did not answer within 30 s."
+
+        view.reportOperationResult("list", "", false, why)
+        compare(banner.message, why)
+        verify(banner.shown)
+        verify(!!findChild(view, "repositories.remove.https://added/"), "the row stays")
+
+        view.reportOperationResult("list", "", true, "")
+        compare(banner.message, "")
+
+        view.reportOperationResult("add", "https://bad/", false, "Not a repository")
+        view.reportOperationResult("list", "", true, "")
+        compare(banner.message, "Not a repository")
+    }
+
     Component { id: viewComp; RepositoriesView { width: 760; height: 600 } }
     SignalSpy { id: removeSpy; signalName: "removeRequested" }
 

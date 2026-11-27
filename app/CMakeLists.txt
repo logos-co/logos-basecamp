@@ -357,6 +357,7 @@ set(PROJECT_SOURCES
     UIPluginManager.cpp
     PackageCoordinator.cpp
     RepositorySource.cpp
+    ModuleCallFailure.cpp
     UninstallPlan.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
