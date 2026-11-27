@@ -28,6 +28,8 @@ function description(verdict) {
         return qsTr("Comes with Basecamp, so only Logos can update it")
     if (verdict.backendTaken === true)
         return qsTr("Another installed package has the name its backend needs")
+    if (verdict.checkFailed === true)
+        return qsTr("Couldn't check who signed it. Try again")
     if (verdict.replaces)
         return qsTr("Not signed by %1, who signed the version you have").arg(verdict.replaces)
     if (verdict.replacesUnverified === true)

@@ -2745,18 +2745,36 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
         return;
     }
     QPointer<PackageCoordinator> self(this);
-    withInstalledAndTrustedKeys([self, name, version, path, epoch]() {
+    // A check that didn't answer is blocked as well, but says that is why.
+    const auto unchecked = [name, version](const logos::CallError& error) {
+        qWarning() << "PackageCoordinator: could not check" << name
+                   << QString::fromStdString(error.message);
+        logos::trust::Package package{name, version, logos::trust::Status::Invalid};
+        package.checkFailed = true;
+        return package;
+    };
+    withInstalledAndTrustedKeys([self, name, version, path, epoch, unchecked]() {
         if (!self) return;
         LogosModules modules(self->m_logosAPI);
-        modules.package_manager.verifyPackageAsync(path,
-            [self, name, version, path, epoch](QVariantMap verified) {
+        modules.package_manager.verifyPackageAsyncResult(path,
+            [self, name, version, path, epoch, unchecked](logos::AsyncResult<QVariantMap> checked) {
             if (!self) return;
+            if (!checked.ok()) {
+                self->publishTrust(epoch, self->trustSummary(name, {unchecked(checked.error)}));
+                return;
+            }
+            const QVariantMap verified = checked.value;
             // Read again for what package_manager_ui is to find before
             // installing it.
             LogosModules modules(self->m_logosAPI);
-            modules.package_manager.inspectPackageAsync(path,
-                [self, name, version, path, epoch, verified](QVariantMap inspected) {
+            modules.package_manager.inspectPackageAsyncResult(path,
+                [self, name, version, path, epoch, verified, unchecked](logos::AsyncResult<QVariantMap> read) {
                 if (!self) return;
+                if (!read.ok()) {
+                    self->publishTrust(epoch, self->trustSummary(name, {unchecked(read.error)}));
+                    return;
+                }
+                const QVariantMap inspected = read.value;
                 // And all of it, byte for byte: neither the root hash nor the
                 // signature covers the manifest of an unsigned file. Hashing a
                 // large file must not stall the UI, so it runs on the pool;

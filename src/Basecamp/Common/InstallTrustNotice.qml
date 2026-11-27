@@ -24,7 +24,8 @@ ColumnLayout {
         readonly property var publishers: root.trust.publishers || []
         readonly property var packages: root.trust.packages || []
         readonly property string invalidNames: d.names(p => p.status === "invalid" && !p.reserved && !p.builtIn
-                                                            && !p.backendTaken)
+                                                            && !p.backendTaken && !p.checkFailed)
+        readonly property string checkFailedNames: d.names(p => p.checkFailed === true)
         readonly property string builtInNames: d.names(p => p.builtIn === true)
         readonly property string reservedNames: d.names(p => p.reserved === true)
         readonly property string backendTakenNames: d.names(p => p.backendTaken === true)
@@ -95,6 +96,9 @@ ColumnLayout {
             if (d.backendTakenNames.length > 0)
                 lines.push(d.fill(qsTr("Another installed package has the name its backend needs: %1"),
                                   [d.backendTakenNames]))
+            if (d.checkFailedNames.length > 0)
+                lines.push(d.fill(qsTr("Couldn't check who signed it, so it can't be installed. Try again: %1"),
+                                  [d.checkFailedNames]))
             if (d.invalidNames.length > 0)
                 lines.push(d.fill(qsTr("Damaged, or the signature doesn't hold: %1"), [d.invalidNames]))
             return lines.join("\n")
