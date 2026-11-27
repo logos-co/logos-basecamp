@@ -1,0 +1,45 @@
+# Literals no design-system token fits. Each line is
+# "<path ending>: <line text>", the reason after " # ".
+Settings/AppsInspectorView.qml: Layout.preferredWidth: 32 # an app's icon tile, not a control
+Settings/AppsInspectorView.qml: Layout.preferredHeight: 32 # an app's icon tile, not a control
+Settings/InspectorPanelHeader.qml: leadingIcon.size: 18 # no 18 px icon token
+Settings/RepositoriesView.qml: iconSize: 18 # no 18 px icon token
+Settings/ThemeListDelegate.qml: implicitWidth: 36 # a theme's colour swatch, not a control
+Settings/ThemeListDelegate.qml: implicitHeight: 36 # a theme's colour swatch, not a control
+Settings/ThemeListDelegate.qml: spacing: 2 # a theme's name and detail lines; no 2 px spacing token
+Settings/ThemeListDelegate.qml: iconSize: 18 # no 18 px icon token
+Settings/TrustedPublishersView.qml: size: 20 # a copy button smaller than any control token
+Settings/TrustedPublishersView.qml: iconSize: 14 # no 14 px icon token
+Settings/TrustedPublishersView.qml: iconSize: 18 # no 18 px icon token
+Shell/ConfirmationDialog.qml: spacing: 6 # the dependency-change list; no 6 px spacing token
+Shell/ConfirmationDialog.qml: Layout.preferredHeight: 20 # an action chip, smaller than any control token
+Shell/IntentChooserDialog.qml: size: 20 # a copy button smaller than any control token
+Shell/IntentChooserDialog.qml: iconSize: 14 # no 14 px icon token
+Shell/IntentInstallDialog.qml: size: 20 # a copy button smaller than any control token
+Shell/IntentInstallDialog.qml: iconSize: 14 # no 14 px icon token
+Shell/OnboardingDownloadsStep.qml: font.pixelSize: 18 # the onboarding step title, as in Alisher's OnboardingProto.qml; no 18 px text token
+Shell/OnboardingDownloadsStep.qml: font.pixelSize: 11 # onboarding fine print, as in Alisher's OnboardingProto.qml; no 11 px text token
+Shell/OnboardingStepPage.qml: spacing: 2 # the title and subtitle, as in Alisher's OnboardingProto.qml; no 2 px spacing token
+Shell/OnboardingStepPage.qml: Layout.preferredWidth: 1 # a layout weight that makes the rail's steps equal, not a size
+Shell/OnboardingStepPage.qml: font.pixelSize: 11 # the step rail's labels, as in Alisher's OnboardingProto.qml; no 11 px text token
+Shell/OnboardingStorageStep.qml: font.pixelSize: 18 # the onboarding step title, as in Alisher's OnboardingProto.qml; no 18 px text token
+Shell/OnboardingStorageStep.qml: spacing: 2 # the status line and its detail; no 2 px spacing token
+Shell/UninstallDialog.qml: Layout.preferredWidth: 24 # the loading spinner, not a control
+Shell/UninstallDialog.qml: Layout.preferredHeight: 24 # the loading spinner, not a control
+Shell/WelcomePage.qml: horizontalPadding: 6 # the ALPHA badge; no 6 px spacing token
+Shell/WelcomePage.qml: verticalPadding: 2 # the ALPHA badge; no 2 px spacing token
+Sidebar/BrokenAppMarker.qml: radius: 7 # half the 14 px marker: a circle
+Sidebar/BrokenAppMarker.qml: anchors.topMargin: 3 # where the "!" glyph sits in the marker
+Sidebar/BrokenAppMarker.qml: anchors.bottomMargin: 3 # where the "!" glyph sits in the marker
+Sidebar/SidebarAppDelegate.qml: width: 20 # the loading spinner, not a control
+Sidebar/SidebarAppDelegate.qml: height: 20 # the loading spinner, not a control
+Sidebar/SidebarAppDelegate.qml: radius: 1.5 # half a 3 px spinner dot: a circle
+Sidebar/SidebarAppDelegate.qml: anchors.rightMargin: -2 # the broken-app marker overhangs the icon's corner
+Sidebar/SidebarAppDelegate.qml: anchors.topMargin: -2 # the broken-app marker overhangs the icon's corner
+Sidebar/SidebarCircleButton.qml: width: 24 # the sidebar glyph; no 24 px icon token
+Sidebar/SidebarCircleButton.qml: height: 24 # the sidebar glyph; no 24 px icon token
+Sidebar/SidebarCircleButton.qml: anchors.rightMargin: -2 # the broken-app marker overhangs the icon's corner
+Sidebar/SidebarCircleButton.qml: anchors.topMargin: -2 # the broken-app marker overhangs the icon's corner
+Sidebar/SidebarIconButton.qml: width: 24 # the sidebar glyph; no 24 px icon token
+Sidebar/SidebarIconButton.qml: height: 24 # the sidebar glyph; no 24 px icon token
+Sidebar/SidebarPanel.qml: spacing: 2 # between the sidebar's app buttons; no 2 px spacing token

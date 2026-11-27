@@ -124,7 +124,7 @@ Item {
                     text: root.loading ? qsTr("Refreshing…") : qsTr("Refresh")
                     enabled: !root.loading
                     implicitWidth: 120
-                    implicitHeight: 36
+                    implicitHeight: Theme.size.controlMedium
                     onClicked: root.refreshRequested()
                 }
             }
@@ -198,7 +198,7 @@ Item {
                     Layout.topMargin: Theme.spacing.tiny
                     Layout.fillWidth: true
                     Layout.maximumWidth: 260
-                    Layout.preferredHeight: 40
+                    Layout.preferredHeight: Theme.size.controlLarge
                     model: d.downloadSourceLabels
                     currentIndex: d.downloadSourceIndex
                     onActivated: function(idx) {
@@ -252,7 +252,7 @@ Item {
                         enabled: d.newRepoUrl.trim().length > 0
                         Layout.fillWidth: true
                         implicitWidth: 100
-                        implicitHeight: 40
+                        implicitHeight: Theme.size.controlLarge
                         onClicked: root.addRequested(d.newRepoUrl.trim())
                     }
                 }
@@ -262,7 +262,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.bottomMargin: Theme.spacing.medium
-                Layout.preferredHeight: 1
+                Layout.preferredHeight: Theme.size.borderWidth
                 color: Theme.palette.borderSubtle
             }
 
@@ -287,7 +287,7 @@ Item {
                     radius: Theme.spacing.radiusLarge
                     color: Theme.palette.background
                     border.color: Theme.palette.borderSubtle
-                    border.width: 1
+                    border.width: Theme.size.borderWidth
 
                     ColumnLayout {
                         id: rowCol
@@ -339,7 +339,7 @@ Item {
                                 },
                                 LogosIconButton {
                                     objectName: "repositories.remove." + url
-                                    size: 32
+                                    size: Theme.size.controlSmall
                                     iconSize: 18
                                     iconSource: LogosIcons.trash
                                     flat: true

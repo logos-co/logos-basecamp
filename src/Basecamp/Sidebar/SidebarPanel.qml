@@ -225,7 +225,7 @@ Control {
     // Reusable component for SeparatorLine
     component SeparatorLine: Rectangle {
         Layout.fillWidth: true
-        Layout.preferredHeight: 1
+        Layout.preferredHeight: Theme.size.borderWidth
         Layout.leftMargin: Theme.spacing.tiny
         Layout.rightMargin: Theme.spacing.tiny
         color: Theme.palette.borderTertiaryMuted

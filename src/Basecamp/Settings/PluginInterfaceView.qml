@@ -46,14 +46,14 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 20
+        spacing: Theme.spacing.xlarge
 
         // Its way back is Settings' back row, over it.
         LogosText {
             Layout.fillWidth: true
             text: "Interface: " + root.pluginName
-            font.pixelSize: 20
-            font.weight: Font.Bold
+            font.pixelSize: Theme.typography.panelTitleText
+            font.weight: Theme.typography.weightBold
             color: Theme.palette.text
             elide: Text.ElideRight
         }
@@ -63,14 +63,14 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: Theme.palette.backgroundSecondary
-            radius: 8
+            radius: Theme.spacing.radiusLarge
             border.color: Theme.palette.border
-            border.width: 1
+            border.width: Theme.size.borderWidth
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 20
-                spacing: 16
+                anchors.margins: Theme.spacing.xlarge
+                spacing: Theme.spacing.large
 
                 LogosScrollView {
                     id: interfaceScroll
@@ -87,13 +87,13 @@ Item {
                         // to width 0 without always recovering. `availableWidth`
                         // is the stable public property (scrollbars included).
                         width: interfaceScroll.availableWidth
-                        spacing: 8
+                        spacing: Theme.spacing.small
 
                         // ── Methods ──
                         LogosText {
                             text: "Methods"
                             font.pixelSize: Theme.typography.secondaryText
-                            font.weight: Font.Bold
+                            font.weight: Theme.typography.weightBold
                             color: Theme.palette.textSecondary
                             visible: root.methods.length > 0
                         }
@@ -103,31 +103,31 @@ Item {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: methodColumn.implicitHeight + 24
+                                Layout.preferredHeight: methodColumn.implicitHeight + 2 * Theme.spacing.medium
                                 color: Theme.palette.surface
-                                radius: 6
+                                radius: Theme.spacing.radiusMedium
 
                                 ColumnLayout {
                                     id: methodColumn
                                     anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 8
+                                    anchors.margins: Theme.spacing.medium
+                                    spacing: Theme.spacing.small
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 12
+                                        spacing: Theme.spacing.medium
 
                                         // The signature beside the name while
                                         // it fits, under it when it doesn't.
                                         Flow {
                                             id: methodTitle
                                             Layout.fillWidth: true
-                                            spacing: 12
+                                            spacing: Theme.spacing.medium
 
                                             LogosText {
                                                 width: Math.min(implicitWidth, methodTitle.width)
                                                 text: modelData.name || modelData
-                                                font.weight: Font.Bold
+                                                font.weight: Theme.typography.weightBold
                                                 color: Theme.palette.info
                                                 elide: Text.ElideRight
                                             }
@@ -175,7 +175,7 @@ Item {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
-                            Layout.topMargin: 40
+                            Layout.topMargin: Theme.spacing.xxlarge
                             visible: root.methods.length === 0
                         }
 
@@ -183,9 +183,9 @@ Item {
                         LogosText {
                             text: "Events"
                             font.pixelSize: Theme.typography.secondaryText
-                            font.weight: Font.Bold
+                            font.weight: Theme.typography.weightBold
                             color: Theme.palette.textSecondary
-                            Layout.topMargin: 12
+                            Layout.topMargin: Theme.spacing.medium
                             visible: root.events.length > 0
                         }
 
@@ -194,26 +194,26 @@ Item {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: eventColumn.implicitHeight + 24
+                                Layout.preferredHeight: eventColumn.implicitHeight + 2 * Theme.spacing.medium
                                 color: Theme.palette.surface
-                                radius: 6
+                                radius: Theme.spacing.radiusMedium
 
                                 ColumnLayout {
                                     id: eventColumn
                                     anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 8
+                                    anchors.margins: Theme.spacing.medium
+                                    spacing: Theme.spacing.small
 
                                     // As a method's: beside the name, or under it.
                                     Flow {
                                         id: eventTitle
                                         Layout.fillWidth: true
-                                        spacing: 12
+                                        spacing: Theme.spacing.medium
 
                                         LogosText {
                                             width: Math.min(implicitWidth, eventTitle.width)
                                             text: modelData.name || modelData
-                                            font.weight: Font.Bold
+                                            font.weight: Theme.typography.weightBold
                                             // Amber to distinguish events from the blue methods.
                                             color: Theme.palette.warning
                                             elide: Text.ElideRight
@@ -249,20 +249,20 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 150
                     color: Theme.palette.surfaceRecessed
-                    radius: 4
+                    radius: Theme.spacing.radiusSmall
                     border.color: Theme.palette.border
-                    border.width: 1
+                    border.width: Theme.size.borderWidth
                     visible: root.resultText.length > 0
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
+                        anchors.margins: Theme.spacing.medium
+                        spacing: Theme.spacing.small
 
                         LogosText {
                             text: "Result:"
                             font.pixelSize: Theme.typography.secondaryText
-                            font.weight: Font.Bold
+                            font.weight: Theme.typography.weightBold
                             color: Theme.palette.textSecondary
                         }
 
@@ -274,7 +274,7 @@ Item {
                             TextArea {
                                 objectName: "pluginInterface.result"
                                 text: root.resultText
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.typography.secondaryText
                                 font.family: Theme.typography.publicSans
                                 color: Theme.palette.success
                                 readOnly: true

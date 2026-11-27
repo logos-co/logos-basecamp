@@ -33,7 +33,7 @@ RowLayout {
         // toggle — the "Load"/"Unload" labels repeat across rows and tables.
         objectName: "moduleRow.loadToggle." + (root.row && root.row.name ? root.row.name : "")
         Layout.preferredWidth: 100
-        Layout.preferredHeight: 40
+        Layout.preferredHeight: Theme.size.controlLarge
         radius: Theme.spacing.radiusLarge
         visible: root.row && !root.row.isMainUi
         enabled: !root.busy && !root.locked
@@ -45,7 +45,7 @@ RowLayout {
 
     LogosButton {
         Layout.preferredWidth: 100
-        Layout.preferredHeight: 40
+        Layout.preferredHeight: Theme.size.controlLarge
         radius: Theme.spacing.radiusLarge
         visible: root.interfaceEnabled && root.row && root.row.isLoaded
         text: qsTr("Interface")

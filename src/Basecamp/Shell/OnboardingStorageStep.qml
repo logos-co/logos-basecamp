@@ -109,8 +109,8 @@ ColumnLayout {
         spacing: Theme.spacing.medium
 
         Item {
-            Layout.preferredWidth: 20
-            Layout.preferredHeight: 20
+            Layout.preferredWidth: Theme.size.iconMedium
+            Layout.preferredHeight: Theme.size.iconMedium
             Layout.alignment: Qt.AlignTop
 
             LogosSpinner {

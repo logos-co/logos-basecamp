@@ -353,7 +353,7 @@ IntentDialog {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 1
+                            Layout.preferredHeight: Theme.size.borderWidth
                             Layout.bottomMargin: Theme.spacing.tiny
                             color: Theme.palette.border
                         }

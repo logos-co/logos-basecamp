@@ -203,6 +203,7 @@ The app runs an inspector server (default: localhost:3768) that the `qml-inspect
 
 - `src/Basecamp/` - QML UI source files, organised by feature (Sidebar/Settings/Shell/Common/Installer/Icons)
 - `src/Basecamp/Installer/` - a copy of basecamp-installer-common's JavaScript, the words and rules the two installer apps and the shell's install dialogs share (`import Basecamp.Installer`). Change it there, then `scripts/sync-installer-common.sh`. The `shared-installer-words` check fails on a copy that isn't the pinned revision, and on a shared phrase written again in the shell's QML (exceptions, with reasons, in `tests/shared-words-allow.txt`)
+- `src/Basecamp/` colours and sizes come from the design system's `Theme`: the `theme-literals` check (`tests/theme-literals-check`) fails on a hard-coded colour or size; one no token fits goes in `tests/theme-literals-allow.txt`, with why
 - `nix/` - Nix build configurations (app.nix, smoke-test.nix, integration-test.nix)
 - `logos-qt-mcp` - QML Inspector: MCP server, test framework, Qt plugin (separate repo, flake input)
 - `tests/` - UI integration tests

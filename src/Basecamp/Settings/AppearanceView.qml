@@ -166,7 +166,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 1
+                Layout.preferredHeight: Theme.size.borderWidth
                 color: Theme.palette.borderSubtle
             }
 

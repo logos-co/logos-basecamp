@@ -11,14 +11,20 @@
 
 #include <functional>
 
-// The current theme's colours for the shell's widget chrome (QSS, QPalette,
-// clear colours), which no QML binding reaches. Logos::ThemeStore resolves
-// them exactly as it does Theme.palette.
+// The current theme's colours and sizes for the shell's widget chrome (QSS,
+// QPalette, clear colours), which no QML binding reaches. Logos::ThemeStore
+// resolves them exactly as it does Theme.palette, Theme.spacing and Theme.size.
 namespace ThemeColours {
 
 inline QColor color(const char* token)
 {
     return Logos::ThemeStore::instance()->color(QLatin1String(token));
+}
+
+// A Theme size, as QML spells it: "spacing.small", "size.iconXSmall".
+inline int metric(const char* token)
+{
+    return Logos::ThemeStore::metric(QLatin1String(token));
 }
 
 // `token` as a QSS colour, its alpha scaled by `alpha`.

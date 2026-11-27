@@ -27,7 +27,7 @@ Rectangle {
     radius: Theme.spacing.radiusLarge
     color: Theme.palette.background
     border.color: root.current ? Theme.palette.primary : Theme.palette.borderSubtle
-    border.width: 1
+    border.width: Theme.size.borderWidth
 
     MouseArea {
         anchors.fill: parent
@@ -63,7 +63,7 @@ Rectangle {
                 implicitHeight: 36
                 radius: Theme.spacing.radiusSmall
                 border.color: Theme.palette.borderSubtle
-                border.width: 1
+                border.width: Theme.size.borderWidth
                 Accessible.ignored: true
                 gradient: Gradient {
                     orientation: Gradient.Horizontal
@@ -109,7 +109,7 @@ Rectangle {
             objectName: "appearance.remove." + root.themeId
             visible: !root.builtin
             flat: true
-            size: 32
+            size: Theme.size.controlSmall
             iconSize: 18
             iconSource: LogosIcons.trash
             Accessible.name: qsTr("Remove %1").arg(root.name)

@@ -94,7 +94,7 @@ Item {
                     color: control.pressed  ? Theme.palette.background
                          : control.hovered  ? Theme.palette.backgroundTertiary
                                             : Theme.palette.backgroundSecondary
-                    border.width: 1
+                    border.width: Theme.size.borderWidth
                     border.color: Theme.palette.border
                 }
             }

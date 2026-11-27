@@ -47,8 +47,9 @@ QWidget* makeSectionPlaceholder(int section, QWidget* parent)
                                       ph);
     loadingLabel->setAlignment(Qt::AlignCenter);
     ThemeColours::bind(loadingLabel, [loadingLabel] {
-        loadingLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 14px;")
-            .arg(ThemeColours::css("textSecondary")));
+        loadingLabel->setStyleSheet(QStringLiteral("color: %1; font-size: %2px;")
+            .arg(ThemeColours::css("textSecondary"))
+            .arg(ThemeColours::metric("typography.primaryText")));
     });
     phLayout->addWidget(loadingLabel);
     return ph;
