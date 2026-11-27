@@ -7,6 +7,7 @@
 #include "LogosBasecampPaths.h"
 #include "OnboardingState.h"
 #include "RepositorySource.h"
+#include "ModuleCallFailure.h"
 #include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/InstallTrust.h"
@@ -1572,41 +1573,49 @@ void PackageCoordinator::refreshRepositories()
     ++m_repositoriesLoadingCount;
     if (!wasLoading) emit repositoriesLoadingChanged();
 
-    withDownloaderStarted([this, dlClient]() {
+    withDownloaderStarted([this]() {
+        LogosModules logos(m_logosAPI);
         QPointer<PackageCoordinator> self(this);
-        dlClient->invokeRemoteMethodAsync(
-            "package_downloader", "listRepositories", QVariantList{},
-            [self](QVariant result) {
+        logos.package_downloader.listRepositoriesAsyncResult(
+            [self](logos::AsyncResult<QVariantList> r) {
                 if (!self) return;
-                self->m_repositories = withDisplayLabels(result.toList());
-                const int remaining = --self->m_repositoriesLoadingCount;
-                emit self->repositoriesChanged();
-                if (remaining == 0) emit self->repositoriesLoadingChanged();
-            });
+                // A downloader that didn't answer has not emptied the list.
+                if (r.ok()) {
+                    self->m_repositories = withDisplayLabels(r.value);
+                    emit self->repositoriesChanged();
+                    emit self->repositoryOperationCompleted(QStringLiteral("list"), QString(), true, QString());
+                } else {
+                    emit self->repositoryOperationCompleted(QStringLiteral("list"), QString(), false,
+                        QStringLiteral("Couldn't read the repositories: %1").arg(moduleCallFailure(
+                            QStringLiteral("package_downloader"), r.error.code, r.error.message,
+                            kRepositoryReadMs)));
+                }
+                if (--self->m_repositoriesLoadingCount == 0) emit self->repositoriesLoadingChanged();
+            },
+            Timeout(kRepositoryReadMs));
     });
 }
 
 // add/remove/setEnabled share a {success, error} result shape. The
 // post-success refresh happens via catalogChanged in
 // subscribeToPackageDownloaderEvents, so this only forwards the outcome.
-void invokeRepositoryMutation(PackageCoordinator* self,
-                              LogosAPIClient* dlClient,
-                              const QString& methodName,
-                              const QString& operation,
-                              const QString& url,
-                              const QVariantList& args)
+static std::function<void(logos::AsyncResult<QVariantMap>)>
+repositoryChangeAnswered(PackageCoordinator* self, const QString& operation, const QString& url)
 {
     QPointer<PackageCoordinator> selfPtr(self);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", methodName, args,
-        [selfPtr, operation, url](QVariant result) {
-            if (!selfPtr) return;
-            const QVariantMap r = result.toMap();
-            const bool ok = r.value("success").toBool();
-            emit selfPtr->repositoryOperationCompleted(operation, url,
-                ok, r.value("error").toString());
-            if (ok) selfPtr->refreshRepositories();
-        });
+    return [selfPtr, operation, url](logos::AsyncResult<QVariantMap> r) {
+        if (!selfPtr) return;
+        if (!r.ok()) {
+            emit selfPtr->repositoryOperationCompleted(operation, url, false,
+                moduleChangeFailure(QStringLiteral("package_downloader"), r.error.code,
+                                    r.error.message, kRepositoryChangeMs));
+            return;
+        }
+        const bool ok = r.value.value("success").toBool();
+        emit selfPtr->repositoryOperationCompleted(operation, url,
+            ok, r.value.value("error").toString());
+        if (ok) selfPtr->refreshRepositories();
+    };
 }
 
 void PackageCoordinator::addRepository(const QString& url)
@@ -1617,9 +1626,10 @@ void PackageCoordinator::addRepository(const QString& url)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    withDownloaderStarted([this, dlClient, url]() {
-        invokeRepositoryMutation(this, dlClient, QStringLiteral("addRepository"),
-                                 QStringLiteral("add"), url, QVariantList{url});
+    withDownloaderStarted([this, url]() {
+        LogosModules(m_logosAPI).package_downloader.addRepositoryAsyncResult(
+            url, repositoryChangeAnswered(this, QStringLiteral("add"), url),
+            Timeout(kRepositoryChangeMs));
     });
 }
 
@@ -1631,9 +1641,10 @@ void PackageCoordinator::removeRepository(const QString& url)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    withDownloaderStarted([this, dlClient, url]() {
-        invokeRepositoryMutation(this, dlClient, QStringLiteral("removeRepository"),
-                                 QStringLiteral("remove"), url, QVariantList{url});
+    withDownloaderStarted([this, url]() {
+        LogosModules(m_logosAPI).package_downloader.removeRepositoryAsyncResult(
+            url, repositoryChangeAnswered(this, QStringLiteral("remove"), url),
+            Timeout(kRepositoryChangeMs));
     });
 }
 
@@ -1645,10 +1656,10 @@ void PackageCoordinator::setRepositoryEnabled(const QString& url, bool enabled)
             QStringLiteral("package_downloader not connected"));
         return;
     }
-    withDownloaderStarted([this, dlClient, url, enabled]() {
-        invokeRepositoryMutation(this, dlClient, QStringLiteral("setRepositoryEnabled"),
-                                 QStringLiteral("setEnabled"), url,
-                                 QVariantList{url, enabled});
+    withDownloaderStarted([this, url, enabled]() {
+        LogosModules(m_logosAPI).package_downloader.setRepositoryEnabledAsyncResult(
+            url, enabled, repositoryChangeAnswered(this, QStringLiteral("setEnabled"), url),
+            Timeout(kRepositoryChangeMs));
     });
 }
 
@@ -1657,14 +1668,19 @@ void PackageCoordinator::refreshDownloadSource()
     LogosAPIClient* dlClient = downloaderClient();
     if (!dlClient || !dlClient->isConnected()) return;
 
-    withDownloaderStarted([this, dlClient]() {
+    withDownloaderStarted([this]() {
         QPointer<PackageCoordinator> self(this);
-        dlClient->invokeRemoteMethodAsync(
-            "package_downloader", "getDownloadSource", QVariantList{},
-            [self](QVariant result) {
+        LogosModules(m_logosAPI).package_downloader.getDownloadSourceAsyncResult(
+            [self](logos::AsyncResult<QString> result) {
                 if (!self) return;
+                // One that didn't answer leaves the selector as it was.
+                if (!result.ok()) {
+                    qWarning() << "PackageCoordinator: package_downloader.getDownloadSource:"
+                               << QString::fromStdString(result.error.message);
+                    return;
+                }
                 // A downloader without the method answers nothing: stays empty.
-                const QString source = result.toString();
+                const QString source = result.value;
                 if (source == QStringLiteral("http")) self->releaseStorageIfUnused();
                 if (source == self->m_downloadSource) return;
                 self->m_downloadSource = source;
@@ -1690,15 +1706,18 @@ void PackageCoordinator::setDownloadSource(const QString& source)
         m_coreModuleManager->loadModule(QStringLiteral("storage_module"));
     }
 
-    withDownloaderStarted([this, dlClient, source]() {
+    withDownloaderStarted([this, source]() {
         QPointer<PackageCoordinator> self(this);
-        dlClient->invokeRemoteMethodAsync(
-            "package_downloader", "setDownloadSource", QVariantList{source},
-            [self, source](QVariant result) {
+        LogosModules(m_logosAPI).package_downloader.setDownloadSourceAsyncResult(
+            source,
+            [self, source](logos::AsyncResult<QVariantMap> result) {
                 if (!self) return;
-                const QVariantMap r = result.toMap();
-                const bool ok = r.value("success").toBool();
-                QString error = r.value("error").toString();
+                const QVariantMap r = result.value;
+                const bool ok = result.ok() && r.value("success").toBool();
+                QString error = result.ok()
+                    ? r.value("error").toString()
+                    : moduleChangeFailure(QStringLiteral("package_downloader"), result.error.code,
+                                          result.error.message, kRepositoryChangeMs);
                 if (!ok && error.isEmpty())
                     error = QStringLiteral("package_downloader did not accept the download source");
                 emit self->repositoryOperationCompleted(QStringLiteral("setDownloadSource"),
@@ -1738,11 +1757,12 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
     // Before start(), which saves it: under "http" the node then never comes
     // up. A downloader that predates that refuses it, and gets it once started.
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "setDownloadSource", QVariantList{source},
-        [self, source](QVariant result) {
+    LogosModules(m_logosAPI).package_downloader.setDownloadSourceAsyncResult(
+        source,
+        [self, source](logos::AsyncResult<QVariantMap> result) {
             if (!self) return;
-            const bool saved = result.toMap().value("success").toBool();
+            // Not saved, or no answer: set again once the downloader runs.
+            const bool saved = result.ok() && result.value.value("success").toBool();
             self->withDownloaderStarted([self, source, saved]() {
                 if (!self) return;
                 if (saved) self->refreshDownloadSource();
@@ -1756,10 +1776,9 @@ void PackageCoordinator::chooseOnboardingSource(const QString& source)
 // starts the node itself.
 void PackageCoordinator::requestStorage()
 {
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
-    dlClient->invokeRemoteMethodAsync("package_downloader", "startStorage", QVariantList{},
-                                      [](QVariant) {});
+    if (!downloaderClient()) return;
+    LogosModules(m_logosAPI).package_downloader.startStorageAsyncResult(
+        [](logos::AsyncResult<QVariantMap>) {});
 }
 
 void PackageCoordinator::retryStorage()
@@ -1772,13 +1791,12 @@ void PackageCoordinator::retryStorage()
 
     // A restart, not just the reload: a start that never answered holds the
     // downloader in "starting", and it waits that out rather than start twice.
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
+    if (!downloaderClient()) return;
 
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "stop", QVariantList{},
-        [self](QVariant) {
+    // Answered or not, it starts again.
+    LogosModules(m_logosAPI).package_downloader.stopAsyncResult(
+        [self](logos::AsyncResult<QVariantMap>) {
             if (!self) return;
             self->m_downloaderStarted = false;
             self->withDownloaderStarted([self]() {
@@ -1789,17 +1807,15 @@ void PackageCoordinator::retryStorage()
 
 void PackageCoordinator::refreshStorageState()
 {
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient) return;
+    if (!downloaderClient()) return;
 
     QPointer<PackageCoordinator> self(this);
-    dlClient->invokeRemoteMethodAsync(
-        "package_downloader", "getStorageState", QVariantList{},
-        [self](QVariant result) {
+    LogosModules(m_logosAPI).package_downloader.getStorageStateAsyncResult(
+        [self](logos::AsyncResult<QVariantMap> result) {
             if (!self) return;
-            // A downloader without the method answers nothing: stays empty.
-            const QVariantMap r = result.toMap();
-            if (r.isEmpty()) return;
+            // No answer, or a downloader without the method: stays as it was.
+            const QVariantMap r = result.value;
+            if (!result.ok() || r.isEmpty()) return;
             const QString state = r.value("state").toString();
             self->setStorageState(state, r.value("error").toString());
 
@@ -2765,18 +2781,36 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
         return;
     }
     QPointer<PackageCoordinator> self(this);
-    withInstalledAndTrustedKeys([self, name, version, path, epoch]() {
+    // A check that didn't answer is blocked as well, but says that is why.
+    const auto unchecked = [name, version](const logos::CallError& error) {
+        qWarning() << "PackageCoordinator: could not check" << name
+                   << QString::fromStdString(error.message);
+        logos::trust::Package package{name, version, logos::trust::Status::Invalid};
+        package.checkFailed = true;
+        return package;
+    };
+    withInstalledAndTrustedKeys([self, name, version, path, epoch, unchecked]() {
         if (!self) return;
         LogosModules modules(self->m_logosAPI);
-        modules.package_manager.verifyPackageAsync(path,
-            [self, name, version, path, epoch](QVariantMap verified) {
+        modules.package_manager.verifyPackageAsyncResult(path,
+            [self, name, version, path, epoch, unchecked](logos::AsyncResult<QVariantMap> checked) {
             if (!self) return;
+            if (!checked.ok()) {
+                self->publishTrust(epoch, self->trustSummary(name, {unchecked(checked.error)}));
+                return;
+            }
+            const QVariantMap verified = checked.value;
             // Read again for what package_manager_ui is to find before
             // installing it.
             LogosModules modules(self->m_logosAPI);
-            modules.package_manager.inspectPackageAsync(path,
-                [self, name, version, path, epoch, verified](QVariantMap inspected) {
+            modules.package_manager.inspectPackageAsyncResult(path,
+                [self, name, version, path, epoch, verified, unchecked](logos::AsyncResult<QVariantMap> read) {
                 if (!self) return;
+                if (!read.ok()) {
+                    self->publishTrust(epoch, self->trustSummary(name, {unchecked(read.error)}));
+                    return;
+                }
+                const QVariantMap inspected = read.value;
                 // And all of it, byte for byte: neither the root hash nor the
                 // signature covers the manifest of an unsigned file. Hashing a
                 // large file must not stall the UI, so it runs on the pool;

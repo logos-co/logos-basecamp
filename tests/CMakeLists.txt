@@ -154,5 +154,7 @@ foreach(test_src IN LISTS TEST_SOURCES)
         Qt6::Test
         ${_extra_libs}
     )
+    # For a test that reads the app's own sources.
+    target_compile_definitions(${test_name} PRIVATE BASECAMP_SRC_DIR="${BASECAMP_SRC}")
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()

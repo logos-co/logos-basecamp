@@ -402,6 +402,31 @@ TestCase {
                 0, bodyOf(gate))
     }
 
+    // A check that didn't answer blocks the file, and the box says the check
+    // didn't run, not that the file is damaged.
+    function test_a_check_that_did_not_answer_says_so() {
+        var dlg = openGate("chat", [change("storage_module")])
+        dlg.trust = { needsPrompt: true, blocked: true, canTrust: false, trustCoversAll: false,
+            packages: [{ name: "storage_module", version: "0.3.0", status: "invalid", checkFailed: true }],
+            publishers: [],
+            byName: { storage_module: { status: "invalid", checkFailed: true } } }
+        compare(noticeTitle(dlg.contentItem), "This can't be installed.")
+        compare(noticeLines(dlg.contentItem),
+                ["Couldn't check who signed it, so it can't be installed. Try again: storage_module"])
+        compare(findChild(dlg.footer, "confirmationDialog.installGate.confirm").enabled, false)
+        tryVerify(function() { return shown(dlg.contentItem, "confirmationDialog.trust.storage_module") })
+        compare(mark(dlg.contentItem, "confirmationDialog.trust.storage_module"),
+                "warning | Couldn't check who signed it. Try again")
+
+        var gate = openGate("storage_module")
+        gate.trust = { needsPrompt: true, blocked: true, canTrust: false, trustCoversAll: false,
+            packages: [{ name: "storage_module", version: "0.3.0", status: "invalid", checkFailed: true }],
+            publishers: [],
+            byName: { storage_module: { status: "invalid", checkFailed: true } } }
+        compare(bodyOf(gate).indexOf("Install 'storage_module' v1.0.0, whose signature couldn't be checked. Try again."),
+                0, bodyOf(gate))
+    }
+
     // One of Basecamp's own apps never installs, Logos-signed or not: the box
     // says it updates only with Basecamp, not that it is damaged.
     function test_basecamps_own_apps_never_install() {

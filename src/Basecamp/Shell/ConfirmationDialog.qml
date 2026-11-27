@@ -248,6 +248,8 @@ LogosWarningDialog {
                 return ", which comes with Basecamp, so only Logos can update it";
             if (v.backendTaken)
                 return ", whose backend's name another installed package already has";
+            if (v.checkFailed)
+                return ", whose signature couldn't be checked. Try again";
             if (v.replaces)
                 return ", which isn't signed by " + v.replaces + ", who signed the version you have";
             if (v.replacesUnverified)
