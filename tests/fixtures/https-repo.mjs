@@ -54,9 +54,10 @@ function makeCertificate(dir) {
 // repository from `dir`. Resolves to
 // { url (its logos-repo.json), env (for spawnBasecamp), requests (every path
 // asked for, in order), republish(lgxPath) (serves it in place of the package
-// of its name), close() }.
+// of its name), close() }. `opts.stall`: paths it never answers, a download
+// that stays on its way.
 export async function serveRepository(dir, packages, opts = {}) {
-  const { name = "local-test-repo", displayName = "Local Test Repo" } = opts;
+  const { name = "local-test-repo", displayName = "Local Test Repo", stall = [] } = opts;
   const www = join(dir, "www");
   mkdirSync(www, { recursive: true });
   const { key, cert } = makeCertificate(dir);
@@ -65,6 +66,7 @@ export async function serveRepository(dir, packages, opts = {}) {
   const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (req, res) => {
     const asked = decodeURIComponent(new URL(req.url, "https://x").pathname);
     requests.push(asked);
+    if (stall.includes(asked)) return;
     const path = resolve(www, "." + asked);
     if (!path.startsWith(www + "/") || !existsSync(path)) {
       res.writeHead(404);
@@ -117,6 +119,9 @@ export async function serveRepository(dir, packages, opts = {}) {
       rows[rows.findIndex((r) => r.name === row.name)] = row;
       writeIndex();
     },
-    close: () => new Promise((done) => server.close(done)),
+    close: () => new Promise((done) => {
+      server.close(done);
+      server.closeAllConnections();
+    }),
   };
 }

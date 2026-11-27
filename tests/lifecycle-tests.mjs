@@ -34,7 +34,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
   assertResponsive,
@@ -1102,6 +1102,104 @@ if (twoRepos.first) {
   await twoRepos.first.close();
   await twoRepos.second.close();
 }
+
+// B12 and B13: an approved App Manager install that ends without its change
+// on disk ends it all the same, and a Package Manager confirmation waiting
+// behind it shows at once. It used to wait two minutes of nothing.
+//
+// Each serves `keep` and `then` from one repository (shaped by `serve`),
+// installs `keep`, has App Manager install `then` (which never lands,
+// `afterApproval` doing its part), and then Package Manager asks to remove
+// `keep`.
+async function endedChangeLetsTheNextThrough(app, userDir, { repo, keep, then, afterApproval = async () => {} }) {
+  const greeting = await app.requireObject("welcomePage.greeting");
+  await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+  await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+  await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+  const gate = await app.requireObject(INSTALL_GATE);
+  const install = async (name) => {
+    const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+    }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+    const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+  };
+
+  await install(keep);
+  await app.requireObject(`sidebar.app.${keep}`, 60000);
+  await install(then);
+  await afterApproval();
+
+  await openPackageManager(app);
+  const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+  await app.evalOn(store, '(logos.request("basecamp.packages.confirm_uninstall", ' +
+                          `{ names: [${JSON.stringify(keep)}] }, function () {}), "sent")`);
+  // Well inside the two minutes.
+  const dialog = await app.requireObject("uninstallDialog", 20000);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+  }, { timeout: 20000, interval: 300, description: "the removal's confirmation" });
+  if (existsSync(join(userDir, "plugins", then)))
+    throw new Error(`${then} is installed after all`);
+  const cancel = await app.requireObject("uninstallDialog.cancelButton");
+  await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+}
+
+function twoAppsRepo(prefix, opts = {}) {
+  const dir = mkdtempSync(join(tmpdir(), `basecamp-lifecycle-${prefix}-`));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name) => makeLgx({
+    outFile: join(lgxDir, `${name}.lgx`), name, version: "1.0.0", variant: process.env.LGX_VARIANT });
+  return { dir, packages: [pkg(opts.keep), pkg(opts.then)] };
+}
+
+// B12. Its download fails: App Manager says the install ended (finished).
+let failing = null;
+try {
+  const { dir, packages } = twoAppsRepo("failing", { keep: "kept_app", then: "lost_app" });
+  failing = { repo: await serveRepository(join(dir, "repo"), packages) };
+  // Listed, but its file is gone.
+  rmSync(join(dir, "repo", "www", "lost_app.lgx"));
+} catch (e) {
+  failing = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("failed install: App Manager saying so lets the next confirmation through",
+  async ({ app, userDir }) => {
+    await endedChangeLetsTheNextThrough(app, userDir, { repo: failing.repo, keep: "kept_app", then: "lost_app" });
+  }, failing.skip ? { skip: failing.skip } : { env: failing.repo.env }));
+if (failing.repo) await failing.repo.close();
+
+// B13. Its download stays on its way, and the person closes App Manager.
+let closing = null;
+try {
+  const { dir, packages } = twoAppsRepo("closing", { keep: "kept_app", then: "slow_app" });
+  closing = { repo: await serveRepository(join(dir, "repo"), packages, { stall: ["/slow_app.lgx"] }) };
+} catch (e) {
+  closing = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("closed mid-install: closing App Manager lets the next confirmation through",
+  async ({ app, userDir }) => {
+    const { repo } = closing;
+    await endedChangeLetsTheNextThrough(app, userDir, {
+      repo, keep: "kept_app", then: "slow_app",
+      afterApproval: async () => {
+        await app.waitFor(async () => {
+          assertEq(repo.requests.includes("/slow_app.lgx"), true, "slow_app's download asked for");
+        }, { timeout: 30000, interval: 300, description: "slow_app's download" });
+        const greeting = await app.requireObject("welcomePage.greeting");
+        await app.evalOn(greeting, '(backend.unloadUiModule("app_manager_ui"), "closing")');
+      },
+    });
+  }, closing.skip ? { skip: closing.skip } : { env: closing.repo.env }));
+if (closing.repo) await closing.repo.close();
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
