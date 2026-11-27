@@ -15,11 +15,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795774967,
-        "narHash": "sha256-oceVLch9hanvwe//LeRbiAkr5GUVo5Z7EG/A1iTXDhA=",
+        "lastModified": 1795795702,
+        "narHash": "sha256-jJE5mDDWroLCo1T12q58Apr4Wox/IbUH0Oa9AolXVjg=",
         "owner": "logos-co",
         "repo": "basecamp-installer-common",
-        "rev": "ae7a38dfd29c9b5a1d7ff95bb4c8a8cec4d59b79",
+        "rev": "eafdfb3bdbe515d301babed2bbcad598eb746d68",
         "type": "github"
       },
       "original": {
@@ -290,11 +290,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795729250,
-        "narHash": "sha256-Dz1j/FyeGioUq2++KjpmsskGX9szrai7wTtYcavb9mc=",
+        "lastModified": 1795799818,
+        "narHash": "sha256-BBjUfCZw6TmGcTRPZKdHAMlk1+yTL++gyWNRBW4uYE0=",
         "owner": "logos-co",
         "repo": "logos-app-manager-ui",
-        "rev": "499cf8406459e73e255af8d05d1cb5b738c0dd68",
+        "rev": "30c0d3766454983aca89cf598514348012e02ece",
         "type": "github"
       },
       "original": {
@@ -7736,11 +7736,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791829636,
-        "narHash": "sha256-R89QMdyd0QAFH84UnNmw6VcWCivkDkFo2YwVHd5w1kM=",
+        "lastModified": 1793304023,
+        "narHash": "sha256-PPJQjSABs54IcN6yZJ+lBZVx1reSQuVXp6f2eXip7VE=",
         "owner": "logos-co",
         "repo": "logos-module-loader-qt",
-        "rev": "ffe923df75a0f352aee1bdc397099d7df99b82ca",
+        "rev": "3eee855362c238052eb66833ec14782c9ab2d07e",
         "type": "github"
       },
       "original": {
@@ -8438,11 +8438,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791822819,
-        "narHash": "sha256-JgljKMXg7E6MAbMhi8xkGG5Mh+8eJZVlVMDnX5Y4C50=",
+        "lastModified": 1793357649,
+        "narHash": "sha256-Q4zcXcmg9EZzEq1YnSCrIlpc1uLoGRHujP1xGFtAJEg=",
         "owner": "logos-co",
         "repo": "logos-module",
-        "rev": "ceee1e35649cc938c213515c672fa40df0a32469",
+        "rev": "a6ac9bd1fd291df3d024898616e286096fb4048d",
         "type": "github"
       },
       "original": {
@@ -17408,6 +17408,9 @@
     },
     "logos-package-manager-ui": {
       "inputs": {
+        "basecamp-installer-common": [
+          "basecamp-installer-common"
+        ],
         "logos-intents-module": [
           "logos-intents-module"
         ],
@@ -17423,11 +17426,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795617840,
-        "narHash": "sha256-m+tJxWTZfEN0hmeIKNrPYWBk2zDIHNMmFx0LPhxPTPg=",
+        "lastModified": 1795798394,
+        "narHash": "sha256-QVsX6usBGV5uREbgK4gfCKWFU26PDZlxyvRp8ZqpeUs=",
         "owner": "logos-co",
         "repo": "logos-package-manager-ui",
-        "rev": "6b11abe2fa49260e7f7e5cbbba20d9139a8eefd1",
+        "rev": "b02f86334690686e51c345825b1a9142dcf63358",
         "type": "github"
       },
       "original": {
@@ -17988,11 +17991,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791820914,
-        "narHash": "sha256-QHKLVXirr1xh50DMOIDcWOba3xbbaliuNnfDyTxlI8w=",
+        "lastModified": 1793356734,
+        "narHash": "sha256-fiQhXUzp8FN6FIpsdjKrv93bAs23sNaYcICHSeQBYX8=",
         "owner": "logos-co",
         "repo": "logos-package",
-        "rev": "9e3fcc785c4978dc1c1c4b2b9fba0555d96c920d",
+        "rev": "4bdd9041ebfbd06c2b22134afdcd27fce8a43f3c",
         "type": "github"
       },
       "original": {
@@ -20246,11 +20249,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791036558,
-        "narHash": "sha256-a1bPAyLuOC5/fJfyGmE0cJPEJQRfQCqklsH7WdZ8v6s=",
+        "lastModified": 1793369932,
+        "narHash": "sha256-9QG/UfmrTyFmBlBf1urIL8BCfRLdbyC1UOlk2ma+AZA=",
         "owner": "logos-co",
         "repo": "logos-plugin-qt",
-        "rev": "2d36a08819b8df36094036d02d130aa4bd3a6132",
+        "rev": "98519c78ec2130fc3dabf61931e65f1fff008012",
         "type": "github"
       },
       "original": {
