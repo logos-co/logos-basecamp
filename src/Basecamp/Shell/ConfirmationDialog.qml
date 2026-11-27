@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Logos.Controls
 import Logos.Theme
-import Basecamp.AppManager
 import Basecamp.Common
 
 // Reusable dialog for dependency-aware confirmation / informational prompts.
@@ -116,27 +115,35 @@ LogosWarningDialog {
         optionalPreviewRequested(moduleName, optionalSelection, optionalPickedVersions);
     }
 
+    // Whether `p` can be installed at `version`, from a source that serves it.
+    function offersVersion(p, version) {
+        return !p.error && !!version && (version === p.version
+            || (p.versions || []).some(function(v) {
+                return v && v.manifest && v.manifest.version === version && v.sourceAvailable !== false;
+            }));
+    }
+
     onOptionalPackagesChanged: {
         var picks = {};
         optionalPackages.forEach(function(p) {
-            const picked = optionalPickedVersions[p.name];
-            if (!p.error && picked && (picked === p.version
-                || (p.versions || []).some(function(v) {
-                    return v && v.manifest && v.manifest.version === picked;
-                }))) picks[p.name] = picked;
+            if (offersVersion(p, optionalPickedVersions[p.name])) picks[p.name] = optionalPickedVersions[p.name];
         });
         optionalPickedVersions = picks;
     }
 
+    // Each optional as the requester asked: ticked or not, and at the version
+    // it picked (`requestedVersion`), which is what the plan resolved with.
     function resetOptionalSelection() {
         var selected = {};
+        var picks = {};
         for (var i = 0; i < optionalPackages.length; ++i) {
             var offer = optionalPackages[i];
             if (!offer.error && !offer.requiredFor) selected[offer.name] = offer.selected !== false;
+            if (offersVersion(offer, offer.requestedVersion)) picks[offer.name] = offer.requestedVersion;
         }
         resolutionPending = false;
         optionalSelection = selected;
-        optionalPickedVersions = ({});
+        optionalPickedVersions = picks;
     }
 
     // The backend's default (`selected`) until the user toggles the row.
@@ -170,6 +177,12 @@ LogosWarningDialog {
     // merely attributes; a warning on every ordinary operation is noise that
     // teaches the user to skip the one that matters.
     property bool requesterBundled: false
+    // App Manager, the Apps slot's app (DefaultApps.h): its requests are the
+    // person's own clicks there, so the dialog speaks of an app and says
+    // nothing of who asked.
+    property string appsApp: ""
+    readonly property bool appWording: root.requesterName.length > 0
+                                       && root.requesterName === root.appsApp
 
     property var displayNameLookup: function(name) { return name; }
 
@@ -190,6 +203,24 @@ LogosWarningDialog {
         id: d
 
         readonly property bool trustApplies: root.mode === "installGate" || root.mode === "upgradeCascade"
+        // What the change stops while it swaps files: what runs on the package
+        // it upgrades (loadedItems), and what each package it replaces stops
+        // (a row's `closes`), for the rows that install: an optional one when
+        // ticked, or when one that needs it is.
+        readonly property var running: {
+            const names = (root.loadedItems || []).slice()
+            const add = function(c) {
+                (c.closes || []).forEach(function(n) { if (names.indexOf(n) < 0) names.push(n) })
+            }
+            root.mandatoryChanges.forEach(add)
+            const ticked = root.selectedOptionalNames()
+            root.optionalPackages.forEach(function(p) {
+                if (ticked.indexOf(p.name) >= 0
+                    || (p.requiredFor || []).some(function(n) { return ticked.indexOf(n) >= 0 }))
+                    add(p)
+            })
+            return names
+        }
         readonly property bool trustHolds: d.trustApplies
                                            && (root.trust.pending === true || root.trust.blocked === true)
         readonly property bool trustAsks: d.trustApplies && !d.trustHolds && root.trust.needsPrompt === true
@@ -254,12 +285,12 @@ LogosWarningDialog {
         if (root.mode === "unloadCascade")
             return "Unload Dependent Modules?";
         if (root.mode === "upgradeCascade") {
-            if (root.upgradeModeKind === 1) return "Downgrade Package?";
-            if (root.upgradeModeKind === 2) return "Reinstall Package?";
-            return "Upgrade Package?";
+            if (root.upgradeModeKind === 1) return root.appWording ? "Downgrade App?" : "Downgrade Package?";
+            if (root.upgradeModeKind === 2) return root.appWording ? "Reinstall App?" : "Reinstall Package?";
+            return root.appWording ? "Upgrade App?" : "Upgrade Package?";
         }
         if (root.mode === "installGate")
-            return "Install Package?";
+            return root.appWording ? "Install App?" : "Install Package?";
         if (root.mode === "installError")
             return "Install Failed";
         if (root.mode === "loadFailed")
@@ -446,7 +477,7 @@ LogosWarningDialog {
         LogosText {
             objectName: "confirmationDialog.requester"
             Layout.fillWidth: true
-            visible: root.requesterName.length > 0
+            visible: root.requesterName.length > 0 && !root.appWording
             wrapMode: Text.Wrap
             // Payload-adjacent and attacker-influenced on the open
             // confirm_install intent: never let a name render as markup.
@@ -530,7 +561,7 @@ LogosWarningDialog {
                     // pre-existing copy bug). If nothing is currently
                     // running on top of the module, the head sentence
                     // stands on its own.
-                    if (root.loadedItems.length === 0)
+                    if (d.running.length === 0)
                         return head;
                     return head + " The modules below are running on top of it and "
                                 + "will be unloaded for the swap — they keep working "
@@ -553,6 +584,11 @@ LogosWarningDialog {
                             ? " Choose optional packages below."
                             : " No other packages need to change.");
                     }
+                    // What runs on a package it replaces stops for the swap.
+                    if (d.running.length > 0)
+                        return iHead + " Installing it also applies the dependency "
+                                     + "changes listed below. The modules below are running "
+                                     + "on ones it replaces and will be unloaded for the swap.";
                     return iHead + " Installing it also applies the dependency "
                                  + "changes listed below:";
                 }
@@ -670,7 +706,7 @@ LogosWarningDialog {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 8
-            visible: root.mode === "upgradeCascade" && root.loadedItems.length > 0
+            visible: d.trustApplies && d.running.length > 0
 
             LogosText {
                 Layout.fillWidth: true
@@ -694,7 +730,7 @@ LogosWarningDialog {
                     objectName: "confirmationDialog.running"
                     anchors.fill: parent
                     anchors.margins: 8
-                    model: root.loadedItems
+                    model: d.running
                     clip: true
                     delegate: LogosText {
                         width: ListView.view ? ListView.view.width : 0

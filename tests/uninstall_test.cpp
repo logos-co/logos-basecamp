@@ -165,6 +165,18 @@ private slots:
         QCOMPARE(dependentNames(p), (QStringList{"irc_ui"}));
     }
 
+    // A target built in, or Basecamp's own, is refused before anything
+    // unloads: the batch took targets as they came, so a confirm_uninstall
+    // naming main_ui would have unloaded Basecamp's UI first.
+    void a_target_built_in_or_basecamps_own_is_irremovable()
+    {
+        Input in = worldChatAndWallet();
+        in.targets = {"Chat"};
+        QVERIFY(irremovable(in).isEmpty());
+        in.targets = {"Chat", "accounts_module", "main_ui"};
+        QCOMPARE(irremovable(in), (QStringList{"accounts_module", "main_ui"}));
+    }
+
     // ── Scenario 14 — embedded dep in the closure ──────────────────────
 
     void embedded_dep_is_kept_and_filtered_out_of_the_batch()

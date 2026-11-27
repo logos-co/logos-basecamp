@@ -293,6 +293,7 @@ private slots:
     void basecampsOwnRequestGoesThroughTheModule();
     void basecampsOwnSingleOptionChoiceIsAnsweredWithoutADialog();
     void basecampsOwnSingleOptionChoiceStartsTheAppFirst();
+    void basecampsOwnChoiceGoesToItsDefaultApp();
     void aRestartFailsBasecampsOwnRequestsInFlight();
     void anInstallOfferNamesTheIntent();
     void whichAppABackendIsStaysInBasecamp();
@@ -438,6 +439,40 @@ void TestIntentsModuleHost::basecampsOwnSingleOptionChoiceIsAnsweredWithoutADial
                                           {QStringLiteral("providers"), two}}));
     host.pullWork();
     QCOMPARE(shown.count(), 2);
+}
+
+// The welcome page's Install of an app goes to App Manager, with another app
+// offering apps.install too; anyone else's request, and another intent, still
+// ask.
+void TestIntentsModuleHost::basecampsOwnChoiceGoesToItsDefaultApp()
+{
+    FakeModule m;
+    IntentsModuleHost host(m.call());
+    QSignalSpy shown(&host, &IntentsModuleHost::chooserRequested);
+    host.setDefaultProvider([](const QString& intent) {
+        return intent == QStringLiteral("apps.install") ? QStringLiteral("app_manager_ui_backend")
+                                                        : QString();
+    });
+    makeReady(host);
+    const QJsonArray both{QJsonObject{{QStringLiteral("module"), QStringLiteral("app_store_backend")}},
+                          QJsonObject{{QStringLiteral("module"), QStringLiteral("app_manager_ui_backend")}}};
+    const auto choose = [&](const char* id, const char* requester, const char* intent) {
+        return item("choose", id, {{QStringLiteral("requester"), QLatin1String(requester)},
+                                   {QStringLiteral("intent"), QLatin1String(intent)},
+                                   {QStringLiteral("providers"), both}});
+    };
+
+    m.work.append(choose("own", "main_ui", "apps.install"));
+    host.pullWork();
+    QCOMPARE(shown.count(), 0);
+    QCOMPARE(m.lastAnswer().value(QStringLiteral("action")).toString(), QStringLiteral("choose"));
+    QCOMPARE(m.lastAnswer().value(QStringLiteral("provider")).toString(), QStringLiteral("app_manager_ui_backend"));
+
+    m.work.append(choose("wallet", "wallet_backend", "apps.install"));
+    m.work.append(choose("link", "logos_link", "apps.install"));
+    m.work.append(choose("show", "main_ui", "packages.show"));
+    host.pullWork();
+    QCOMPARE(shown.count(), 3);
 }
 
 // As a pick in the chooser: answered once the app's backend is up.

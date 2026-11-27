@@ -14,7 +14,7 @@
 #include "ModulesFilterProxy.h"
 #include "InstallEnums.h"
 
-// The App Manager's model, filled by a test as the backend fills it.
+// The catalogue model, filled by a test as the backend fills it.
 class TestAppsModel : public AppsModel {
     Q_OBJECT
 public:
@@ -55,9 +55,6 @@ public slots:
 #else
         Q_UNUSED(engine);
 #endif
-        qmlRegisterUncreatableType<InstallStage>("Basecamp.Backend", 1, 0,
-            "InstallStage",
-            QStringLiteral("Use InstallStage.Downloading etc.; not instantiable."));
         qmlRegisterUncreatableType<InstallStatus>("Basecamp.Backend", 1, 0,
             "InstallStatus",
             QStringLiteral("Use InstallStatus.Installed etc.; not instantiable."));

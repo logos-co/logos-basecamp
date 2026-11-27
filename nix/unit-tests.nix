@@ -1,4 +1,4 @@
-{ pkgs, src, logosPackageHeaders, logosPackageLib, logosPackageManagerLibrary, logosViewModuleRuntimeSrc, logosDesignSystem }:
+{ pkgs, src, basecampInstallerCommon, logosPackageHeaders, logosPackageLib, logosPackageManagerLibrary, logosViewModuleRuntimeSrc, logosDesignSystem }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-basecamp-unit-tests";
@@ -14,7 +14,7 @@ pkgs.stdenv.mkDerivation {
   ];
   buildInputs = [
     pkgs.qt6.qtbase
-    pkgs.qt6.qtdeclarative   # Qt::Qml — InstallStage.h includes <QtQml/qqml.h>
+    pkgs.qt6.qtdeclarative   # Qt::Qml — InstallEnums.h includes <QtQml/qqml.h>
     # log_sink_test / logging_config_test declare these as `// libdeps:`.
     pkgs.spdlog
     pkgs.yaml-cpp
@@ -30,6 +30,7 @@ pkgs.stdenv.mkDerivation {
       -DLGX_ROOT="${logosPackageLib}" \
       -DLOGOS_PACKAGE_MANAGER_ROOT="${logosPackageManagerLibrary}" \
       -DLOGOS_VIEW_MODULE_RUNTIME_ROOT="${logosViewModuleRuntimeSrc}" \
+      -DBASECAMP_INSTALLER_COMMON_DIR="${basecampInstallerCommon}" \
       -DCMAKE_PREFIX_PATH="${logosDesignSystem}"
     cmake --build build-unit-tests
     runHook postBuild

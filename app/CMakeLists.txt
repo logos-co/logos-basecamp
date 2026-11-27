@@ -28,8 +28,14 @@ find_package(Qt6 COMPONENTS Widgets RemoteObjects Quick Qml QuickWidgets QuickCo
 # app/utils/LoggingConfig.*). spdlog supplies the rotating file sink — the same
 # one liblogos already logs through, so this adds no second copy to the closure.
 find_package(spdlog REQUIRED)
-# Unicode's lookalike skeletons (utils/InstallTrust.cpp): the ICU Qt itself links.
+# Who signed a package: basecamp-installer-common's judge (Trust.h), on which
+# utils/InstallTrust.cpp builds. Its lookalike skeletons are ICU's, the ICU Qt
+# itself links.
 find_package(ICU REQUIRED COMPONENTS uc i18n)
+if(NOT BASECAMP_INSTALLER_COMMON_DIR)
+    message(FATAL_ERROR "Set BASECAMP_INSTALLER_COMMON_DIR to basecamp-installer-common's source.")
+endif()
+include(${BASECAMP_INSTALLER_COMMON_DIR}/cmake/BasecampInstallerCommon.cmake)
 find_package(yaml-cpp REQUIRED)
 
 # QML Inspector (Qt DevTools-like inspection over TCP)
@@ -341,6 +347,7 @@ set(PROJECT_SOURCES
     IntentBroker.cpp
     IntentBridgeAdapter.cpp
     IntentChooserQueue.cpp
+    ConfirmationQueue.cpp
     intents/IntentsModuleHost.cpp
     UIPluginPresenter.cpp
     CoreModuleManager.cpp
@@ -351,7 +358,6 @@ set(PROJECT_SOURCES
     PackageCoordinator.cpp
     RepositorySource.cpp
     UninstallPlan.cpp
-    InstallRegistry.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp
     PluginLoader.cpp
@@ -385,6 +391,7 @@ option(LOGOS_PORTABLE_BUILD "Build as a portable/distributed app (no /nix/store 
 qt_add_executable(LogosBasecamp
     ${CORE_RUNTIME_SOURCES}
     ${PROJECT_SOURCES}
+    ${BASECAMP_INSTALLER_COMMON_TRUST_SOURCES}
 )
 
 if(WIN32)
@@ -404,6 +411,7 @@ endif()
 target_include_directories(LogosBasecamp PRIVATE
     ${LOGOS_VIEW_MODULE_RUNTIME_ROOT}/include
     ${GENERATED_LOGOS_SDK_DIR}
+    ${BASECAMP_INSTALLER_COMMON_INCLUDE_DIRS}
 )
 # Basecamp still runs ui-host apps (deprecated) until the next breaking release.
 target_compile_definitions(LogosBasecamp PRIVATE LOGOS_UI_HOST_ALLOWED)

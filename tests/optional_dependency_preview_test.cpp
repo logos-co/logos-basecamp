@@ -90,6 +90,24 @@ private slots:
         QCOMPARE(inputs.size(), 2);
         QCOMPARE(inputs[1].toObject().value("version").toString(), QStringLiteral("2.0.0"));
     }
+    // A version the requester picked for a package it didn't call optional:
+    // the plan offers it as optional, so it is that row's version, and once
+    // the person unticks it, nothing asks for it.
+    void aVersionPickedForAnOfferedPackageIsTheOptionalsVersion() {
+        const logos::InstallChoices c =
+            logos::installChoicesFrom({{"versions", QVariantMap{{"rln", "1.0.0"}}}}, "chat", "1.0.0");
+        logos::OptionalDependencyPreview preview("chat", "repo", c.pins, c.selection, c.optionalPins);
+        const auto inputs = QJsonDocument::fromJson(preview.advance(
+            response({{"chat", QStringList{"delivery"}}}, {versioned("rln", "delivery")})).toUtf8()).array();
+        QCOMPARE(inputs.size(), 2);
+        QCOMPARE(inputs[1].toObject().value("name").toString(), QStringLiteral("rln"));
+        QCOMPARE(inputs[1].toObject().value("version").toString(), QStringLiteral("1.0.0"));
+
+        const logos::InstallChoices unticked = logos::withDialogPicks(c, {{"rln", false}}, {});
+        logos::OptionalDependencyPreview again("chat", "repo", unticked.pins, unticked.selection,
+                                               unticked.optionalPins);
+        QCOMPARE(names(again.initialRequest()), QStringList{"chat"});
+    }
     void newOptionalsCanStartUnselected() {
         logos::OptionalDependencyPreview preview("chat", "repo");
         preview.setSelectNew(false);

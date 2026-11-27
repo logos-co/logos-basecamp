@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Logos.Controls
 import Logos.Icons
 import Logos.Theme
+import Basecamp.Installer
 
 // An app asked for something nothing installed can do — but the catalog knows a
 // package that could.
@@ -22,13 +23,6 @@ IntentDialog {
     objectName: "intentInstallDialog"
 
     property var displayNameLookup: function (name) { return name }
-
-    // Injected for the same reason displayNameLookup is: this dialog resolves
-    // nothing itself. Reaching into Basecamp.AppManager for AppColors would have
-    // been the one place a Shell dialog imported a feature module for a value
-    // rather than a type — and would drag the whole module into any test that
-    // instantiates this component.
-    property var fallbackColorFor: function (name) { return Theme.palette.surfaceRaised }
 
     readonly property alias intentName: d.intentName
 
@@ -162,7 +156,7 @@ IntentDialog {
                         Layout.preferredHeight: side
                         Layout.alignment: Qt.AlignVCenter
                         label: root.displayNameLookup(modelData.moduleName)
-                        fallbackColor: root.fallbackColorFor(modelData.moduleName)
+                        fallbackColor: Theme.palette.surfaceRaised
                         tileSize: side
                         interactive: false
                     }
@@ -251,7 +245,7 @@ IntentDialog {
         },
         LogosButton {
             objectName: "intentInstallConfirm"
-            text: qsTr("Install")
+            text: Stages.actionWord(Types.RowAction.Install)
             variant: LogosButton.Variant.Primary
             enabled: d.selected !== ""
             onClicked: {

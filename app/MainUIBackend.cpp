@@ -10,7 +10,9 @@
 #include "ShellIntentInstaller.h"
 #include "ShellIntentEndpoint.h"
 #include "ShellIntents.h"
+#include "DefaultApps.h"
 #include "IntentChooserQueue.h"
+#include "ConfirmationQueue.h"
 #include "links/LinkRequestCoordinator.h"
 #include "UIPluginPresenter.h"
 #include "intents/IntentsModuleHost.h"
@@ -112,6 +114,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
     m_intentBroker   = new IntentBroker(m_intentRegistry, /*presenter=*/nullptr, this);
     m_intentAdapter  = new IntentBridgeAdapter(m_intentBroker, this);
     m_chooserQueue   = new IntentChooserQueue(this);
+    m_confirmations  = new ConfirmationQueue(this);
     connect(m_chooserQueue, &IntentChooserQueue::show, this,
             [this](const QString& id, const QString& intent, const QString& requester,
                    const QVariantList& providers) {
@@ -137,7 +140,26 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
         m_coreModuleManager->setInstalledModulesRoot(LogosBasecampPaths::modulesDirectory());
     m_uiPluginManager   = new UIPluginManager(m_logosAPI, m_coreModuleManager, m_hostProfile, this);
     m_packageCoordinator    = new PackageCoordinator(m_logosAPI, m_coreModuleManager, m_uiPluginManager, m_appsModel, m_hostProfile, this);
-    m_appsModel->setInstallRegistry(m_packageCoordinator->installRegistry());
+    // It shows each one, or answers it at once.
+    m_confirmations->setBegin([this](const ConfirmationQueue::Request& r) {
+        m_packageCoordinator->beginPackageConfirmation(r.id, r.intent, r.params, r.requester);
+        return true;
+    });
+    m_packageCoordinator->setChangeInFlight([this]() { return !m_confirmations->changing().isEmpty(); });
+    connect(m_packageCoordinator, &PackageCoordinator::installedPackagesRead,
+            m_confirmations, &ConfirmationQueue::installedChanged);
+    connect(m_packageCoordinator, &PackageCoordinator::packageOnItsWay,
+            m_confirmations, &ConfirmationQueue::progressed);
+    connect(m_packageCoordinator, &PackageCoordinator::packageFilesChanged,
+            m_confirmations, &ConfirmationQueue::activity);
+    connect(m_uiPluginManager, &UIPluginManager::installerChangeEnded,
+            m_confirmations, &ConfirmationQueue::changeEnded);
+    // The app making a change closed: nothing is making it any more.
+    connect(m_uiPluginManager, &UIPluginManager::uiModulesChanged, this, [this]() {
+        const QString changing = m_confirmations->changing();
+        if (!changing.isEmpty() && !m_uiPluginManager->isUiAppLoaded(changing))
+            m_confirmations->requesterGone(changing);
+    });
     // The platform's own backend: by features alone Qt can pick glib, which
     // outside Linux never sees the connection go.
     if (QNetworkInformation::loadDefaultBackend()) {
@@ -215,7 +237,7 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
            this,              &MainUIBackend::presentAppRequested);
 
     // Forward PackageCoordinator dialog signals. One uninstallPlanRequested
-    // serves all four initiators — see buildPlanPayload.
+    // serves one package or several — see buildPlanPayload.
     reemit(m_packageCoordinator, &PackageCoordinator::uninstallPlanRequested,
            this,             &MainUIBackend::uninstallPlanRequested);
     reemit(m_packageCoordinator, &PackageCoordinator::dependencyDataReadyChanged,
@@ -231,35 +253,21 @@ MainUIBackend::MainUIBackend(LogosAPI* logosAPI, ICoreRuntime* core,
            this,             &MainUIBackend::installGateConfirmationRequested);
     reemit(m_packageCoordinator, &PackageCoordinator::confirmationWithdrawn,
            this,             &MainUIBackend::confirmationWithdrawn);
-    reemit(m_packageCoordinator, &PackageCoordinator::requestOpenAddApplicationDialog,
-           this,             &MainUIBackend::requestOpenAddApplicationDialog);
-    reemit(m_packageCoordinator, &PackageCoordinator::addApplicationDataUpdated,
-           this,             &MainUIBackend::addApplicationDataUpdated);
     connect(m_packageCoordinator, &PackageCoordinator::launchAppRequested,
             this, [this](const QString& name) {
         m_uiPluginManager->onAppLauncherClicked(name);
     }, Qt::QueuedConnection);
-    // The resolver's required packages are cached here and published as a
-    // property; QML binds a shell-declared AppsFilterProxy to it. Nothing on
-    // this side holds a pointer to that proxy.
-    connect(m_packageCoordinator, &PackageCoordinator::requiredPackagesResolved,
-            this, [this](const QVariantList& entries) {
-        if (m_requiredPackages == entries) return;
-        m_requiredPackages = entries;
-        emit requiredPackagesChanged();
-    });
-
-    // Widened to int at this hop rather than connected signal-to-signal, so
-    // the conversion is written down instead of relying on the implicit
-    // enum-to-int the connect check would otherwise permit silently.
-    connect(m_packageCoordinator, &PackageCoordinator::catalogInstallStageChanged,
-            this, [this](const QString& name, InstallStage::Value stage) {
-        emit catalogInstallStageChanged(name, static_cast<int>(stage));
-    });
-    reemit(m_packageCoordinator, &PackageCoordinator::catalogInstallFinished,
-           this,             &MainUIBackend::catalogInstallFinished);
-    reemit(m_packageCoordinator, &PackageCoordinator::catalogInstallFailed,
-           this,             &MainUIBackend::catalogInstallFailed);
+    // An app goes to App Manager, any other package to Package Manager.
+    connect(m_packageCoordinator, &PackageCoordinator::installRequested,
+            this, [this](const QString& name, const QString& repositoryUrl) {
+        const QString type = m_appsModel
+            ? m_appsModel->rowDataByName(name, repositoryUrl).value(QStringLiteral("type")).toString()
+            : QString();
+        if (logos::defaultapps::installSlotFor(type) == logos::defaultapps::Slot::Apps)
+            requestAppInstall(name, repositoryUrl);
+        else
+            requestPackageInstall(name, repositoryUrl);
+    }, Qt::QueuedConnection);
 
     // Package repositories — pure re-emits so QML binding to backend.*
     reemit(m_packageCoordinator, &PackageCoordinator::repositoriesChanged,
@@ -475,6 +483,7 @@ void MainUIBackend::wireIntents()
     connect(m_uiPluginManager, &UIPluginManager::appBackendStopped,
             this, [this](const QString& name, QWidget* widget) {
                 m_intentBroker->onAppUnavailable(name);
+                m_confirmations->requesterGone(name);
                 emit appStopped(widget, name);
             });
     connect(m_uiPluginManager, &UIPluginManager::missingDepsPopupRequested,
@@ -553,8 +562,11 @@ void MainUIBackend::wireIntents()
                const QVariantMap& params, const QString& requesterName) {
             return deliverShellIntent(dispatchId, intent, params, requesterName);
         });
+    // The confirmation lets go of it before the queue shows the next, which
+    // it would otherwise refuse as one already open.
     m_shellEndpoint->setOnEnded([this](const QString& dispatchId) {
         if (m_packageCoordinator) m_packageCoordinator->shellIntentEnded(dispatchId);
+        m_confirmations->withdrawn(dispatchId);
     });
     m_intentBroker->registerEndpoint(QStringLiteral("main_ui"), m_shellEndpoint.get());
 
@@ -564,7 +576,11 @@ void MainUIBackend::wireIntents()
         m_packageCoordinator->setIntentResponder(
             [this](const QString& requestId, bool ok, const QString& error, const QVariant& data,
                    std::function<void(bool)> heard) {
-                answerShellIntent(requestId, ok, data, error, std::move(heard));
+                answerShellIntent(requestId, ok, data, error,
+                                  [this, requestId, ok, data, heard = std::move(heard)](bool taken) {
+                                      m_confirmations->answered(requestId, ok && taken, data);
+                                      if (heard) heard(taken);
+                                  });
             });
     }
 
@@ -647,11 +663,11 @@ int MainUIBackend::deliverShellIntent(const QString& dispatchId, const QString& 
     if (intent == kAppLaunchIntent)
         return beginAppLaunch(dispatchId, params);
 
+    // One approved change at a time, whichever app asks (ConfirmationQueue).
     if (kPackageConfirmIntents.contains(intent)) {
-        return m_packageCoordinator
-            && m_packageCoordinator->beginPackageConfirmation(
-                   dispatchId, intent, params, requesterName)
-            ? 1 : 0;
+        if (!m_packageCoordinator) return 0;
+        m_confirmations->submit({dispatchId, intent, params, requesterName});
+        return 1;
     }
     const int receivers =
         this->receivers(SIGNAL(shellIntentRequested(QString, QString, QVariantMap, QString)));
@@ -687,6 +703,11 @@ void MainUIBackend::wireIntentsModule()
         return m_packageCoordinator
             && m_packageCoordinator->requesterIsBundled(app.isEmpty() ? module : app);
     });
+    // Basecamp's own requests go to the default app for them with no chooser:
+    // its Install to App Manager, its Details to Package Manager.
+    m_intentsHost->setDefaultProvider([](const QString& intent) {
+        return logos::defaultapps::defaultProviderFor(intent);
+    });
     m_intentsHost->setProviderStarter([this](const QString& provider, std::function<void()> done) {
         if (!m_coreModuleManager->knownModules().contains(provider)
             || m_coreModuleManager->loadedModules().contains(provider)) {
@@ -718,6 +739,7 @@ void MainUIBackend::wireIntentsModule()
     connect(m_intentsHost, &IntentsModuleHost::shellDeliveryEnded, this,
             [this](const QString& id) {
                 if (m_packageCoordinator) m_packageCoordinator->shellIntentEnded(id);
+                m_confirmations->withdrawn(id);
             });
     // Someone else may hold it now: it does not keep running.
     connect(m_intentsHost, &IntentsModuleHost::presenterRoleLost, this, [this]() {
@@ -1027,28 +1049,52 @@ void MainUIBackend::showPackageDetails(const QString& packageName)
     // favour of the generic path. Adding a second would be walking backwards.
     // This also means the shell dogfoods the mechanism it asks apps to use.
     QPointer<MainUIBackend> self(this);
-    askPackageManager(QStringLiteral("packages.show"), packageName, [self, packageName]() {
+    askInstallerApp(QStringLiteral("packages.show"), {{QStringLiteral("name"), packageName}},
+                    [self, packageName]() {
         if (self) self->showPackageDetailsFallback(packageName);
     });
 }
 
-void MainUIBackend::requestPackageInstall(const QString& packageName)
+void MainUIBackend::requestAppInstall(const QString& appName, const QString& repositoryUrl)
 {
-    if (packageName.isEmpty()) return;
+    if (appName.isEmpty()) return;
+    QVariantMap params{{QStringLiteral("name"), appName}};
+    // Two repositories can list it: the one its tile came from.
+    if (!repositoryUrl.isEmpty()) params.insert(QStringLiteral("repositoryUrl"), repositoryUrl);
     QPointer<MainUIBackend> self(this);
-    askPackageManager(QStringLiteral("packages.install"), packageName, [self, packageName]() {
-        if (self && self->m_packageCoordinator)
-            self->m_packageCoordinator->openApp(packageName, self->repositoryUrlFor(packageName),
-                                                {}, /*allowFastLaunch=*/false);
+    askInstallerApp(QStringLiteral("apps.install"), params, [self]() {
+        if (self) self->setCurrentActiveSectionIndex(ShellSection::AppManager);
     });
 }
 
-void MainUIBackend::askPackageManager(const QString& intent, const QString& packageName,
-                                      std::function<void()> orElse)
+void MainUIBackend::requestPackageInstall(const QString& packageName, const QString& repositoryUrl)
 {
-    const auto fallBack = [intent, packageName, orElse]() {
-        qWarning().noquote() << QStringLiteral("intents_module did not take %1; the App Manager answers for %2")
-                                    .arg(intent, packageName);
+    if (packageName.isEmpty()) return;
+    QVariantMap params{{QStringLiteral("name"), packageName}};
+    if (!repositoryUrl.isEmpty()) params.insert(QStringLiteral("repositoryUrl"), repositoryUrl);
+    QPointer<MainUIBackend> self(this);
+    askInstallerApp(QStringLiteral("packages.install"), params, [self]() {
+        if (self) self->setCurrentActiveSectionIndex(ShellSection::PackageManager);
+    });
+}
+
+void MainUIBackend::searchApps(const QString& query)
+{
+    setCurrentActiveSectionIndex(ShellSection::AppManager);
+    if (query.isEmpty()) return;
+    // Its section is in front already; the query reaches App Manager only
+    // through intents_module.
+    askInstallerApp(QStringLiteral("apps.search"), {{QStringLiteral("query"), query}}, []() {});
+}
+
+void MainUIBackend::askInstallerApp(const QString& intent, const QVariantMap& params,
+                                    std::function<void()> orElse)
+{
+    const QString subject =
+        params.value(QStringLiteral("name"), params.value(QStringLiteral("query"))).toString();
+    const auto fallBack = [intent, subject, orElse]() {
+        qWarning().noquote() << QStringLiteral("intents_module did not take %1 for %2; showing its section")
+                                    .arg(intent, subject);
         orElse();
     };
     if (!m_intentsHost) {
@@ -1058,7 +1104,7 @@ void MainUIBackend::askPackageManager(const QString& intent, const QString& pack
     // Refused, nothing it knows provides it, or it is gone; a cancel is the
     // person's answer.
     m_intentsHost->shellRequest(
-        intent, {{QStringLiteral("name"), packageName}}, /*asLink=*/false,
+        intent, params, /*asLink=*/false,
         [fallBack](const QVariantMap& result) {
             const QString error = result.value(QStringLiteral("error")).toString();
             if (error == QLatin1String("unavailable") || error == QLatin1String("failed")) fallBack();
@@ -1129,8 +1175,9 @@ int MainUIBackend::beginAppLaunch(const QString& dispatchId,
     const bool known = m_uiPluginManager
                     && m_uiPluginManager->uiPluginMetadataSnapshot().contains(appName);
 
-    if (appName == kPackageManagerAppName) {
-        setCurrentActiveSectionIndex(ShellSection::PackageManager);
+    const int appSection = m_uiPluginManager ? m_uiPluginManager->sectionOfApp(appName) : -1;
+    if (appSection >= 0) {
+        setCurrentActiveSectionIndex(appSection);
     } else if (!appName.isEmpty() && m_intentPresenter) {
         m_intentPresenter->ensureAppLoaded(appName);
         m_intentPresenter->presentApp(appName);
@@ -1147,61 +1194,39 @@ int MainUIBackend::beginAppLaunch(const QString& dispatchId,
     return 1;
 }
 
-void MainUIBackend::showPackageDetailsFallback(const QString& packageName)
+void MainUIBackend::showPackageDetailsFallback(const QString&)
 {
-    if (!m_packageCoordinator) return;
-
-    // No Package Manager to ask: none installed, or intents_module, the only
-    // way it answers, is not running. The App Manager's own detail dialog
-    // answers the same question (version, publisher, dependencies, install
-    // state), so the Details button still does something rather than silently
-    // failing.
-    //
-    // allowFastLaunch=false is the point: the user asked to LOOK, not to run.
-    m_packageCoordinator->openApp(packageName, repositoryUrlFor(packageName),
-                                  {}, /*allowFastLaunch=*/false);
+    // No Package Manager to ask: intents_module, the only way it answers, is
+    // not running. Its section still does something rather than nothing.
+    setCurrentActiveSectionIndex(ShellSection::PackageManager);
 }
 
 void MainUIBackend::beginIntentInstall(const QString& providerName)
 {
-    if (!m_packageCoordinator || providerName.isEmpty())
-        return;
-
-    // The normal install path, gate dialog and all. Being prompted by an intent
-    // buys no shortcut past the confirmation the user would see anywhere else —
-    // it is the same install, started for a different reason.
-    m_packageCoordinator->openApp(providerName, repositoryUrlFor(providerName), {},
-                                  /*allowFastLaunch=*/false);
+    // The normal install path: its installer app, then Basecamp's gate. Being
+    // prompted by an intent buys no shortcut past the confirmation the user
+    // would see anywhere else — it is the same install, started for a
+    // different reason.
+    if (m_packageCoordinator) m_packageCoordinator->openApp(providerName, {}, /*allowFastLaunch=*/false);
 }
 
 QString MainUIBackend::displayNameFor(const QString& n) const {
     return m_packageCoordinator ? m_packageCoordinator->displayNameFor(n) : n;
 }
-void MainUIBackend::uninstallUiModule(const QString& n)       { m_packageCoordinator->uninstallUiModule(n); }
-void MainUIBackend::uninstallApp(const QString& n, const QString& repositoryUrl)
-                                                             { m_packageCoordinator->uninstallApp(n, repositoryUrl); }
-void MainUIBackend::uninstallCoreModule(const QString& n)     { m_packageCoordinator->uninstallCoreModule(n); }
 void MainUIBackend::confirmUninstallCascade(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmUninstallCascade(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::confirmUninstallMultiCascade(const QStringList& names) { m_packageCoordinator->confirmUninstallMultiCascade(names); }
 void MainUIBackend::cancelMultiUninstall(const QStringList& names)         { m_packageCoordinator->cancelMultiUninstall(names); }
-void MainUIBackend::cancelPendingUninstallApp(const QString& name)         { m_packageCoordinator->cancelPendingUninstallApp(name); }
-void MainUIBackend::refreshOptionalPreview(const QString& n, const QString& repo,
-                                            const QVariantMap& pins, const QVariantMap& selection,
-                                            const QVariantMap& optionalPins, bool gate)
-{ m_packageCoordinator->refreshOptionalPreview(n, repo, pins, selection, optionalPins, gate); }
+void MainUIBackend::refreshOptionalPreview(const QString& n, const QVariantMap& selection,
+                                            const QVariantMap& optionalPins)
+{ m_packageCoordinator->refreshOptionalPreview(n, selection, optionalPins); }
 void MainUIBackend::confirmInstallGate(const QString& n, const QStringList& optionalNames, const QVariantMap& optionalVersionPins, bool trustPublishers) { m_packageCoordinator->confirmInstallGate(n, optionalNames, optionalVersionPins, trustPublishers); }
 void MainUIBackend::cancelInstallGate(const QString& n)       { m_packageCoordinator->cancelInstallGate(n); }
-void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
-{ m_packageCoordinator->openApp(name, repositoryUrl, versionPins, allowFastLaunch); }
-void MainUIBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl,
-                                          bool trustPublishers)
-{ m_packageCoordinator->confirmCatalogInstall(name, repositoryUrl, trustPublishers); }
+void MainUIBackend::openApp(const QString& name, const QString& repositoryUrl, bool allowFastLaunch)
+{ m_packageCoordinator->openApp(name, repositoryUrl, allowFastLaunch); }
 void MainUIBackend::refreshTrustedPublishers()                  { m_packageCoordinator->refreshTrustedPublishers(); }
 void MainUIBackend::removeTrustedPublisher(const QString& keyName) { m_packageCoordinator->removeTrustedPublisher(keyName); }
 QStringList MainUIBackend::installedFromPublisher(const QString& did) const
 { return m_packageCoordinator->installedFromPublisher(did); }
-void MainUIBackend::notifyAddApplicationDialogClosed()
-{ m_packageCoordinator->notifyAddApplicationDialogClosed(); }
 
 // cancelPendingAction is the one slot that doesn't route to a single manager:
 // a pending action lives on either UIPluginManager (local unload cascade) or
@@ -1256,7 +1281,6 @@ void MainUIBackend::endModulesLoading()
 }
 
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
-void MainUIBackend::refreshAppCatalog()                                    { m_packageCoordinator->remoteRefresh(); }
 void MainUIBackend::requestCatalog()                                       { m_packageCoordinator->requestCatalog(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }
@@ -1297,6 +1321,16 @@ QVariantList MainUIBackend::availableSections() const
     QVariantList sections;
     for (int s : m_hostProfile.availableSections()) sections << s;
     return sections;
+}
+
+QVariantMap MainUIBackend::sectionApps() const
+{
+    QVariantMap apps;
+    for (const QString& app : logos::defaultapps::apps()) {
+        const int section = m_hostProfile.sectionOfApp(app);
+        if (section >= 0) apps.insert(QString::number(section), app);
+    }
+    return apps;
 }
 
 // Read the environment rather than a compile-time flag.

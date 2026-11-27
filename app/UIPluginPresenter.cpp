@@ -2,6 +2,7 @@
 
 #include "ShellSections.h"
 #include "UIPluginManager.h"
+#include "utils/Frontmost.h"
 
 UIPluginPresenter::UIPluginPresenter(UIPluginManager* uiPluginManager,
                                      SectionFn sectionProvider,
@@ -41,27 +42,13 @@ void UIPluginPresenter::presentApp(const QString& appName)
 // request drag someone out of Settings.
 bool UIPluginPresenter::isAppFrontmost(const QString& appName) const
 {
-    if (!m_uiPluginManager || appName.isEmpty())
-        return false;
-    if (m_uiPluginManager->currentVisibleApp() != appName)
-        return false;
-
     // No provider means we cannot tell which section is up. Answer false: the
     // only thing this gates is a navigation, and declining to move is the safe
     // direction.
-    if (!m_sectionProvider)
+    if (!m_uiPluginManager || !m_sectionProvider)
         return false;
-
-    const int section = m_sectionProvider();
-
-    // package_manager_ui is hoisted into the content stack as its own section
-    // rather than docked, so "frontmost" means that section is selected —
-    // where the host has that section (see HostProfile).
-    if (appName == QLatin1String("package_manager_ui")
-        && m_uiPluginManager && m_uiPluginManager->isShellInternalApp(appName))
-        return section == ShellSection::PackageManager;
-
-    return section == ShellSection::Workspace;
+    return logos::isFrontmost(appName, m_uiPluginManager->sectionOfApp(appName), m_sectionProvider(),
+                              ShellSection::Workspace, m_uiPluginManager->currentVisibleApp());
 }
 
 bool UIPluginPresenter::anyDialogOpen() const

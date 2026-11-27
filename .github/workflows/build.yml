@@ -194,6 +194,12 @@ jobs:
       - name: QML tests
         run: nix build .#qml-tests -L
 
+      # The copy of basecamp-installer-common's JavaScript is the pinned one,
+      # and no shell QML writes one of its phrases again. Only under `checks`,
+      # which nothing here runs on its own.
+      - name: Shared installer words
+        run: nix build .#checks.${{ matrix.arch }}.shared-installer-words --no-link -L
+
       - name: Sandbox test
         run: nix build .#sandbox-test -L
 

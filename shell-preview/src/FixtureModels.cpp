@@ -35,10 +35,10 @@ QHash<int, QByteArray> appsRoleNames()
         {R::InstalledVersionRole, "installedVersion"}, {R::LatestVersionRole, "latestVersion"},
         {R::HasUpdateRole, "hasUpdate"}, {R::IsInstalledRole, "isInstalled"},
         {R::MissingDepsRole, "missingDeps"}, {R::InstallStatusRole, "installStatus"},
-        {R::InstallTypeRole, "installType"}, {R::ActionRole, "action"},
-        {R::ToVersionRole, "toVersion"}, {R::IsTopLevelRole, "isTopLevel"},
-        {R::ResolverErrorRole, "resolverError"}, {R::InstallStageRole, "installStage"},
-        {R::InstallErrorRole, "installError"},
+        {R::InstallTypeRole, "installType"}, {R::ProvidesRole, "provides"},
+        {R::WebProvidesRole, "webProvides"},
+        {R::HasInstallableVersionRole, "hasInstallableVersion"},
+        {R::NotAvailableReasonRole, "notAvailableReason"},
     };
 }
 

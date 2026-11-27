@@ -14,8 +14,8 @@ class MainUIBackend;
 // IShellObserver calls; every operation is a one-line delegation.
 //
 // It exists so the shell never names MainUIBackend, whose header pulls in
-// InstallEnums, the models and logos_api.h and whose signals carry
-// InstallStage::Value — none of which a Qt-only shell could compile against.
+// the models and logos_api.h — none of which a Qt-only shell could compile
+// against.
 //
 // Owned by Window, alongside the MainUIBackend it wraps.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,18 +1,12 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import Logos.Theme
 
-import Basecamp.AppManager
 import Basecamp.Settings
 import Basecamp.Backend
 
 Item {
     id: root
-
-    // Entry point for the shell: the welcome page's search routes a result
-    // here and hands over the query that produced it.
-    function applyAppSearch(query) { appManagerView.applySearch(query) }
 
     // Section indices come from ShellSection (src/ShellSections.h), the single
     // source of truth shared with MainContainer's C++ switch and
@@ -20,25 +14,6 @@ Item {
     readonly property int sidebarAppManager: ShellSection.AppManager
     readonly property int sidebarSettings:   ShellSection.Settings
     readonly property int sidebarPackages:   ShellSection.PackageManager
-
-    // The App Manager shows the catalog, which is fetched the first time
-    // something needs it rather than at launch.
-    readonly property bool appManagerShown:
-        backend.currentActiveSectionIndex === root.sidebarAppManager
-    onAppManagerShownChanged: if (appManagerShown) backend.requestCatalog()
-    Component.onCompleted: if (appManagerShown) backend.requestCatalog()
-
-    // The App Manager's view of the catalog. Declared here rather than handed
-    // over by the backend: a filter proxy is view configuration, so it belongs
-    // to whoever draws the view. Only the source model crosses, as a plain
-    // QAbstractItemModel*.
-    AppsFilterProxy {
-        id: uiAppsProxy
-        sourceModel:   backend.appsModel
-        typeFilter:    "ui_qml"
-        excludeMainUi: true
-        showUnavailable: appManagerView.showUnavailable
-    }
 
     Connections {
         target: backend
@@ -92,105 +67,65 @@ Item {
         color: Theme.palette.background
     }
 
-    // Content views stack — only App Manager and Settings live here.
-    // Apps (backend idx 0) is the C++ WorkspaceArea (QDockWidget-based),
-    // and Modules (backend idx 2) is the sandboxed package_manager_ui
-    // QQuickWidget.
-    StackLayout {
-        id: contentStack
+    // Settings, the one content view left here. Apps (backend idx 0) is the
+    // C++ WorkspaceArea, and Applications and Package Manager are their apps,
+    // sandboxed QQuickWidgets in MainContainer's stack.
+    SettingsView {
+        id: settingsView
         anchors.fill: parent
 
-        // Map backend's sidebar index to this stack's two-entry layout.
-        currentIndex: backend.currentActiveSectionIndex === root.sidebarSettings ? 1 : 0
+        repositories:        backend.repositories
+        repositoriesLoading: backend.repositoriesLoading
+        downloadSource:      backend.downloadSource
+        uiModulesModel:      backend.uiModulesModel
+        coreModulesModel:    backend.coreModulesModel
+        modulesLoading:      backend.modulesLoading
+        repositoriesAvailable: backend.repositoryManagement !== false
+        trustedPublishers:   backend.trustedPublishers
+        installedFromPublisher: did => backend.installedFromPublisher(did)
+        buildVersion:        backend.buildVersion
+        portableBuild:       backend.isPortableBuild
+        buildCommits:        backend.buildCommits
+        userDirectory:       backend.userDirectory || ""
 
-        // App Manager (sidebar sidebarAppManager -> stack index 0)
-        AppManagerView {
-            id: appManagerView
+        onOpenUserDirectoryRequested: if (!backend.openUserDirectory())
+                                          settingsView.reportOpenUserDirectoryFailed()
 
-            appsProxy:      uiAppsProxy
-            hostVariant:    backend.appsModel ? backend.appsModel.hostVariant : ""
-            repositories:   backend.repositories
-            loading:        backend.appsLoading
-            online:         backend.online !== false
-            downloadSource: backend.downloadSource || ""
-            storageState:   backend.storageState || ""
-            onAppClicked: function(name, repositoryUrl) {
-                // Primary click — fast-path launch for installed apps.
-                backend.openApp(name, repositoryUrl, ({}), true)
-            }
-            onManageAppRequested: function(name, repositoryUrl) {
-                // Context menu's Install… / App details… — force the dialog
-                // open. The modal is the install confirmation (version picker
-                // + required packages), so both items land here.
-                backend.openApp(name, repositoryUrl, ({}), false)
-            }
-            onUninstallAppRequested: function(name, repositoryUrl) {
-                backend.uninstallApp(name, repositoryUrl)
-            }
-            onNavigateToRepositories: {
-                backend.setCurrentActiveSectionIndex(root.sidebarSettings)
-                settingsView.showRepositories()
-            }
-            onRefreshRequested: backend.refreshAppCatalog()
+        onRepositoryRefreshRequested: backend.refreshRepositories()
+        onRepositoryAddRequested:     url => backend.addRepository(url)
+        onRepositoryRemoveRequested:  url => backend.removeRepository(url)
+        onRepositoryEnabledRequested: (url, e) => backend.setRepositoryEnabled(url, e)
+        onDownloadSourceRequested:    source => backend.setDownloadSource(source)
+        onRepositoriesBecameVisible: {
+            Qt.callLater(backend.refreshRepositories)
+            Qt.callLater(backend.refreshDownloadSource)
         }
 
-        // Settings (backend index 3 -> internal index 1)
-        SettingsView {
-            id: settingsView
+        onTrustedPublisherRemoveRequested:   keyName => backend.removeTrustedPublisher(keyName)
+        onTrustedPublishersRefreshRequested: Qt.callLater(backend.refreshTrustedPublishers)
 
-            repositories:        backend.repositories
-            repositoriesLoading: backend.repositoriesLoading
-            downloadSource:      backend.downloadSource
-            uiModulesModel:      backend.uiModulesModel
-            coreModulesModel:    backend.coreModulesModel
-            modulesLoading:      backend.modulesLoading
-            repositoriesAvailable: backend.repositoryManagement !== false
-            trustedPublishers:   backend.trustedPublishers
-            installedFromPublisher: did => backend.installedFromPublisher(did)
-            buildVersion:        backend.buildVersion
-            portableBuild:       backend.isPortableBuild
-            buildCommits:        backend.buildCommits
-            userDirectory:       backend.userDirectory || ""
+        // Apps Inspector (UI plugins). View-only — uninstall lives in PMUI.
+        onAppsRefreshRequested:       backend.refreshUiModules()
+        onAppLoadRequested:           name => backend.loadUiModule(name)
+        onAppUnloadRequested:         name => backend.unloadUiModule(name)
+        onAppsInspectorBecameVisible: Qt.callLater(backend.refreshUiModules)
 
-            onOpenUserDirectoryRequested: if (!backend.openUserDirectory())
-                                              settingsView.reportOpenUserDirectoryFailed()
-
-            onRepositoryRefreshRequested: backend.refreshRepositories()
-            onRepositoryAddRequested:     url => backend.addRepository(url)
-            onRepositoryRemoveRequested:  url => backend.removeRepository(url)
-            onRepositoryEnabledRequested: (url, e) => backend.setRepositoryEnabled(url, e)
-            onDownloadSourceRequested:    source => backend.setDownloadSource(source)
-            onRepositoriesBecameVisible: {
-                Qt.callLater(backend.refreshRepositories)
-                Qt.callLater(backend.refreshDownloadSource)
-            }
-
-            onTrustedPublisherRemoveRequested:   keyName => backend.removeTrustedPublisher(keyName)
-            onTrustedPublishersRefreshRequested: Qt.callLater(backend.refreshTrustedPublishers)
-
-            // Apps Inspector (UI plugins). View-only — uninstall lives in PMUI.
-            onAppsRefreshRequested:       backend.refreshUiModules()
-            onAppLoadRequested:           name => backend.loadUiModule(name)
-            onAppUnloadRequested:         name => backend.unloadUiModule(name)
-            onAppsInspectorBecameVisible: Qt.callLater(backend.refreshUiModules)
-
-            // themeManager is set on this view only (MainContainer).
-            onThemeInstallRequested: file => {
-                const result = themeManager.install(file)
-                if (result.ok)
-                    themeManager.select(result.id)
-                settingsView.showThemeInstallResult(result)
-            }
-            onThemeSelectRequested: themeId => themeManager.select(themeId)
-            onThemeRemoveRequested: themeId =>
-                settingsView.showThemeRemoveResult(themeManager.remove(themeId))
-
-            // Module Inspector (core modules). View-only — uninstall lives in PMUI.
-            onModulesRefreshRequested:      backend.refreshCoreModules()
-            onModuleLoadRequested:          name => backend.loadCoreModule(name)
-            onModuleUnloadRequested:        name => backend.unloadCoreModule(name)
-            onModuleInspectorBecameVisible: Qt.callLater(backend.refreshCoreModules)
+        // themeManager is set on this view only (MainContainer).
+        onThemeInstallRequested: file => {
+            const result = themeManager.install(file)
+            if (result.ok)
+                themeManager.select(result.id)
+            settingsView.showThemeInstallResult(result)
         }
+        onThemeSelectRequested: themeId => themeManager.select(themeId)
+        onThemeRemoveRequested: themeId =>
+            settingsView.showThemeRemoveResult(themeManager.remove(themeId))
+
+        // Module Inspector (core modules). View-only — uninstall lives in PMUI.
+        onModulesRefreshRequested:      backend.refreshCoreModules()
+        onModuleLoadRequested:          name => backend.loadCoreModule(name)
+        onModuleUnloadRequested:        name => backend.unloadCoreModule(name)
+        onModuleInspectorBecameVisible: Qt.callLater(backend.refreshCoreModules)
     }
 }
 

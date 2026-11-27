@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DefaultApps.h"
+
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -13,10 +15,11 @@ class ICoreRuntime;
 // before anything scans there, so the bundled one is the one that runs.
 namespace logos::builtin {
 
-// The apps, each with the backend it registers as `<app>_backend`.
+// The apps, each with the backend it registers as `<app>_backend`: the
+// default-app table's.
 inline QStringList apps()
 {
-    return {QStringLiteral("package_manager_ui")};
+    return logos::defaultapps::apps();
 }
 
 // Every name a built-in app runs under: the app and its backend.

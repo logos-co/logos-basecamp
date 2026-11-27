@@ -7,13 +7,13 @@ import Logos.Theme
 // Directory imports, not `import Basecamp.Shell` — see tst_IntentInstallDialog.
 import "../../src/Basecamp/Shell"
 import "../../src/Basecamp/Settings"
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
+import Basecamp.Common
 
-// Trust at install: what the install dialogs say about who signed what they
-// would install, and what they let the user do about it. Both say it the same
-// way: a badge on every package's row, and a summary under the rows when not
-// everything comes from a trusted publisher. The rules that decide it are
+// Trust at install: what the install and upgrade dialogs say about who signed
+// what they would install, and what they let the user do about it: a badge on
+// every package's row, and a summary under the rows when not everything comes
+// from a trusted publisher. The rules that decide it are
 // PackageCoordinator's (tests/install_trust_test.cpp); these feed the dialogs
 // the shapes it publishes.
 TestCase {
@@ -29,13 +29,11 @@ TestCase {
     readonly property string otherDid: "did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6Im90aGVyIn0"
 
     Component { id: dialogComp; ConfirmationDialog {} }
-    Component { id: appDialogComp; AddApplicationDialog {} }
+    Component { id: lineComp; InstallTrustLine {} }
     Component { id: publishersComp; TrustedPublishersView { width: 760; height: 600 } }
 
     SignalSpy { id: continueSpy; signalName: "continueClicked" }
     SignalSpy { id: trustContinueSpy; signalName: "trustAndContinueClicked" }
-    SignalSpy { id: installSpy; signalName: "installRequested" }
-    SignalSpy { id: trustInstallSpy; signalName: "trustAndInstallRequested" }
     SignalSpy { id: removeSpy; signalName: "removeRequested" }
 
     function trusted() {
@@ -130,15 +128,6 @@ TestCase {
     // What package_manager_ui's dialog says about the package it installs.
     function bodyOf(dlg) {
         return findChild(dlg.contentItem, "confirmationDialog.body").text
-    }
-
-    // The line the package a dialog is about gets: its mark, then the words.
-    function trustLine(parent, name) {
-        var item = findChild(parent, name)
-        return item && item.visible
-               ? iconWord(findChild(item, "installTrust.lineMark")) + " "
-                 + findChild(item, "installTrust.lineWords").text
-               : ""
     }
 
     function openGate(name, changes) {
@@ -286,17 +275,6 @@ TestCase {
         compare(upgradeTrust.text, "Trust & upgrade")
         upgrade.trust = untrusted()
         compare(upgradeTrust.text, "Trust & upgrade anyway")
-
-        var app = createTemporaryObject(appDialogComp, testCase)
-        app.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: trustable() })
-        var primary = findChild(app.footer, "addApplicationDialog.primaryButton")
-        var appTrust = findChild(app.footer, "addApplicationDialog.trustAndInstallButton")
-        compare(primary.text, "Install")
-        verify(appTrust.visible)
-        compare(appTrust.text, "Trust & install")
-        app.trust = untrusted()
-        compare(primary.text, "Install anyway", "beside something unsigned")
-        compare(appTrust.text, "Trust & install anyway")
     }
 
     // Nobody signed it, so there is nobody to trust: "anyway" is the only way
@@ -527,11 +505,9 @@ TestCase {
         touch.release(0, markItem).commit()
         tryCompare(tip, "visible", false)
 
-        var app = createTemporaryObject(appDialogComp, testCase)
-        app.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: untrusted() })
-        waitForRendering(app.contentItem)
-        var lineMark = findChild(findChild(app.contentItem, "addApplicationDialog.trust.chat"),
-                                 "installTrust.lineMark")
+        var line = createTemporaryObject(lineComp, testCase, { verdict: untrusted().byName.chat })
+        waitForRendering(line)
+        var lineMark = findChild(line, "installTrust.lineMark")
         var lineTip = findChild(lineMark, "installTrust.markTip")
         touch = touchEvent(lineMark)
         touch.press(0, lineMark).commit()
@@ -543,17 +519,15 @@ TestCase {
     // A package already installed and left as it is says what it is, muted:
     // it is not part of what is being decided.
     function test_an_installed_row_says_what_it_is() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "storage_ui", repositoryUrl: "https://repo/",
-                       optionalPackages: [
-                           { name: "storage_module", version: "3.0.2", installedVersion: "3.0.2",
-                             action: "installed", selected: true },
-                           { name: "old_dep", version: "1.0.0", installedVersion: "1.0.0",
-                             action: "installed", selected: true }],
-                       trust: { needsPrompt: true, blocked: false, packages: [], publishers: [],
-                                byName: { storage_ui: { status: "unsigned" },
-                                          storage_module: { status: "bundled", installed: true },
-                                          old_dep: { status: "unsigned", installed: true } } } })
+        var dlg = openGate("storage_ui", [
+            { name: "storage_module", optional: true, version: "3.0.2", installedVersion: "3.0.2",
+              action: "installed" },
+            { name: "old_dep", optional: true, version: "1.0.0", installedVersion: "1.0.0",
+              action: "installed" }])
+        dlg.trust = { needsPrompt: true, blocked: false, packages: [], publishers: [],
+                      byName: { storage_ui: { status: "unsigned" },
+                                storage_module: { status: "bundled", installed: true },
+                                old_dep: { status: "unsigned", installed: true } } }
         tryVerify(function() { return shown(dlg.contentItem, "packageRow.trust.old_dep") })
         compare(mark(dlg.contentItem, "packageRow.trust.storage_module"), "check | Ships with Basecamp")
         compare(mark(dlg.contentItem, "packageRow.trust.old_dep"), "warning | Already installed, not signed")
@@ -565,12 +539,9 @@ TestCase {
     // A name next to its mark is shown in full when there is room: the rows
     // size it to its own width, which a layout rounds down.
     function test_a_short_name_beside_its_mark_is_shown_in_full() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "storage_ui", repositoryUrl: "https://repo/",
-                       optionalPackages: [{ name: "logos_dep", displayName: "Logos", version: "1.0.0",
-                                            action: "install" }],
-                       trust: { needsPrompt: false, blocked: false, packages: [], publishers: [],
-                                byName: { logos_dep: { status: "trusted", publisher: "Logos" } } } })
+        var dlg = openGate("storage_ui", [{ name: "logos_dep", displayName: "Logos", optional: true,
+                                            version: "1.0.0", action: "install" }])
+        dlg.trust = signedByLogos(["logos_dep"])
         tryVerify(function() { return shown(dlg.contentItem, "packageRow.trust.logos_dep") })
         waitForRendering(dlg.contentItem)
         verify(!findChild(dlg.contentItem, "packageRow.name.logos_dep").truncated)
@@ -584,12 +555,11 @@ TestCase {
 
     // A row's mark sits right after its name, inside the row's name column.
     function test_a_rows_mark_sits_beside_its_name() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "storage_ui", repositoryUrl: "https://repo/",
-                       optionalPackages: [{ name: "storage_module", version: "0.4.0", action: "install" }],
-                       trust: { needsPrompt: true, blocked: false, packages: [], publishers: [],
-                                byName: { storage_ui: { status: "unsigned" },
-                                          storage_module: { status: "unsigned" } } } })
+        var dlg = openGate("storage_ui", [{ name: "storage_module", optional: true, version: "0.4.0",
+                                            action: "install", versions: [{ manifest: { version: "0.4.0" } }] }])
+        dlg.trust = { needsPrompt: true, blocked: false, packages: [], publishers: [],
+                      byName: { storage_ui: { status: "unsigned" },
+                                storage_module: { status: "unsigned" } } }
         tryVerify(function() { return shown(dlg.contentItem, "packageRow.trust.storage_module") })
         waitForRendering(dlg.contentItem)
         var markItem = findChild(dlg.contentItem, "packageRow.trust.storage_module")
@@ -597,7 +567,6 @@ TestCase {
         var markRight = markItem.mapToItem(null, markItem.width, 0).x
         verify(markRight <= version.mapToItem(null, 0, 0).x,
                "mark ends at " + markRight + ", past the version picker")
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.storage_ui"), "warning Not signed: nobody vouches for it")
     }
 
     // What a publisher calls itself is shown as it is: markup is not drawn,
@@ -630,20 +599,15 @@ TestCase {
     // or description could fake one ("✓ Signed by Logos").
     function test_a_catalogs_own_text_is_never_markup() {
         var fake = "Wallet <font color='green'>✓ Signed by Logos</font>"
-        var app = createTemporaryObject(appDialogComp, testCase)
-        app.openWith({ name: "wallet", displayName: fake, description: fake, repositoryUrl: "https://repo/",
-                       optionalPackages: [{ name: "dep", displayName: fake, description: fake,
-                                            version: "1.0.0", action: "install" }],
-                       trust: untrusted() })
-        compare(findChild(app.contentItem, "addApplicationDialog.name").textFormat, Text.PlainText)
-        tryVerify(function() { return !!findChild(app.contentItem, "packageRow.name.dep") })
-        compare(findChild(app.contentItem, "packageRow.name.dep").textFormat, Text.PlainText)
-        compare(findChild(app.contentItem, "packageRowDescription").textFormat, Text.PlainText)
-
-        var gate = openGate("wallet", [{ name: fake, action: "install", toVersion: "1.0.0", fromVersion: "" }])
+        var gate = openGate("wallet", [{ name: fake, action: "install", toVersion: "1.0.0", fromVersion: "" },
+                                       { name: "dep", displayName: fake, description: fake, optional: true,
+                                         version: "1.0.0", action: "install" }])
         gate.trust = untrusted()
         tryVerify(function() { return !!findChild(gate.contentItem, "confirmationDialog.change." + fake) })
         compare(findChild(gate.contentItem, "confirmationDialog.change." + fake).textFormat, Text.PlainText)
+        tryVerify(function() { return !!findChild(gate.contentItem, "packageRow.name.dep") })
+        compare(findChild(gate.contentItem, "packageRow.name.dep").textFormat, Text.PlainText)
+        compare(findChild(gate.contentItem, "packageRowDescription").textFormat, Text.PlainText)
     }
 
     // Any app may ask for an install, and names itself: drawn as markup, its
@@ -662,124 +626,6 @@ TestCase {
     }
 
     // ── App Manager ──
-
-    function test_app_dialog_checks_then_asks() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        installSpy.target = dlg
-        installSpy.clear()
-        trustInstallSpy.target = dlg
-        trustInstallSpy.clear()
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: { pending: true } })
-        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
-        compare(primary.text, "Checking packages…")
-        compare(primary.enabled, false)
-        verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.chat"), "")
-
-        dlg.trust = untrusted()
-        compare(primary.text, "Install anyway")
-        compare(primary.enabled, true)
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.chat"), "warning Signed by a publisher you don't trust yet")
-        verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
-        var trustButton = findChild(dlg.footer, "addApplicationDialog.trustAndInstallButton")
-        verify(trustButton.visible)
-        compare(trustButton.text, "Trust & install anyway")
-        mouseClick(trustButton)
-        compare(trustInstallSpy.count, 1)
-        compare(trustInstallSpy.signalArguments[0][0], "chat")
-        compare(trustInstallSpy.signalArguments[0][1], "https://repo/")
-        compare(installSpy.count, 0)
-    }
-
-    function test_app_dialog_says_who_signed_a_trusted_install() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "blockchain_ui", repositoryUrl: "https://repo/",
-                       optionalPackages: [{ name: "storage_module", version: "0.3.0", action: "install" }],
-                       trust: signedByLogos(["blockchain_ui", "storage_module"]) })
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.blockchain_ui"), "check Signed by Logos")
-        tryVerify(function() { return shown(dlg.contentItem, "packageRow.trust.storage_module") })
-        compare(mark(dlg.contentItem, "packageRow.trust.storage_module"), "check | Signed by Logos")
-        verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").text, "Install")
-
-        // A new plan being resolved has no verdict yet: no badge from the last.
-        dlg.metadata = Object.assign({}, dlg.metadata, { resolutionPending: true })
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.blockchain_ui"), "")
-    }
-
-    // Both answers to the question sit side by side where the dialog's
-    // answers go, in the same order in both dialogs: "Install anyway", then
-    // "Trust & install".
-    function test_both_answers_sit_side_by_side() {
-        var app = createTemporaryObject(appDialogComp, testCase)
-        app.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: untrusted() })
-        waitForRendering(app.contentItem)
-        var anyway = findChild(app.footer, "addApplicationDialog.primaryButton")
-        var trust = findChild(app.footer, "addApplicationDialog.trustAndInstallButton")
-        compare(trust.parent, anyway.parent, "in the same row")
-        verify(trust.x > anyway.x, "Trust & install after Install anyway")
-        compare(anyway.text, "Install anyway")
-
-        var gate = openGate()
-        gate.trust = untrusted()
-        waitForRendering(gate.contentItem)
-        var gateAnyway = findChild(gate.footer, "confirmationDialog.installGate.confirm")
-        var gateTrust = findChild(gate.footer, "confirmationDialog.installGate.trustAndConfirm")
-        compare(gateTrust.parent, gateAnyway.parent, "in the same row")
-        verify(gateTrust.x > gateAnyway.x, "Trust & install after Install anyway")
-    }
-
-    // The longest labels, with Uninstall, still fit the dialog's footer: none
-    // spills past its edge or over another.
-    function test_the_longest_answers_fit_beside_uninstall() {
-        var app = createTemporaryObject(appDialogComp, testCase)
-        app.openWith({ name: "chat", repositoryUrl: "https://repo/", selectedVersion: "1.0.0-rc.12",
-                       installedVersion: "2.0.0", installStatus: InstallStatus.DowngradeAvailable,
-                       trust: untrusted() })
-        waitForRendering(app.contentItem)
-        var names = ["uninstallButton", "closeButton", "primaryButton", "trustAndInstallButton"]
-        var right = 0
-        for (var i = 0; i < names.length; ++i) {
-            var button = findChild(app.footer, "addApplicationDialog." + names[i])
-            verify(button.visible, names[i])
-            var at = button.mapToItem(app.footer, 0, 0)
-            verify(at.x >= right, names[i] + " starts after what is left of it")
-            right = at.x + button.width
-        }
-        compare(findChild(app.footer, "addApplicationDialog.trustAndInstallButton").text,
-                "Trust & downgrade anyway")
-        verify(right <= app.footer.width, "ends at " + right + " of " + app.footer.width)
-    }
-
-    function test_app_dialog_lets_nothing_damaged_through() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: blocked() })
-        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
-        verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
-        verify(!shown(dlg.footer, "addApplicationDialog.trustAndInstallButton"))
-    }
-
-    // A re-resolve is a new plan: the last one's warning is not about it.
-    function test_app_dialog_hides_the_last_plans_warning_while_resolving() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", trust: untrusted() })
-        verify(shown(dlg.contentItem, "addApplicationDialog.trust"))
-        dlg.metadata = Object.assign({}, dlg.metadata, { resolutionPending: true })
-        verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(findChild(dlg.footer, "addApplicationDialog.primaryButton").enabled, false)
-    }
-
-    // Launch installs nothing, so there is nothing to ask about.
-    function test_launch_ignores_trust() {
-        var dlg = createTemporaryObject(appDialogComp, testCase)
-        dlg.openWith({ name: "chat", repositoryUrl: "https://repo/", isInstalled: true,
-                       installStatus: InstallStatus.Installed, trust: blocked() })
-        var primary = findChild(dlg.footer, "addApplicationDialog.primaryButton")
-        compare(primary.text, "Launch")
-        compare(primary.enabled, true)
-        verify(!shown(dlg.contentItem, "addApplicationDialog.trust"))
-        compare(trustLine(dlg.contentItem, "addApplicationDialog.trust.chat"), "")
-    }
 
     // ── Settings → Trusted Publishers ──
 

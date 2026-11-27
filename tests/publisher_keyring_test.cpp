@@ -1,5 +1,5 @@
 // srcdeps: utils/PublisherKeyring.cpp utils/InstallTrust.cpp
-// libdeps: ICU::i18n ICU::uc
+// libdeps: basecamp_installer_trust
 //
 // The trusted publishers (app/utils/PublisherKeyring.{h,cpp}) against a fake
 // of package_manager's keyring calls that answers only when told to:

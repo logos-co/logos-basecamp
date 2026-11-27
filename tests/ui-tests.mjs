@@ -719,22 +719,16 @@ test("sidebar: active tile follows currentVisibleApp across section switches", a
            "backend.currentVisibleApp at end");
 });
 
-// --- App Manager (A33) — opening an installed app presents it once ---
+// --- Opening an app (A33) — an installed app is presented once ---
 //
-// The App Manager's open request reached the launcher twice, through QML and
-// through a queued call in C++, so an open app was presented twice per click.
+// The open request reached the launcher twice, through QML and through a
+// queued call in C++, so an open app was presented twice per click.
 
-test("app manager: opening an installed app presents it once", async (app) => {
+test("open app: opening an installed app presents it once", async (app) => {
   const welcome = await requireWelcomePage(app);
   const workspace = await requireWorkspace(app);
   const startDockCount = await ensureFixtureAOpen(app, "A33", welcome.id, workspace.id);
   if (startDockCount === null) return;
-
-  // Only an installed row takes the launch path; any other opens a dialog.
-  const proxyId = await openApplicationsWithProxy(app);
-  const row = await findFixtureARow(app, proxyId);
-  if (!row) throw new Error("fixture A has no installed row in the App Manager");
-  assertEq(row.installStatus, 1, "fixture A's installStatus (InstallStatus.Installed)");
 
   await evalOn(app, welcome.id,
     `Qt.createQmlObject('import QtQuick; Connections { objectName: "test.presentProbe"; ' +
@@ -744,8 +738,7 @@ test("app manager: opening an installed app presents it once", async (app) => {
   if (!probe) throw new Error("the presentAppRequested probe was not created");
 
   await evalOn(app, welcome.id,
-    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, ${JSON.stringify(row.repositoryUrl)}, ` +
-    `({}), true)`);
+    `backend.openApp(${JSON.stringify(FIXTURE_A.name)}, "", true)`);
   await app.waitFor(async () => {
     if ((await evalOn(app, probe.id, "presented")) < 1) throw new Error("not presented yet");
   }, { timeout: 10000, interval: 250, description: "fixture A to be presented" });
@@ -757,56 +750,9 @@ test("app manager: opening an installed app presents it once", async (app) => {
   await restoreFixtureADock(app, workspace.id, startDockCount, "cleanup: fixture A dock to close");
 });
 
-// --- App Manager helpers -----------------------------------------------------
-//
-// AppsFilterProxy's search is a fixed-string case-insensitive contains over
-// name/displayName/description. appManager.localAppsProxy chains
-// matchLocalOnly onto the searched proxy, so its visibleCount tracks the
-// search and its sourceModel is the searched ("outer") proxy — the same
-// AppsFilterProxy AppManagerView calls appsProxy. Offline, the outer model
-// holds the local installs plus package_downloader's default catalog.
-
-// AppsModelRoles (app/interfaces/BasecampModelRoles.h) as evaluate expressions.
-const APPS_ROLE = {
-  name: "Qt.UserRole + 1",
-  repositoryUrl: "Qt.UserRole + 2",
-  displayName: "Qt.UserRole + 3",
-  description: "Qt.UserRole + 4",
-  category: "Qt.UserRole + 5",
-  isInstalled: "Qt.UserRole + 14",
-  installStatus: "Qt.UserRole + 16",
-  installType: "Qt.UserRole + 17",
-  installStage: "Qt.UserRole + 29", // PlanInstallStageRole — what the delegates snapshot
-};
-
-// Opens the Applications view and returns the appManager.localAppsProxy id.
-async function openApplicationsWithProxy(app) {
-  await openApplications(app);
-  let proxyId = null;
-  await app.waitFor(async () => {
-    proxyId = await findLocalAppsProxy(app);
-    if (proxyId === null) throw new Error("appManager.localAppsProxy not found in QML tree");
-  }, { timeout: 10000, interval: 500, description: "localAppsProxy to exist" });
-  return proxyId;
-}
-
-async function outerRowCount(app, proxyId) {
-  return assertType(await evalOn(app, proxyId, "sourceModel.rowCount()"),
-                    "number", "outer proxy rowCount()");
-}
-
-// One primitive role of outer-model row `i`; unset roles coerce to "" / false / 0.
-async function outerRowField(app, proxyId, i, roleExpr, kind = "string") {
-  const data = `sourceModel.data(sourceModel.index(${i}, 0), ${roleExpr})`;
-  const expr = kind === "string" ? `String(${data} || "")`
-    : kind === "bool" ? `${data} === true`
-    : `Number(${data} || 0)`;
-  return evalOn(app, proxyId, expr);
-}
-
-// A search field driven by assigning `text`. On App Manager's that breaks its
-// `text: d.searchText` binding, which is harmless: onTextChanged still feeds
-// d.searchText, and every test ends with the field cleared.
+// A search field driven by assigning `text`. That breaks a `text:` binding,
+// which is harmless where onTextChanged feeds the search, and every test ends
+// with the field cleared.
 async function searchFieldOn(app, objectName) {
   const field = await requireObject(app, objectName);
   const get = () => evalOn(app, field.id, "text");
@@ -821,690 +767,6 @@ async function searchFieldOn(app, objectName) {
   };
   return { id: field.id, get, set, expectText, normalize };
 }
-
-// Clears the App Manager search and waits for the recorded counts to return
-// and the empty view to hide.
-async function clearAppManagerSearch(app, search, proxyId, { preLocal = null, preOuterRows }) {
-  const emptyView = await requireObject(app, "appManager.emptyView");
-  await search.set("");
-  await app.waitFor(async () => {
-    await search.expectText("");
-    assertEq(await outerRowCount(app, proxyId), preOuterRows,
-             "outer proxy rowCount() after clearing the search");
-    if (preLocal !== null) {
-      assertEq(await evalOn(app, proxyId, "visibleCount"), preLocal,
-               "localAppsProxy.visibleCount after clearing the search");
-    }
-    assertEq(await evalOn(app, emptyView.id, "visible"), false,
-             "appManager.emptyView visible after clearing the search");
-  }, { timeout: 5000, interval: 250, description: "cleared search to restore the grid" });
-}
-
-// Precondition: fixture A installed and at least one local row in the grid.
-// Returns localAppsProxy.visibleCount, or null on skip.
-async function requireFixtureALocalRow(app, label, proxyId) {
-  return requireFixtureA(app, label, async () => {
-    await findFixtureATile(app);
-    const count = await evalOn(app, proxyId, "visibleCount");
-    if (typeof count !== "number" || count < 1) {
-      throw new Error(`localAppsProxy.visibleCount=${count} (expected at least 1 local row)`);
-    }
-    return count;
-  }, "fixture A and at least one local row to be present");
-}
-
-// --- App Manager (A8) — search narrows the grid to matching apps ---
-
-test("app manager: search narrows the grid to matching apps", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-  const search = await searchFieldOn(app, "appManager.searchField");
-  await search.normalize();
-  const preLocal = await requireFixtureALocalRow(app, "A8", proxyId);
-  if (preLocal === null) return;
-  const preOuterRows = await outerRowCount(app, proxyId);
-
-  // Wrong case proves case-insensitivity. The spaced display name matches
-  // only via DisplayNameRole (name and description use the underscored form).
-  const matchQuery = FIXTURE_A.displayName.toUpperCase();
-  if (matchQuery === FIXTURE_A.displayName) {
-    throw new Error(
-      `FIXTURE_A.displayName=${JSON.stringify(FIXTURE_A.displayName)} is already ` +
-      "upper-case, so the wrong-case leg cannot prove case-insensitivity");
-  }
-  await search.set(matchQuery);
-  await app.waitFor(async () => {
-    await search.expectText(matchQuery);
-    assertEq(await evalOn(app, proxyId, "visibleCount"), 1,
-             "localAppsProxy.visibleCount with wrong-case display-name search");
-    assertEq(await outerRowCount(app, proxyId), 1,
-             "outer proxy rowCount() with wrong-case display-name search");
-  }, { timeout: 5000, interval: 250,
-       description: "wrong-case display-name search to narrow to fixture A" });
-
-  const noMatchQuery = `${matchQuery} ZZZ-NO-SUCH-APP`;
-  await search.set(noMatchQuery);
-  await app.waitFor(async () => {
-    await search.expectText(noMatchQuery);
-    assertEq(await evalOn(app, proxyId, "visibleCount"), 0,
-             "localAppsProxy.visibleCount with non-matching search");
-    assertEq(await outerRowCount(app, proxyId), 0,
-             "outer proxy rowCount() with non-matching search");
-  }, { timeout: 5000, interval: 250, description: "non-matching search to empty the grid" });
-
-  await clearAppManagerSearch(app, search, proxyId, { preLocal, preOuterRows });
-});
-
-// --- App Manager (A9) — search with no match shows the empty view ---
-
-test("app manager: search with no match shows the empty view", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-
-  // A catalog refresh landing mid-test would cover the empty view and move
-  // the counts the restore gate compares against.
-  const overlay = await requireObject(app, "appManager.loadingOverlay");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, overlay.id, "visible"), false, "appManager.loadingOverlay visible");
-  }, { timeout: 30000, interval: 500, description: "apps loading overlay to hide" });
-
-  const search = await searchFieldOn(app, "appManager.searchField");
-  // A plain (non-Loader) child, findable while hidden.
-  const emptyView = await requireObject(app, "appManager.emptyView");
-  await search.normalize();
-  const preLocal = assertType(await evalOn(app, proxyId, "visibleCount"),
-                              "number", "localAppsProxy.visibleCount");
-  const preOuterRows = await outerRowCount(app, proxyId);
-
-  // title (EmptyView) or text (LogosText), whichever is a non-empty string.
-  const emptyViewMessage = async () => {
-    for (const prop of ["title", "text"]) {
-      const res = await app.inspector.send("evaluate", { objectId: emptyView.id, expression: prop });
-      if (!res.error && typeof res.result === "string" && res.result.length > 0) return res.result;
-    }
-    return "";
-  };
-
-  // Every AppRepoSection: the Repeater's repo delegates plus the
-  // always-instantiated synthetic local one, so zero matches means the
-  // probe itself broke.
-  const visibleRepoSectionCount = async () => {
-    const matches = await findByType(app, "AppRepoSection");
-    if (matches.length === 0) {
-      throw new Error("findByType(AppRepoSection) returned no instances");
-    }
-    let count = 0;
-    for (const m of matches) {
-      if ((await evalOn(app, m.id, "visible")) === true) count += 1;
-    }
-    return count;
-  };
-
-  // The synthetic local section's header is the lowercase "local". Uses
-  // getProperties: a non-visual match has no `visible` and does not count,
-  // while a failed round-trip must surface.
-  const visibleLocalHeaderCount = async () => {
-    const hits = await app.inspector.send("findByProperty", { property: "text", value: "local" });
-    if (hits.error) throw new Error(`findByProperty(text="local") failed: ${hits.error}`);
-    let count = 0;
-    for (const m of (hits.matches ?? [])) {
-      const props = await app.inspector.send("getProperties", { objectId: m.id });
-      if (props.error) throw new Error(`getProperties(${m.id}) failed: ${props.error}`);
-      if (props.properties?.find((p) => p.name === "visible")?.value === true) count += 1;
-    }
-    return count;
-  };
-
-  // "§" is inert data: the filter is fixed-string, not a pattern.
-  const noMatchQuery = "zzz-no-such-app-§";
-  await search.set(noMatchQuery);
-  await app.waitFor(async () => {
-    await search.expectText(noMatchQuery);
-    assertEq(await outerRowCount(app, proxyId), 0, "outer proxy rowCount() with no-match search");
-    assertEq(await evalOn(app, proxyId, "visibleCount"), 0,
-             "localAppsProxy.visibleCount with no-match search");
-    assertEq(await evalOn(app, emptyView.id, "visible"), true,
-             "appManager.emptyView visible with no-match search");
-    if ((await emptyViewMessage()).length === 0) {
-      throw new Error("appManager.emptyView carries no message (neither title nor text)");
-    }
-    assertEq(await visibleRepoSectionCount(), 0, "visible AppRepoSections with no-match search");
-    assertEq(await visibleLocalHeaderCount(), 0, 'visible "local" headers with no-match search');
-  }, { timeout: 5000, interval: 250, description: "no-match search to show the empty view" });
-
-  await clearAppManagerSearch(app, search, proxyId, { preLocal, preOuterRows });
-});
-
-// --- App Manager (A10) — search tolerates regex/special/unicode input ---
-//
-// Regex metacharacters are inert data to the fixed-string filter, so none of
-// these inputs may produce QRegularExpression warnings or a stale grid. The
-// expected count per input is computed from a snapshot of the searched
-// fields, mirroring the C++ filter: "(" matches fixture A's own description,
-// and the outer model also holds the default catalog.
-
-test("app manager: search tolerates regex/special/unicode input", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-  const search = await searchFieldOn(app, "appManager.searchField");
-  const emptyView = await requireObject(app, "appManager.emptyView");
-
-  // Scanned from a baseline taken now; no-op when BASECAMP_APP_LOG is unset.
-  const appLogPath = process.env.BASECAMP_APP_LOG || null;
-  let appLogBaseline = 0;
-  if (appLogPath) {
-    try { appLogBaseline = statSync(appLogPath).size; } catch { appLogBaseline = 0; }
-  }
-  const assertNoRegexWarnings = (label) => {
-    if (!appLogPath) return;
-    let tail = "";
-    try {
-      tail = readFileSync(appLogPath).subarray(appLogBaseline).toString("utf-8");
-    } catch {
-      return;
-    }
-    const hits = tail.split("\n").filter((l) => l.includes("QRegularExpression"));
-    if (hits.length > 0) {
-      throw new Error(
-        `${hits.length} QRegularExpression warning(s) in the app log after input ` +
-        `${label}:\n  ${hits.join("\n  ")}`);
-    }
-  };
-
-  // Keeps the 512-char input out of descriptions and error messages.
-  const labelFor = (input) =>
-    input.length > 16
-      ? `${JSON.stringify(`${input.slice(0, 8)}…`)} (${input.length} chars)`
-      : JSON.stringify(input);
-
-  await search.normalize();
-  if ((await requireFixtureALocalRow(app, "A10", proxyId)) === null) return;
-  const preOuterRows = await outerRowCount(app, proxyId);
-
-  const snapshot = [];
-  for (let i = 0; i < preOuterRows; i += 1) {
-    snapshot.push({
-      name: await outerRowField(app, proxyId, i, APPS_ROLE.name),
-      displayName: await outerRowField(app, proxyId, i, APPS_ROLE.displayName),
-      description: await outerRowField(app, proxyId, i, APPS_ROLE.description),
-    });
-  }
-  const expectedMatches = (input) => {
-    const needle = input.toLowerCase();
-    return snapshot.filter((r) =>
-      [r.name, r.displayName, r.description].some((v) => v.toLowerCase().includes(needle))
-    ).length;
-  };
-
-  const inputs = ["(", "[", "*", "\\", ".*", "日本語", "x".repeat(512)];
-  for (const input of inputs) {
-    const expected = expectedMatches(input);
-    const label = labelFor(input);
-    await search.set(input);
-    await app.waitFor(async () => {
-      const text = await search.get();
-      if (text !== input) {
-        throw new Error(
-          `search text=${labelFor(String(text))} did not round-trip (expected ${label})`);
-      }
-      assertEq(await outerRowCount(app, proxyId), expected,
-               `outer proxy rowCount() for input ${label}`);
-      assertEq(await evalOn(app, emptyView.id, "visible"), expected === 0,
-               `appManager.emptyView visible for input ${label}`);
-    }, { timeout: 5000, interval: 100,
-         description: `input ${label} to filter to ${expected} row(s)` });
-    assertNoRegexWarnings(label);
-  }
-
-  await assertResponsive(app);
-  await clearAppManagerSearch(app, search, proxyId, { preOuterRows });
-  assertNoRegexWarnings('"" (clear)');
-});
-
-// --- App Manager (A11) — selecting a category filters the grid ---
-//
-// The filter is read as sourceModel.categoryFilter: object-scoped evaluate
-// cannot reach AppManagerView's file-internal `d`. The selection shows
-// through the cells' `highlighted` (ListView.isCurrentItem). Fixture A's
-// manifest category is "testing", which AppsFilterProxy::categories()
-// capitalizes; the expected count is computed from a snapshot of every
-// outer row's category, mirroring filterAcceptsRow's capitalizeFirst.
-
-test("app manager: selecting a category filters the grid", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-  const CATEGORY = "Testing";
-  const capitalizeFirst = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-  const categoryFilter = () => evalOn(app, proxyId, "sourceModel.categoryFilter");
-
-  // Cells are re-found on every use: categoriesChanged can rebuild the
-  // ListView's delegates.
-  const findCategoryCell = (name) =>
-    findByObjectName(app.inspector, `appManager.category.${name}`);
-  const requireCell = async (name) => {
-    const cell = await findCategoryCell(name);
-    if (!cell) throw new Error(`appManager.category.${name} not in the QML tree`);
-    return cell;
-  };
-  const clickCell = async (name) => evalOn(app, (await requireCell(name)).id, "clicked()");
-  const cellHighlighted = async (name) => evalOn(app, (await requireCell(name)).id, "highlighted");
-
-  // Normalize: "All" category and an empty search. The search is cleared
-  // through the field so d.searchText stays in sync.
-  const initialFilter = assertType(await categoryFilter(), "string", "sourceModel.categoryFilter");
-  if (initialFilter !== "" && initialFilter !== "All") {
-    await clickCell("All");
-    await app.waitFor(async () => {
-      assertEq(await categoryFilter(), "All", "sourceModel.categoryFilter");
-    }, { timeout: 5000, interval: 100, description: 'category filter to normalize to "All"' });
-  }
-  if ((await evalOn(app, proxyId, "sourceModel.searchText")) !== "") {
-    await (await searchFieldOn(app, "appManager.searchField")).set("");
-    await app.waitFor(async () => {
-      assertEq(await evalOn(app, proxyId, "sourceModel.searchText"), "", "sourceModel.searchText");
-    }, { timeout: 5000, interval: 100, description: "search to normalize to empty" });
-  }
-
-  const cell = await requireFixtureA(app, "A11", () => requireCell(CATEGORY),
-                                     `the "${CATEGORY}" category cell to exist`);
-  if (cell === null) return;
-
-  const preOuterRows = await outerRowCount(app, proxyId);
-  const rowCategory = (i) => outerRowField(app, proxyId, i, APPS_ROLE.category);
-  const snapshot = [];
-  for (let i = 0; i < preOuterRows; i += 1) snapshot.push(await rowCategory(i));
-  const expectedFiltered = snapshot.filter((c) => capitalizeFirst(c) === CATEGORY).length;
-  if (expectedFiltered < 1) {
-    throw new Error(
-      `snapshot found 0 "${CATEGORY}"-category rows in ${preOuterRows} outer rows ` +
-      `although the "${CATEGORY}" cell renders`);
-  }
-
-  await clickCell(CATEGORY);
-  await app.waitFor(async () => {
-    assertEq(await categoryFilter(), CATEGORY, "sourceModel.categoryFilter after the click");
-    const outerRows = await outerRowCount(app, proxyId);
-    assertEq(outerRows, expectedFiltered, `outer proxy rowCount() with the "${CATEGORY}" filter`);
-    for (let i = 0; i < outerRows; i += 1) {
-      assertEq(capitalizeFirst(await rowCategory(i)), CATEGORY, `filtered row ${i} category`);
-    }
-    assertEq(await cellHighlighted(CATEGORY), true, `"${CATEGORY}" cell highlighted`);
-    assertEq(await cellHighlighted("All"), false, '"All" cell highlighted');
-  }, { timeout: 5000, interval: 100,
-       description: `the "${CATEGORY}" category to filter the grid to ${expectedFiltered} row(s)` });
-
-  await clickCell("All");
-  await app.waitFor(async () => {
-    assertEq(await categoryFilter(), "All", 'sourceModel.categoryFilter after clicking "All"');
-    assertEq(await outerRowCount(app, proxyId), preOuterRows,
-             "outer proxy rowCount() after clearing the category");
-    assertEq(await cellHighlighted("All"), true, '"All" cell highlighted after the reset');
-  }, { timeout: 5000, interval: 100,
-       description: 'the "All" category to restore the unfiltered grid' });
-});
-
-// --- App Manager (A12) — reload shows the loading state then settles ---
-//
-// The overlay's visible and the reload button's enabled both bind
-// backend.appsLoading. Offline, the catalog fetch gives up after ~2 s, so the
-// loading window is short: the phase gate polls all three observables in a
-// fast loop and any one counts. A failed fetch never touches the model, so
-// both counts must survive verbatim. The button is clicked by objectName:
-// package_manager_ui renders its own "Reload".
-
-test("app manager: reload shows the loading state then settles", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-  const reloadButton = await requireObject(app, "appManager.reloadButton");
-  const overlay = await requireObject(app, "appManager.loadingOverlay");
-  const appsLoading = () => evalOn(app, overlay.id, "backend.appsLoading");
-  const overlayVisible = () => evalOn(app, overlay.id, "visible");
-  const reloadEnabled = () => evalOn(app, reloadButton.id, "enabled");
-
-  // No refresh may be in flight while the counts are recorded.
-  await app.waitFor(async () => {
-    assertEq(await appsLoading(), false, "backend.appsLoading");
-    assertEq(await reloadEnabled(), true, "reload button enabled");
-  }, { timeout: 30000, interval: 500, description: "no refresh to be in flight before the click" });
-  const preOuterRows = await outerRowCount(app, proxyId);
-  const preLocal = assertType(await evalOn(app, proxyId, "visibleCount"),
-                              "number", "localAppsProxy.visibleCount");
-
-  await invoke(app, reloadButton.id, "clicked", "clicking appManager.reloadButton");
-
-  const phaseDeadline = Date.now() + 2000;
-  let observed = null;
-  for (;;) {
-    if ((await overlayVisible()) === true) { observed = "loadingOverlay visible"; break; }
-    if ((await appsLoading()) === true) { observed = "backend.appsLoading === true"; break; }
-    if ((await reloadEnabled()) === false) { observed = "reload button disabled"; break; }
-    if (Date.now() >= phaseDeadline) {
-      throw new Error(
-        "no loading observable within 2s of clicking reload (overlay hidden, " +
-        "backend.appsLoading false, reload button enabled)");
-    }
-    await sleep(50);
-  }
-  note("loading phase observed via", observed);
-
-  await app.waitFor(async () => {
-    assertEq(await appsLoading(), false, "backend.appsLoading after reload");
-    assertEq(await overlayVisible(), false, "appManager.loadingOverlay visible after reload");
-    assertEq(await reloadEnabled(), true, "reload button enabled after reload");
-  }, { timeout: 30000, interval: 250, description: "reload to settle" });
-
-  // Single-shot reads: the counts must already be back the moment
-  // appsLoading clears, and a retried wait would mask a transient drop.
-  assertEq(await outerRowCount(app, proxyId), preOuterRows,
-           "outer proxy rowCount() after the reload settled");
-  assertEq(await evalOn(app, proxyId, "visibleCount"), preLocal,
-           "localAppsProxy.visibleCount after the reload settled");
-});
-
-// --- App Manager — context-menu / Details-dialog helpers (A13–A15) ---------
-//
-// The welcome page also builds AppGridDelegate tiles, with contextMenuEnabled
-// false and no detailsRequested wiring, and they precede the App Manager's in
-// findByType order, so menus are selected by probing each AppContextMenu's
-// delegate scope. Menu items are addressed through the menu's own
-// count/itemAt: a tree-wide objectName find would hit another delegate's
-// unopened menu. The AddApplicationDialog has no objectName and lives in the
-// overlay QQuickWidget, so its texts are checked with a walk over contentItem.
-
-// The outer-model roles the menu's appData consumes; kind picks the coercion.
-const APPS_ROW_FIELDS = [
-  ["name",          APPS_ROLE.name,          "string"],
-  ["repositoryUrl", APPS_ROLE.repositoryUrl, "string"],
-  ["displayName",   APPS_ROLE.displayName,   "string"],
-  ["isInstalled",   APPS_ROLE.isInstalled,   "bool"],
-  ["installStatus", APPS_ROLE.installStatus, "number"],
-  ["installType",   APPS_ROLE.installType,   "string"],
-  ["installStage",  APPS_ROLE.installStage,  "number"],
-];
-
-async function readOuterRow(app, proxyId, i) {
-  const row = {};
-  for (const [key, roleExpr, kind] of APPS_ROW_FIELDS) {
-    row[key] = await outerRowField(app, proxyId, i, roleExpr, kind);
-  }
-  return row;
-}
-
-async function snapshotOuterRows(app, proxyId) {
-  const rowCount = await outerRowCount(app, proxyId);
-  const rows = [];
-  for (let i = 0; i < rowCount; i += 1) rows.push(await readOuterRow(app, proxyId, i));
-  return rows;
-}
-
-// Fixture A's installed row, or null.
-async function findFixtureARow(app, proxyId) {
-  const rowCount = await outerRowCount(app, proxyId);
-  for (let i = 0; i < rowCount; i += 1) {
-    const name = await outerRowField(app, proxyId, i, APPS_ROLE.name);
-    if (name === FIXTURE_A.name) {
-      const row = await readOuterRow(app, proxyId, i);
-      return row.isInstalled === true ? row : null;
-    }
-  }
-  return null;
-}
-
-// The AppContextMenu owned by the App Manager delegate rendering `row`, or
-// null if none is live. Disabled menus are skipped.
-async function findDelegateMenu(app, row) {
-  const matches = await findByType(app, "AppContextMenu");
-  if (matches.length === 0) throw new Error("no AppContextMenu instance in the QML tree");
-  for (const m of matches) {
-    const probe = await app.inspector.send("evaluate", {
-      objectId: m.id,
-      expression:
-        "JSON.stringify({ name: String(d.nameText), " +
-        "installed: d.isInstalled === true, " +
-        "menuEnabled: root.contextMenuEnabled !== false })",
-    });
-    if (probe.error) {
-      throw new Error(
-        `delegate state does not resolve in AppContextMenu ${m.id}'s scope: ${probe.error}`);
-    }
-    const got = JSON.parse(probe.result);
-    if (!got.menuEnabled) continue;
-    if (got.name === row.name && got.installed === row.isInstalled) return m.id;
-  }
-  return null;
-}
-
-async function requireFixtureAMenu(app, row) {
-  let menuId = null;
-  await app.waitFor(async () => {
-    menuId = await findDelegateMenu(app, row);
-    if (menuId === null) {
-      throw new Error(`no live delegate renders fixture A's installed row ("${row.name}")`);
-    }
-  }, { timeout: 10000, interval: 500,
-       description: "fixture A's delegate (and its AppContextMenu) to exist" });
-  return menuId;
-}
-
-// What a right-click or long press on the delegate does, by hand: the menu
-// with the delegate's snapshot. Waits for the menu to show.
-async function openContextMenuFor(app, menuId, label) {
-  await evalOn(app, menuId, "openFor(d.snapshot())");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, menuId, "visible"), true,
-             `AppContextMenu visible after openFor (${label})`);
-  }, { timeout: 5000, interval: 100, description: "the context menu to open" });
-}
-
-// The appData the delegate handed the menu must equal its model row.
-async function assertMenuAppData(app, menuId, row, label) {
-  const appData = JSON.parse(await evalOn(app, menuId, "JSON.stringify(appData)"));
-  for (const [key] of APPS_ROW_FIELDS) {
-    assertEq(appData[key], row[key], `menu appData.${key} for the ${label} row`);
-  }
-}
-
-async function closeContextMenu(app, menuId, label) {
-  await evalOn(app, menuId, "close()");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, menuId, "visible"), false, `AppContextMenu visible after close() (${label})`);
-  }, { timeout: 5000, interval: 100, description: `the menu to close after ${label}` });
-}
-
-// Emits triggered() on this menu's item found by objectName among its own items.
-async function triggerContextMenuItem(app, menuId, objectName) {
-  const result = await evalOn(app, menuId, `(() => {
-    for (let i = 0; i < count; i += 1) {
-      const item = itemAt(i);
-      if (!item || item.objectName !== ${JSON.stringify(objectName)}) continue;
-      if (item.visible !== true) return "item not visible";
-      item.triggered();
-      return "triggered";
-    }
-    return "item not found";
-  })()`);
-  if (result !== "triggered") throw new Error(`triggering ${objectName} failed: ${result}`);
-}
-
-// Waits for the single AddApplicationDialog instance to be visible; returns its id.
-async function waitForAddApplicationDialog(app) {
-  let dialogId = null;
-  await app.waitFor(async () => {
-    dialogId = (await findByType(app, "AddApplicationDialog"))[0]?.id ?? null;
-    if (dialogId === null) throw new Error("no AddApplicationDialog instance in the QML tree");
-    assertEq(await evalOn(app, dialogId, "visible"), true, "AddApplicationDialog visible");
-  }, { timeout: 10000, interval: 500, description: "the Add Application dialog to open" });
-  return dialogId;
-}
-
-const missingDialogTexts = (app, dialogId, texts) =>
-  missingTexts(app, dialogId, "contentItem", texts);
-
-// Clicks addApplicationDialog.closeButton and waits for the dialog to hide.
-async function closeAddApplicationDialog(app, dialogId) {
-  const closeButton = await requireObject(app, "addApplicationDialog.closeButton");
-  await invoke(app, closeButton.id, "clicked", "clicking addApplicationDialog.closeButton");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, dialogId, "visible"), false,
-             "AddApplicationDialog visible after the close click");
-  }, { timeout: 5000, interval: 100, description: "the dialog to close" });
-}
-
-// Applications → fixture A's delegate menu → Details → dialog visible.
-// Returns the dialog id, or null when the fixture-A precondition skipped.
-async function openFixtureADetailsDialog(app, label) {
-  const proxyId = await openApplicationsWithProxy(app);
-  const fixtureRow = await requireFixtureA(app, label, async () => {
-    const row = await findFixtureARow(app, proxyId);
-    if (!row) throw new Error(`no installed row named "${FIXTURE_A.name}" in the outer model`);
-    return row;
-  }, "fixture A's installed row to appear in the model");
-  if (fixtureRow === null) return null;
-
-  const menuId = await requireFixtureAMenu(app, fixtureRow);
-  await openContextMenuFor(app, menuId, "fixture A");
-  await triggerContextMenuItem(app, menuId, "appContextMenu.details");
-  // Direct signal emission bypasses the menu's auto-close.
-  await closeContextMenu(app, menuId, "Details");
-  return waitForAddApplicationDialog(app);
-}
-
-// --- App Manager (A13) — the context menu offers actions by install state ---
-//
-// Install state shows as item visibility: open/details iff installed;
-// install iff not installed; uninstall iff installed && installType !==
-// "embedded" && name !== "main_ui", enabled iff no install is in flight.
-// The right-button binding is not covered: the inspector clicks left only.
-
-test("app manager: context menu offers actions by install state", async (app) => {
-  const proxyId = await openApplicationsWithProxy(app);
-
-  const rows = await requireFixtureA(app, "A13", async () => {
-    const snapshot = await snapshotOuterRows(app, proxyId);
-    if (!snapshot.some((r) => r.name === FIXTURE_A.name && r.isInstalled === true)) {
-      throw new Error(
-        `no installed row named "${FIXTURE_A.name}" among ${snapshot.length} outer row(s)`);
-    }
-    return snapshot;
-  }, "fixture A's installed row to appear in the model");
-  if (rows === null) return;
-  const installedRow = rows.find((r) => r.name === FIXTURE_A.name && r.isInstalled === true);
-  const catalogRows = rows.filter((r) => r.isInstalled === false);
-
-  const ITEM_NAMES = [
-    "appContextMenu.open", "appContextMenu.details",
-    "appContextMenu.install", "appContextMenu.uninstall",
-  ];
-  const menuItemStates = async (menuId) => {
-    const states = JSON.parse(await evalOn(app, menuId, `(() => {
-      const out = {};
-      for (let i = 0; i < count; i += 1) {
-        const item = itemAt(i);
-        if (!item || !item.objectName) continue;
-        out[item.objectName] = { visible: item.visible === true, enabled: item.enabled === true };
-      }
-      return JSON.stringify(out);
-    })()`));
-    for (const name of ITEM_NAMES) {
-      if (!states[name]) {
-        throw new Error(
-          `menu item ${name} not among the menu's items ` +
-          `(got: ${Object.keys(states).join(", ") || "none"})`);
-      }
-    }
-    return states;
-  };
-  const assertItem = (states, name, expected, label) => {
-    for (const [prop, want] of Object.entries(expected)) {
-      assertEq(states[name][prop], want, `${name} ${prop} for the ${label} row`);
-    }
-  };
-
-  const installedMenuId = await requireFixtureAMenu(app, installedRow);
-  await openContextMenuFor(app, installedMenuId, "installed");
-  await app.waitFor(async () => {
-    await assertMenuAppData(app, installedMenuId, installedRow, "installed");
-    const states = await menuItemStates(installedMenuId);
-    assertItem(states, "appContextMenu.open",    { visible: true },  "installed");
-    assertItem(states, "appContextMenu.details", { visible: true },  "installed");
-    assertItem(states, "appContextMenu.install", { visible: false }, "installed");
-    assertItem(states, "appContextMenu.uninstall", { visible: true, enabled: true }, "installed");
-  }, { timeout: 5000, interval: 100,
-       description: "the installed row's menu to offer open/details/uninstall" });
-  await closeContextMenu(app, installedMenuId, "the installed row");
-
-  // First not-installed row with a live delegate.
-  let catalogRow = null;
-  let catalogMenuId = null;
-  for (const row of catalogRows) {
-    const id = await findDelegateMenu(app, row);
-    if (id !== null) { catalogRow = row; catalogMenuId = id; break; }
-  }
-  if (catalogMenuId === null) {
-    skip("A13 catalog-only half",
-         `${catalogRows.length} of ${rows.length} outer row(s) are not installed, ` +
-         "but none has a live delegate");
-    return;
-  }
-  await openContextMenuFor(app, catalogMenuId, "catalog-only");
-  await app.waitFor(async () => {
-    await assertMenuAppData(app, catalogMenuId, catalogRow, "catalog-only");
-    const states = await menuItemStates(catalogMenuId);
-    assertItem(states, "appContextMenu.install",   { visible: true },  "catalog-only");
-    assertItem(states, "appContextMenu.open",      { visible: false }, "catalog-only");
-    assertItem(states, "appContextMenu.details",   { visible: false }, "catalog-only");
-    assertItem(states, "appContextMenu.uninstall", { visible: false }, "catalog-only");
-  }, { timeout: 5000, interval: 100,
-       description: "the catalog-only row's menu to offer install alone" });
-  await closeContextMenu(app, catalogMenuId, "the catalog-only row");
-});
-
-// --- App Manager (A14) — Details opens the Add Application dialog ---
-
-test("app manager: context menu Details opens the Add Application dialog", async (app) => {
-  const dialogId = await openFixtureADetailsDialog(app, "A14");
-  if (dialogId === null) return;
-
-  await app.waitFor(async () => {
-    // A LogosDialog's title is its header's, not its content's.
-    assertEq(await evalOn(app, dialogId, "title"), "Add Application", "the dialog's title");
-    const missing = await missingDialogTexts(app, dialogId, [
-      FIXTURE_A.displayName, "Description", "Required Packages",
-    ]);
-    if (missing.length > 0) throw new Error(`dialog texts missing: ${missing.join(", ")}`);
-  }, { timeout: 5000, interval: 250, description: "the dialog's fixed texts to render" });
-
-  assertEq(await evalOn(app, dialogId, "installStage"), 0,
-           "dialog.installStage (0 = InstallStage.None)");
-
-  await closeAddApplicationDialog(app, dialogId);
-});
-
-// --- App Manager (A15) — dialog wording for an already-installed app ---
-//
-// Fixture A is a catalog-less user install, so actionMode resolves to
-// "launch" and the primary button reads "Launch"; "%1 will be installed."
-// comes only from the "install" footer arm. Uninstall keys on d.canUninstall,
-// all true for fixture A.
-
-test("app manager: dialog wording for an already-installed app", async (app) => {
-  const dialogId = await openFixtureADetailsDialog(app, "A15");
-  if (dialogId === null) return;
-
-  const primaryButton = await requireObject(app, "addApplicationDialog.primaryButton");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, primaryButton.id, "text"), "Launch", "primaryButton text");
-  }, { timeout: 5000, interval: 100, description: 'the primary button to read "Launch"' });
-
-  const missing = await missingDialogTexts(app, dialogId, ["will be installed."]);
-  if (missing.length !== 1) {
-    throw new Error('"will be installed." found in the dialog (expected absent)');
-  }
-
-  const uninstallButton = await requireObject(app, "addApplicationDialog.uninstallButton");
-  await app.waitFor(async () => {
-    assertEq(await evalOn(app, uninstallButton.id, "visible"), true, "uninstallButton visible");
-    assertEq(await evalOn(app, uninstallButton.id, "enabled"), true, "uninstallButton enabled");
-  }, { timeout: 5000, interval: 100,
-       description: "the Uninstall button to be visible and enabled" });
-
-  await closeAddApplicationDialog(app, dialogId);
-});
 
 // --- Settings helpers --------------------------------------------------------
 
@@ -2710,17 +1972,27 @@ test("sidebar: open multiple sections sequentially without failure", async (app)
 // follow the window there too. The welcome page and the dialogs' overlay
 // didn't: their Theme.viewWidth stayed 0, a desktop's, on any window.
 test("shell views: the welcome page and the overlay follow their width", async (app) => {
-  for (const name of ["welcomePage.greeting", "overlayDialogs"]) {
-    const item = await requireObject(app, name);
-    const seen = await evalOn(app, item.id, "Theme.viewWidth");
-    const width = await evalOn(app, item.id, "Window.width");
-    if (!(typeof seen === "number" && seen > 0 && Math.abs(seen - width) < 1)) {
-      throw new Error(`${name}: Theme.viewWidth ${seen}, its window ${width}`);
+  // The overlay is sized once it shows: a dialog first.
+  const overlay = await requireObject(app, "overlayDialogs");
+  await evalOn(app, overlay.id, '(loadFailedDialog.openWithLoadError("width_probe", "A width probe."), "opened")');
+  await app.waitFor(async () => {
+    if (!((await evalOn(app, overlay.id, "Window.width")) > 0)) throw new Error("the overlay is not shown yet");
+  }, { timeout: 10000, interval: 250, description: "the overlay to show" });
+  try {
+    for (const name of ["welcomePage.greeting", "overlayDialogs"]) {
+      const item = await requireObject(app, name);
+      const seen = await evalOn(app, item.id, "Theme.viewWidth");
+      const width = await evalOn(app, item.id, "Window.width");
+      if (!(typeof seen === "number" && seen > 0 && Math.abs(seen - width) < 1)) {
+        throw new Error(`${name}: Theme.viewWidth ${seen}, its window ${width}`);
+      }
     }
+  } finally {
+    await evalOn(app, overlay.id, '(loadFailedDialog.close(), "closed")');
   }
 });
 
-// --- App Manager ---
+// --- Applications: App Manager, an app shown as the section ---
 test("app manager: panel + categories sidebar render on first open", async (app) => {
   await openPlugin(app, "Applications", ["Not Installed", "Categories", "All"], { timeout: 15000 });
 });
@@ -3358,100 +2630,6 @@ test("search chips show the platform's shortcut text (⌘K on macOS, Ctrl+K else
   assertEq(await evalOn(app, settingsBar.id, "shortcutHint"), expected, "settings.searchField shortcutHint");
 });
 
-// --- App Manager "Local" section ---
-//
-// Two invariants for the synthetic "Local" repo bucket in AppManagerView:
-//   (a) matchLocalOnly on AppsFilterProxy picks up exactly the rows in
-//       AppsModel that have an empty repositoryUrl;
-//   (b) the "Local" section header renders in the grid iff local rows exist.
-//
-// The test inspects the live QML tree — no fixture-seeding, so it verifies
-// the invariant against whatever the harness has installed. If the harness
-// has zero local packages the test short-circuits ("ok, no local rows"),
-// which is fine: what we're guarding against is a wrong / silent-broken
-// mapping, not fixture presence.
-//
-// Anchor: AppManagerView declares `AppsFilterProxy { objectName:
-// "appManager.localAppsProxy"; matchLocalOnly: true; sourceModel:
-// root.appsProxy }`. From that anchor we can reach both the proxy's own
-// visibleCount and the underlying AppsModel via sourceModel.sourceModel.
-
-async function findLocalAppsProxy(app) {
-  const res = await app.findByProperty("objectName", "appManager.localAppsProxy");
-  if (!res.matches || res.matches.length === 0) return null;
-  return res.matches[0].id;
-}
-
-test("app manager: localAppsProxy is wired as a matchLocalOnly filter", async (app) => {
-  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
-
-  const proxyId = await findLocalAppsProxy(app);
-  if (proxyId === null) {
-    throw new Error("appManager.localAppsProxy not found in QML tree");
-  }
-
-  // Guards the wiring: without matchLocalOnly=true the section would
-  // silently absorb every catalog row when repositoryUrlFilter is empty.
-  // Without a sourceModel it would report 0 forever.
-  const matchLocalOnly = await evalOn(app, proxyId, "matchLocalOnly");
-  if (matchLocalOnly !== true) {
-    throw new Error(`matchLocalOnly=${matchLocalOnly} (expected true)`);
-  }
-  const excludeMainUi = await evalOn(app, proxyId, "excludeMainUi");
-  if (excludeMainUi !== false) {
-    throw new Error(`excludeMainUi=${excludeMainUi} (expected false — Local shows all)`);
-  }
-  const hasSourceModel = await evalOn(app, proxyId, "!!sourceModel");
-  if (!hasSourceModel) {
-    throw new Error("localAppsProxy.sourceModel is unset");
-  }
-  const visibleCount = await evalOn(app, proxyId, "visibleCount");
-  if (typeof visibleCount !== "number" || visibleCount < 0) {
-    throw new Error(`visibleCount=${visibleCount} (expected non-negative number)`);
-  }
-  const outerRowCount = await evalOn(app, proxyId, "sourceModel.rowCount()");
-  if (visibleCount > outerRowCount) {
-    throw new Error(
-      `visibleCount=${visibleCount} exceeds outer proxy rowCount=${outerRowCount} — ` +
-      `matchLocalOnly cannot legally count MORE rows than its source`);
-  }
-});
-
-test("app manager: 'local' header renders iff local rows exist", async (app) => {
-  await openPlugin(app, "Applications", ["Not Installed", "Categories"], { timeout: 15000 });
-
-  const proxyId = await findLocalAppsProxy(app);
-  if (proxyId === null) throw new Error("appManager.localAppsProxy not found");
-
-  const vcRes = await app.inspector.send("evaluate", {
-    objectId: proxyId, expression: "visibleCount",
-  });
-  if (vcRes.error) throw new Error(`evaluate(visibleCount) failed: ${vcRes.error}`);
-  const localCount = typeof vcRes.result === "number" ? vcRes.result : 0;
-
-  // Section header label is lowercase "local" — distinguishes the
-  // synthetic bucket from publisher-authored repo display names.
-  const headerHits = await app.inspector.send("findByProperty", {
-    property: "text", value: "local",
-  });
-  const visibleLocalHeaders = [];
-  for (const m of (headerHits.matches ?? [])) {
-    try {
-      const props = await app.inspector.send("getProperties", { objectId: m.id });
-      const visibleProp = props.properties?.find(p => p.name === "visible");
-      if (visibleProp && visibleProp.value === true) visibleLocalHeaders.push(m.id);
-    } catch { /* ignore per-match failures */ }
-  }
-
-  if (localCount > 0 && visibleLocalHeaders.length === 0) {
-    throw new Error(
-      `localAppsProxy.visibleCount=${localCount} but no visible "local" ` +
-      `header was found in the AppManager tree`);
-  }
-  // Absence is fine when localCount === 0 — the section's `visible` binds
-  // on localFilter.visibleCount > 0 and correctly hides.
-});
-
 // --- Tray Show/Hide (issue #268) ---
 //
 // Drives the real Window through the inspector: showHideWindow is a private
@@ -4001,11 +3179,20 @@ test("intents: cancelling also returns the user to the caller", async (app) => {
 });
 
 // A package confirmation whose request ended closes, so it can't answer nobody
-// or refuse the next one (#570). Here its requester goes away while it is up.
-test("intents: a package confirmation closes when its request ends", async (app) => {
-  const anchor = await openIntentRequester(app);
-  await evalOn(app, anchor, '(logos.request("basecamp.packages.confirm_install", ' +
-                            '{ name: "probe_pkg" }, function () {}), "sent")');
+// or refuse the next one (#570). Here its requester goes away while it is up,
+// with another installer's confirmation waiting behind it: that one shows. It
+// used to be refused, the closed one still holding Basecamp's gate.
+test("intents: a package confirmation closes when its request ends, and the next one shows", async (app) => {
+  // Only the installer apps may ask (app/interfaces/DefaultApps.h): Package
+  // Manager's screen asks here.
+  await app.click("Package Manager", sidebarSection);
+  let store = null;
+  await app.waitFor(async () => {
+    store = await findByObjectName(app.inspector, "pmui.BackendStore");
+    if (!store) throw new Error("Package Manager's view is not up yet");
+  }, { timeout: 30000, interval: 500, description: "Package Manager's view" });
+  await evalOn(app, store.id, '(logos.request("basecamp.packages.confirm_install", ' +
+                              '{ name: "probe_pkg" }, function () {}), "sent")');
   await app.waitFor(async () => {
     if ((await visibilityOf(app, "confirmationDialog.installGate")) !== true)
       throw new Error("no install confirmation yet");
@@ -4013,11 +3200,30 @@ test("intents: a package confirmation closes when its request ends", async (app)
 
   const welcome = await findByObjectName(app.inspector, "welcomePage.greeting");
   if (!welcome) throw new Error("no welcomePage.greeting to reach the backend through");
-  await evalOn(app, welcome.id, '(backend.unloadUiModule("intent_requester_demo"), "unloaded")');
+  // App Manager asks too; it waits behind the confirmation on screen.
+  await evalOn(app, welcome.id, '(backend.setCurrentActiveSectionIndex(1), "applications")');
+  let appManager = null;
   await app.waitFor(async () => {
-    if ((await visibilityOf(app, "confirmationDialog.installGate")) !== false)
-      throw new Error("the confirmation is still up");
-  }, { timeout: 15000, interval: 250, description: "the confirmation to close" });
+    appManager = await findByObjectName(app.inspector, "appManager");
+    if (!appManager) throw new Error("App Manager's view is not up yet");
+  }, { timeout: 30000, interval: 500, description: "App Manager's view" });
+  await evalOn(app, appManager.id, '(logos.request("basecamp.packages.confirm_install", ' +
+                                   '{ name: "probe_next" }, function () {}), "sent")');
+  const gate = await findByObjectName(app.inspector, "confirmationDialog.installGate");
+  await evalOn(app, welcome.id, '(backend.unloadUiModule("package_manager_ui"), "unloaded")');
+  try {
+    await app.waitFor(async () => {
+      const shown = await evalOn(app, gate.id, "visible ? moduleName : ''");
+      if (shown !== "probe_next") throw new Error(`the gate shows ${JSON.stringify(shown)}`);
+    }, { timeout: 15000, interval: 250, description: "the waiting confirmation to show" });
+    await evalOn(app, gate.id, '(close(), "closed")');
+    await app.waitFor(async () => {
+      if ((await visibilityOf(app, "confirmationDialog.installGate")) !== false)
+        throw new Error("the confirmation is still up");
+    }, { timeout: 15000, interval: 250, description: "the confirmation to close" });
+  } finally {
+    await evalOn(app, welcome.id, '(backend.loadUiModule("package_manager_ui"), "loaded")');
+  }
 });
 
 test("intents: a hand-off leaves the user where it took them", async (app) => {

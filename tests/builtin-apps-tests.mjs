@@ -5,16 +5,16 @@
 // `nix build .#builtin-apps-test` (nix/builtin-apps-test.nix) once per
 // BUILTIN_SCENARIO, each with a fresh LOGOS_USER_DIR:
 //
-//   moved  Copies of Package Manager planted before start are moved aside and
-//          Basecamp's own opens. Copies planted while it runs move on the next
-//          rescan; the backend running under that name is stopped, and Reopen
-//          brings back Basecamp's own.
+//   moved  Copies of Package Manager and App Manager planted before start are
+//          moved aside and Basecamp's own open. Copies planted while it runs
+//          move on the next rescan; the backend running under that name is
+//          stopped, and Reopen brings back Basecamp's own.
 //   stuck  Copies that cannot be moved (set-aside is a file) stay where they
-//          are, and Package Manager is refused rather than opened from them.
+//          are, and both apps are refused rather than opened from them.
 //
-// The copies are Basecamp's own Package Manager claiming a newer version (the
-// screen) and its backend plugin installed as a core module (the backend):
-// the real thing, so only where it runs from tells them apart. On Linux the
+// The copies are Basecamp's own apps claiming a newer version (the screen)
+// and their backend plugins installed as core modules (the backend): the real
+// thing, so only where they run from tells them apart. On Linux the
 // files each process has mapped say that; the nix file's log gates check what
 // Basecamp told the user, on every platform.
 // ---------------------------------------------------------------------------
@@ -36,12 +36,16 @@ const userDir = process.env.LOGOS_USER_DIR;
 if (!["moved", "stuck"].includes(scenario) || !appRoot || !userDir)
   throw new Error("set BUILTIN_SCENARIO (moved or stuck), BUILTIN_APP_ROOT and LOGOS_USER_DIR");
 
-const bundled = join(appRoot, "plugins/package_manager_ui");
-const manifest = JSON.parse(readFileSync(join(bundled, "manifest.json"), "utf8"));
-const variant = readFileSync(join(bundled, "variant"), "utf8").trim();
-const backendFile = manifest.main[variant];
+// Each app as Basecamp bundles it, and where its planted copies go.
+const [packageManager, appManager] = ["package_manager_ui", "app_manager_ui"].map((name) => {
+  const bundled = join(appRoot, "plugins", name);
+  const manifest = JSON.parse(readFileSync(join(bundled, "manifest.json"), "utf8"));
+  const variant = readFileSync(join(bundled, "variant"), "utf8").trim();
+  return { name, bundled, manifest, variant, backendFile: manifest.main[variant],
+           screen: `plugins/${name}`, backend: `modules/${name}_backend` };
+});
 const setAside = join(userDir, "set-aside");
-const copies = ["plugins/package_manager_ui", "modules/package_manager_ui_backend"];
+const copies = [packageManager, appManager].flatMap((a) => [a.screen, a.backend]);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -53,19 +57,22 @@ function makeWritable(path) {
 }
 
 function plant() {
-  const screen = join(userDir, copies[0]);
-  cpSync(bundled, screen, { recursive: true });
-  makeWritable(screen);
-  writeFileSync(join(screen, "manifest.json"), JSON.stringify({ ...manifest, version: "99.0.0" }));
+  for (const { name, bundled, manifest, variant, backendFile, screen: screenDir, backend: backendDir }
+       of [packageManager, appManager]) {
+    const screen = join(userDir, screenDir);
+    cpSync(bundled, screen, { recursive: true });
+    makeWritable(screen);
+    writeFileSync(join(screen, "manifest.json"), JSON.stringify({ ...manifest, version: "99.0.0" }));
 
-  const backend = join(userDir, copies[1]);
-  mkdirSync(backend, { recursive: true });
-  copyFileSync(join(bundled, backendFile), join(backend, backendFile));
-  makeWritable(backend);
-  writeFileSync(join(backend, "variant"), variant);
-  writeFileSync(join(backend, "manifest.json"), JSON.stringify({
-    name: "package_manager_ui_backend", type: "core", version: "99.0.0", manifestVersion: "0.3.0",
-    main: { [variant]: backendFile } }));
+    const backend = join(userDir, backendDir);
+    mkdirSync(backend, { recursive: true });
+    copyFileSync(join(bundled, backendFile), join(backend, backendFile));
+    makeWritable(backend);
+    writeFileSync(join(backend, "variant"), variant);
+    writeFileSync(join(backend, "manifest.json"), JSON.stringify({
+      name: `${name}_backend`, type: "core", version: "99.0.0", manifestVersion: "0.3.0",
+      main: { [variant]: backendFile } }));
+  }
 }
 
 const stillPlanted = () => copies.filter((copy) => existsSync(join(userDir, copy)));
@@ -99,7 +106,7 @@ function expectNoCopyRuns(when) {
 }
 
 // The backend that runs is Basecamp's own.
-function expectBundledBackend(when) {
+function expectBundledBackend(when, { backendFile } = packageManager) {
   if (process.platform !== "linux") return;
   const running = mappedFiles().filter((file) => file.endsWith("/" + backendFile));
   if (!running.length) throw new Error(`no process has ${backendFile} mapped ${when}`);
@@ -146,7 +153,7 @@ if (scenario === "moved") {
   plant();
 
   test("built-in: copies planted before start are moved aside, and Basecamp's own opens", async (app) => {
-    await waitUntilMoved(app, 2, "both copies to be moved aside");
+    await waitUntilMoved(app, copies.length, "every copy to be moved aside");
     await app.click("Package Manager", PMUI_SIDEBAR_SECTION);
     if (!(await packageManagerStore(app, 90000))) throw new Error("Package Manager never came up");
     expectBundledBackend("once Package Manager is open");
@@ -158,7 +165,7 @@ if (scenario === "moved") {
     const anchor = await requireObject(app, "sidebar.section.2");
     await evalOn(app, anchor.id, "backend.refreshCoreModules()");
     await evalOn(app, anchor.id, "backend.refreshUiModules()");
-    await waitUntilMoved(app, 4, "the new copies to be moved aside");
+    await waitUntilMoved(app, 2 * copies.length, "the new copies to be moved aside");
     expectNoCopyRuns("after the rescan");
 
     // The rescan pointed the running backend's entry at the planted copy, so
@@ -171,6 +178,13 @@ if (scenario === "moved") {
     expectBundledBackend("after Reopen");
     expectNoCopyRuns("after Reopen");
   });
+
+  test("built-in: App Manager opens from Basecamp's own copy too", async (app) => {
+    await app.click("Applications", PMUI_SIDEBAR_SECTION);
+    await requireObject(app, "appManager.header", 90000);
+    expectBundledBackend("once App Manager is open", appManager);
+    expectNoCopyRuns("once App Manager is open");
+  });
 }
 
 if (scenario === "stuck") {
@@ -178,15 +192,19 @@ if (scenario === "stuck") {
   // A file where set-aside would be: nothing can be moved there.
   writeFileSync(setAside, "");
 
-  test("built-in: copies that cannot be moved stay, and Package Manager is refused", async (app) => {
+  test("built-in: copies that cannot be moved stay, and both apps are refused", async (app) => {
     await requireObject(app, "sidebar.section.2");
     // The app list is fetched once the window is up; give it time to try.
     await sleep(5000);
     const left = stillPlanted();
-    if (left.length !== copies.length) throw new Error(`expected both copies to stay, found ${left.join(", ")}`);
+    if (left.length !== copies.length) throw new Error(`expected every copy to stay, found ${left.join(", ")}`);
     await app.click("Package Manager", PMUI_SIDEBAR_SECTION);
     if (await packageManagerStore(app, 30000)) throw new Error("Package Manager opened from a copy that was not moved");
-    expectNoCopyRuns("after asking for Package Manager");
+    await app.click("Applications", PMUI_SIDEBAR_SECTION);
+    await sleep(10000);
+    if (((await app.findByProperty("objectName", "appManager.header")).matches ?? []).length)
+      throw new Error("App Manager opened from a copy that was not moved");
+    expectNoCopyRuns("after asking for both apps");
   });
 }
 

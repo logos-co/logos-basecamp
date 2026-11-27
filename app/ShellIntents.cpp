@@ -1,5 +1,6 @@
 #include "ShellIntents.h"
 
+#include "DefaultApps.h"
 #include "IntentRegistry.h"
 
 #include <QJsonArray>
@@ -21,9 +22,8 @@ void registerWith(IntentRegistry* registry,
     registry->registerShellProvider(shellModuleName, provides,
                                     kNavigationIntents, displayName, iconSource);
 
-    for (const QString& destructive : kRestrictedToPackageManagerUi)
-        registry->restrictIntentToRequesters(
-            destructive, { QStringLiteral("package_manager_ui") });
+    for (const QString& intent : logos::defaultapps::restrictedIntents())
+        registry->restrictIntentToRequesters(intent, logos::defaultapps::requestersFor(intent));
 }
 
 QJsonObject moduleDeclaration(const QString& shellModuleName,
@@ -31,9 +31,17 @@ QJsonObject moduleDeclaration(const QString& shellModuleName,
                               const QString& iconSource,
                               const QString& linkRequesterName)
 {
+    QStringList intents = kPackageConfirmIntents;
+    for (const QString& intent : logos::defaultapps::restrictedIntents()) {
+        if (!intents.contains(intent)) intents << intent;
+    }
     QJsonObject restricted;
-    for (const QString& confirm : kPackageConfirmIntents)
-        restricted.insert(confirm, QJsonArray{kPackageManagerAppName + QStringLiteral("_backend")});
+    for (const QString& intent : intents) {
+        QStringList backends = logos::defaultapps::backendsFor(intent);
+        // The module takes no empty list: the shell, which never asks.
+        if (backends.isEmpty()) backends << shellModuleName;
+        restricted.insert(intent, QJsonArray::fromStringList(backends));
+    }
     return QJsonObject{
         {QStringLiteral("name"), shellModuleName},
         {QStringLiteral("reservedPrefix"), QStringLiteral("basecamp.")},

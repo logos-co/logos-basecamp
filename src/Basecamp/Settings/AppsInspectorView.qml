@@ -27,7 +27,7 @@ Item {
     // ─── Public API ───
     // View emits, ContentViews calls the backend — see the Settings wiring in
     // Basecamp/Shell/ContentViews.qml. `searchText` is owned by SettingsView
-    // (one shared page-level search bar, styled like AppManagerView).
+    // (one shared page-level search bar, styled like App Manager's).
     property var sourceModel: null
     property bool loading: false
     property string searchText: ""
@@ -60,7 +60,8 @@ Item {
             revision
             for (let i = 0; i < allRows.count; ++i) {
                 const entry = allRows.objectAt(i)
-                if (entry && entry.row.name === openName)
+                // A row on its way out of a model reset has no data left.
+                if (entry && entry.row && entry.row.name === openName)
                     return entry.row
             }
             return null

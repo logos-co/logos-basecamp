@@ -88,7 +88,14 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
   #
   # `grep -c` exits 1 on zero matches, so each count is taken with `|| true`;
   # the `:-0` guards the (log-missing) case where grep prints nothing at all.
-  REFUSED=$(grep -c "ModuleProxy: rejecting unauthorized call" "$LOG" || true)
+  #
+  # A refusal the caller recovered from is not one: a token that was stale or
+  # not delivered yet is refused once, and LogosAPIClient re-exchanges it and
+  # retries once, logging that. A grant that fails closed refuses the retry too,
+  # with no retry line after it, so that one still counts.
+  REJECTED=$(grep -c "ModuleProxy: rejecting unauthorized call" "$LOG" || true)
+  RETRIED=$(grep -c "rejected by provider.*re-exchanging and retrying once" "$LOG" || true)
+  REFUSED=$(( ''${REJECTED:-0} - ''${RETRIED:-0} ))
   UNGRANTED=$(grep -c "was not granted the token_registry host service" "$LOG" || true)
   UNGRANTED_DELIVERY=$(grep -c "was not granted the token_delivery host service" "$LOG" || true)
   REFUSED=''${REFUSED:-0}
@@ -96,7 +103,7 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
   UNGRANTED_DELIVERY=''${UNGRANTED_DELIVERY:-0}
 
   echo ""
-  echo "Gate 2 counts: refused=$REFUSED ungranted(token_registry)=$UNGRANTED ungranted(token_delivery)=$UNGRANTED_DELIVERY"
+  echo "Gate 2 counts: refused=$REFUSED (rejected=''${REJECTED:-0} retried=''${RETRIED:-0}) ungranted(token_registry)=$UNGRANTED ungranted(token_delivery)=$UNGRANTED_DELIVERY"
 
   if [ "$RUN_CODE" -eq 124 ]; then
     echo ""
@@ -112,7 +119,7 @@ pkgs.runCommand "logos-basecamp-host-services-test" {
     exit 1
   fi
 
-  if [ "$REFUSED" -ne 0 ] || [ "$UNGRANTED" -ne 0 ] || [ "$UNGRANTED_DELIVERY" -ne 0 ]; then
+  if [ "$REFUSED" -gt 0 ] || [ "$UNGRANTED" -ne 0 ] || [ "$UNGRANTED_DELIVERY" -ne 0 ]; then
     echo ""
     echo "FAIL: gate 2 — the run contains refused capability-gated calls."
     echo "      capability_module fails CLOSED when it is missing the token_registry /"

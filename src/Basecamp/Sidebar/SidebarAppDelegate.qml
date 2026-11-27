@@ -3,7 +3,6 @@ import QtQuick.Controls
 
 import Logos.Theme
 import Logos.Controls
-import Basecamp.AppManager
 
 // AbstractButton so the whole 50px row is one mouse, keyboard and
 // accessibility control — matching the grid and list delegates, and avoiding

@@ -1,0 +1,6 @@
+# Unrelated uses of words the shared installer files also say. Each line is
+# "<path ending>: <phrase>", the reason after " # ".
+Basecamp/Shell/IntentChooserDialog.qml: Install # the label of a provider's install type
+Basecamp/Shell/OnboardingStorageStep.qml: Starting Logos Storage… # onboarding's storage step, which waits for the node itself
+Basecamp/Shell/OnboardingStorageStep.qml: Apps download from GitHub meanwhile. Basecamp tries Logos Storage again with the next download. # onboarding's storage step, when the node failed
+Basecamp/Shell/OnboardingView.qml: Retry # onboarding's retry of its storage step

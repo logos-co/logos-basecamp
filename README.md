@@ -122,8 +122,8 @@ saving one reloads the shell in place: no rebuild, no restart. Loaded apps and
 backends keep running; the shell's QML state (scroll positions, open dialogs)
 resets. A save that does not compile is logged and the next good one recovers.
 
-Still needs a restart: the singletons `BasecampIcons`, `AppColors` and
-`DownloadFormat`. Still needs a build: a new QML file (add it to
+Still needs a restart: the singleton `BasecampIcons`. Still needs a build: a
+new QML file (add it to
 `src/CMakeLists.txt`), C++ changes, and the design system (`Logos.Theme`,
 `Logos.Controls`), which is compiled in. `LOGOS_QML_HOT_RELOAD=0` loads from
 `src/` without watching. For an app's QML rather than the shell's, see
@@ -648,7 +648,7 @@ The `.mcp.json` in this repo is pre-configured to use the MCP server from `resul
 
 ## Cutting a release
 
-- **The Logos signing key.** Basecamp trusts Logos's packages by the keys in `logosKeys()` (`app/utils/InstallTrust.cpp`). Before every release, check that the first one is the key Logos signs with now: the "Official Logos signing key" in [logos-modules-release's README](https://github.com/logos-co/logos-modules-release#official-logos-signing-key). `lgx verify` on a freshly signed official package prints the same DID.
+- **The Logos signing key.** Basecamp trusts Logos's packages by the keys in `logosKeys()` (basecamp-installer-common's `src/Trust.cpp`; its README, "Logos's keys", has the same steps for the apps). Before every release, check that the first one is the key Logos signs with now: the "Official Logos signing key" in [logos-modules-release's README](https://github.com/logos-co/logos-modules-release#official-logos-signing-key). `lgx verify` on a freshly signed official package prints the same DID.
   - **A new key:** put it first, and keep the old one while what it signed should still install without asking. The release must be out before Logos signs anything with the new key: logos-modules-release re-signs every current package in the same change as a rotation, and a Basecamp that doesn't know the key shows all of them as impostors. Agree the date with whoever runs that rotation.
   - **A leaked key:** move it to `revoked`, and put its replacement first in the same change. Basecamp then installs nothing it signed.
   - Never just delete a key from the list, and never leave it without a current key (the unit tests check). Users do nothing either way: a keyring holding any Logos key, old or revoked, stands for Logos and the keys it signs with now.

@@ -31,6 +31,15 @@ endif()
 # names by Unicode's lookalike skeletons.
 find_package(ICU QUIET COMPONENTS uc i18n)
 
+# basecamp-installer-common's trust judge (Trust.h), as the
+# `basecamp_installer_trust` libdep: Basecamp's install trust builds on it.
+if(DEFINED BASECAMP_INSTALLER_COMMON_DIR AND TARGET ICU::uc AND TARGET ICU::i18n)
+    include("${BASECAMP_INSTALLER_COMMON_DIR}/cmake/BasecampInstallerCommon.cmake")
+    add_library(basecamp_installer_trust STATIC ${BASECAMP_INSTALLER_COMMON_TRUST_SOURCES})
+    target_include_directories(basecamp_installer_trust PUBLIC ${BASECAMP_INSTALLER_COMMON_INCLUDE_DIRS})
+    target_link_libraries(basecamp_installer_trust PUBLIC Qt6::Core ICU::i18n ICU::uc)
+endif()
+
 # liblgx, as the `lgx` libdep: the integrity check's tests build and verify
 # real packages with it. Optional, like every libdep.
 if(DEFINED LGX_ROOT)
@@ -126,7 +135,7 @@ foreach(test_src IN LISTS TEST_SOURCES)
     # AUTOMOC pairs a header with a .cpp of the same basename in the SAME
     # directory, and InstallEnums.cpp (src/) and its header (app/interfaces/)
     # are in different ones -- so the header rides along on every target to get
-    # InstallStage/InstallStatus' staticMetaObject. Elsewhere: a spare moc TU.
+    # InstallStatus' staticMetaObject. Elsewhere: a spare moc TU.
     add_executable(${test_name} ${test_src} ${_extra_srcs}
         ${BASECAMP_SRC}/interfaces/InstallEnums.h)
     target_include_directories(${test_name} PRIVATE

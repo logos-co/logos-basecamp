@@ -1,5 +1,6 @@
 #include "utils/HostProfile.h"
 
+#include "DefaultApps.h"
 #include "ShellSections.h"
 
 namespace LogosBasecamp {
@@ -7,18 +8,20 @@ namespace LogosBasecamp {
 QList<int> HostProfile::availableSections() const
 {
     QList<int> sections{ShellSection::Workspace};
-    if (packageCatalog) sections << ShellSection::AppManager;
-    // Standalone mode drops the catalogue, but a package_manager_ui under
+    // Standalone mode drops the catalogue, but an installer app under
     // development still gets its own section, where it lives in Basecamp.
-    if (packageCatalog || appsToOpen.contains(QStringLiteral("package_manager_ui")))
-        sections << ShellSection::PackageManager;
+    for (const int section : {int(ShellSection::AppManager), int(ShellSection::PackageManager)}) {
+        const auto* app = logos::defaultapps::appInSection(section);
+        if (packageCatalog || (app && appsToOpen.contains(app->app))) sections << section;
+    }
     sections << ShellSection::Settings;
     return sections;
 }
 
-bool HostProfile::packageManagerUiIsSection() const
+int HostProfile::sectionOfApp(const QString& app) const
 {
-    return availableSections().contains(ShellSection::PackageManager);
+    const int section = logos::defaultapps::sectionOf(app);
+    return section >= 0 && availableSections().contains(section) ? section : -1;
 }
 
 QString intentsAttentionFor(const QString& requested, bool developerBuild, QString* warning)

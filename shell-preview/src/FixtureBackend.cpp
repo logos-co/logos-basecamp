@@ -19,7 +19,6 @@ int FixtureBackend::currentActiveSectionIndex() const { return m_sectionIndex; }
 QAbstractItemModel* FixtureBackend::uiModulesModel() const { return const_cast<FixtureListModel*>(&m_uiModules); }
 QAbstractItemModel* FixtureBackend::coreModulesModel() const { return const_cast<FixtureListModel*>(&m_coreModules); }
 QAbstractItemModel* FixtureBackend::appsModel() const { return const_cast<FixtureListModel*>(&m_apps); }
-QVariantList FixtureBackend::requiredPackages() const { return m_fixture.value("requiredPackages").toArray().toVariantList(); }
 QVariantList FixtureBackend::launcherApps() const { return m_fixture.value("launcherApps").toArray().toVariantList(); }
 QString FixtureBackend::currentVisibleApp() const { return m_currentVisibleApp; }
 QStringList FixtureBackend::loadingModules() const { QStringList o; for (const auto& v : m_fixture.value("loadingModules").toArray()) o << v.toString(); return o; }
@@ -42,12 +41,6 @@ QString FixtureBackend::displayNameFor(const QString& moduleName) const
             return o.value("displayName").toString();
     }
     return moduleName;
-}
-
-void FixtureBackend::uninstallApp(const QString& name, const QString& repositoryUrl)
-{
-    Q_UNUSED(name); Q_UNUSED(repositoryUrl);
-    qInfo() << "FixtureBackend: uninstallApp — fixture build, no effect";
 }
 
 void FixtureBackend::confirmUnloadCascade(const QString& moduleName)
@@ -80,12 +73,6 @@ void FixtureBackend::cancelPendingAction(const QString& moduleName)
     qInfo() << "FixtureBackend: cancelPendingAction — fixture build, no effect";
 }
 
-void FixtureBackend::cancelPendingUninstallApp(const QString& name)
-{
-    Q_UNUSED(name);
-    qInfo() << "FixtureBackend: cancelPendingUninstallApp — fixture build, no effect";
-}
-
 void FixtureBackend::confirmInstallGate(const QString& name)
 {
     Q_UNUSED(name);
@@ -98,21 +85,10 @@ void FixtureBackend::cancelInstallGate(const QString& name)
     qInfo() << "FixtureBackend: cancelInstallGate — fixture build, no effect";
 }
 
-void FixtureBackend::openApp(const QString& name, const QString& repositoryUrl, const QVariantMap& versionPins, bool allowFastLaunch)
+void FixtureBackend::openApp(const QString& name, const QString& repositoryUrl, bool allowFastLaunch)
 {
-    Q_UNUSED(name); Q_UNUSED(repositoryUrl); Q_UNUSED(versionPins); Q_UNUSED(allowFastLaunch);
+    Q_UNUSED(name); Q_UNUSED(repositoryUrl); Q_UNUSED(allowFastLaunch);
     qInfo() << "FixtureBackend: openApp — fixture build, no effect";
-}
-
-void FixtureBackend::confirmCatalogInstall(const QString& name, const QString& repositoryUrl)
-{
-    Q_UNUSED(name); Q_UNUSED(repositoryUrl);
-    qInfo() << "FixtureBackend: confirmCatalogInstall — fixture build, no effect";
-}
-
-void FixtureBackend::notifyAddApplicationDialogClosed()
-{
-    qInfo() << "FixtureBackend: notifyAddApplicationDialogClosed — fixture build, no effect";
 }
 
 void FixtureBackend::refreshCoreModules()
@@ -149,11 +125,6 @@ void FixtureBackend::refreshUiModules()
 void FixtureBackend::refreshRepositories()
 {
     qInfo() << "FixtureBackend: refreshRepositories — fixture build, no effect";
-}
-
-void FixtureBackend::refreshAppCatalog()
-{
-    qInfo() << "FixtureBackend: refreshAppCatalog — fixture build, no effect";
 }
 
 // The fixture's catalog is loaded from the start.

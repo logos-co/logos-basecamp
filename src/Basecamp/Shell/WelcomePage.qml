@@ -5,7 +5,6 @@ import Logos.Theme
 import Logos.Controls
 import Logos.Layouts
 
-import Basecamp.AppManager
 import Basecamp.Common
 import Basecamp.Backend 1.0
 
@@ -283,8 +282,6 @@ Item {
                                 })
 
                                 onAppClicked: (name) => root.reopenAppRequested(name)
-
-                                contextMenuEnabled: false
                             }
                         }
                     }
@@ -439,7 +436,6 @@ Item {
 
                 onAppClicked:         (name, repo) => row.activated(name, repo,
                                                                      model.installStatus)
-                contextMenuEnabled: false
             }
         }
 

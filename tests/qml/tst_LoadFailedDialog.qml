@@ -3,7 +3,6 @@ import QtTest
 
 // Directory import, not `import Basecamp.Shell` — see tst_IntentInstallDialog.
 import "../../src/Basecamp/Shell"
-import Basecamp.AppManager
 import Basecamp.Backend 1.0
 
 // The loadFailed mode is the only feedback a user gets when a UI app's view

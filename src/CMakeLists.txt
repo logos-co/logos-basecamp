@@ -65,10 +65,6 @@ add_library(main_ui SHARED ${SOURCES})
 # stay beside this file.
 set_source_files_properties(Basecamp/Icons/BasecampIcons.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set_source_files_properties(Basecamp/AppManager/AppColors.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set_source_files_properties(Basecamp/AppManager/DownloadFormat.qml
-    PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(basecamp_backend_qml
     URI Basecamp.Backend
@@ -114,24 +110,21 @@ qt_add_qml_module(basecamp_sidebar_qml
         Basecamp/Sidebar/BrokenAppMarker.qml
 )
 
-qt_add_qml_module(basecamp_appmanager_qml
-    URI Basecamp.AppManager
+# The words and rules both installer apps share, from basecamp-installer-common:
+# a copy the flake's shared-installer-words check holds to the pinned revision
+# (scripts/sync-installer-common.sh refreshes it).
+qt_add_qml_module(basecamp_installer_qml
+    URI Basecamp.Installer
     VERSION 1.0
     STATIC
     RESOURCE_PREFIX /qt/qml
-    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/AppManager
+    OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Basecamp/Installer
     QML_FILES
-        Basecamp/AppManager/AppManagerView.qml
-        Basecamp/AppManager/AppManagerPanelHeader.qml
-        Basecamp/AppManager/AppRepoSection.qml
-        Basecamp/AppManager/AppContextMenu.qml
-        Basecamp/AppManager/AppGrid.qml
-        Basecamp/AppManager/AppGridDelegate.qml
-        Basecamp/AppManager/AppListDelegate.qml
-        Basecamp/AppManager/PackageRowDelegate.qml
-        Basecamp/AppManager/AddApplicationDialog.qml
-        Basecamp/AppManager/AppColors.qml
-        Basecamp/AppManager/DownloadFormat.qml
+        Basecamp/Installer/Availability.js
+        Basecamp/Installer/Downloads.js
+        Basecamp/Installer/Stages.js
+        Basecamp/Installer/Trust.js
+        Basecamp/Installer/Types.js
 )
 
 qt_add_qml_module(basecamp_settings_qml
@@ -181,6 +174,8 @@ qt_add_qml_module(basecamp_shell_qml
         Basecamp/Shell/OnboardingStorageStep.qml
         Basecamp/Shell/OnboardingStepPage.qml
         Basecamp/Shell/AppStoppedPanel.qml
+        Basecamp/Shell/AppGridDelegate.qml
+        Basecamp/Shell/PackageRowDelegate.qml
 )
 
 qt_add_qml_module(basecamp_icons_qml
@@ -227,14 +222,14 @@ target_link_libraries(main_ui
         basecamp_backend_qml
         basecamp_common_qml
         basecamp_sidebar_qml
-        basecamp_appmanager_qml
+        basecamp_installer_qml
         basecamp_settings_qml
         basecamp_shell_qml
         basecamp_icons_qml
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_backend_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_common_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_sidebar_qmlplugin>
-        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_appmanager_qmlplugin>
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_installer_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_settings_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_shell_qmlplugin>
         $<LINK_LIBRARY:WHOLE_ARCHIVE,basecamp_icons_qmlplugin>

@@ -34,7 +34,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
   assertResponsive,
@@ -48,7 +48,8 @@ import {
   waitForExit,
   waitForPort,
 } from "./fixtures/harness.mjs";
-import { makeLifecycleFixtures } from "./fixtures/lgx.mjs";
+import { makeLgx, makeLifecycleFixtures, makeSigningKey, signLgx, writeInstalledPlugin } from "./fixtures/lgx.mjs";
+import { serveRepository } from "./fixtures/https-repo.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -70,6 +71,8 @@ const FIRST_RUN_WAIT_MS = 30000;
 // The Package Manager spawns a ui-host and waits on its ready handshake
 // (PluginLoader gives that 30 s) before its QML compiles.
 const PMUI_WAIT_MS = 45000;
+// App Manager the same, and then its catalog.
+const APP_MANAGER_WAIT_MS = 60000;
 // Above the longest bounded teardown a single module can cost (see
 // shutdown-tests.mjs).
 const SHUTDOWN_WAIT_MS = 25000;
@@ -230,7 +233,8 @@ async function passOnboarding(app) {
 
 // ---------------------------------------------------------------------------
 // Runner. Body-return protocol: throw = FAIL; return skipTest(reason) = SKIP;
-// else PASS. opts: { xfail } — loud on unexpected pass; { skip } — not run.
+// else PASS. opts: { xfail } — loud on unexpected pass; { skip } — not run;
+// { env } — for the app.
 // ---------------------------------------------------------------------------
 class SkipTest {
   constructor(reason) { this.reason = reason; }
@@ -259,7 +263,8 @@ async function runTest(name, body, opts = {}) {
   }
 
   const userDir = makeUserDir("basecamp-lifecycle");
-  const child = spawnBasecamp(APP_BIN, userDir);
+  if (opts.seed) opts.seed(userDir);
+  const child = spawnBasecamp(APP_BIN, userDir, { env: opts.env ?? {} });
   const logChunks = [];
   child.stdout.on("data", (d) => logChunks.push(d));
   child.stderr.on("data", (d) => logChunks.push(d));
@@ -460,6 +465,1287 @@ results.push(await runTest("install: cancelling the install gate leaves nothing 
     if (existsSync(pluginDir)) throw new Error(`${pluginDir} exists after the second cancel`);
     assertEq(await rowCount(), rowsBefore, "uiModulesModel.rowCount() after the second cancel");
   }));
+
+// A click on an app that isn't installed shows its details beside the list;
+// their Install asks Basecamp. The panel's button is there, hidden, before the
+// details come: wait until it offers Install.
+async function clickDetailsInstall(app) {
+  const install = await app.requireObject("appManager.details.action", 30000);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(install, "visible && enabled ? text : ''"), "Install",
+             "the details' Install");
+  }, { timeout: 30000, interval: 300, description: "the app's details to offer Install" });
+  await app.send("callMethod", { objectId: install.id, method: "clicked" });
+}
+
+// Picks `version` in a details row's version picker (`row`, its
+// appManager.details.package.* object), as the person does: by its place in
+// the list it shows. What the pick sends is App Manager's to say.
+async function pickVersion(app, row, version) {
+  const picked = await app.evalOn(row, `(() => {
+    const find = (node) => {
+      if (!node) return null;
+      if (node.objectName === "packageRow.versionPicker") return node;
+      const kids = node.children;
+      for (let i = 0; kids && i < kids.length; i += 1) {
+        const found = find(kids[i]);
+        if (found) return found;
+      }
+      return null;
+    };
+    let picker = null;
+    for (let i = 0; !picker && i < children.length; i += 1) picker = find(children[i]);
+    const index = picker ? Array.from(picker.model).indexOf(${JSON.stringify(version)}) : -1;
+    if (index < 0) return false;
+    picker.activated(index);
+    return true;
+  })()`);
+  if (picked !== true) throw new Error(`the row's version picker has no ${version}`);
+}
+
+// B2. The first install from App Manager, end to end: its backend asks
+// Basecamp (basecamp.packages.confirm_install, through intents_module), the
+// gate names App Manager as the asker, and on Install the backend downloads
+// exactly the approved release from the repository and installs it. Then the
+// way back: App Manager asks to uninstall it (confirm_uninstall), Basecamp
+// plans the app's removal, and the backend removes what the answer names.
+let repo = null;
+try {
+  repo = await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-repo-")),
+                               [FIXTURES.A_0_1_1]);
+} catch (e) {
+  repo = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("install and uninstall: App Manager asks, Basecamp's gate approves, App Manager does it",
+  async ({ app, userDir, note }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    // A click shows what installing it brings; Install there asks Basecamp.
+    const tile = await app.requireObject("appManager.app.test_qml_only", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 300, description: "the install gate to open" });
+    assertEq(await app.evalOn(gate, "requesterName"), "app_manager_ui", "the gate's requester");
+    const { title, body } = await gateTexts(app, gate);
+    assertEq(title, "Install App?", "the gate's title, in App Manager's words");
+    note(`gate body: ${body}`);
+
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    await app.requireObject("sidebar.app.test_qml_only", 60000);
+    if (!existsSync(join(userDir, "plugins", "test_qml_only")))
+      throw new Error("test_qml_only is not in the user's plugins after the install");
+    await app.waitFor(async () => {
+      const installed = await app.findByObjectName("appManager.app.test_qml_only");
+      assertEq(installed && await app.evalOn(installed, "appData.isInstalled"), true,
+               "App Manager's tile installed");
+    }, { timeout: 30000, interval: 500, description: "App Manager's tile to say installed" });
+
+    const installedTile = await app.requireObject("appManager.app.test_qml_only");
+    await app.evalOn(installedTile, "detailsRequested(appData.name, appData.repositoryUrl)");
+    const uninstall = await app.requireObject("appManager.details.uninstall", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(uninstall, "visible"), true, "the details page's Uninstall");
+    }, { timeout: 30000, interval: 300, description: "the details page to offer Uninstall" });
+    await app.send("callMethod", { objectId: uninstall.id, method: "clicked" });
+
+    const dialog = await app.requireObject("uninstallDialog");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+      assertEq(await app.evalOn(dialog, "plan.loading === true"), false, "the plan, read");
+    }, { timeout: 30000, interval: 300, description: "the uninstall confirmation to open" });
+    assertEq(await app.evalOn(dialog, "plan.kind"), "app", "the plan removes an app");
+    assertEq(await app.evalOn(dialog, "plan.requester"), "app_manager_ui", "the uninstall's requester");
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.batch)"), JSON.stringify(["test_qml_only"]),
+             "what it removes");
+    const remove = await app.requireObject("uninstallDialog.confirmButton");
+    await app.send("callMethod", { objectId: remove.id, method: "clicked" });
+
+    await app.waitFor(async () => {
+      if (existsSync(join(userDir, "plugins", "test_qml_only")))
+        throw new Error("test_qml_only is still in the user's plugins");
+      if (await app.findByObjectName("sidebar.app.test_qml_only"))
+        throw new Error("test_qml_only is still in the sidebar");
+    }, { timeout: 60000, interval: 500, description: "test_qml_only to be removed" });
+  }, repo.skip ? { skip: repo.skip } : { env: repo.env }));
+if (repo.close) await repo.close();
+
+// B3. An app App Manager removes takes with it what only it needed: Basecamp
+// plans both, says so, and its answer names both, which the backend removes.
+results.push(await runTest("uninstall: App Manager removes an app and what only it needed",
+  async ({ app, userDir }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const tile = await app.requireObject("appManager.app.orphan_app", APP_MANAGER_WAIT_MS);
+    await app.evalOn(tile, "detailsRequested(appData.name, appData.repositoryUrl)");
+    const uninstall = await app.requireObject("appManager.details.uninstall", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(uninstall, "visible"), true, "the details page's Uninstall");
+    }, { timeout: 30000, interval: 300, description: "the details page to offer Uninstall" });
+    await app.send("callMethod", { objectId: uninstall.id, method: "clicked" });
+
+    const dialog = await app.requireObject("uninstallDialog");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+      assertEq(await app.evalOn(dialog, "plan.loading === true"), false, "the plan, read");
+    }, { timeout: 30000, interval: 300, description: "the uninstall confirmation to open" });
+    assertEq(await app.evalOn(dialog, "plan.kind"), "app", "the plan removes an app");
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.batch)"),
+             JSON.stringify(["orphan_app", "orphan_dep"]), "what it removes");
+    const remove = await app.requireObject("uninstallDialog.confirmButton");
+    await app.send("callMethod", { objectId: remove.id, method: "clicked" });
+
+    await app.waitFor(async () => {
+      for (const name of ["orphan_app", "orphan_dep"]) {
+        if (existsSync(join(userDir, "plugins", name)))
+          throw new Error(`${name} is still in the user's plugins`);
+      }
+    }, { timeout: 60000, interval: 500, description: "the app and its dependency to be removed" });
+  }, { seed: (userDir) => {
+    writeInstalledPlugin(userDir, { name: "orphan_dep" });
+    writeInstalledPlugin(userDir, { name: "orphan_app", dependencies: ["orphan_dep"] });
+  } }));
+
+// B4. basecamp#427 through App Manager: an app whose own release is on disk,
+// under a dependency republished at the same version with other contents. Its
+// Reinstall fetches only that dependency, counted at the repository.
+let drift = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-drift-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, file, extra = {}) => makeLgx({
+    outFile: join(lgxDir, file), name, version: "1.0.0", variant: process.env.LGX_VARIANT, ...extra });
+  const packages = [pkg("drift_dep_a", "drift_dep_a.lgx"), pkg("drift_dep_b", "drift_dep_b.lgx"),
+                    pkg("drift_app", "drift_app.lgx", { dependencies: ["drift_dep_a", "drift_dep_b"] })];
+  const republished = pkg("drift_dep_b", "drift_dep_b-2.lgx", { description: "drift_dep_b, republished" });
+  drift = { repo: await serveRepository(join(dir, "repo"), packages), republished };
+} catch (e) {
+  drift = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("reinstall: a dependency that drifted is all App Manager fetches",
+  async ({ app }) => {
+    const { repo, republished } = drift;
+    const fetched = () => repo.requests.filter((path) => path.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const confirmGate = async () => {
+      const gate = await app.requireObject(INSTALL_GATE);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+      }, { timeout: 30000, interval: 300, description: "the install gate to open" });
+      const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+      }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+      await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+      await waitGateHidden(app, 5000);
+    };
+
+    const tile = await app.requireObject("appManager.app.drift_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await confirmGate();
+    await app.requireObject("sidebar.app.drift_app", 60000);
+    assertEq(JSON.stringify(fetched().sort()),
+             JSON.stringify(["/drift_app.lgx", "/drift_dep_a.lgx", "/drift_dep_b.lgx"]), "the first install's downloads");
+
+    repo.republish(republished);
+    const reload = await app.requireObject("appManager.reloadButton");
+    await app.send("callMethod", { objectId: reload.id, method: "clicked" });
+    const before = fetched().length;
+    await app.evalOn(await app.requireObject("appManager.app.drift_app"), "openDetails()");
+    const action = await app.requireObject("appManager.details.action", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(action, "text"), "Reinstall", "the details page's action");
+    }, { timeout: 60000, interval: 500, description: "the drifted dependency to show as Reinstall" });
+    await app.send("callMethod", { objectId: action.id, method: "clicked" });
+    await confirmGate();
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(action, "visible"), false, "the details page's action, once reinstalled");
+    }, { timeout: 60000, interval: 500, description: "the reinstall to finish" });
+    assertEq(JSON.stringify(fetched().slice(before)), JSON.stringify(["/drift_dep_b-2.lgx"]),
+             "the reinstall's downloads");
+  }, drift.skip ? { skip: drift.skip } : { env: drift.repo.env }));
+if (drift.repo) await drift.repo.close();
+
+// B5. A version picked in App Manager's details for a package the app needs
+// goes to Basecamp with the install: its dialog shows that version, and it is
+// the one fetched.
+let pinned = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-pin-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, file, version, extra = {}) => makeLgx({
+    outFile: join(lgxDir, file), name, version, variant: process.env.LGX_VARIANT, ...extra });
+  const packages = [pkg("pin_dep", "pin_dep-1.0.0.lgx", "1.0.0"),
+                    pkg("pin_dep", "pin_dep-1.1.0.lgx", "1.1.0"),
+                    pkg("pin_app", "pin_app.lgx", "1.0.0", { dependencies: ["pin_dep"] })];
+  pinned = { repo: await serveRepository(join(dir, "repo"), packages) };
+} catch (e) {
+  pinned = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("pick: the version picked in App Manager for what an app needs is what installs",
+  async ({ app }) => {
+    const { repo } = pinned;
+    const fetched = () => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const tile = await app.requireObject("appManager.app.pin_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    // The details' rows are made again as they change: found afresh each time.
+    const pinDep = () => app.requireObject("appManager.details.package.pin_dep", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await pinDep(), "row.version"), "1.1.0", "pin_dep's newest, before a pick");
+    }, { timeout: 30000, interval: 300, description: "pin_dep in the details" });
+    await pickVersion(app, await pinDep(), "1.0.0");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await pinDep(), "row.version"), "1.0.0", "pin_dep at the version picked");
+    }, { timeout: 30000, interval: 300, description: "the pick to show in the details" });
+
+    await clickDetailsInstall(app);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 300, description: "the install gate to open" });
+    await app.waitFor(async () => {
+      const change = await app.requireObject("confirmationDialog.change.pin_dep", 30000);
+      const text = String(await app.evalOn(change, "text"));
+      if (!text.includes("v1.0.0") || text.includes("v1.1.0"))
+        throw new Error(`the gate's pin_dep row says ${JSON.stringify(text)}`);
+    }, { timeout: 30000, interval: 300, description: "the gate to show pin_dep at 1.0.0" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    await app.requireObject("sidebar.app.pin_app", 60000);
+    assertEq(JSON.stringify(fetched().sort()), JSON.stringify(["/pin_app.lgx", "/pin_dep-1.0.0.lgx"]),
+             "the install's downloads");
+  }, pinned.skip ? { skip: pinned.skip } : { env: pinned.repo.env }));
+if (pinned.repo) await pinned.repo.close();
+
+// B6. Leaving Applications or Package Manager for another section starts it
+// afresh next time: its details closed and its search empty. Each app sees
+// the leaving only as its view hidden behind the section Basecamp shows.
+results.push(await runTest("leave: Applications and Package Manager start afresh once left",
+  async ({ app }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const views = [
+      { name: "Applications", prefix: "appManager",
+        open: () => app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(1)") },
+      { name: "Package Manager", prefix: "pmui", open: () => openPackageManager(app) },
+    ];
+    for (const view of views) {
+      await view.open();
+      const panel = await app.requireObject(`${view.prefix}.detailsPanel`, APP_MANAGER_WAIT_MS);
+      const header = await app.requireObject(`${view.prefix}.header`);
+      await app.evalOn(panel, "panelOpen = true");
+      await app.evalOn(header, "openSearch('zzz')");
+      assertEq(await app.evalOn(header, "searchText"), "zzz", `${view.name}'s search, before leaving`);
+      assertEq(await app.evalOn(panel, "panelOpen"), true, `${view.name}'s details, before leaving`);
+
+      await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+      await view.open();
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(panel, "panelOpen"), false, `${view.name}'s details`);
+        assertEq(await app.evalOn(header, "searchText"), "", `${view.name}'s search`);
+      }, { timeout: 10000, interval: 300, description: `${view.name} to start afresh` });
+    }
+  }));
+
+// B7. Basecamp's own request to install an app (a Welcome page tile,
+// openApp: apps.install) reaches App Manager through intents_module under
+// Basecamp's name, main_ui: the only requester App Manager asks the gate for
+// on the request itself. The app's details come up in Applications, and the
+// gate asks as App Manager's. Another app's request only shows the app (App
+// Manager's own tests).
+let own = null;
+try {
+  own = { repo: await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-own-")),
+                                      [FIXTURES.A_0_1_1]) };
+} catch (e) {
+  own = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("own request: Basecamp's Install shows the app in App Manager, which asks the gate",
+  async ({ app, userDir }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(own.repo.url)})`);
+    // App Manager has the app in its catalogue before it is asked.
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(1)");
+    await app.requireObject("appManager.app.test_qml_only", APP_MANAGER_WAIT_MS);
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+
+    await app.evalOn(greeting, `(backend.openApp("test_qml_only", "", true), "sent")`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 300, description: "the install gate to open" });
+    assertEq(await app.evalOn(gate, "requesterName"), "app_manager_ui", "the gate's requester");
+    assertEq(await app.evalOn(greeting, "backend.currentActiveSectionIndex"), 1, "the section in front");
+    await app.waitFor(async () => {
+      const name = await app.requireObject("appManager.details.name", 10000);
+      assertEq(await app.evalOn(name, "text"), "Test QML Only", "the app App Manager shows");
+    }, { timeout: 30000, interval: 300, description: "App Manager to show the app" });
+
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    if (existsSync(join(userDir, "plugins", "test_qml_only")))
+      throw new Error("test_qml_only is in the user's plugins after the cancel");
+  }, own.skip ? { skip: own.skip } : { env: own.repo.env }));
+if (own.repo) await own.repo.close();
+
+// B8. A version picked in App Manager's details for an optional package goes
+// to Basecamp with the install: the dialog's row for it starts at that
+// version, and it is the one fetched. The row used to show the newest while
+// the plan held the pick.
+let optional = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-optional-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, file, version, extra = {}) => makeLgx({
+    outFile: join(lgxDir, file), name, version, variant: process.env.LGX_VARIANT, ...extra });
+  const packages = [pkg("opt_dep", "opt_dep-1.0.0.lgx", "1.0.0"),
+                    pkg("opt_dep", "opt_dep-1.1.0.lgx", "1.1.0"),
+                    pkg("opt_app", "opt_app.lgx", "1.0.0", { optionalDependencies: ["opt_dep"] })];
+  optional = { repo: await serveRepository(join(dir, "repo"), packages) };
+} catch (e) {
+  optional = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("pick an optional: the version picked in App Manager for an optional package is what installs",
+  async ({ app }) => {
+    const { repo } = optional;
+    const fetched = () => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const tile = await app.requireObject("appManager.app.opt_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    const optDep = () => app.requireObject("appManager.details.package.opt_dep", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await optDep(), "row.version"), "1.1.0", "opt_dep's newest, before a pick");
+      assertEq(await app.evalOn(await optDep(), "row.selected"), true, "opt_dep, ticked");
+    }, { timeout: 30000, interval: 300, description: "opt_dep in the details" });
+    await pickVersion(app, await optDep(), "1.0.0");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await optDep(), "row.version"), "1.0.0", "opt_dep at the version picked");
+    }, { timeout: 30000, interval: 300, description: "the pick to show in the details" });
+
+    await clickDetailsInstall(app);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+    }, { timeout: 30000, interval: 300, description: "the install gate to open" });
+    await app.waitFor(async () => {
+      const picker = await app.requireObject("packageRow.version.opt_dep", 30000);
+      assertEq(await app.evalOn(picker, "displayText"), "v.1.0.0", "the gate's opt_dep version");
+    }, { timeout: 30000, interval: 300, description: "the gate to show opt_dep at 1.0.0" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    await app.requireObject("sidebar.app.opt_app", 60000);
+    await app.waitFor(async () => {
+      assertEq(JSON.stringify(fetched().sort()), JSON.stringify(["/opt_app.lgx", "/opt_dep-1.0.0.lgx"]),
+               "the install's downloads");
+    }, { timeout: 60000, interval: 500, description: "opt_dep to be fetched" });
+  }, optional.skip ? { skip: optional.skip } : { env: optional.repo.env }));
+if (optional.repo) await optional.repo.close();
+
+// B9. A confirmation let through the queue is planned on what is installed
+// when it starts: Package Manager's request to remove a package waits behind
+// App Manager installing an app that needs it, and the removal's plan names
+// that app. It used to be planned on the graph from before the install.
+let fresh = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-fresh-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, extra = {}) => makeLgx({
+    outFile: join(lgxDir, `${name}.lgx`), name, version: "1.0.0", variant: process.env.LGX_VARIANT, ...extra });
+  fresh = { repo: await serveRepository(join(dir, "repo"),
+                                        [pkg("dep_lib"), pkg("dep_app", { dependencies: ["dep_lib"] })]) };
+} catch (e) {
+  fresh = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("fresh plan: a removal let through after an install is planned on what it installed",
+  async ({ app }) => {
+    const { repo } = fresh;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const askToInstall = async (name) => {
+      const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+      await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+      await clickDetailsInstall(app);
+      const gate = await app.requireObject(INSTALL_GATE);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+      }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+    };
+    const confirm = async () => {
+      const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+      }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+      await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    };
+
+    await askToInstall("dep_lib");
+    await confirm();
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.dep_lib", 60000);
+
+    await askToInstall("dep_app");
+    // Package Manager asks to remove dep_lib; it waits behind the install.
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+    await app.evalOn(store, '(logos.request("basecamp.packages.confirm_uninstall", ' +
+                            '{ names: ["dep_lib"] }, function () {}), "sent")');
+    await confirm();
+
+    const dialog = await app.requireObject("uninstallDialog", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+      assertEq(await app.evalOn(dialog, "plan.loading === true"), false, "the plan, read");
+    }, { timeout: 60000, interval: 300, description: "the removal's confirmation" });
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.batch)"), JSON.stringify(["dep_lib"]),
+             "what it removes");
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.dependents.map(d => d.name))"),
+             JSON.stringify(["dep_app"]), "what needs it");
+    const cancel = await app.requireObject("uninstallDialog.cancelButton");
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+  }, fresh.skip ? { skip: fresh.skip } : { env: fresh.repo.env }));
+if (fresh.repo) await fresh.repo.close();
+
+// B10. An install that replaces a package that is open: the gate names it
+// as running, and approving unloads it before the installer swaps the files.
+// The extracted gate used to replace the package under it. (What runs on it
+// stops too: replace_impact_test; an app here can't run on another app.)
+let swap = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-swap-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, file, version, extra = {}) => makeLgx({
+    outFile: join(lgxDir, file), name, version, variant: process.env.LGX_VARIANT, ...extra });
+  swap = { repo: await serveRepository(join(dir, "repo"), [
+    pkg("shared_dep", "shared_dep-1.0.0.lgx", "1.0.0"),
+    pkg("shared_dep", "shared_dep-2.0.0.lgx", "2.0.0"),
+    pkg("uses_shared", "uses_shared.lgx", "1.0.0", { dependencies: ["shared_dep"] }),
+    pkg("needs_new", "needs_new.lgx", "1.0.0",
+        { dependencies: [{ name: "shared_dep", version: ">=2.0.0" }] }),
+  ]) };
+} catch (e) {
+  swap = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("swap: an install that replaces an open package unloads it first",
+  async ({ app }) => {
+    const { repo } = swap;
+    const fetched = () => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    const isLoaded = (name) => app.evalOn(greeting,
+      `JSON.stringify(backend.launcherApps.filter(a => a.name === ${JSON.stringify(name)}).map(a => a.isLoaded))`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const confirm = async (name) => {
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+      }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+      const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+      }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+      await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    };
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    // uses_shared, on shared_dep 1.0.0 as picked in its details.
+    const usesTile = await app.requireObject("appManager.app.uses_shared", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: usesTile.id, method: "clicked" });
+    const dep = () => app.requireObject("appManager.details.package.shared_dep", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await dep(), "row.version"), "2.0.0", "shared_dep's newest, before a pick");
+    }, { timeout: 30000, interval: 300, description: "shared_dep in the details" });
+    await pickVersion(app, await dep(), "1.0.0");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(await dep(), "row.version"), "1.0.0", "shared_dep at the version picked");
+    }, { timeout: 30000, interval: 300, description: "the pick to show" });
+    await clickDetailsInstall(app);
+    await confirm("uses_shared");
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.uses_shared", 60000);
+
+    await app.evalOn(greeting, '(backend.loadUiModule("shared_dep"), "loaded")');
+    await app.waitFor(async () => {
+      assertEq(await isLoaded("shared_dep"), "[true]", "shared_dep open");
+    }, { timeout: 30000, interval: 300, description: "shared_dep to open" });
+
+    // needs_new takes shared_dep to 2.0.0 under it.
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const newTile = await app.requireObject("appManager.app.needs_new", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: newTile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "needs_new", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for needs_new" });
+    await app.waitFor(async () => {
+      // Every dialog has a list by that name: the gate's.
+      const running = await app.evalOn(gate, `(() => {
+        const find = (node) => {
+          if (!node) return null;
+          if (node.objectName === "confirmationDialog.running") return node;
+          const kids = node.children;
+          for (let i = 0; kids && i < kids.length; i += 1) {
+            const found = find(kids[i]);
+            if (found) return found;
+          }
+          return null;
+        };
+        const list = find(contentItem);
+        return JSON.stringify(list ? list.model : null);
+      })()`);
+      assertEq(running, JSON.stringify(["shared_dep"]), "what the gate says stops");
+    }, { timeout: 30000, interval: 300, description: "the gate to name shared_dep" });
+    await confirm("needs_new");
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.needs_new", 60000);
+    assertEq(await isLoaded("shared_dep"), "[false]", "shared_dep, unloaded for the swap");
+    if (!fetched().includes("/shared_dep-2.0.0.lgx"))
+      throw new Error(`shared_dep 2.0.0 was not fetched: ${JSON.stringify(fetched())}`);
+  }, swap.skip ? { skip: swap.skip } : { env: swap.repo.env }));
+if (swap.repo) await swap.repo.close();
+
+// B11. Two repositories list the app: one picked from the second (a welcome
+// page tile's openApp, with its repository) is the second's in App Manager,
+// and installs from there. Basecamp used to drop the repository, and App
+// Manager showed the app from the first.
+let twoRepos = null;
+try {
+  const first = await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-first-")),
+                                      [FIXTURES.A_0_1_1], { name: "first-repo", displayName: "First Repo" });
+  const second = await serveRepository(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-second-")),
+                                       [FIXTURES.A_0_1_1], { name: "second-repo", displayName: "Second Repo" });
+  // One trust file for both certificates.
+  const trust = join(mkdtempSync(join(tmpdir(), "basecamp-lifecycle-trust-")), "trust.pem");
+  writeFileSync(trust, readFileSync(first.env.SSL_CERT_FILE, "utf-8") + "\n"
+                       + readFileSync(second.env.SSL_CERT_FILE, "utf-8"));
+  twoRepos = { first, second, env: { SSL_CERT_FILE: trust } };
+} catch (e) {
+  twoRepos = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("two repositories: an app picked from the second installs from it",
+  async ({ app }) => {
+    const { first, second } = twoRepos;
+    const fetched = (repo) => repo.requests.filter((p) => p.endsWith(".lgx"));
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(first.url)})`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(second.url)})`);
+    const urls = JSON.stringify([first.url, second.url]);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, `${urls}.every(u => backend.repositories.some(r => r.url === u))`),
+               true, "both repositories added");
+    }, { timeout: 30000, interval: 300, description: "both repositories" });
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(1)");
+    await app.requireObject("appManager.app.test_qml_only", APP_MANAGER_WAIT_MS);
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+
+    await app.evalOn(greeting, `(backend.openApp("test_qml_only", ${JSON.stringify(second.url)}, true), "sent")`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "test_qml_only", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for test_qml_only" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.test_qml_only", 60000);
+    assertEq(JSON.stringify(fetched(first)), "[]", "what the first repository served");
+    assertEq(fetched(second).length, 1, `what the second repository served (${JSON.stringify(fetched(second))})`);
+  }, twoRepos.skip ? { skip: twoRepos.skip } : { env: twoRepos.env }));
+if (twoRepos.first) {
+  await twoRepos.first.close();
+  await twoRepos.second.close();
+}
+
+// B12 and B13: an approved App Manager install that ends without its change
+// on disk ends it all the same, and a Package Manager confirmation waiting
+// behind it shows at once. It used to wait two minutes of nothing.
+//
+// Each serves `keep` and `then` from one repository (shaped by `serve`),
+// installs `keep`, has App Manager install `then` (which never lands,
+// `afterApproval` doing its part), and then Package Manager asks to remove
+// `keep`.
+async function endedChangeLetsTheNextThrough(app, userDir, { repo, keep, then, afterApproval = async () => {} }) {
+  const greeting = await app.requireObject("welcomePage.greeting");
+  await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+  await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+  await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+  const gate = await app.requireObject(INSTALL_GATE);
+  const install = async (name) => {
+    const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+    }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+    const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+    await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+  };
+
+  await install(keep);
+  await app.requireObject(`sidebar.app.${keep}`, 60000);
+  await install(then);
+  await afterApproval();
+
+  await openPackageManager(app);
+  const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+  await app.evalOn(store, '(logos.request("basecamp.packages.confirm_uninstall", ' +
+                          `{ names: [${JSON.stringify(keep)}] }, function () {}), "sent")`);
+  // Well inside the two minutes.
+  const dialog = await app.requireObject("uninstallDialog", 20000);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+  }, { timeout: 20000, interval: 300, description: "the removal's confirmation" });
+  if (existsSync(join(userDir, "plugins", then)))
+    throw new Error(`${then} is installed after all`);
+  const cancel = await app.requireObject("uninstallDialog.cancelButton");
+  await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+}
+
+function twoAppsRepo(prefix, opts = {}) {
+  const dir = mkdtempSync(join(tmpdir(), `basecamp-lifecycle-${prefix}-`));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name) => makeLgx({
+    outFile: join(lgxDir, `${name}.lgx`), name, version: "1.0.0", variant: process.env.LGX_VARIANT });
+  return { dir, packages: [pkg(opts.keep), pkg(opts.then)] };
+}
+
+// B12. Its download fails: App Manager says the install ended (finished).
+let failing = null;
+try {
+  const { dir, packages } = twoAppsRepo("failing", { keep: "kept_app", then: "lost_app" });
+  failing = { repo: await serveRepository(join(dir, "repo"), packages) };
+  // Listed, but its file is gone.
+  rmSync(join(dir, "repo", "www", "lost_app.lgx"));
+} catch (e) {
+  failing = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("failed install: App Manager saying so lets the next confirmation through",
+  async ({ app, userDir }) => {
+    await endedChangeLetsTheNextThrough(app, userDir, { repo: failing.repo, keep: "kept_app", then: "lost_app" });
+  }, failing.skip ? { skip: failing.skip } : { env: failing.repo.env }));
+if (failing.repo) await failing.repo.close();
+
+// B13. Its download stays on its way, and the person closes App Manager.
+let closing = null;
+try {
+  const { dir, packages } = twoAppsRepo("closing", { keep: "kept_app", then: "slow_app" });
+  closing = { repo: await serveRepository(join(dir, "repo"), packages, { stall: ["/slow_app.lgx"] }) };
+} catch (e) {
+  closing = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("closed mid-install: closing App Manager lets the next confirmation through",
+  async ({ app, userDir }) => {
+    const { repo } = closing;
+    await endedChangeLetsTheNextThrough(app, userDir, {
+      repo, keep: "kept_app", then: "slow_app",
+      afterApproval: async () => {
+        await app.waitFor(async () => {
+          assertEq(repo.requests.includes("/slow_app.lgx"), true, "slow_app's download asked for");
+        }, { timeout: 30000, interval: 300, description: "slow_app's download" });
+        const greeting = await app.requireObject("welcomePage.greeting");
+        await app.evalOn(greeting, '(backend.unloadUiModule("app_manager_ui"), "closing")');
+      },
+    });
+  }, closing.skip ? { skip: closing.skip } : { env: closing.repo.env }));
+if (closing.repo) await closing.repo.close();
+
+// B14. A package that isn't an app, from the Welcome page's Packages row:
+// Package Manager shows it (packages.install), and the person's Install there
+// asks for the gate, as before App Manager left Basecamp. It went to App
+// Manager, which shows only apps, and nothing came up.
+let packageRow = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-package-row-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  packageRow = { repo: await serveRepository(join(dir, "repo"), [makeLgx({
+    outFile: join(lgxDir, "row_module.lgx"), name: "row_module", version: "1.0.0",
+    type: "core", variant: process.env.LGX_VARIANT })]) };
+} catch (e) {
+  packageRow = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("package row: Package Manager shows a package from the Welcome page",
+  async ({ app }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(packageRow.repo.url)})`);
+
+    // What the row does for a package that isn't installed.
+    await app.evalOn(greeting, '(root.packageInstallRequested("row_module"), "sent")');
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, "backend.currentActiveSectionIndex"), 2, "the section in front");
+      const header = await app.requireObject("pmui.header", 10000);
+      assertEq(await app.evalOn(header, "searchText"), "row_module", "Package Manager's search");
+    }, { timeout: 30000, interval: 300, description: "Package Manager to show row_module" });
+  }, packageRow.skip ? { skip: packageRow.skip } : { env: packageRow.repo.env }));
+
+// B15. An install offer for a package that isn't an app (beginIntentInstall,
+// which openApp routes by the package's type): Package Manager shows it too.
+results.push(await runTest("install offer: Package Manager shows a package an offer names",
+  async ({ app }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(packageRow.repo.url)})`);
+    // Something else in its search first, so the offer is what fills it.
+    await openPackageManager(app);
+    const header = await app.requireObject("pmui.header", APP_MANAGER_WAIT_MS);
+    await app.evalOn(header, "openSearch('zzz')");
+    await app.evalOn(greeting, "backend.setCurrentActiveSectionIndex(0)");
+
+    await app.evalOn(greeting, '(backend.beginIntentInstall("row_module"), "sent")');
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(greeting, "backend.currentActiveSectionIndex"), 2, "the section in front");
+      assertEq(await app.evalOn(header, "searchText"), "row_module", "Package Manager's search");
+    }, { timeout: 30000, interval: 300, description: "Package Manager to show row_module" });
+  }, packageRow.skip ? { skip: packageRow.skip } : { env: packageRow.repo.env }));
+if (packageRow.repo) await packageRow.repo.close();
+
+// Two installs, the first held on its way: App Manager installs `first`, then
+// asks for `second` while the first downloads, approving each gate (with
+// Trust & install where offered). The tile's badge, by app.
+async function secondWhileTheFirstDownloads(app, repo, { held, first = "first_app", second = "second_app" }) {
+  const greeting = await app.requireObject("welcomePage.greeting");
+  await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+  await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+  await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+  const gate = await app.requireObject(INSTALL_GATE);
+  const openGate = async (name) => {
+    const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+    }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: `${name}'s trust check` });
+  };
+  const approve = async () => {
+    const trust = await app.requireObject(`${INSTALL_GATE}.trustAndConfirm`);
+    const button = await app.evalOn(trust, "visible && enabled")
+      ? trust : await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    await waitGateHidden(app, 15000);
+  };
+  await openGate(first);
+  await approve();
+  await app.waitFor(async () => {
+    assertEq(repo.requests.includes(held), true, `${held} asked for`);
+  }, { timeout: 30000, interval: 300, description: "the first's download to start" });
+  await openGate(second);
+  return { gate, approve };
+}
+
+// The visible badge of an app's tile, or "".
+async function badgeOf(app, name) {
+  return app.evalOn(await app.requireObject(`appManager.app.${name}`), `(() => {
+    const find = (n) => { if (!n) return null; if (n.objectName === "appGridStateBadge") return n;
+      for (let i = 0; i < n.children.length; ++i) { const f = find(n.children[i]); if (f) return f; }
+      return null; };
+    const badge = find(this);
+    return badge && badge.visible ? badge.text : ""; })()`);
+}
+
+// Waits for `name` to install, noting whether the install gate showed
+// meanwhile.
+async function installedNotingTheGate(app, gate, name, timeoutMs = 60000) {
+  let gateShown = false;
+  for (const start = Date.now(); Date.now() - start < timeoutMs;) {
+    gateShown = gateShown || await app.evalOn(gate, "visible");
+    if (await app.findByObjectName(`sidebar.app.${name}`)) return { gateShown };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`${name} did not install within ${timeoutMs} ms`);
+}
+
+// B16. A second Install while the first is still on its way: Basecamp asks
+// about it at once, offering to trust its publisher, and approves it for its
+// turn. App Manager says it is queued meanwhile, and nothing of it is
+// fetched; once the first is in, it installs without asking again, as
+// nothing it was planned over changed. It used to say it was installing,
+// before Basecamp had asked anything.
+let queued;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-queued-"));
+  const keysDir = join(dir, "keys");
+  mkdirSync(keysDir);
+  makeSigningKey(keysDir, "xavier");
+  const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
+                                         variant: process.env.LGX_VARIANT, ...extra });
+  queued = { repo: await serveRepository(dir, [
+    lgx("first_app", { displayName: "First App", dependencies: ["first_module"] }),
+    lgx("first_module", { type: "core" }),
+    signLgx(lgx("second_app", { displayName: "Second App" }), { keysDir, key: "xavier", signer: "Xavier" }),
+  ], { name: "queued-repo", displayName: "Queued Repo", hold: ["/first_module-1.0.0.lgx"] }) };
+} catch (e) {
+  queued = { skip: `no signed local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("queued: a second Install is asked about at once and installs in turn",
+  async ({ app, userDir }) => {
+    const { repo } = queued;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const { gate, approve } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+
+    // Asked at once, while the first downloads: trust offered, nothing fetched.
+    const trustAndConfirm = await app.requireObject(`${INSTALL_GATE}.trustAndConfirm`);
+    assertEq(await app.evalOn(trustAndConfirm, "visible && enabled"), true, "Trust & install offered");
+    assertEq(fetched("second_app"), 0, "second_app fetched before Basecamp answered");
+    await approve();
+
+    // Approved for its turn: queued, still nothing fetched.
+    const action = await app.requireObject("appManager.details.action");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(action, "text"), "Queued", "the details' state");
+      assertEq(await badgeOf(app, "second_app"), "Queued", "second_app's tile");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
+    assertEq(fetched("second_app"), 0, "second_app fetched while queued");
+
+    // Its turn: in, with nothing asked again.
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    const { gateShown } = await installedNotingTheGate(app, gate, "second_app");
+    assertEq(gateShown, false, "Basecamp asking again at its turn");
+    if (!existsSync(join(userDir, "plugins", "second_app"))) throw new Error("second_app is not installed");
+  }, queued.skip ? { skip: queued.skip } : { env: queued.repo.env }));
+if (queued.repo) await queued.repo.close();
+
+
+// B17. Trusting one publisher trusts only that one: after "Trust & install"
+// for Acme's app, Globex's app, which App Manager says nobody trusts yet,
+// still has Basecamp's gate ask and offer to trust Globex before anything of
+// it downloads; a cancel installs and fetches nothing. Acme's other app then
+// reads as trusted in App Manager's details.
+let twoPublishers;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-publishers-"));
+  const keysDir = join(dir, "keys");
+  mkdirSync(keysDir);
+  const signed = (name, displayName, key, signer) => {
+    if (!existsSync(join(keysDir, `${key}.jwk`))) makeSigningKey(keysDir, key);
+    return signLgx(makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0", displayName,
+                             variant: process.env.LGX_VARIANT }), { keysDir, key, signer });
+  };
+  twoPublishers = { repo: await serveRepository(dir, [
+    signed("acme_app", "Acme App", "acme", "Acme"),
+    signed("acme_tool", "Acme Tool", "acme", "Acme"),
+    signed("globex_app", "Globex App", "globex", "Globex"),
+  ], { name: "publishers-repo", displayName: "Publishers Repo" }) };
+} catch (e) {
+  twoPublishers = { skip: `no signed local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("two publishers: trusting one, the gate still asks about the other",
+  async ({ app, userDir, note }) => {
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(twoPublishers.repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const fetched = (name) =>
+      JSON.stringify(twoPublishers.repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")));
+    const openDetails = async (name, line) => {
+      const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+      await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(await app.requireObject("appManager.details.name"), "text"),
+                 name === "acme_app" ? "Acme App" : name === "acme_tool" ? "Acme Tool" : "Globex App",
+                 "the details shown");
+        assertEq(await app.evalOn(await app.requireObject("trust.lineWords"), "text"), line,
+                 `${name}'s signer line`);
+      }, { timeout: 30000, interval: 300, description: `${name}'s details to say who signed it` });
+    };
+    const openGate = async (name) => {
+      await clickDetailsInstall(app);
+      const gate = await app.requireObject(INSTALL_GATE);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible"), true, `${INSTALL_GATE} visible`);
+        assertEq(await app.evalOn(gate, "moduleName"), name, "the gate's package");
+      }, { timeout: 30000, interval: 300, description: `the install gate to open for ${name}` });
+      const trustAndConfirm = await app.requireObject(`${INSTALL_GATE}.trustAndConfirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(trustAndConfirm, "visible && enabled"), true, "Trust & install offered");
+      }, { timeout: 30000, interval: 300, description: `the gate's trust check for ${name}` });
+      note(`${name}: ${(await gateTexts(app, gate)).body}`);
+      return trustAndConfirm;
+    };
+
+    // Acme's app: asked, Acme trusted, installed.
+    await openDetails("acme_app", "Signed by a publisher you don't trust yet");
+    const trustAcme = await openGate("acme_app");
+    assertEq(fetched("acme_app"), "[]", "acme_app fetched before Basecamp answered");
+    await app.send("callMethod", { objectId: trustAcme.id, method: "clicked" });
+    await waitGateHidden(app, 15000);
+    await app.requireObject("sidebar.app.acme_app", 60000);
+
+    // Globex's app, nobody trusts: still asked, offered for trust, nothing fetched.
+    await openDetails("globex_app", "Signed by a publisher you don't trust yet");
+    await openGate("globex_app");
+    assertEq(fetched("globex_app"), "[]", "globex_app fetched before Basecamp answered");
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+    await expectAbsent(app, "sidebar.app.globex_app", 3000);
+    assertEq(fetched("globex_app"), "[]", "globex_app fetched after a cancel");
+    if (existsSync(join(userDir, "plugins", "globex_app"))) throw new Error("globex_app installed after a cancel");
+
+    // Acme is trusted now, in App Manager's details too.
+    await openDetails("acme_tool", "Signed by Acme");
+  }, twoPublishers.skip ? { skip: twoPublishers.skip } : { env: twoPublishers.repo.env }));
+if (twoPublishers.repo) await twoPublishers.repo.close();
+
+// B18. Approved for its turn, but what it was planned over changed before
+// then: one of its packages turned up on disk, as another app's install
+// would put it. At its turn Basecamp asks again, and what the person
+// approves then is what installs. (App Manager itself doesn't let an app ask
+// while another install brings a package it needs.)
+let changedUnder;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-changed-"));
+  const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
+                                         variant: process.env.LGX_VARIANT, ...extra });
+  changedUnder = { repo: await serveRepository(dir, [
+    lgx("first_app", { displayName: "First App", dependencies: ["first_module"] }),
+    lgx("first_module", { type: "core" }),
+    lgx("second_app", { displayName: "Second App", dependencies: ["second_module"] }),
+    lgx("second_module", { type: "core" }),
+  ], { name: "changed-repo", displayName: "Changed Repo", hold: ["/first_module-1.0.0.lgx"] }) };
+} catch (e) {
+  changedUnder = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("asked again: what an approval for later was planned over changed",
+  async ({ app, userDir }) => {
+    const { repo } = changedUnder;
+    const { gate, approve } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+    await approve();
+    writeInstalledPlugin(userDir, { name: "second_module", type: "core", version: "0.9.0" });
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the gate asking again");
+    }, { timeout: 30000, interval: 300, description: "Basecamp to ask about second_app again" });
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "second_app's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await waitGateHidden(app, 15000);
+    await app.requireObject("sidebar.app.second_app", 60000);
+  }, changedUnder.skip ? { skip: changedUnder.skip } : { env: changedUnder.repo.env }));
+if (changedUnder.repo) await changedUnder.repo.close();
+
+// Package Manager's Install for `name`: its details opened by name, then
+// their row's action, as the person's click on it.
+async function installFromPackageManager(app, name) {
+  const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+  await app.waitFor(async () => {
+    await app.evalOn(store, `showDetailsForName(${JSON.stringify(name)})`);
+    assertEq(await app.evalOn(store, `selectedRow ? selectedRow.name : ""`), name, "the open package");
+  }, { timeout: 30000, interval: 300, description: `Package Manager to list ${name}` });
+  // 0: PackageManagerUi.Install.
+  await app.evalOn(store, "(runSelectedAction(0), 'sent')");
+  return store;
+}
+
+// Waits for the install gate to ask about `name`, then approves it.
+async function approveGate(app, gate, name) {
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+  }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+  const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+  await app.waitFor(async () => {
+    assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+  }, { timeout: 30000, interval: 300, description: `${name}'s trust check` });
+  await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+  await waitGateHidden(app, 15000);
+}
+
+// first_app, its first_module held on its way, and second_app; `more`
+// ({name: {displayName, dependencies, type}}) adds packages, or replaces one.
+async function heldFirstRepo(prefix, more = {}) {
+  const dir = mkdtempSync(join(tmpdir(), `basecamp-lifecycle-${prefix}-`));
+  const lgx = (name, extra) => makeLgx({ outFile: join(dir, `${name}-1.0.0.lgx`), name, version: "1.0.0",
+                                         variant: process.env.LGX_VARIANT, ...extra });
+  const packages = {
+    first_app: { displayName: "First App", dependencies: ["first_module"] },
+    first_module: { type: "core" },
+    second_app: { displayName: "Second App" },
+    ...more,
+  };
+  return serveRepository(dir, Object.entries(packages).map(([name, extra]) => lgx(name, extra)),
+                         { name: `${prefix}-repo`, displayName: "Held Repo", hold: ["/first_module-1.0.0.lgx"] });
+}
+
+// B19. Package Manager's own queue through the same gate: a second Install
+// while its first is on its way is asked about at once, waits Queued with
+// nothing fetched, and installs at its turn without asking again. B16 is App
+// Manager's; this is Package Manager's wiring of the same library.
+let pmQueued;
+try {
+  pmQueued = { repo: await heldFirstRepo("pm-queued") };
+} catch (e) {
+  pmQueued = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("Package Manager queued: a second Install is asked about at once and installs in turn",
+  async ({ app }) => {
+    const { repo } = pmQueued;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await openPackageManager(app);
+    const gate = await app.requireObject(INSTALL_GATE);
+
+    await installFromPackageManager(app, "first_app");
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "the first's download to start" });
+
+    const store = await installFromPackageManager(app, "second_app");
+    await approveGate(app, gate, "second_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "second_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
+    assertEq(fetched("second_app"), 0, "second_app fetched while queued");
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    const { gateShown } = await installedNotingTheGate(app, gate, "second_app");
+    assertEq(gateShown, false, "Basecamp asking again at its turn");
+  }, pmQueued.skip ? { skip: pmQueued.skip } : { env: pmQueued.repo.env }));
+if (pmQueued.repo) await pmQueued.repo.close();
+
+// B20. Each installer has its own queue; Basecamp's is the one they share.
+// Package Manager's Install while App Manager's is on its way is asked about
+// at once, but approved for later: it says Queued, nothing of it is fetched
+// until App Manager's change is on disk, and then it installs without
+// asking again.
+let acrossApps;
+try {
+  acrossApps = { repo: await heldFirstRepo("across-apps") };
+} catch (e) {
+  acrossApps = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("across apps: Package Manager's Install waits for App Manager's change",
+  async ({ app, userDir }) => {
+    const { repo } = acrossApps;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const tile = await app.requireObject("appManager.app.first_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "App Manager's download to start" });
+
+    await openPackageManager(app);
+    const store = await installFromPackageManager(app, "second_app");
+    await approveGate(app, gate, "second_app");
+    // Waiting, it says so: its row said Install, and Install did nothing.
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "second_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "second_app to say it is queued" });
+    for (const start = Date.now(); Date.now() - start < 5000;) {
+      assertEq(fetched("second_app"), 0, "second_app fetched during App Manager's change");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (existsSync(join(userDir, "plugins", "second_app")))
+      throw new Error("second_app installed during App Manager's change");
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    const { gateShown } = await installedNotingTheGate(app, gate, "second_app");
+    assertEq(gateShown, false, "Basecamp asking again once App Manager's change was made");
+  }, acrossApps.skip ? { skip: acrossApps.skip } : { env: acrossApps.repo.env }));
+if (acrossApps.repo) await acrossApps.repo.close();
+
+// B21. Cancelling an install that waited its turn ends no change: App
+// Manager's first install still downloads, so Package Manager's Install is
+// approved for later and fetches nothing until it is in. The cancel used to
+// say App Manager's change ended, and Package Manager's install started
+// beside the first.
+let cancelQueued;
+try {
+  cancelQueued = { repo: await heldFirstRepo("cancel-queued", { third_app: { displayName: "Third App" } }) };
+} catch (e) {
+  cancelQueued = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("cancel queued: cancelling a waiting install keeps the change before it",
+  async ({ app, userDir }) => {
+    const { repo } = cancelQueued;
+    const fetched = (name) => repo.requests.filter((p) => p.includes(name) && p.endsWith(".lgx")).length;
+    const { gate } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+    const cancel = await app.requireObject(`${INSTALL_GATE}.cancel`);
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+    await waitGateHidden(app, 5000);
+
+    await openPackageManager(app);
+    const store = await installFromPackageManager(app, "third_app");
+    await approveGate(app, gate, "third_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(store, "selectedRow ? selectedRow.queued === true : false"), true,
+               "third_app's row queued");
+    }, { timeout: 10000, interval: 200, description: "third_app to say it is queued" });
+    for (const start = Date.now(); Date.now() - start < 5000;) {
+      assertEq(fetched("third_app"), 0, "third_app fetched during App Manager's change");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.requireObject("sidebar.app.third_app", 60000);
+    assertEq(fetched("second_app"), 0, "second_app fetched after its cancel");
+    if (existsSync(join(userDir, "plugins", "second_app"))) throw new Error("second_app installed after its cancel");
+  }, cancelQueued.skip ? { skip: cancelQueued.skip } : { env: cancelQueued.repo.env }));
+if (cancelQueued.repo) await cancelQueued.repo.close();
+
+// B22. Approved once the change before it is made, on a plan made while it
+// was: Package Manager's second_app needs shared_module, which App Manager's
+// first_app brings. Its dialog opens while that downloads, the first comes
+// in meanwhile, and the approval made after is checked again: shared_module
+// is installed now, so the person is asked again, on what is there. It used
+// to go ahead on the plan the dialog was opened with.
+let doneWhileOpen;
+try {
+  doneWhileOpen = { repo: await heldFirstRepo("done-while-open", {
+    first_app: { displayName: "First App", dependencies: ["first_module", "shared_module"] },
+    second_app: { displayName: "Second App", dependencies: ["shared_module"] },
+    shared_module: { type: "core" },
+  }) };
+} catch (e) {
+  doneWhileOpen = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("done while open: an approval made after the change before it is checked again",
+  async ({ app, log }) => {
+    const { repo } = doneWhileOpen;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    const gate = await app.requireObject(INSTALL_GATE);
+    const tile = await app.requireObject("appManager.app.first_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    await approveGate(app, gate, "first_app");
+    await app.waitFor(async () => {
+      assertEq(repo.requests.includes("/first_module-1.0.0.lgx"), true, "first_module asked for");
+    }, { timeout: 30000, interval: 300, description: "App Manager's download to start" });
+
+    await openPackageManager(app);
+    await installFromPackageManager(app, "second_app");
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the install gate");
+    }, { timeout: 30000, interval: 300, description: "the install gate for second_app" });
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "second_app's dialog still open");
+    // Asked again at once, maybe before the gate is seen hidden: the log says.
+    const confirm = await app.requireObject(`${INSTALL_GATE}.confirm`);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(confirm, "enabled"), true, "Install enabled");
+    }, { timeout: 30000, interval: 300, description: "second_app's trust check" });
+    await app.send("callMethod", { objectId: confirm.id, method: "clicked" });
+    await app.waitFor(async () => {
+      assertEq(/changed since second_app was approved; asking again/.test(log()), true, "asked again");
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the gate asking again");
+    }, { timeout: 30000, interval: 300, description: "Basecamp to ask about second_app again" });
+    await approveGate(app, gate, "second_app");
+    await app.requireObject("sidebar.app.second_app", 60000);
+  }, doneWhileOpen.skip ? { skip: doneWhileOpen.skip } : { env: doneWhileOpen.repo.env }));
+if (doneWhileOpen.repo) await doneWhileOpen.repo.close();
+
+// B23. Approved for its turn, then something that depends on a package its
+// plan replaces turns up on disk: second_app's plan upgrades shared_module,
+// and other_module, installed meanwhile, runs on it. The person was never
+// told the plan closes it, or may break it, so at its turn Basecamp asks
+// again. Only the planned packages' own releases used to be compared.
+let newDependent;
+try {
+  newDependent = { repo: await heldFirstRepo("new-dependent", {
+    second_app: { displayName: "Second App", dependencies: ["shared_module"] },
+    shared_module: { type: "core" },
+  }) };
+} catch (e) {
+  newDependent = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("new dependent: an approval for later is asked again once something new runs on its plan",
+  async ({ app, userDir }) => {
+    const { repo } = newDependent;
+    const { gate, approve } = await secondWhileTheFirstDownloads(app, repo, { held: "/first_module-1.0.0.lgx" });
+    await approve();
+    writeInstalledPlugin(userDir, { name: "other_module", type: "core", version: "1.0.0",
+                                    dependencies: ["shared_module"] });
+
+    repo.release("/first_module-1.0.0.lgx");
+    await app.requireObject("sidebar.app.first_app", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), "second_app", "the gate asking again");
+    }, { timeout: 30000, interval: 300, description: "Basecamp to ask about second_app again" });
+    await approveGate(app, gate, "second_app");
+    await app.requireObject("sidebar.app.second_app", 60000);
+  }, newDependent.skip ? { skip: newDependent.skip }
+     : { env: newDependent.repo.env,
+         seed: (userDir) => writeInstalledPlugin(userDir, { name: "shared_module", type: "core", version: "0.9.0" }) }));
+if (newDependent.repo) await newDependent.repo.close();
 
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;

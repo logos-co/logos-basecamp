@@ -229,9 +229,10 @@ namespace {
 // Package Manager cannot repair the modules it runs on, nor itself.
 bool repairsItself(const QString& module)
 {
+    const auto* packages = logos::defaultapps::appInSlot(logos::defaultapps::Slot::Packages);
     return module == QLatin1String("package_manager")
         || module == QLatin1String("package_downloader")
-        || module == QLatin1String("package_manager_ui");
+        || (packages && module == packages->app);
 }
 
 } // namespace

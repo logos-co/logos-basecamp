@@ -49,11 +49,13 @@ struct HostProfile {
 
     QList<int> availableSections() const;  // ShellSection values
 
-    // package_manager_ui is the Package Manager section — shell furniture, not
-    // an app — wherever that section is offered: always in the desktop app,
-    // and in standalone mode when it is one of the apps opened (`--module`).
-    // Elsewhere (loaded only as a dependency) it is docked like any app.
-    bool packageManagerUiIsSection() const;
+    // The section `app` is shown as — shell furniture, not an app — when it
+    // is a default app with a section (DefaultApps.h) and that section is
+    // offered: always in the desktop app, and in standalone mode when it is
+    // one of the apps opened (`--module`). -1 otherwise: loaded only as a
+    // dependency, it is docked like any app.
+    int sectionOfApp(const QString& app) const;
+    bool isSectionApp(const QString& app) const { return sectionOfApp(app) >= 0; }
 };
 
 // The intents attention `requested` (--intents-attention or

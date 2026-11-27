@@ -1,34 +1,28 @@
 #include "PackageCoordinator.h"
 #include "ResolverRequest.h"
 #include "OptionalDependencyPreview.h"
-#include "InstallRegistry.h"
 #include "AppsModel.h"
 #include "CoreModuleManager.h"
 #include "UIPluginManager.h"
 #include "LogosBasecampPaths.h"
 #include "OnboardingState.h"
 #include "RepositorySource.h"
-#include "PackageInstallDecision.h"
 #include "utils/BuiltInApps.h"
 #include "utils/DependencyBlocker.h"
 #include "utils/InstallTrust.h"
+#include "utils/ReplaceImpact.h"
 #include "utils/PublisherKeyring.h"
 #include "ShellIntents.h"
 
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
-#include <QFile>
-#include <QTemporaryDir>
 #include <QHash>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QPointer>
 #include <QThreadPool>
 #include <QTimer>
+#include <QUuid>
 
-#include <algorithm>
 #include <memory>
 
 #include "LogosIntent.h"
@@ -49,7 +43,6 @@ PackageCoordinator::PackageCoordinator(LogosAPI* logosAPI,
     , m_coreModuleManager(coreModuleManager)
     , m_uiPluginManager(uiPluginManager)
     , m_appsModel(appsModel)
-    , m_installRegistry(new InstallRegistry(this))
 {
     logos::trust::PublisherKeyring::Keyring keyring;
     using Done = logos::trust::PublisherKeyring::Done;
@@ -206,6 +199,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("corePluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module file installed:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             if (m_coreModuleManager) m_coreModuleManager->refresh();
             // Also rescan UI plugin metadata — a newly installed core module
@@ -218,6 +212,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("uiPluginFileInstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "UI plugin file installed:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             fetchUiPluginMetadata();
         });
@@ -231,6 +226,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("corePluginUninstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "Core module uninstalled:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             if (m_coreModuleManager) m_coreModuleManager->refresh();
             fetchUiPluginMetadata();
@@ -240,6 +236,7 @@ void PackageCoordinator::subscribeToPackageInstallationEvents()
     logos.package_manager.on("uiPluginUninstalled", [this](const QVariantList& data) {
         if (data.isEmpty()) return;
         qDebug() << "UI plugin uninstalled:" << data[0].toString();
+        emit packageFilesChanged();
         QTimer::singleShot(100, this, [this]() {
             fetchUiPluginMetadata();
         });
@@ -279,31 +276,21 @@ void PackageCoordinator::subscribeToPackageDownloaderEvents()
         if (m_catalogWanted) refresh();
     });
 
-    // Live byte progress for whatever is downloading. Payload is
-    // [packageName, received, total, transport]; a downloader that predates
-    // the transport sends three.
-    logos.package_downloader.on("downloadProgress", [this](const QVariantList& data) {
-        if (!m_installRegistry) return;
-        if (data.size() < 3) {
-            qWarning() << "PackageCoordinator: package_downloader.downloadProgress "
-                          "expected [name, received, total], got" << data.size() << "args";
-            return;
-        }
-        m_installRegistry->setDownloadProgress(data.at(0).toString(),
-                                               data.at(1).toULongLong(),
-                                               data.at(2).toULongLong(),
-                                               data.value(3).toString());
-    });
-
-    // Which transport served a package, `logos:<cid>` or the https url. Payload
-    // is [packageName, source]. Logged only: nothing shows it yet.
-    logos.package_downloader.on("downloadDone", [](const QVariantList& data) {
+    // Which transport served a package, `logos:<cid>` or the https url, for
+    // whichever app asked for it. Payload is [packageName, source]. Logged
+    // only: nothing shows it yet.
+    logos.package_downloader.on("downloadDone", [this](const QVariantList& data) {
         if (data.size() < 2) {
             qWarning() << "PackageCoordinator: package_downloader.downloadDone "
                           "expected [name, source], got" << data.size() << "args";
             return;
         }
         qInfo() << "Downloaded" << data.at(0).toString() << "from" << data.at(1).toString();
+        emit packageOnItsWay(data.at(0).toString());
+    });
+    // [packageName, received, total, transport], while its bytes are on the wire.
+    logos.package_downloader.on("downloadProgress", [this](const QVariantList& data) {
+        if (!data.isEmpty()) emit packageOnItsWay(data.at(0).toString());
     });
 
     // A reloaded instance starts stopped, and the next operation here starts it.
@@ -416,91 +403,6 @@ QString PackageCoordinator::displayNameFor(const QString& name) const
 // Gated uninstall — entry points
 // ---------------------------------------------------------------------------
 
-void PackageCoordinator::uninstallUiModule(const QString& moduleName)
-{
-    qDebug() << "uninstallUiModule:" << moduleName;
-
-    // Main UI is protected — uninstalling it would brick Basecamp. Every
-    // other "is this uninstallable?" check (embedded-refusal, unknown-module)
-    // now lives in the package_manager module itself, so there's no duplicate
-    // gating here. This guard stays local because "don't kill your own UI"
-    // is a Basecamp concern, not a package-lifecycle concern.
-    if (moduleName == QStringLiteral("main_ui")) {
-        qWarning() << "Refusing to uninstall main_ui";
-        return;
-    }
-
-    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
-}
-
-void PackageCoordinator::uninstallApp(const QString& name, const QString& repositoryUrl)
-{
-    Q_UNUSED(repositoryUrl);
-    if (name.isEmpty()) return;
-    if (name == QStringLiteral("main_ui")) {
-        qWarning() << "Refusing to uninstall main_ui";
-        return;
-    }
-
-    if (m_dependencyDataReady) {
-        performUninstallApp(name);
-        return;
-    }
-
-    // Cache still populating — open the dialog in a loading state and defer
-    // the real dispatch until dependencyDataReadyChanged fires. Drop any
-    // prior deferred connection first so re-clicking during the cold-boot
-    // window doesn't stack callbacks.
-    QObject::disconnect(m_pendingUninstallAppConn);
-    m_pendingUninstallAppName = name;
-    emit uninstallPlanRequested(
-        buildLoadingPayload(name, QStringLiteral("app")));
-
-    QPointer<PackageCoordinator> self(this);
-    m_pendingUninstallAppConn = connect(
-        this, &PackageCoordinator::dependencyDataReadyChanged, this,
-        [self, name]() {
-            if (!self) return;
-            if (self->m_pendingUninstallAppName != name) return;   // cancelled
-            self->m_pendingUninstallAppName.clear();
-            QObject::disconnect(self->m_pendingUninstallAppConn);
-            self->performUninstallApp(name);
-        });
-}
-
-void PackageCoordinator::performUninstallApp(const QString& name)
-{
-    // Compose: target + orphaned deps. requestMultiUninstall refuses the
-    // whole batch if any member is embedded, so filter here.
-    const uninstallplan::Plan plan =
-        uninstallplan::composeFrom(planInput({name}));
-    if (plan.batch.isEmpty()) {
-        qWarning() << "performUninstallApp:" << name << "is not installed — ignoring";
-        return;
-    }
-
-    qDebug() << "performUninstallApp:" << name << "batch=" << plan.batch;
-
-    // Remembered only so the explain pass can flag which rows the user
-    // actually picked apart from what the batch dragged in.
-    m_lastRequestedTargets = {name};
-    beginLocalUninstall(plan.batch, QStringLiteral("app"));
-}
-
-void PackageCoordinator::cancelPendingUninstallApp(const QString& name)
-{
-    if (m_pendingUninstallAppName != name) return;
-    m_pendingUninstallAppName.clear();
-    QObject::disconnect(m_pendingUninstallAppConn);
-}
-
-void PackageCoordinator::uninstallCoreModule(const QString& moduleName)
-{
-    // Same flow as uninstallUiModule — removal is type-agnostic.
-    qDebug() << "uninstallCoreModule:" << moduleName;
-    beginLocalUninstall({moduleName}, QStringLiteral("packages"));
-}
-
 // ---------------------------------------------------------------------------
 // Uninstall plan — compose (what to remove) and explain (why the rest stays)
 // ---------------------------------------------------------------------------
@@ -572,8 +474,7 @@ QVariantMap PackageCoordinator::buildLoadingPayload(const QString& name,
                                                     const QString& kind) const
 {
     // Stub payload; UninstallDialog reads `loading` to swap in the spinner.
-    // `multi: false` sends cancel through cancelPendingUninstallApp (no
-    // module IPC to unwind).
+    // A cancel goes through cancelPendingAction.
     QVariantMap payload;
     payload.insert(QStringLiteral("loading"),    true);
     payload.insert(QStringLiteral("kind"),       kind);
@@ -649,7 +550,6 @@ QVariantMap PackageCoordinator::buildPlanPayload(const QStringList& batch,
         {QStringLiteral("removable"),  removable},
         {QStringLiteral("kept"),       kept},
         {QStringLiteral("dependents"), dependents},
-        // Empty when the shell itself asked (Settings → Modules / Apps).
         {QStringLiteral("requester"),  requesterName},
         {QStringLiteral("requesterBundled"), requesterIsBundled(requesterName)},
         {QStringLiteral("requesterDisplayName"),
@@ -723,18 +623,25 @@ void PackageCoordinator::confirmUninstallCascade(const QString& moduleName, cons
     }
     const QVariantMap answer = gateAnswer(moduleName, optionalNames, optionalVersionPins);
     const QString requestId = m_pendingAction.intentRequestId;
-    if (!m_pendingAction.isUpgrade || requestId.isEmpty()) {
+    if (!m_pendingAction.isUpgrade) {
         runUninstallCascade(moduleName, answer);
         return;
     }
     QPointer<PackageCoordinator> self(this);
-    admitTrust(TrustFlow::Gate, moduleName, requestId, trustPublishers,
+    admitTrust(moduleName, requestId, trustPublishers,
                [self, moduleName, requestId, answer](const QString& refused) {
         if (!self || self->m_pendingAction.intentRequestId != requestId) return;
         if (!refused.isEmpty()) {
             self->endGatePreview(moduleName);
             self->m_pendingAction = {};
             self->refuseConfirmed(requestId, moduleName, refused);
+            return;
+        }
+        const QString ticket = self->approveForLater(moduleName, answer);
+        if (!ticket.isEmpty()) {
+            self->endGatePreview(moduleName);
+            self->m_pendingAction = {};
+            self->finishIntent(requestId, true, QString(), QVariantMap{{QStringLiteral("ticket"), ticket}});
             return;
         }
         self->runUninstallCascade(moduleName, answer);
@@ -745,29 +652,20 @@ void PackageCoordinator::runUninstallCascade(const QString& moduleName, const QV
 {
     const QString requestId = m_pendingAction.intentRequestId;
     const bool    isUpgrade = m_pendingAction.isUpgrade;
-    const QVariantList catalogPlan = m_pendingAction.catalogPlan;
-    const QVariantList approvedPlan = m_pendingAction.approvedPlan;
     endGatePreview(moduleName);
     m_pendingAction = {};
 
-    if (!catalogPlan.isEmpty()) {
-        QPointer<PackageCoordinator> selfResume(this);
-        QMetaObject::invokeMethod(this, [this, selfResume, moduleName, catalogPlan, approvedPlan]() {
-            if (!selfResume) return;
-            for (const QString& replaced : replacedPackagesOf(catalogPlan))
-                cascadeUnloadForPackage(replaced);
-            withDownloaderStarted([this, moduleName, catalogPlan, approvedPlan]() {
-                downloadResolvedSequential(catalogPlan, moduleName, approvedPlan, 0, QVariantList{});
-            });
-        }, Qt::QueuedConnection);   // off the click stack, as the cascade path does
-        return;
-    }
+    // An uninstall's answer names what may be removed.
+    QVariantMap approved = answer;
+    if (!isUpgrade) approved.insert(QStringLiteral("names"), QStringList{moduleName});
 
     QPointer<PackageCoordinator> selfDefer(this);
-    QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade, answer]() {
+    QMetaObject::invokeMethod(this, [this, selfDefer, moduleName, requestId, isUpgrade, approved]() {
         if (!selfDefer) return;
 
         cascadeUnloadForPackage(moduleName);
+        // An upgrade swaps what its plan replaces too.
+        if (isUpgrade) unloadReplaced(moduleName, approved);
 
         // Answering is what tells the requester it may now remove files. If
         // nobody heard — no intent, or a dispatch that already ended, including
@@ -779,7 +677,7 @@ void PackageCoordinator::runUninstallCascade(const QString& moduleName, const QV
         // version and install the new one; doing only the removal ourselves
         // would delete the package outright. Leave it installed (unloaded) —
         // the requester has already told the user the action failed.
-        finishIntent(requestId, true, QString(), answer, [selfDefer, moduleName, isUpgrade](bool heard) {
+        finishIntent(requestId, true, QString(), approved, [selfDefer, moduleName, isUpgrade](bool heard) {
             if (selfDefer && !heard && !isUpgrade) selfDefer->performLocalRemoval({moduleName});
         });
 
@@ -821,7 +719,7 @@ void PackageCoordinator::fetchCatalogNow()
         emit appsLoadingChanged();
     }
 
-    // The App Manager and the install offers label packages by repository.
+    // The install offers label packages by repository.
     refreshRepositories();
     tryFetchCatalog(m_installedVersionByName, /*retriesLeft=*/10);
 }
@@ -832,37 +730,6 @@ void PackageCoordinator::catalogFetchFinished()
     m_catalogFetchInFlight = false;
     const QList<std::function<void()>> waiting = std::exchange(m_waitingForCatalog, {});
     for (const auto& then : waiting) then();
-}
-
-void PackageCoordinator::remoteRefresh()
-{
-    // A reload is a request too: the refresh below fetches both again.
-    m_catalogWanted = true;
-    m_repositoriesWanted = true;
-
-    if (!m_appsLoading) {
-        m_appsLoading = true;
-        emit appsLoadingChanged();
-    }
-
-    LogosAPIClient* dlClient = downloaderClient();
-    if (!dlClient || !dlClient->isConnected()) {
-        // Downloader unreachable — fall back to a local re-sync
-        refresh();
-        return;
-    }
-
-    withDownloaderStarted([this]() {
-        LogosModules logos(m_logosAPI);
-        QPointer<PackageCoordinator> self(this);
-        logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
-            if (!self) return;
-            const QString err = r.value(QStringLiteral("error")).toString();
-            if (!err.isEmpty())
-                qWarning() << "package_downloader.refreshCatalog reported:" << err;
-            self->refresh();
-        });
-    });
 }
 
 void PackageCoordinator::cancelPendingAction(const QString& moduleName)
@@ -876,13 +743,7 @@ void PackageCoordinator::cancelPendingAction(const QString& moduleName)
     endGatePreview(moduleName);
     qDebug() << "Cancelling pending package action for" << moduleName;
     const QString requestId = m_pendingAction.intentRequestId;
-    const bool wasCatalogInstall = !m_pendingAction.catalogPlan.isEmpty();
     m_pendingAction = {};
-    if (wasCatalogInstall) {
-        m_installRegistry->clearByTopLevel(moduleName);
-        emit catalogInstallStageChanged(moduleName, InstallStage::None);
-        return;
-    }
     finishIntent(requestId, false, logos::intent::errCancelled());
 }
 
@@ -901,7 +762,16 @@ void PackageCoordinator::finishIntent(const QString& requestId, bool ok, const Q
         if (heard) heard(false);
         return;
     }
-    m_intentResponder(requestId, ok, error, data, std::move(heard));
+    // An approved change is named by its request: the installer says when
+    // that change ends (ConfirmationQueue::changeEnded).
+    QVariant answer = data;
+    if (ok && data.typeId() == QMetaType::QVariantMap
+        && !data.toMap().contains(QStringLiteral("ticket"))) {
+        QVariantMap approved = data.toMap();
+        approved.insert(QStringLiteral("change"), requestId);
+        answer = approved;
+    }
+    m_intentResponder(requestId, ok, error, answer, std::move(heard));
 }
 
 // Only the dialog previewing `name` may end its preview; unrelated dialogs must
@@ -950,6 +820,9 @@ QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) con
     row.insert("description", catalogRow.isEmpty() ? installed.value("description")
                                                     : catalogRow.value("description"));
     row.insert("toVersion", offer.value("version"));
+    // The requester's pick, which the dialog starts at.
+    const QString requested = m_pendingPreviewChoices.optionalPins.value(name).toString();
+    if (!requested.isEmpty()) row.insert("requestedVersion", requested);
     row.insert("action", offer.contains("error") ? QStringLiteral("error")
         : depAction(m_installedVersionByName.value(name), offer.value("version").toString(),
                     m_installedHashByName.value(name), offer.value("rootHash").toString()));
@@ -963,28 +836,6 @@ QVariantMap PackageCoordinator::optionalPackageRow(const QVariantMap& offer) con
     }
     row.insert("versions", versions);
     return row;
-}
-
-void PackageCoordinator::beginLocalUninstall(const QStringList& names,
-                                             const QString& kind)
-{
-    if (names.isEmpty()) return;
-    if (m_pendingAction.op != PendingOp::None) {
-        qWarning() << "beginLocalUninstall: a confirmation is already open — ignoring";
-        return;
-    }
-    const bool multi = names.size() > 1;
-
-    // No intentRequestId: we asked ourselves, so the removal is ours to do.
-    m_pendingAction = multi
-        ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, {}}
-        : PendingAction{PendingOp::UninstallCascade, names.first(), {}, {}};
-
-    // Empty requester — the dialog says nothing about who asked, because the
-    // user is the one who clicked.
-    emit uninstallPlanRequested(
-        buildPlanPayload(names, dependentsOfBatch(names), kind, multi));
-    m_lastRequestedTargets.clear();
 }
 
 void PackageCoordinator::performLocalRemoval(const QStringList& names)
@@ -1002,8 +853,9 @@ void PackageCoordinator::performLocalRemoval(const QStringList& names)
 
 void PackageCoordinator::resolveDepChangesThen(const QString& name,
                                                const QString& repositoryUrl,
-                                               const QString& version,
                                                bool localFile,
+                                               bool newestReleases,
+                                               const logos::InstallChoices& choices,
                                                std::function<void(bool, const QVariantList&)> then)
 {
     // Nothing to resolve against (a local .lgx), or no downloader. Answer
@@ -1017,22 +869,20 @@ void PackageCoordinator::resolveDepChangesThen(const QString& name,
 
     m_pendingPreviewName = name;
     m_pendingPreviewRepo = repositoryUrl;
-    m_pendingPreviewVersion = version;
+    m_pendingPreviewNewest = newestReleases;
+    m_pendingPreviewChoices = choices;
     const int epoch = ++m_gatePreviewEpoch;
     QPointer<PackageCoordinator> self(this);
-    LogosModules logos(m_logosAPI);
-    logos.package_manager.getInstalledPackagesAsync(
-        [self, name, repositoryUrl, version, epoch, then](QVariantList installed) {
-        if (!self || self->m_gatePreviewEpoch != epoch) return;
-        self->resolveOptionalPreview(name, repositoryUrl, {{name, version}}, {}, {},
-            logos::installedPackagesJson(installed),
-            [self, epoch]() { return self && self->m_gatePreviewEpoch == epoch; },
-            [self, name, then](QVariantList resolved) {
-                if (!self) return;
-                then(!resolved.isEmpty(), self->gatePreviewChanges(resolved));
-                if (self) self->assessPlanTrust(TrustFlow::Gate, name, resolved);
-            });
-    });
+    // Called after a fresh read (beginPackageConfirmation()): the caches are
+    // what is installed now.
+    resolveOptionalPreview(name, repositoryUrl, choices.pins, choices.selection, choices.optionalPins,
+        newestReleases ? QString() : logos::installedPackagesJson(m_installedPackagesCache),
+        [self, epoch]() { return self && self->m_gatePreviewEpoch == epoch; },
+        [self, name, then](QVariantList resolved) {
+            if (!self) return;
+            then(!resolved.isEmpty(), self->gatePreviewChanges(resolved));
+            if (self) self->assessPlanTrust(name, resolved);
+        });
 }
 
 bool PackageCoordinator::requesterIsBundled(const QString& requesterName) const
@@ -1060,7 +910,7 @@ QStringList PackageCoordinator::dependentsOfBatch(const QStringList& names) cons
     return out;
 }
 
-bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
+void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
                                                   const QString& intent,
                                                   const QVariantMap& params,
                                                   const QString& requesterName)
@@ -1076,7 +926,16 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
     if (busy) {
         qWarning() << "PackageCoordinator: confirmation in flight, refusing" << intent;
         finishIntent(dispatchId, false, logos::intent::errFailed());
-        return true;   // answered — do NOT let the broker time it out too
+        return;   // answered — do NOT let the broker time it out too
+    }
+
+    const bool installOrUpgrade = intent == QLatin1String("basecamp.packages.confirm_install")
+                               || intent == QLatin1String("basecamp.packages.confirm_upgrade");
+    // Approved earlier, for its turn: it goes ahead, or the person is asked
+    // again.
+    if (installOrUpgrade && !params.value(QStringLiteral("ticket")).toString().isEmpty()) {
+        goAhead(dispatchId, intent, params, requesterName);
+        return;
     }
 
     const QString name    = params.value(QStringLiteral("name")).toString();
@@ -1084,55 +943,93 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
     m_pendingOptionalPackages.clear();
     m_pendingPreviewName.clear();
     ++m_gatePreviewEpoch;
+    if (installOrUpgrade) {
+        m_gateRequester = requesterName;
+        m_gateIntent = intent;
+        m_gateParams = params;
+        m_gateInstalled.clear();
+        m_gateDependents.clear();
+        m_gateDuringChange = false;
+    }
 
     if (intent == QLatin1String("basecamp.packages.confirm_install")) {
         if (name.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
         // A fresh install unloads nothing, so there is no cascade and no
-        // PendingAction — the dialog's answer is the whole flow.
+        // PendingAction — the dialog's answer is the whole flow. Held at once,
+        // so a cancel or a withdrawal finds it; planned on what is installed
+        // now.
         m_pendingInstallRequestId = dispatchId;
         m_pendingInstallName      = name;
-        const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
-        const bool localFile = logos::trust::requestsLocalFile(params);
-        beginConfirmationTrust(name, version, localFile, params, requesterName);
-        resolveDepChangesThen(name, repositoryUrl, version, localFile,
-            [this, name, version, requesterName, dispatchId](bool resolved,
-                                                                      const QVariantList& changes) {
-                emit installGateConfirmationRequested(name, version, changes, requesterName,
-                                                     requesterIsBundled(requesterName),
-                                                     resolved, dispatchId);
-                // The dialog opens on what is known so far; the rest follows.
-                if (m_gateTrust.name == name) emitTrust(TrustFlow::Gate);
-            });
-        return true;
+        QPointer<PackageCoordinator> self(this);
+        afterFreshRead([self, name, version, params, requesterName, dispatchId](bool read) {
+            if (!self || self->m_pendingInstallRequestId != dispatchId) return;
+            if (!read) {
+                self->m_pendingInstallRequestId.clear();
+                self->m_pendingInstallName.clear();
+                self->refuseUnread(dispatchId, name);
+                return;
+            }
+            self->snapshotGateBasis();
+            const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
+            const bool localFile = logos::trust::requestsLocalFile(params);
+            self->beginConfirmationTrust(name, version, localFile, params, requesterName);
+            self->resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
+                                        logos::installChoicesFrom(params, name, version),
+                [self, name, version, requesterName, dispatchId](bool resolved,
+                                                                  const QVariantList& changes) {
+                    if (!self) return;
+                    emit self->installGateConfirmationRequested(name, version, changes, requesterName,
+                                                               self->requesterIsBundled(requesterName),
+                                                               resolved, dispatchId);
+                    // The dialog opens on what is known so far; the rest follows.
+                    if (self->m_gateTrust.name == name) self->emitTrust();
+                });
+        });
+        return;
     }
 
     if (intent == QLatin1String("basecamp.packages.confirm_upgrade")) {
         if (name.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
-        const int mode = params.value(QStringLiteral("mode")).toInt();
-        const QStringList installedDeps = dependentsOfBatch({name});
-        const QStringList loadedDeps = m_uiPluginManager
-            ? m_uiPluginManager->intersectWithLoaded(installedDeps)
-            : QStringList{};
+        // Held at once, so a cancel or a withdrawal finds it; planned, what
+        // depends on it included, on what is installed now.
         m_pendingAction = {PendingOp::UninstallCascade, name, {}, dispatchId,
                            /*isUpgrade=*/true};
-        const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
-        const bool localFile = logos::trust::requestsLocalFile(params);
-        beginConfirmationTrust(name, version, localFile, params, requesterName);
-        resolveDepChangesThen(name, repositoryUrl, version, localFile,
-            [this, name, version, mode, installedDeps, loadedDeps, requesterName, dispatchId]
-            (bool /*resolved*/, const QVariantList& changes) {
-                emit upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
-                                                        loadedDeps, changes, requesterName,
-                                                        requesterIsBundled(requesterName), dispatchId);
-                if (m_gateTrust.name == name) emitTrust(TrustFlow::Gate);
-            });
-        return true;
+        QPointer<PackageCoordinator> self(this);
+        afterFreshRead([self, name, version, params, requesterName, dispatchId](bool read) {
+            if (!self || self->m_pendingAction.intentRequestId != dispatchId) return;
+            if (!read) {
+                self->m_pendingAction = {};
+                self->refuseUnread(dispatchId, name);
+                return;
+            }
+            self->snapshotGateBasis();
+            const int mode = params.value(QStringLiteral("mode")).toInt();
+            const QStringList installedDeps = self->dependentsOfBatch({name});
+            const QStringList loadedDeps = self->m_uiPluginManager
+                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
+                : QStringList{};
+            const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
+            const bool localFile = logos::trust::requestsLocalFile(params);
+            self->beginConfirmationTrust(name, version, localFile, params, requesterName);
+            self->resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
+                                        logos::installChoicesFrom(params, name, version),
+                [self, name, version, mode, installedDeps, loadedDeps, requesterName, dispatchId]
+                (bool /*resolved*/, const QVariantList& changes) {
+                    if (!self) return;
+                    emit self->upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
+                                                                  loadedDeps, changes, requesterName,
+                                                                  self->requesterIsBundled(requesterName),
+                                                                  dispatchId);
+                    if (self->m_gateTrust.name == name) self->emitTrust();
+                });
+        });
+        return;
     }
 
     if (intent == QLatin1String("basecamp.packages.confirm_uninstall")) {
@@ -1143,32 +1040,81 @@ bool PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         }
         if (names.isEmpty()) {
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
+            return;
         }
 
-        const bool multi = names.size() > 1;
-        QVariantMap plan =
-            buildPlanPayload(names, dependentsOfBatch(names),
-                             QStringLiteral("packages"), multi, requesterName);
-        if (plan.value(QStringLiteral("removable")).toList().isEmpty()) {
-            qWarning() << "PackageCoordinator: nothing removable in" << names
-                       << "— refusing" << intent;
-            finishIntent(dispatchId, false, logos::intent::errBadRequest());
-            return true;
-        }
-
-        m_pendingAction = multi
-            ? PendingAction{PendingOp::MultiUninstallCascade, {}, names, dispatchId}
-            : PendingAction{PendingOp::UninstallCascade, names.first(), {}, dispatchId};
-
-        plan.insert(QStringLiteral("requestId"), dispatchId);
-        emit uninstallPlanRequested(plan);
-        return true;
+        // Held at once, so a cancel or a withdrawal finds it. The plan is read
+        // off what is installed now, its dependencies too: until a read made
+        // for it is in, the dialog waits.
+        m_pendingAction = {PendingOp::UninstallCascade, names.first(), {}, dispatchId};
+        QVariantMap loading = buildLoadingPayload(
+            names.first(), removesAnApp(names, requesterName) ? QStringLiteral("app") : QStringLiteral("packages"));
+        loading.insert(QStringLiteral("requestId"), dispatchId);
+        emit uninstallPlanRequested(loading);
+        QPointer<PackageCoordinator> self(this);
+        afterFreshRead([self, dispatchId, names, requesterName](bool read) {
+            if (!self || self->m_pendingAction.intentRequestId != dispatchId) return;
+            if (!read) {
+                self->m_pendingAction = {};
+                emit self->confirmationWithdrawn(dispatchId);
+                self->refuseUnread(dispatchId, names.first());
+                return;
+            }
+            self->planUninstall(dispatchId, names, requesterName);
+        });
+        return;
     }
 
     qWarning() << "PackageCoordinator: unhandled package intent" << intent;
     finishIntent(dispatchId, false, logos::intent::errFailed());
-    return true;
+}
+
+bool PackageCoordinator::installsNewestReleases(const QString& requesterName)
+{
+    const auto* defaultApp = logos::defaultapps::appNamed(requesterName);
+    return defaultApp && defaultApp->slot == logos::defaultapps::Slot::Apps;
+}
+
+bool PackageCoordinator::removesAnApp(const QStringList& names, const QString& requesterName)
+{
+    const auto* defaultApp = logos::defaultapps::appNamed(requesterName);
+    return names.size() == 1 && defaultApp && defaultApp->slot == logos::defaultapps::Slot::Apps;
+}
+
+void PackageCoordinator::planUninstall(const QString& dispatchId, const QStringList& names,
+                                       const QString& requesterName)
+{
+    // Built in, or Basecamp's own: nothing removes it, and the cascade would
+    // unload it first.
+    const QStringList irremovable = uninstallplan::irremovable(planInput(names));
+    if (!irremovable.isEmpty()) {
+        qWarning() << "PackageCoordinator:" << irremovable << "can't be removed — refusing confirm_uninstall";
+        m_pendingAction = {};
+        emit confirmationWithdrawn(dispatchId);
+        finishIntent(dispatchId, false, logos::intent::errBadRequest());
+        return;
+    }
+    // An app the `apps` slot removes takes with it what only that app needed.
+    const bool app = removesAnApp(names, requesterName);
+    const QStringList batch = app ? uninstallplan::composeFrom(planInput(names)).batch : names;
+    if (app) m_lastRequestedTargets = names;
+    const bool multi = batch.size() > 1;
+    QVariantMap plan = buildPlanPayload(batch, dependentsOfBatch(batch),
+                                        app ? QStringLiteral("app") : QStringLiteral("packages"),
+                                        multi, requesterName);
+    m_lastRequestedTargets.clear();
+    if (batch.isEmpty() || plan.value(QStringLiteral("removable")).toList().isEmpty()) {
+        qWarning() << "PackageCoordinator: nothing removable in" << names << "— refusing confirm_uninstall";
+        m_pendingAction = {};
+        emit confirmationWithdrawn(dispatchId);
+        finishIntent(dispatchId, false, logos::intent::errBadRequest());
+        return;
+    }
+    m_pendingAction = multi
+        ? PendingAction{PendingOp::MultiUninstallCascade, {}, batch, dispatchId}
+        : PendingAction{PendingOp::UninstallCascade, batch.first(), {}, dispatchId};
+    plan.insert(QStringLiteral("requestId"), dispatchId);
+    emit uninstallPlanRequested(plan);
 }
 
 // A fresh install unloads nothing, so both of these are just the answer — but
@@ -1183,7 +1129,7 @@ void PackageCoordinator::confirmInstallGate(const QString& name, const QStringLi
     const QString requestId = m_pendingInstallRequestId;
     const QVariantMap answer = gateAnswer(name, optionalNames, optionalVersionPins);
     QPointer<PackageCoordinator> self(this);
-    admitTrust(TrustFlow::Gate, name, requestId, trustPublishers,
+    admitTrust(name, requestId, trustPublishers,
                [self, name, requestId, answer](const QString& refused) {
         if (!self || self->m_pendingInstallRequestId != requestId) return;
         self->m_pendingInstallRequestId.clear();
@@ -1193,7 +1139,18 @@ void PackageCoordinator::confirmInstallGate(const QString& name, const QStringLi
             self->refuseConfirmed(requestId, name, refused);
             return;
         }
-        self->finishIntent(requestId, true, QString(), answer);
+        const QString ticket = self->approveForLater(name, answer);
+        if (!ticket.isEmpty()) {
+            self->finishIntent(requestId, true, QString(), QVariantMap{{QStringLiteral("ticket"), ticket}});
+            return;
+        }
+        // What it replaces stops first, off the click stack: the installer
+        // swaps the files under it once it hears.
+        QMetaObject::invokeMethod(self, [self, name, requestId, answer]() {
+            if (!self) return;
+            self->unloadReplaced(name, answer);
+            self->finishIntent(requestId, true, QString(), answer);
+        }, Qt::QueuedConnection);
     });
 }
 
@@ -1206,6 +1163,12 @@ QVariantMap PackageCoordinator::gateAnswer(const QString& name, const QStringLis
         && m_gateTrust.about == gateDispatchId(name))
         answer.insert(m_gateTrust.approval);
     return answer;
+}
+
+void PackageCoordinator::refuseUnread(const QString& requestId, const QString& name)
+{
+    refuseConfirmed(requestId, name, QStringLiteral("Basecamp couldn't read what is installed, so "
+                                                    "nothing was changed. Try again."));
 }
 
 void PackageCoordinator::refuseConfirmed(const QString& requestId, const QString& name,
@@ -1279,7 +1242,8 @@ void PackageCoordinator::confirmUninstallMultiCascade(const QStringList& moduleN
     // Everything in the batch is unloaded — tell the requester it may remove
     // them; if nobody heard, the removal falls to us.
     QPointer<PackageCoordinator> self(this);
-    finishIntent(requestId, true, QString(), QVariant(), [self, moduleNames](bool heard) {
+    finishIntent(requestId, true, QString(), QVariantMap{{QStringLiteral("names"), moduleNames}},
+                 [self, moduleNames](bool heard) {
         if (self && !heard) self->performLocalRemoval(moduleNames);
     });
 
@@ -1419,7 +1383,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
     }
 
     if (retriesLeft <= 0) {
-        // Give up — drop the App Manager overlay so Reload doesn't stick.
+        // Give up — drop the loading state so it doesn't stick.
         if (m_appsLoading) {
             m_appsLoading = false;
             emit appsLoadingChanged();
@@ -1493,8 +1457,6 @@ void PackageCoordinator::populateAppsModel(
         m_appsLoading = false;
         emit appsLoadingChanged();
     }
-
-    refreshActiveAddDialog();
 }
 
 // ── Package repository management ──────────────────────────────────────────
@@ -1872,24 +1834,39 @@ void PackageCoordinator::releaseStorageIfUnused()
     m_coreModuleManager->unloadModule(QStringLiteral("storage_module"));
 }
 
-void PackageCoordinator::refreshDependencyInfo()
+void PackageCoordinator::afterFreshRead(std::function<void(bool)> then)
 {
-    if (!m_logosAPI) return;
+    m_freshReads.afterNext([this] { return refreshDependencyInfo(); }, std::move(then));
+}
+
+bool PackageCoordinator::refreshDependencyInfo()
+{
+    if (!m_logosAPI) return false;
     // Same reasoning as fetchUiPluginMetadata: no package_manager, no
     // dependency info to fetch, and no reason to block on discovering that.
-    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return;
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return false;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
+    // The newest read asked for wins: an older one still answering would mix
+    // its dependency graph into this one's.
+    const int generation = m_freshReads.begin();
 
     // First: refresh installType for every installed package (UI + core).
     // We want the Uninstall button on both tabs to gate correctly, so the
     // map must cover everything — not just UI plugins. fetchUiPluginMetadata
     // already filled installType for its subset; we overwrite with this
     // full-scan so core-only modules pick up their installType too.
-    logos.package_manager.getInstalledPackagesAsync(
-        [self](QVariantList packages) {
-        if (!self) return;
+    logos.package_manager.getInstalledPackagesAsyncResult(
+        [self, generation](logos::AsyncResult<QVariantList> result) {
+        if (!self || !self->m_freshReads.isNewest(generation)) return;
+        if (!result.ok()) {
+            qWarning().noquote() << "PackageCoordinator: couldn't read the installed packages:"
+                                 << QString::fromStdString(result.error.message);
+            self->m_freshReads.done(generation, false);
+            return;
+        }
+        const QVariantList packages = result.value;
         self->m_installedPackagesCache = packages;
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;
@@ -1906,8 +1883,8 @@ void PackageCoordinator::refreshDependencyInfo()
             typeMap[name] = pkg.value("installType").toString();
             const QString dn = pkg.value("displayName").toString();
             if (!dn.isEmpty()) displayNameMap[name] = dn;
-            // moduleName is the key openApp / runResolverAndOpenDialog
-            // use; fall back to name when the field is absent.
+            // moduleName is the key openApp uses; fall back to name when the
+            // field is absent.
             const QString lookupName = pkg.value("moduleName").toString().isEmpty()
                                            ? name
                                            : pkg.value("moduleName").toString();
@@ -1950,11 +1927,16 @@ void PackageCoordinator::refreshDependencyInfo()
             // Sidebar reads from launcherApps (not uiModules) so it needs its
             // own kick whenever hasMissingDeps may have flipped.
             emit self->launcherAppsChanged();
+            emit self->installedPackagesRead(packages);
+            self->m_freshReads.done(generation, true);
             return;
         }
 
         LogosModules inner(self->m_logosAPI);
         auto remaining = std::make_shared<int>(names.size() * 2);
+        // One query that failed leaves the graph unknown: the caches keep the
+        // last whole one.
+        auto failed = std::make_shared<bool>(false);
         auto missingMap = std::make_shared<QMap<QString, QStringList>>();
         auto blockingMap = std::make_shared<QMap<QString, QVariantList>>();
         auto dependenciesMap = std::make_shared<QMap<QString, QStringList>>();
@@ -1962,9 +1944,16 @@ void PackageCoordinator::refreshDependencyInfo()
         QPointer<PackageCoordinator> selfCopy(self.data());
 
         auto maybeFinish = [selfCopy, missingMap, blockingMap, dependenciesMap,
-                            dependentsMap, remaining]() {
+                            dependentsMap, remaining, failed, generation, packages]() {
             if (!selfCopy) return;
             if (--(*remaining) > 0) return;
+            // Read again since: that read publishes its own, whole.
+            if (!selfCopy->m_freshReads.isNewest(generation)) return;
+            if (*failed) {
+                qWarning() << "PackageCoordinator: couldn't read the installed packages' dependencies";
+                selfCopy->m_freshReads.done(generation, false);
+                return;
+            }
             selfCopy->m_missingDepsByModule = *missingMap;
             selfCopy->m_blockingDepsByModule = *blockingMap;
             selfCopy->m_dependenciesByModule = *dependenciesMap;
@@ -1984,16 +1973,27 @@ void PackageCoordinator::refreshDependencyInfo()
             // marker only appears on the next side-effect that triggers a
             // launcher refresh (e.g. clicking the plugin to load it).
             emit selfCopy->launcherAppsChanged();
+            // Only now, the graph read too: a confirmation this lets through is
+            // planned on what is installed now. It used to go out first.
+            emit selfCopy->installedPackagesRead(packages);
+            selfCopy->m_freshReads.done(generation, true);
         };
 
         for (const QString& name : names) {
             // One call, three caches: the names the load gate refuses on, the
             // reason per name, and the on-disk closure the uninstall plan
             // walks. Why the dependency cleanup needs no extra IPC.
-            inner.package_manager.resolveFlatDependenciesAsync(
+            inner.package_manager.resolveFlatDependenciesAsyncResult(
                 name, true,
-                [missingMap, blockingMap, dependenciesMap, name, maybeFinish,
-                 enforceVersions = self->m_hostProfile.enforceDependencyVersions](QVariantList deps) {
+                [missingMap, blockingMap, dependenciesMap, failed, name, maybeFinish,
+                 enforceVersions = self->m_hostProfile.enforceDependencyVersions]
+                (logos::AsyncResult<QVariantList> result) {
+                    if (!result.ok()) {
+                        *failed = true;
+                        maybeFinish();
+                        return;
+                    }
+                    const QVariantList& deps = result.value;
                     // Two questions, not one: which rows are on disk (the
                     // graph) and which refuse the load (the gate). The split
                     // lives in utils/DependencyBlocker.h so it is under test —
@@ -2013,8 +2013,15 @@ void PackageCoordinator::refreshDependencyInfo()
                     maybeFinish();
                 });
 
-            inner.package_manager.resolveFlatDependentsAsync(
-                name, true, [dependentsMap, name, maybeFinish](QVariantList deps) {
+            inner.package_manager.resolveFlatDependentsAsyncResult(
+                name, true, [dependentsMap, failed, name, maybeFinish]
+                (logos::AsyncResult<QVariantList> result) {
+                    if (!result.ok()) {
+                        *failed = true;
+                        maybeFinish();
+                        return;
+                    }
+                    const QVariantList& deps = result.value;
                     QStringList out;
                     for (const QVariant& v : deps) {
                         const QVariantMap m = v.toMap();
@@ -2026,6 +2033,7 @@ void PackageCoordinator::refreshDependencyInfo()
                 });
         }
     });
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2043,34 +2051,6 @@ QVariantMap nameAndRepo(const QString& name, const QString& repo)
     };
 }
 
-QVariantList PackageCoordinator::collectCatalogRequired(const QString& name,
-                                                        const QString& repositoryUrl) const
-{
-    QVariantList out;
-    QSet<QString> seen;
-    out.append(nameAndRepo(name, repositoryUrl));
-    seen.insert(name);
-
-    if (repositoryUrl.isEmpty() || !m_appsModel) return out;
-
-    QStringList queue;
-    queue << name;
-    for (int head = 0; head < queue.size(); ++head) {
-        const QVariantMap row = m_appsModel->rowDataByName(queue[head], repositoryUrl);
-        if (row.isEmpty()) continue;
-        const QVariantList deps = row.value("dependencies").toList();
-        for (const QVariant& d : deps) {
-            const QString depName = d.toMap().value("name").toString();
-            if (depName.isEmpty() || seen.contains(depName)) continue;
-            if (m_appsModel->rowDataByName(depName, repositoryUrl).isEmpty()) continue;
-            seen.insert(depName);
-            out.append(nameAndRepo(depName, repositoryUrl));
-            queue << depName;
-        }
-    }
-    return out;
-}
-
 bool PackageCoordinator::alreadyOnDisk(const QString& installedVersion,
                                        const QString& installedHash,
                                        const QString& resolvedVersion,
@@ -2083,36 +2063,6 @@ bool PackageCoordinator::alreadyOnDisk(const QString& installedVersion,
         resolvedHash.isEmpty() || installedHash.isEmpty()
         || resolvedHash == installedHash;
     return versionMatches && hashMatches;
-}
-
-bool PackageCoordinator::entryCarriesDownload(const QVariantMap& entry)
-{
-    return !entry.value(QStringLiteral("name")).toString().isEmpty()
-        && entry.value(QStringLiteral("error")).toString().isEmpty();
-}
-
-PackageCoordinator::ResolvedSplit PackageCoordinator::splitResolved(
-    const QVariantList& resolved,
-    const QHash<QString, QString>& installedVersions,
-    const QHash<QString, QString>& installedHashes)
-{
-    ResolvedSplit out;
-    for (const QVariant& v : resolved) {
-        const QVariantMap m = v.toMap();
-        // Nothing fetchable to compare — an error row, or one with no name.
-        if (!entryCarriesDownload(m)) {
-            out.needed.append(v);
-            continue;
-        }
-        const QString name = m.value(QStringLiteral("name")).toString();
-        if (alreadyOnDisk(installedVersions.value(name), installedHashes.value(name),
-                          m.value(QStringLiteral("version")).toString(),
-                          m.value(QStringLiteral("rootHash")).toString()))
-            out.satisfied.append(v);
-        else
-            out.needed.append(v);
-    }
-    return out;
 }
 
 QString PackageCoordinator::depAction(const QString& installedVersion,
@@ -2134,11 +2084,6 @@ QString PackageCoordinator::depAction(const QString& installedVersion,
                                   installedVersion.toStdString()) >= 0
                ? QStringLiteral("upgrade")
                : QStringLiteral("downgrade");
-}
-
-bool PackageCoordinator::installPluginSucceeded(const QVariantMap& installResult)
-{
-    return installResult.value(QStringLiteral("error")).toString().isEmpty();
 }
 
 QVariantMap PackageCoordinator::changeFromResolverEntry(const QVariantMap& entry,
@@ -2194,32 +2139,20 @@ QVariantList PackageCoordinator::computeDepChanges(
     return out;
 }
 
-void PackageCoordinator::setOpStage(const QString& name, InstallStage::Value stage)
-{
-    if (!m_installRegistry->has(name)) return;
-    if (m_installRegistry->stage(name) == static_cast<int>(stage)) return;
-    if (m_installRegistry->stage(name) == static_cast<int>(InstallStage::Installed)
-        && stage != InstallStage::Failed) {
-        return;
-    }
-    m_installRegistry->setStage(name, stage);
-    emit catalogInstallStageChanged(name, stage);
-}
-
 void PackageCoordinator::openApp(const QString& name,
                                  const QString& repositoryUrl,
-                                 const QVariantMap& versionPins,
                                  bool allowFastLaunch)
 {
     if (!m_logosAPI || name.isEmpty()) return;
 
     if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
 
-    // Anything else reads the app's catalog row, which may not be fetched yet.
-    // A bundled app has no row before it is, so the fast path gets a second look.
-    whenCatalogLoaded([this, name, repositoryUrl, versionPins, allowFastLaunch]() {
+    // A bundled app has no catalog row before the catalog is fetched, so the
+    // fast path gets a second look. Anything else is its installer app's to
+    // show.
+    whenCatalogLoaded([this, name, repositoryUrl, allowFastLaunch]() {
         if (allowFastLaunch && fastLaunch(name, repositoryUrl)) return;
-        runResolverAndOpenDialog(name, repositoryUrl, versionPins);
+        emit installRequested(name, repositoryUrl);
     });
 }
 
@@ -2242,14 +2175,6 @@ bool PackageCoordinator::fastLaunch(const QString& name, const QString& reposito
              << "), emitting launchAppRequested";
     emit launchAppRequested(name);
     return true;
-}
-
-void PackageCoordinator::notifyAddApplicationDialogClosed()
-{
-    if (m_activeAddDialogName.isEmpty()) return;
-    ++m_dialogResolveEpoch[m_activeAddDialogName];
-    m_activeAddDialogName.clear();
-    m_addPreviewPending = false;
 }
 
 void PackageCoordinator::resolveOptionalPreview(const QString& name, const QString& repositoryUrl,
@@ -2385,789 +2310,59 @@ QVariantList PackageCoordinator::gatePreviewChanges(const QVariantList& resolved
         if (!row.value("optional").toBool() && !row.contains("requiredFor")) changes.append(row);
     }
     changes.append(optionalRowsWithChildren(m_pendingOptionalPackages, all));
-    return changes;
+    return withReplaceImpact(changes);
 }
 
-void PackageCoordinator::refreshOptionalPreview(const QString& name, const QString& repositoryUrl,
-                                                 const QVariantMap& versionPins,
+QVariantList PackageCoordinator::withReplaceImpact(const QVariantList& rows) const
+{
+    const QSet<QString> running = loadedNames();
+    return logos::replace::withCloses(rows, [this, &running](const QString& name) {
+        return logos::replace::closedBy(name, m_dependentsByModule.value(name),
+                                        [&running](const QString& n) { return running.contains(n); });
+    });
+}
+
+void PackageCoordinator::unloadReplaced(const QString& name, const QVariantMap& answer)
+{
+    QVariantList plan = answer.value(QStringLiteral("plan")).toList();
+    // A local file is the package it names.
+    if (plan.isEmpty()) plan << QVariantMap{{QStringLiteral("name"), name}};
+    const QStringList replaced = logos::replace::replacedBy(plan, [this](const QVariantMap& row) {
+        const QString n = row.value(QStringLiteral("name")).toString();
+        if (!m_installedNameSet.contains(n) || n == QLatin1String("main_ui")) return false;
+        const QString hash = row.value(QStringLiteral("rootHash")).toString();
+        return m_installedVersionByName.value(n) != row.value(QStringLiteral("version")).toString()
+            || (!hash.isEmpty() && m_installedHashByName.value(n) != hash);
+    });
+    for (const QString& r : replaced) cascadeUnloadForPackage(r);
+}
+
+void PackageCoordinator::refreshOptionalPreview(const QString& name,
                                                  const QVariantMap& optionalSelection,
-                                                 const QVariantMap& optionalVersionPins,
-                                                 bool installGate)
+                                                 const QVariantMap& optionalVersionPins)
 {
     if (!m_logosAPI || name.isEmpty()) return;
-    if (!installGate) {
-        runResolverAndOpenDialog(name, repositoryUrl, versionPins, optionalSelection, optionalVersionPins);
-        return;
-    }
     if (name != m_pendingPreviewName || (name != m_pendingInstallName
         && !(m_pendingAction.isUpgrade && m_pendingAction.name == name))) return;
     const int epoch = ++m_gatePreviewEpoch;
     emit optionalGatePreviewUpdated(name, {}, true);
-    beginTrust(TrustFlow::Gate, name);
+    beginTrust(name);
     QPointer<PackageCoordinator> self(this);
     LogosModules logos(m_logosAPI);
+    const logos::InstallChoices choices =
+        logos::withDialogPicks(m_pendingPreviewChoices, optionalSelection, optionalVersionPins);
     logos.package_manager.getInstalledPackagesAsync(
-        [self, name, optionalSelection, optionalVersionPins, epoch](QVariantList installed) {
+        [self, name, choices, epoch](QVariantList installed) {
             if (!self || self->m_gatePreviewEpoch != epoch) return;
             self->resolveOptionalPreview(name, self->m_pendingPreviewRepo,
-                {{name, self->m_pendingPreviewVersion}}, optionalSelection, optionalVersionPins,
-                logos::installedPackagesJson(installed),
+                choices.pins, choices.selection, choices.optionalPins,
+                self->m_pendingPreviewNewest ? QString() : logos::installedPackagesJson(installed),
                 [self, epoch]() { return self && self->m_gatePreviewEpoch == epoch; },
                 [self, name](QVariantList resolved) {
                     if (!self) return;
                     emit self->optionalGatePreviewUpdated(name, self->gatePreviewChanges(resolved), false);
-                    self->assessPlanTrust(TrustFlow::Gate, name, resolved);
+                    self->assessPlanTrust(name, resolved);
                 });
-        });
-}
-
-void PackageCoordinator::runResolverAndOpenDialog(const QString& name,
-                                                  const QString& repositoryUrl,
-                                                  const QVariantMap& versionPins,
-                                                  const QVariantMap& optionalSelection,
-                                                  const QVariantMap& optionalVersionPins,
-                                                  bool requestOpen)
-{
-    QVariantMap catalogRow =
-        m_appsModel ? m_appsModel->rowDataByName(name, repositoryUrl) : QVariantMap{};
-
-    const QString targetVersion = versionPins.value(name).toString();
-
-    const int epoch = ++m_dialogResolveEpoch[name];
-    m_activeAddDialogName = name;
-    m_activeAddDialogRequest = {repositoryUrl, versionPins, optionalSelection, optionalVersionPins};
-    m_addPreviewPending = true;
-
-    qDebug() << "PackageCoordinator::runResolverAndOpenDialog" << name
-             << "repo=" << repositoryUrl << "targetVersion=" << targetVersion
-             << "pins=" << versionPins.size() << "epoch=" << epoch
-             << "requestOpen=" << requestOpen;
-
-    beginTrust(TrustFlow::AppManager, name);
-
-    // A refresh keeps the rows on screen until the new resolve replaces them.
-    QVariantList initialChanges;
-    if (!requestOpen || m_installRegistry->isInFlight(name))
-        initialChanges = m_lastResolvedChangesByName.value(name);
-    // Sync stack frame only — QML may open the modal from this signal.
-    emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, initialChanges,
-                       requestOpen, /*resolutionPending=*/true);
-
-    // For an installed app, optionals it does not have yet start unchecked, so
-    // opening it does not turn Launch into Install.
-    const bool selectNew = !m_installedVersionByName.contains(name);
-    QPointer<PackageCoordinator> self(this);
-    resolveOptionalPreview(name, repositoryUrl, versionPins, optionalSelection, optionalVersionPins,
-        QString(), [self, name, epoch]() {
-            return self && self->m_dialogResolveEpoch.value(name) == epoch;
-        }, [self, name, repositoryUrl, targetVersion, catalogRow](QVariantList resolved) {
-            if (!self) return;
-            self->m_addPreviewPending = false;
-            const QVariantList changes =
-                self->computeDepChanges(resolved, self->m_installedVersionByName);
-            self->m_lastResolvedRawByName.insert(name, resolved);
-            self->m_lastResolvedChangesByName.insert(name, changes);
-            self->assessPlanTrust(TrustFlow::AppManager, name, resolved);
-            self->emitDialogMetadata(name, repositoryUrl, targetVersion, catalogRow, changes,
-                                     /*requestOpen=*/false, /*resolutionPending=*/false);
-        }, selectNew);
-}
-
-void PackageCoordinator::refreshActiveAddDialog()
-{
-    const QString name = m_activeAddDialogName;
-    // An install owns the dialog until it settles; refreshOverlayAfterInstall follows it.
-    if (name.isEmpty() || m_installRegistry->has(name)) return;
-    const AddDialogRequest request = m_activeAddDialogRequest;
-    runResolverAndOpenDialog(name, request.repositoryUrl, request.versionPins,
-                             request.optionalSelection, request.optionalVersionPins,
-                             /*requestOpen=*/false);
-}
-
-void PackageCoordinator::emitDialogMetadata(const QString& name,
-                                            const QString& repositoryUrl,
-                                            const QString& targetVersion,
-                                            const QVariantMap& catalogRow,
-                                            const QVariantList& changes,
-                                            bool requestOpen,
-                                            bool resolutionPending)
-{
-    if (name != m_activeAddDialogName)
-        return;
-
-    QVariantMap metadata;
-    metadata["name"]          = name;
-    metadata["repositoryUrl"] = repositoryUrl;
-    metadata["selectedVersion"] = targetVersion;
-    metadata["displayName"]   = catalogRow.value("displayName").toString().isEmpty()
-                                    ? name
-                                    : catalogRow.value("displayName");
-    metadata["description"]   = catalogRow.value("description");
-    metadata["icon"]          = catalogRow.value("iconUrl");
-    metadata["category"]      = catalogRow.value("category");
-    metadata["versions"]      = catalogRow.value("versions").toList();
-    const QString installedVersion = m_installedVersionByName.value(name);
-    // Per-tile installStatus from the CLICKED row. Already missing-deps-aware
-    // (AppsModel::recomputeInstallStatus returns NotInstalled when missingDeps
-    // is non-empty), so the dialog reads Install instead of Launch for a
-    // partial install.
-    int tileStatus = InstallStatus::NotInstalled;
-    if (m_appsModel) {
-        const QVariantMap clickedRow = m_appsModel->rowDataByName(name, repositoryUrl);
-        tileStatus = clickedRow.value("installStatus").toInt();
-    }
-    metadata["installStatus"]    = tileStatus;
-    metadata["isInstalled"]      = tileStatus == InstallStatus::Installed;
-    metadata["installedVersion"] = installedVersion;
-    // Needed by the dialog's Uninstall affordance: "embedded" packages ship
-    // inside the bundle and package_manager refuses to remove them, so the
-    // button has to hide rather than offer a call that always fails.
-    metadata["installType"]      = m_installTypeByModule.value(name);
-    const QVariantList versionsList = catalogRow.value("versions").toList();
-    metadata["latestVersion"] = versionsList.isEmpty()
-        ? QString()
-        : versionsList.first().toMap().value("manifest").toMap().value("version").toString();
-
-    metadata["installStage"] = m_installRegistry->stage(name);
-    metadata["resolutionPending"] = resolutionPending;
-    // While resolving, the verdict is not about this plan yet.
-    metadata["trust"] = !resolutionPending && m_appTrust.name == name
-                            ? m_appTrust.trust
-                            : QVariantMap{{QStringLiteral("pending"), true}};
-    // An installed app whose optional selection changes something installs instead of launching.
-    bool optionalChangesPending = false;
-    for (const QVariant& v : changes) {
-        const QVariantMap c = v.toMap();
-        if ((c.value("optional").toBool() || c.contains("requiredFor")) && !c.contains("error")
-            && c.value("action").toString() != QLatin1String("installed"))
-            optionalChangesPending = true;
-    }
-    metadata["optionalChangesPending"] = optionalChangesPending;
-    QVariantList optionalPackages;
-    for (const QVariant& v : m_lastResolvedRawByName.value(name))
-        for (const QVariant& offer : v.toMap().value("optionalDependencies").toList())
-            optionalPackages.append(optionalPackageRow(offer.toMap()));
-    metadata["optionalPackages"] = optionalRowsWithChildren(optionalPackages, changes);
-
-    // {name, repo} entries so the filter pins each row to the resolver's
-    // chosen repo and multi-repo names don't duplicate. Always at least the
-    // top-level entry so the dialog has something to render before the
-    // async resolver callback arrives.
-    QVariantList requiredEntries;
-    QSet<QString> seen;
-    requiredEntries.reserve(changes.size() + 1);
-    requiredEntries.append(nameAndRepo(name, repositoryUrl));
-    seen.insert(name);
-    if (m_appsModel) {
-        QList<AppsModel::ResolverRow> overlay;
-        overlay.reserve(changes.size());
-        for (const QVariant& v : changes) {
-            const QVariantMap c = v.toMap();
-            if (c.value("optional").toBool() || c.contains("requiredFor")) continue;
-            AppsModel::ResolverRow rr;
-            rr.name          = c.value("name").toString();
-            rr.repositoryUrl = c.value("repositoryUrl").toString();
-            rr.action        = c.value("action").toString();
-            rr.toVersion     = c.value("toVersion").toString();
-            rr.isTopLevel    = c.value("isTopLevel").toBool();
-            rr.resolverError = c.value("error").toString();
-            overlay.append(rr);
-            if (!rr.name.isEmpty() && !seen.contains(rr.name)) {
-                seen.insert(rr.name);
-                requiredEntries.append(
-                    nameAndRepo(rr.name, c.value("repositoryUrl").toString()));
-            }
-        }
-        m_appsModel->setResolverOverlay(overlay);
-    }
-
-    // Catalog placeholders are only for a pending paint with no graph yet. The
-    // chosen graph is authoritative once resolution completes.
-    const bool placeholders = resolutionPending && (requestOpen || changes.isEmpty());
-    for (const QVariant& v : placeholders ? collectCatalogRequired(name, repositoryUrl) : QVariantList{}) {
-        const QString depName = v.toMap().value("name").toString();
-        if (depName.isEmpty() || seen.contains(depName)) continue;
-        seen.insert(depName);
-        requiredEntries.append(v);
-    }
-
-    emit requiredPackagesResolved(requiredEntries);
-
-    if (requestOpen)
-        emit requestOpenAddApplicationDialog(metadata);
-    else
-        emit addApplicationDataUpdated(metadata);
-}
-
-void PackageCoordinator::refreshOverlayAfterInstall(const QString& topLevelName)
-{
-    if (!m_appsModel || topLevelName.isEmpty()) return;
-
-    const QVariantList raw = m_lastResolvedRawByName.value(topLevelName);
-    if (raw.isEmpty()) return;
-
-    const QVariantList changes =
-        computeDepChanges(raw, m_installedVersionByName);
-    if (!changes.isEmpty())
-        m_lastResolvedChangesByName.insert(topLevelName, changes);
-
-    // Only push UI updates while this app's dialog is still the active session.
-    if (topLevelName != m_activeAddDialogName) return;
-
-    const QString repositoryUrl = m_repoByName.value(topLevelName);
-    const QVariantMap catalogRow =
-        m_appsModel->rowDataByName(topLevelName, repositoryUrl);
-    emitDialogMetadata(topLevelName, repositoryUrl, QString(), catalogRow, changes,
-                       /*requestOpen=*/false, /*resolutionPending=*/false);
-}
-
-void PackageCoordinator::confirmCatalogInstall(const QString& name,
-                                                const QString& repositoryUrl,
-                                                bool trustPublishers)
-{
-    if (!m_logosAPI || name.isEmpty()) return;
-
-    if (m_addPreviewPending) {
-        emit catalogInstallStageChanged(name, InstallStage::None);
-        return;
-    }
-
-    if (m_installRegistry->has(name)) {
-        qDebug() << "confirmCatalogInstall: session for" << name
-                 << "already in progress, ignoring";
-        return;
-    }
-
-    m_installRegistry->beginPlan(
-        name, {{name, /*version=*/{}, /*rootHash=*/{}, /*size=*/0, repositoryUrl}});
-
-    emit catalogInstallStageChanged(name, InstallStage::Downloading);
-
-    const QVariantList preview = m_lastResolvedRawByName.value(name);
-    if (preview.isEmpty()) {
-        failCatalogInstall(name, QStringLiteral("package preview is not ready"));
-        return;
-    }
-    for (const QVariant& v : preview) {
-        const QVariantMap row = v.toMap();
-        if (row.contains("error")) {
-            failCatalogInstall(name, row.value("error").toString());
-            return;
-        }
-    }
-    // Execute the reviewed, fully resolved graph with its pinned artifacts.
-    // Resolving again would discard the preview's optional classification and
-    // could make the approved version differ from the downloaded one.
-    // What the fetched packages are held to: the plan as it was judged.
-    const QVariantList approved =
-        trustVerdict(TrustFlow::AppManager).approval.value(QStringLiteral("plan")).toList();
-    QPointer<PackageCoordinator> self(this);
-    admitTrust(TrustFlow::AppManager, name, logos::trust::planIdentity(preview), trustPublishers,
-               [self, name, preview, approved](const QString& refused) {
-        if (!self) return;
-        if (!refused.isEmpty()) {
-            self->failCatalogInstall(name, refused);
-            return;
-        }
-        if (approved.isEmpty()) {
-            self->failCatalogInstall(name, QStringLiteral("Basecamp has not checked what this installs."));
-            return;
-        }
-        self->startResolvedInstall(name, preview, approved);
-    });
-}
-
-void PackageCoordinator::startResolvedInstall(const QString& name,
-                                              const QVariantList& resolved,
-                                              const QVariantList& approved)
-{
-    const ResolvedSplit plan =
-        splitResolved(resolved, m_installedVersionByName, m_installedHashByName);
-
-    QStringList neededNames, satisfiedNames;
-    for (const QVariant& v : plan.needed)    neededNames    << v.toMap().value("name").toString();
-    for (const QVariant& v : plan.satisfied) satisfiedNames << v.toMap().value("name").toString();
-    qInfo() << "Install plan for" << name << "— needs:" << neededNames
-            << "| already current:" << satisfiedNames;
-
-    QList<InstallRegistry::PlannedPackage> planned;
-    for (const QVariant& v : plan.needed) {
-        const QVariantMap m = v.toMap();
-        if (!entryCarriesDownload(m)) continue;
-        planned.append({m.value("name").toString(),
-                        m.value("version").toString(),
-                        m.value("rootHash").toString(),
-                        m.value("size").toULongLong(),
-                        m.value("repositoryUrl").toString()});
-    }
-    if (!planned.isEmpty()) m_installRegistry->beginPlan(name, planned);
-
-    for (const QVariant& v : plan.satisfied) {
-        const QVariantMap m = v.toMap();
-        const QString rowName = m.value("name").toString();
-        if (rowName.isEmpty()) continue;
-        m_installRegistry->beginOrTrack(rowName,
-            m.value("version").toString(), m.value("rootHash").toString(),
-            name, m.value("repositoryUrl").toString());
-        m_installRegistry->setStage(rowName, InstallStage::Installed);
-    }
-
-    if (plan.needed.isEmpty()) {
-        setOpStage(name, InstallStage::Installed);
-        emit catalogInstallFinished(name);
-        refreshOverlayAfterInstall(name);
-        QPointer<PackageCoordinator> self(this);
-        QTimer::singleShot(1500, self.data(), [self, name]() {
-            if (!self) return;
-            self->m_installRegistry->clearByTopLevel(name);
-        });
-        return;
-    }
-
-    for (const QVariant& v : plan.needed) {
-        const QVariantMap m = v.toMap();
-        const QString rowName = m.value("name").toString();
-        if (rowName.isEmpty()) continue;
-        m_installRegistry->beginOrTrack(rowName,
-            m.value("version").toString(), m.value("rootHash").toString(),
-            name, m.value("repositoryUrl").toString());
-        if (!entryCarriesDownload(m))
-            m_installRegistry->setStage(rowName, InstallStage::Queued);
-    }
-
-    QStringList installedDependents;
-    QStringList loadedDependents;
-    if (!replaceImpactOf(plan.needed, &installedDependents, &loadedDependents).isEmpty()) {
-        // Lead with the verb the top-level row shows, so it reads like the
-        // PMUI dialog for the same action.
-        QString version;
-        int mode = 0;   // 0 upgrade, 1 downgrade, 2 reinstall
-        for (const QVariant& v : plan.needed) {
-            const QVariantMap m = v.toMap();
-            if (m.value("name").toString() != name) continue;
-            version = m.value("version").toString();
-            const QString action = depAction(m_installedVersionByName.value(name),
-                                             version,
-                                             m_installedHashByName.value(name),
-                                             m.value("rootHash").toString());
-            if (action == QLatin1String("downgrade"))      mode = 1;
-            else if (action == QLatin1String("reinstall")) mode = 2;
-            break;
-        }
-
-        m_pendingAction = {PendingOp::UninstallCascade, name, {}, /*intentRequestId=*/{},
-                           /*isUpgrade=*/true, plan.needed, approved};
-        // Optionals were chosen in App Manager; this dialog only confirms that plan.
-        QVariantList reviewed;
-        for (const QVariant& v : m_lastResolvedChangesByName.value(name)) {
-            QVariantMap c = v.toMap();
-            c.remove("optional");
-            reviewed.append(c);
-        }
-        emit upgradeCascadeConfirmationRequested(name, version, mode,
-                                                 installedDependents, loadedDependents,
-                                                 reviewed,
-                                                 /*requesterName=*/QString(),
-                                                 /*requesterBundled=*/false,
-                                                 /*requestId=*/QString());
-        return;
-    }
-
-    withDownloaderStarted([this, needed = plan.needed, name, approved]() {
-        downloadResolvedSequential(needed, name, approved, 0, QVariantList{});
-    });
-}
-
-QStringList PackageCoordinator::replacedPackagesOf(const QVariantList& needed) const
-{
-    QStringList replaced;
-    for (const QVariant& v : needed) {
-        const QVariantMap m = v.toMap();
-        if (!entryCarriesDownload(m)) continue;
-        const QString rowName = m.value("name").toString();
-        if (rowName == QStringLiteral("main_ui")) continue;
-        if (m_installedNameSet.contains(rowName) && !replaced.contains(rowName))
-            replaced.append(rowName);
-    }
-    return replaced;
-}
-
-QStringList PackageCoordinator::replaceImpactOf(const QVariantList& needed,
-                                                QStringList* installedDependents,
-                                                QStringList* loadedDependents) const
-{
-    const QStringList replaced = replacedPackagesOf(needed);
-    if (replaced.isEmpty()) return {};
-
-    const QStringList deps = dependentsOfBatch(replaced);
-    const QStringList loadedDeps = m_uiPluginManager
-        ? m_uiPluginManager->intersectWithLoaded(deps)
-        : QStringList{};
-    if (installedDependents) *installedDependents = deps;
-    if (loadedDependents)    *loadedDependents    = loadedDeps;
-
-    // The replaced modules themselves count: reinstalling a running module
-    // stops it, whether or not anything else depends on it.
-    QStringList impact = loadedDeps;
-    const QStringList loadedCore = m_coreModuleManager
-        ? m_coreModuleManager->loadedModules()
-        : QStringList{};
-    for (const QString& r : replaced)
-        if (loadedCore.contains(r) && !impact.contains(r))
-            impact.append(r);
-    return impact;
-}
-
-void PackageCoordinator::downloadResolvedSequential(const QVariantList& planned,
-                                                    const QString& topLevelName,
-                                                    const QVariantList& approved,
-                                                    int index,
-                                                    QVariantList fetched)
-{
-    if (index >= planned.size()) {
-        installAsApproved(fetched, planned, approved, topLevelName);
-        return;
-    }
-
-    const QVariantMap entry = planned[index].toMap();
-    const QString rowName = entry.value("name").toString();
-
-    if (!entryCarriesDownload(entry)) {
-        fetched.append(entry);
-        downloadResolvedSequential(planned, topLevelName, approved, index + 1, std::move(fetched));
-        return;
-    }
-
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    constexpr int kDownloadIpcDeadlineMs = 5 * 60 * 1000;
-    logos.package_downloader.downloadPinnedAsyncResult(
-        entry.value("repositoryUrl").toString(), rowName,
-        entry.value("version").toString(), entry.value("rootHash").toString(),
-        [self, planned, topLevelName, approved, index, fetched, entry, rowName]
-        (logos::AsyncResult<QVariantMap> r) mutable {
-            if (!self) return;
-            QVariantMap dl = r.ok() ? r.value : QVariantMap{};
-            if (dl.value("name").toString().isEmpty()) dl["name"] = rowName;
-            if (!r.ok() && dl.value("error").toString().isEmpty()) {
-                const QString detail = QString::fromStdString(r.error.message);
-                dl["error"] = detail.isEmpty()
-                    ? QStringLiteral("package_downloader did not reply")
-                    : detail;
-            }
-            const auto inheritFromPlan = [&dl, &entry](const QString& key) {
-                if (dl.value(key).toString().isEmpty())
-                    dl.insert(key, entry.value(key));
-            };
-            inheritFromPlan(QStringLiteral("version"));
-            inheritFromPlan(QStringLiteral("rootHash"));
-            inheritFromPlan(QStringLiteral("repositoryUrl"));
-
-            fetched.append(dl);
-
-            // A required package that didn't come: nothing is installed.
-            if (!dl.value("error").toString().isEmpty() && !entry.value("optional").toBool()) {
-                self->installAsApproved(fetched, planned, approved, topLevelName);
-                return;
-            }
-
-            self->downloadResolvedSequential(planned, topLevelName, approved, index + 1,
-                                             std::move(fetched));
-        },
-        Timeout(kDownloadIpcDeadlineMs));
-}
-
-void PackageCoordinator::installAsApproved(const QVariantList& fetched, const QVariantList& planned,
-                                           const QVariantList& approved, const QString& topLevelName)
-{
-    const QString why = logos::trust::notAsApproved(fetched, planned, approved);
-    if (!why.isEmpty()) {
-        failCatalogInstall(topLevelName, why);
-        return;
-    }
-    QVariantList kept;
-    for (const QVariant& v : fetched) {
-        const QVariantMap row = v.toMap();
-        if (row.value("error").toString().isEmpty()) {
-            kept.append(row);
-            continue;
-        }
-        // An optional package that didn't come is left out, and its row says so.
-        m_installRegistry->fail(row.value("name").toString(), row.value("error").toString());
-    }
-    if (kept.isEmpty()) {
-        failCatalogInstall(topLevelName, QStringLiteral("Nothing could be fetched."));
-        return;
-    }
-    // Checked and installed from copies only Basecamp writes, as
-    // package_manager_ui does a local file: another download of the same
-    // release lands on the downloader's path.
-    auto copies = std::make_shared<QTemporaryDir>();
-    QString copyError = copies->isValid() ? QString()
-                                          : QStringLiteral("Couldn't make a private folder to install from.");
-    if (copyError.isEmpty()) kept = logos::trust::intoPrivateCopies(kept, copies->path(), &copyError);
-    if (!copyError.isEmpty()) {
-        failCatalogInstall(topLevelName, copyError);
-        return;
-    }
-    m_installCopies.insert(topLevelName, copies);
-    QPointer<PackageCoordinator> self(this);
-    checkFetchedSigners(kept, approved, [self, kept, topLevelName](const QString& refused) {
-        if (!self) return;
-        if (!refused.isEmpty()) {
-            self->failCatalogInstall(topLevelName, refused);
-            return;
-        }
-        self->setOpStage(topLevelName, InstallStage::Installing);
-        self->installResultsSequential(kept, topLevelName, 0);
-    });
-}
-
-void PackageCoordinator::checkFetchedSigners(const QVariantList& fetched, const QVariantList& approved,
-                                             std::function<void(const QString& refused)> then, int index)
-{
-    while (index < fetched.size() && fetched.at(index).toMap().value("path").toString().isEmpty())
-        ++index;
-    if (index >= fetched.size()) {
-        then({});
-        return;
-    }
-    // The download picks among a release's catalogue entries by root hash
-    // alone, and the root hash covers neither the manifest nor its signature.
-    constexpr int kVerifyIpcDeadlineMs = 2 * 60 * 1000;
-    const QVariantMap row = fetched.at(index).toMap();
-    QPointer<PackageCoordinator> self(this);
-    LogosModules(m_logosAPI).package_manager.verifyPackageAsync(row.value("path").toString(),
-        [self, fetched, approved, then, index, row](QVariantMap verified) {
-            if (!self) return;
-            const QString why = logos::trust::signerChanged(verified, approved, row);
-            if (!why.isEmpty()) {
-                then(why);
-                return;
-            }
-            self->checkFetchedSigners(fetched, approved, then, index + 1);
-        }, Timeout(kVerifyIpcDeadlineMs));
-}
-
-void PackageCoordinator::failCatalogInstall(const QString& name,
-                                            const QString& error)
-{
-    qWarning() << "confirmCatalogInstall failed for" << name << ":" << error;
-    m_installCopies.remove(name);
-    m_installRegistry->fail(name, error);
-    emit catalogInstallStageChanged(name, InstallStage::Failed);
-    emit catalogInstallFailed(name, error);
-    QPointer<PackageCoordinator> self(this);
-    QTimer::singleShot(2500, self.data(), [self, name]() {
-        if (!self) return;
-        self->m_installRegistry->clearByTopLevel(name);
-    });
-}
-
-void PackageCoordinator::installOnePackage(const QVariantMap& dl,
-    std::function<void(bool, const QString&)> onDone)
-{
-    const QString packageName  = dl.value("name").toString();
-    const QString filePath     = dl.value("path").toString();
-    const QString downloadError = dl.value("error").toString();
-
-    if (filePath.isEmpty()) {
-        if (onDone) onDone(false, downloadError.isEmpty()
-                                       ? QStringLiteral("Download failed")
-                                       : downloadError);
-        return;
-    }
-
-    if (!m_logosAPI) {
-        if (onDone) onDone(false, QStringLiteral("package_manager not connected"));
-        return;
-    }
-
-    const bool alreadyInstalled = m_installedNameSet.contains(packageName);
-    // Never tear down or remove our own UI — same guard uninstallUiModule
-    // carries, for the same reason: it would brick Basecamp mid-install.
-    // AppsFilterProxy::excludeMainUi only hides it from the list; it is not a
-    // safety gate, and a resolver result can name it as a transitive entry.
-    // Falling through installs over it, which is the old merge behaviour —
-    // strictly better than deleting the running UI.
-    const bool isSelf = (packageName == QStringLiteral("main_ui"));
-    if (isSelf && alreadyInstalled) {
-        qWarning() << "Refusing to remove main_ui before install; "
-                      "installing over it instead";
-    }
-
-    if (alreadyInstalled && !isSelf) {
-        // Unload before either branch below runs. An already-installed package
-        // is replaced one of two ways — uninstall-then-install, or installing
-        // over it when it is embedded — and both need whatever is running to
-        // have stopped first. The rescan only decides WHICH of the two, so the
-        // unload cannot wait on it: gating it on the removal path left an
-        // embedded package running while its replacement was written.
-        cascadeUnloadForPackage(packageName);
-
-        LogosModules logos(m_logosAPI);
-        QPointer<PackageCoordinator> self(this);
-        // The install-type cache can be temporarily incomplete during a
-        // metadata refresh. Recheck the current package before removing it.
-        logos.package_manager.getInstalledPackagesAsync(
-            [self, dl, packageName, onDone](QVariantList installedPackages) {
-                if (!self) return;
-                if (!shouldRemoveBeforeInstall(installedPackages, packageName)) {
-                    self->installDownloadedFile(dl, onDone);
-                    return;
-                }
-
-                LogosModules logos(self->m_logosAPI);
-                logos.package_manager.uninstallPackageAsync(packageName,
-                    [self, dl, packageName, onDone](QVariantMap uninstallResult) {
-                        if (!self) return;
-                        if (!uninstallResult.value("success", false).toBool()) {
-                            const QString err = uninstallResult.value("error").toString();
-                            qWarning() << "Pre-install removal of" << packageName
-                                       << "failed, aborting install:" << err;
-                            if (onDone)
-                                onDone(false, err.isEmpty()
-                                           ? QStringLiteral("Could not remove the installed version")
-                                           : err);
-                            return;
-                        }
-                        self->installDownloadedFile(dl, onDone);
-                    });
-            });
-        return;
-    }
-
-    installDownloadedFile(dl, onDone);
-}
-
-void PackageCoordinator::installDownloadedFile(const QVariantMap& dl,
-    std::function<void(bool, const QString&)> onDone)
-{
-    const QString packageName = dl.value("name").toString();
-    const QString filePath    = dl.value("path").toString();
-    // Where the downloader fetched it from; package_manager records it with the install.
-    const QString source      = dl.value("source").toString();
-
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageCoordinator> self(this);
-    // Installing was left on the default 20 s IPC deadline while DOWNLOADING
-    // got five minutes -- backwards. Downloading is network-bound and can be
-    // retried; installing is disk-bound over a payload that package_manager
-    // reads, gunzips and tar-parses three times and Merkle-hashes twice, then
-    // extracts and copies. It is ~1 s on a warm dev box and unbounded on a slow
-    // disk, a large package, or a machine where the antivirus scans every DLL
-    // as it lands. Blowing the deadline does not cancel any of that work: the
-    // files still install and the reply is simply abandoned, so the user is
-    // told the install failed when it did not. Match the download budget.
-    constexpr int kInstallIpcDeadlineMs = 5 * 60 * 1000;
-    // `installPluginAsyncResult`, not `installPluginAsync`: the plain async
-    // wrapper hands the callback a bare QVariantMap, so a transport failure is
-    // indistinguishable from a provider that legitimately returned an empty
-    // one. AsyncResult<T> carries the value and the error together, which is
-    // the whole reason it exists.
-    logos.package_manager.installPluginAsyncResult(filePath, false, source,
-        [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
-            if (!self) return;
-            // Transport-level failure FIRST -- a timeout leaves `value`
-            // default-constructed, and reading it as an install verdict is
-            // exactly the mistake this channel removes. The message names the
-            // module and the deadline (logos::callErrorTimeout builds it), and
-            // says the package may in fact be installed: blowing the deadline
-            // cancels nothing, so the files may well be on disk.
-            if (!r.ok()) {
-                const QString detail = QString::fromStdString(r.error.message);
-                if (onDone) onDone(false,
-                    QStringLiteral("%1 — the package may in fact be installed; check before retrying")
-                        .arg(detail.isEmpty()
-                                 ? QStringLiteral("package_manager did not reply")
-                                 : detail));
-                return;
-            }
-            const bool success = installPluginSucceeded(r.value);
-            const QString err  = r.value.value("error").toString();
-            if (onDone) onDone(success, success ? QString() : err);
-        },
-        Timeout(kInstallIpcDeadlineMs));
-}
-
-void PackageCoordinator::installResultsSequential(const QVariantList& results,
-                                                  const QString& topLevelName,
-                                                  int index,
-                                                  QStringList failures)
-{
-    if (index >= results.size()) return;
-    const QVariantMap dl = results[index].toMap();
-    const QString rowName = dl.value("name").toString();
-    qDebug() << "installResultsSequential index=" << index
-             << "of" << results.size()
-             << "rowName=" << rowName
-             << "topLevel=" << topLevelName;
-    if (!rowName.isEmpty()) {
-        m_installRegistry->beginOrTrack(rowName, dl.value("version").toString(),
-                                   dl.value("rootHash").toString(), topLevelName,
-                                   dl.value("repositoryUrl").toString());
-        m_installRegistry->setStage(rowName, InstallStage::Installing);
-    }
-
-    QPointer<PackageCoordinator> self(this);
-    installOnePackage(dl,
-        [self, results, topLevelName, rowName, index, failures, dl]
-        (bool success, const QString& err) mutable {
-            qDebug() << "installOnePackage callback rowName=" << rowName
-                     << "success=" << success << "err=" << err;
-            if (!self) return;
-
-            if (!rowName.isEmpty()) {
-                if (success) {
-                    const QString ver = dl.value("version").toString();
-                    const QString hash = dl.value("rootHash").toString();
-                    if (!ver.isEmpty())
-                        self->m_installedVersionByName.insert(rowName, ver);
-                    if (!hash.isEmpty())
-                        self->m_installedHashByName.insert(rowName, hash);
-                    if (self->m_appsModel)
-                        self->m_appsModel->markInstalled(rowName, ver, hash);
-                    self->m_installRegistry->finish(rowName);
-                } else {
-                    self->m_installRegistry->fail(rowName, err);
-                }
-            }
-            if (!success) {
-                failures.append(rowName.isEmpty()
-                                    ? err
-                                    : (rowName + ": " + err));
-            }
-
-            // Stop on the first failure rather than growing a half-installed
-            // set; report it now. (Rollback of installed packages is follow-up.)
-            const bool isLast = (index + 1) >= results.size();
-            if (!isLast && success) {
-                self->installResultsSequential(
-                    results, topLevelName, index + 1, failures);
-                return;
-            }
-
-            self->m_installCopies.remove(topLevelName);
-            if (!failures.isEmpty()) {
-                qDebug() << "  install loop complete with failures for"
-                         << topLevelName << ":" << failures.size();
-                self->setOpStage(topLevelName, InstallStage::Failed);
-                emit self->catalogInstallFailed(
-                    topLevelName, failures.join(QStringLiteral("; ")));
-                QTimer::singleShot(2500, self.data(), [self, topLevelName]() {
-                    if (!self) return;
-                    self->m_installRegistry->clearByTopLevel(topLevelName);
-                });
-                return;
-            }
-
-            self->setOpStage(topLevelName, InstallStage::Installed);
-            emit self->catalogInstallFinished(topLevelName);
-            self->refreshOverlayAfterInstall(topLevelName);
-            QTimer::singleShot(1500, self.data(), [self, topLevelName]() {
-                if (!self) return;
-                self->m_installRegistry->clearByTopLevel(topLevelName);
-            });
         });
 }
 
@@ -3277,11 +2472,6 @@ QStringList PackageCoordinator::installedFromPublisher(const QString& did) const
     return names;
 }
 
-PackageCoordinator::TrustVerdict& PackageCoordinator::trustVerdict(TrustFlow flow)
-{
-    return flow == TrustFlow::Gate ? m_gateTrust : m_appTrust;
-}
-
 QString PackageCoordinator::gateDispatchId(const QString& name) const
 {
     if (name.isEmpty()) return {};
@@ -3292,47 +2482,182 @@ QString PackageCoordinator::gateDispatchId(const QString& name) const
     return {};
 }
 
-int PackageCoordinator::beginTrust(TrustFlow flow, const QString& name)
+int PackageCoordinator::beginTrust(const QString& name)
 {
-    TrustVerdict& verdict = trustVerdict(flow);
-    verdict.name = name;
-    verdict.about = flow == TrustFlow::Gate ? gateDispatchId(name) : QString();
-    verdict.trust = {{QStringLiteral("pending"), true}};
-    verdict.approval = {};
-    ++verdict.epoch;
-    emitTrust(flow);
-    return verdict.epoch;
+    m_gateTrust.name = name;
+    m_gateTrust.about = gateDispatchId(name);
+    m_gateTrust.trust = {{QStringLiteral("pending"), true}};
+    m_gateTrust.approval = {};
+    ++m_gateTrust.epoch;
+    emitTrust();
+    return m_gateTrust.epoch;
 }
 
-void PackageCoordinator::publishTrust(TrustFlow flow, int epoch, const QString& plan,
-                                      const QVariantMap& trust, const QVariantMap& approval)
+void PackageCoordinator::publishTrust(int epoch, const QVariantMap& trust, const QVariantMap& approval,
+                                      const QStringList& plannedOn)
 {
-    TrustVerdict& verdict = trustVerdict(flow);
-    if (verdict.epoch != epoch) return;
+    if (m_gateTrust.epoch != epoch) return;
     // A gate answered or cancelled is over, and so is what it was told.
-    if (flow == TrustFlow::Gate && gateDispatchId(verdict.name) != verdict.about) return;
-    if (flow == TrustFlow::AppManager) verdict.about = plan;
-    verdict.trust = trust;
-    verdict.approval = approval;
-    emitTrust(flow);
+    if (gateDispatchId(m_gateTrust.name) != m_gateTrust.about) return;
+    m_gateTrust.trust = trust;
+    m_gateTrust.approval = approval;
+    // Each app's backend too: a package by that name would block the app.
+    m_gateTrust.plannedOn.clear();
+    for (const QString& planned : plannedOn) {
+        if (planned.isEmpty()) continue;
+        m_gateTrust.plannedOn << planned << planned + QStringLiteral("_backend");
+    }
+    m_gateTrust.plannedOn.removeDuplicates();
+    emitTrust();
 }
 
-void PackageCoordinator::emitTrust(TrustFlow flow)
+// ── Approved for later ───────────────────────────────────────────────────
+
+namespace {
+
+// Long enough for the change before it to download, short enough that a
+// forgotten approval doesn't wait for good.
+constexpr int kTicketLifetimeSecs = 60 * 60;
+
+}  // namespace
+
+QString PackageCoordinator::releaseOf(const QVariantList& installed, const QString& name)
 {
-    const TrustVerdict& verdict = trustVerdict(flow);
-    emit installTrustUpdated(flow == TrustFlow::Gate ? QStringLiteral("gate") : QStringLiteral("app"),
-                             verdict.name, verdict.trust);
+    const QVariantMap record = logos::trust::installedRecordOf(installed, name);
+    if (record.isEmpty()) return {};
+    return record.value(QStringLiteral("version")).toString() + QLatin1Char('\x01')
+         + record.value(QStringLiteral("hashes")).toMap().value(QStringLiteral("root")).toString();
 }
 
-void PackageCoordinator::assessPlanTrust(TrustFlow flow, const QString& name,
-                                         const QVariantList& resolved)
+void PackageCoordinator::snapshotGateBasis()
 {
-    const int epoch = beginTrust(flow, name);
-    const QString plan = logos::trust::planIdentity(resolved);
+    m_gateInstalled = m_installedPackagesCache;
+    m_gateDependents = m_dependentsByModule;
+    m_gateDuringChange = m_changeInFlight && m_changeInFlight();
+}
+
+QString PackageCoordinator::approveForLater(const QString& name, const QVariantMap& answer)
+{
+    if (!m_gateParams.value(QStringLiteral("waits")).toBool()) return {};
+    // Planned while a change was being made, it may be planned on what that
+    // change has since replaced: it goes ahead only once checked again.
+    if (!m_gateDuringChange && !(m_changeInFlight && m_changeInFlight())) return {};
+    // Nothing to hold it to without what it was planned over.
+    if (m_gateTrust.name != name || m_gateTrust.plannedOn.isEmpty()) return {};
+    Ticket ticket;
+    ticket.requester = m_gateRequester;
+    ticket.intent = m_gateIntent;
+    for (const char* key : {"name", "version", "repositoryUrl", "mode"})
+        ticket.request.insert(QLatin1String(key), m_gateParams.value(QLatin1String(key)));
+    ticket.answer = answer;
+    for (const QString& planned : m_gateTrust.plannedOn)
+        ticket.basis.releases.insert(planned, releaseOf(m_gateInstalled, planned));
+    // What runs on a package it replaces was told it closes, and may break.
+    for (const QVariant& v : answer.value(QStringLiteral("plan")).toList()) {
+        const QVariantMap row = v.toMap();
+        const QString n = row.value(QStringLiteral("name")).toString();
+        const QString installed = releaseOf(m_gateInstalled, n);
+        const QString planned = row.value(QStringLiteral("version")).toString() + QLatin1Char('\x01')
+                              + row.value(QStringLiteral("rootHash")).toString();
+        if (!installed.isEmpty() && installed != planned)
+            ticket.basis.dependents.insert(n, m_gateDependents.value(n));
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    ticket.expires = now.addSecs(kTicketLifetimeSecs);
+    // Those never handed back go.
+    for (auto it = m_tickets.begin(); it != m_tickets.end();)
+        it = it->expires < now ? m_tickets.erase(it) : std::next(it);
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_tickets.insert(id, ticket);
+    qInfo().noquote() << "PackageCoordinator:" << name << "approved for later, after the change being made";
+    return id;
+}
+
+void PackageCoordinator::goAhead(const QString& dispatchId, const QString& intent,
+                                 const QVariantMap& params, const QString& requesterName)
+{
+    const Ticket held = m_tickets.take(params.value(QStringLiteral("ticket")).toString());
+    QVariantMap again = params;
+    again.remove(QStringLiteral("ticket"));
+    const QString name = again.value(QStringLiteral("name")).toString();
+    const auto same = [&held, &again](const char* key) {
+        return held.request.value(QLatin1String(key)) == again.value(QLatin1String(key));
+    };
+    // Not this request's approval, or one too old: asked again, as any request.
+    if (held.requester.isEmpty() || held.requester != requesterName || held.intent != intent
+        || !same("name") || !same("version") || !same("repositoryUrl") || !same("mode")
+        || held.expires < QDateTime::currentDateTimeUtc()) {
+        qInfo().noquote() << "PackageCoordinator: no approval to go ahead with for" << name << "; asking";
+        beginPackageConfirmation(dispatchId, intent, again, requesterName);
+        return;
+    }
+    const bool install = intent == QLatin1String("basecamp.packages.confirm_install");
+    // Held at once, as a dialog's request is: a withdrawal finds it.
+    if (install) {
+        m_pendingInstallRequestId = dispatchId;
+        m_pendingInstallName = name;
+    } else {
+        m_pendingAction = {PendingOp::UninstallCascade, name, {}, dispatchId, /*isUpgrade=*/true};
+    }
     QPointer<PackageCoordinator> self(this);
-    withInstalledAndTrustedKeys([self, flow, name, resolved, plan, epoch]() {
+    afterFreshRead([self, dispatchId, intent, again, requesterName, held, name, install](bool read) {
         if (!self) return;
-        self->whenCatalogLoaded([self, flow, name, resolved, plan, epoch]() {
+        if (install ? self->m_pendingInstallRequestId != dispatchId
+                    : self->m_pendingAction.intentRequestId != dispatchId)
+            return;
+        const auto letGo = [self, install]() {
+            if (install) {
+                self->m_pendingInstallRequestId.clear();
+                self->m_pendingInstallName.clear();
+            } else {
+                self->m_pendingAction = {};
+            }
+        };
+        // Not knowing what is installed now, it doesn't go ahead.
+        if (!read) {
+            letGo();
+            self->refuseUnread(dispatchId, name);
+            return;
+        }
+        // What it was planned over changed: the person decides again.
+        const QString changed = logos::planbasis::changed(
+            held.basis,
+            [self](const QString& n) { return releaseOf(self->m_installedPackagesCache, n); },
+            [self](const QString& n) { return self->m_dependentsByModule.value(n); });
+        if (!changed.isEmpty()) {
+            qInfo().noquote() << "PackageCoordinator:" << changed << "changed since" << name
+                              << "was approved; asking again";
+            letGo();
+            self->beginPackageConfirmation(dispatchId, intent, again, requesterName);
+            return;
+        }
+        if (!install) {
+            self->runUninstallCascade(name, held.answer);
+            return;
+        }
+        self->m_pendingInstallRequestId.clear();
+        self->m_pendingInstallName.clear();
+        // What it replaces stops first, as at once.
+        QMetaObject::invokeMethod(self, [self, name, dispatchId, answer = held.answer]() {
+            if (!self) return;
+            self->unloadReplaced(name, answer);
+            self->finishIntent(dispatchId, true, QString(), answer);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void PackageCoordinator::emitTrust()
+{
+    emit installTrustUpdated(m_gateTrust.name, m_gateTrust.trust);
+}
+
+void PackageCoordinator::assessPlanTrust(const QString& name, const QVariantList& resolved)
+{
+    const int epoch = beginTrust(name);
+    QPointer<PackageCoordinator> self(this);
+    withInstalledAndTrustedKeys([self, name, resolved, epoch]() {
+        if (!self) return;
+        self->whenCatalogLoaded([self, name, resolved, epoch]() {
             if (!self) return;
             const QList<logos::trust::Package> packages = logos::trust::judgePlan(
                 name, resolved,
@@ -3354,9 +2679,12 @@ void PackageCoordinator::assessPlanTrust(TrustFlow flow, const QString& name,
                 },
                 logos::trust::trustedDids(self->m_publisherKeyring->keys()),
                 logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, resolved));
-            self->publishTrust(flow, epoch, plan, self->trustSummary(name, packages),
+            QStringList plannedOn{name};
+            for (const QVariant& v : resolved) plannedOn << v.toMap().value(QStringLiteral("name")).toString();
+            self->publishTrust(epoch, self->trustSummary(name, packages),
                                {{QStringLiteral("plan"),
-                                 logos::trust::approvedPlan(name, resolved, packages)}});
+                                 logos::trust::approvedPlan(name, resolved, packages)}},
+                               plannedOn);
         });
     });
 }
@@ -3366,15 +2694,17 @@ void PackageCoordinator::beginConfirmationTrust(const QString& name, const QStri
                                                 const QString& requesterName)
 {
     // A local .lgx has no catalogue entry: its signer comes from the file,
-    // which only the Package Manager may name. A catalogue plan, with or
-    // without a repository, is assessed once resolved; until then, "checking".
+    // which only a slot allowed to may name (DefaultApps.h), from its bundled
+    // app. A catalogue plan, with or without a repository, is assessed once
+    // resolved; until then, "checking".
     if (localFile) {
-        const bool fromPackageManager = requesterName == ShellIntents::kPackageManagerAppName
-                                        && requesterIsBundled(requesterName);
+        const auto* defaultApp = logos::defaultapps::appNamed(requesterName);
+        const bool fromPackageManager = defaultApp && defaultApp->namesLocalFiles
+                                        && requesterIsBundled(defaultApp->app);
         assessLocalFileTrust(name, version, logos::trust::localPackagePath(
             params.value(QStringLiteral("localPath")).toString(), fromPackageManager));
     } else {
-        beginTrust(TrustFlow::Gate, name);
+        beginTrust(name);
     }
 }
 
@@ -3390,11 +2720,11 @@ QVariantMap PackageCoordinator::trustSummary(const QString& about,
 void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString& version,
                                               const QString& path)
 {
-    const int epoch = beginTrust(TrustFlow::Gate, name);
+    const int epoch = beginTrust(name);
     // A file Basecamp may not open, or can't verify, can't be installed:
     // approving it unchecked would leave nothing to hold the install to.
     if (path.isEmpty() || !m_logosAPI) {
-        publishTrust(TrustFlow::Gate, epoch, {}, trustSummary(
+        publishTrust(epoch, trustSummary(
             name, {logos::trust::fromVerifiedFile(name, version, {}, {})}));
         return;
     }
@@ -3431,8 +2761,8 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
                             self->installedRecord(name),
                             self->installedRecord(name + QStringLiteral("_backend")),
                             logos::trust::reservedFor(self->m_bundledNames, self->m_installedPackagesCache, {}));
-                        self->publishTrust(TrustFlow::Gate, epoch, {}, self->trustSummary(name, {package}),
-                                           {{QStringLiteral("file"), file}});
+                        self->publishTrust(epoch, self->trustSummary(name, {package}),
+                                           {{QStringLiteral("file"), file}}, {name});
                     }, Qt::QueuedConnection);
                 });
             });
@@ -3440,10 +2770,10 @@ void PackageCoordinator::assessLocalFileTrust(const QString& name, const QString
     });
 }
 
-void PackageCoordinator::admitTrust(TrustFlow flow, const QString& name, const QString& about,
+void PackageCoordinator::admitTrust(const QString& name, const QString& about,
                                     bool trustPublishers, std::function<void(const QString&)> then)
 {
-    const TrustVerdict& verdict = trustVerdict(flow);
+    const TrustVerdict& verdict = m_gateTrust;
     if (about.isEmpty() || verdict.name != name || verdict.about != about
         || verdict.trust.isEmpty() || verdict.trust.value(QStringLiteral("pending")).toBool()) {
         then(QStringLiteral("Basecamp is still checking who signed it."));

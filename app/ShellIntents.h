@@ -14,12 +14,6 @@ inline const QStringList kPackageConfirmIntents = {
     QStringLiteral("basecamp.packages.confirm_upgrade"),
 };
 
-// Of those, the ones no third party has a legitimate reason to raise.
-inline const QStringList kRestrictedToPackageManagerUi = {
-    QStringLiteral("basecamp.packages.confirm_uninstall"),
-    QStringLiteral("basecamp.packages.confirm_upgrade"),
-};
-
 // PURE NAVIGATION, and hand-offs to a one. `ok` means "you are there", not "we
 // are done", so the broker must not bounce the user back out of a destination
 // it was asked to take them to.
@@ -33,8 +27,6 @@ inline const QStringList kNavigationIntents = {
 
 // Bring a named app forward: `{ "app": "wallet_ui" }`.
 inline const QString kAppLaunchIntent = QStringLiteral("basecamp.apps.launch");
-inline const QString kPackageManagerAppName =
-    QStringLiteral("package_manager_ui");
 inline const QString kPackagesOpenIntent =
     QStringLiteral("basecamp.packages.open");
 inline const QString kAppLaunchParam  = QStringLiteral("app");
@@ -64,18 +56,22 @@ inline const QStringList kWebReachableIntents = {
 inline const QStringList kShellUses = {
     QStringLiteral("packages.show"),
     QStringLiteral("packages.install"),
+    QStringLiteral("apps.install"),
+    QStringLiteral("apps.search"),
 };
 
-// Declare the shell's provides, hand-offs, uses and requester restrictions.
+// Declare the shell's provides, hand-offs, uses and requester restrictions:
+// each intent a default-app slot may raise (DefaultApps.h), only that slot's
+// app and backend may.
 void registerWith(IntentRegistry* registry,
                   const QString& shellModuleName,
                   const QString& displayName,
                   const QString& iconSource);
 
-// The same, for intents_module's declare_shell, with the link requester. Every
-// confirm intent is restricted to the Package Manager's backend, the module it
-// asks through: the module lets any package that declares a shell intent ask
-// for it otherwise.
+// The same, for intents_module's declare_shell, with the link requester. Each
+// confirm intent only from the backends of the slots that may raise it (the
+// module knows modules, and an app asks through its backend): the module lets
+// any package that declares a shell intent ask for it otherwise.
 QJsonObject moduleDeclaration(const QString& shellModuleName,
                               const QString& displayName,
                               const QString& iconSource,

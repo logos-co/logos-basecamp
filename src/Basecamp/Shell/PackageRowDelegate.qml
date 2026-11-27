@@ -3,17 +3,15 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 import Logos.Controls
-import Logos.Icons
 import Logos.Theme
-import Basecamp.Backend 1.0
 import Basecamp.Common
+import Basecamp.Installer
 
 ItemDelegate {
     id: root
 
     // ─── Public API ───
     property var appRow: ({})
-    property bool installing: false
     property bool selectable: false
     property bool selected: false
     property string selectedVersion: ""
@@ -40,10 +38,6 @@ ItemDelegate {
         readonly property bool   isError: d.action === "error" || !!(root.appRow && root.appRow.error)
         readonly property bool   isInstalled:
             root.appRow ? (root.appRow.isInstalled === true) : false
-        readonly property int rowStage:
-            root.appRow && root.appRow.installStage !== undefined
-                ? root.appRow.installStage
-                : InstallStage.None
 
         // Not the versions the download source cannot serve: the resolver
         // never picks one.
@@ -52,32 +46,17 @@ ItemDelegate {
                 return !v || v.sourceAvailable !== false
             }) : []
 
-        // Live download bytes. `downloadTotal` is 0 when nobody knows the
-        // size, so guard every division on `hasProgress`.
-        readonly property real dlReceived:
-            root.appRow ? (root.appRow.downloadReceived || 0) : 0
-        readonly property real dlTotal:
-            root.appRow ? (root.appRow.downloadTotal || 0) : 0
-        readonly property bool downloadDone: d.dlTotal > 0 && d.dlReceived >= d.dlTotal
-        readonly property string transport: root.appRow ? (root.appRow.downloadTransport || "") : ""
-        readonly property string transportCaption: d.rowStage === InstallStage.Downloading
-            ? DownloadFormat.transportCaption(d.transport, root.appRow && root.appRow.downloadFellBack)
-            : ""
-        readonly property url badgeIcon: d.rowStage === InstallStage.Downloading
-            ? DownloadFormat.transportIcon(d.transport) : ""
-        readonly property bool findingPeers: d.rowStage === InstallStage.Downloading
-            && !d.downloadDone && DownloadFormat.findingPeers(d.transport, d.dlReceived)
-        // A determinate bar claims a FRACTION, so it needs a real sample.
-        // dlTotal is seeded from the catalog when the plan is registered —
-        // before any transfer — so gating on it alone parked the bar at 0%.
-        readonly property bool hasProgress:
-            d.rowStage === InstallStage.Downloading && d.dlTotal > 0
-            && d.dlReceived > 0 && !d.downloadDone
-        // Nothing measurable yet: no bytes, or no size from transport or
-        // catalog. Sweep rather than sit still.
-        readonly property bool indeterminateProgress:
-            d.rowStage === InstallStage.Downloading && !d.downloadDone
-            && (d.dlReceived <= 0 || d.dlTotal <= 0)
+        // The action the resolver picked, as a RowAction.
+        readonly property int rowAction: {
+            switch (d.action) {
+            case "install":   return Types.RowAction.Install
+            case "upgrade":   return Types.RowAction.Upgrade
+            case "downgrade": return Types.RowAction.Downgrade
+            case "reinstall": return Types.RowAction.Reinstall
+            case "installed": return Types.RowAction.NoOp
+            }
+            return d.isInstalled ? Types.RowAction.NoOp : Types.RowAction.Install
+        }
     }
 
     hoverEnabled: true
@@ -111,7 +90,7 @@ ItemDelegate {
                 Layout.preferredWidth: 24
                 Layout.preferredHeight: 24
                 // Installed-only (not in the catalog): kept as installed, nothing to choose.
-                enabled: !root.installing && !d.isError && !(root.appRow && root.appRow.installedOnly)
+                enabled: !d.isError && !(root.appRow && root.appRow.installedOnly)
                 checked: root.selected
                 onToggled: root.selectionToggled(checked)
                 ToolTip.visible: hovered && !!root.appRow.error
@@ -161,7 +140,7 @@ ItemDelegate {
                 objectName: "packageRow.version." + d.rowName
                 anchors.fill: parent
                 visible: d.usableVersions.length > 0
-                enabled: !root.installing && !d.isError
+                enabled: !d.isError
                 // Catalog entries can have manifest: null; guard every access
                 // or v.manifest.version throws a QML TypeError and blanks the picker.
                 model: d.usableVersions.map(function(v) { return (v && v.manifest) ? (v.manifest.version || "") : "" })
@@ -234,60 +213,13 @@ ItemDelegate {
         LogosBadge {
             id: stageBadge
             objectName: "packageRowStageBadge"
-            TextMetrics {
-                id: widestInstallLabel
-                font: stageBadge.labelItem.font
-                text: "999.9 / 999.9 MB"
-            }
-            property int pillWidth: (d.rowStage === InstallStage.Downloading || d.rowStage === InstallStage.Downloaded || d.rowStage === InstallStage.Queued || d.rowStage === InstallStage.Installing)
-                ? Math.ceil(widestInstallLabel.width) + leftPadding + rightPadding
-                  + (d.badgeIcon.toString().length > 0 ? DownloadFormat.badgeIconWidth : 0)
-                : implicitWidth
-            // Where the bytes come from, at the start of the progress.
-            iconSource: d.badgeIcon
-
-            HoverHandler { id: sourceHover }
-            LogosToolTip {
-                text: d.rowStage === InstallStage.Downloading ? d.transportCaption : ""
-                placement: LogosToolTip.Top
-                visible: sourceHover.hovered && text.length > 0
-            }
-            Behavior on pillWidth {
-                NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
-            }
-            Layout.preferredWidth: pillWidth
             Layout.alignment: Qt.AlignVCenter
             text: {
                 if (d.isError) return root.selectable ? qsTr("Unavailable") : qsTr("Conflict")
-                if (d.hasProgress) return DownloadFormat.label(d.dlReceived, d.dlTotal)
-                if (d.findingPeers) return qsTr("Finding peers…")
-                switch (d.rowStage) {
-                case InstallStage.Downloading: return qsTr("Downloading…")
-                case InstallStage.Downloaded:  return qsTr("Downloaded")
-                case InstallStage.Queued:      return qsTr("Queued")
-                case InstallStage.Installing:  return qsTr("Installing…")
-                case InstallStage.Installed:   return qsTr("Installed")
-                case InstallStage.Failed:      return qsTr("Failed")
-                }
-                switch (d.action) {
-                case "install":   return qsTr("Install")
-                case "upgrade":   return qsTr("Upgrade")
-                case "downgrade": return qsTr("Downgrade")
-                case "reinstall": return qsTr("Reinstall")
-                case "installed": return qsTr("Installed")
-                }
-                return d.isInstalled ? qsTr("Installed") : qsTr("Install")
+                return Stages.actionWord(d.rowAction)
             }
             color: {
                 if (d.isError) return Theme.palette.error
-                switch (d.rowStage) {
-                case InstallStage.Downloading:
-                case InstallStage.Downloaded:
-                case InstallStage.Queued:
-                case InstallStage.Installing:  return Theme.palette.warning
-                case InstallStage.Installed:   return Theme.palette.textTertiary
-                case InstallStage.Failed:      return Theme.palette.error
-                }
                 switch (d.action) {
                 case "install":   return Theme.palette.primary
                 case "upgrade":   return Theme.palette.info
@@ -298,28 +230,6 @@ ItemDelegate {
                 return d.isInstalled ? Theme.palette.textTertiary : Theme.palette.primary
             }
             radius: Theme.spacing.radiusLarge
-
-            LogosProgressBar {
-                parent: stageBadge.backgroundItem
-                visible: d.hasProgress || d.indeterminateProgress
-                anchors.left: parent ? parent.left : undefined
-                anchors.right: parent ? parent.right : undefined
-                anchors.bottom: parent ? parent.bottom : undefined
-                anchors.margins: stageBadge.borderWidth + 1
-                height: 3
-
-                from: 0
-                to: d.dlTotal > 0 ? d.dlTotal : 1
-                value: d.dlReceived
-                indeterminate: d.indeterminateProgress
-
-                trackColor: "transparent"
-                fillColor: Theme.colors.getColor(Theme.palette.warning, 0.95)
-
-                Behavior on value {
-                    NumberAnimation { duration: 180; easing.type: Easing.OutQuad }
-                }
-            }
 
             HoverHandler { id: badgeHover; enabled: d.isError }
             ToolTip.visible: badgeHover.hovered && d.isError

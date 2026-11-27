@@ -17,6 +17,7 @@
 
 #include "IntentBroker.h"
 #include "IntentRegistry.h"
+#include "DefaultApps.h"
 #include "ShellIntents.h"
 #include "ShellIntentEndpoint.h"
 #include "links/LinkRequestCoordinator.h"
@@ -308,9 +309,9 @@ void TestLinkIntent::testRestrictedIntentsDenyTheLinkRequester()
 
     // Belt as well as braces: even if one of these were ever added to the
     // web-reachable set by mistake, the requester allow-list still refuses it
-    // because the link requester is not package_manager_ui.
+    // because the link requester holds no default-app slot.
     const QString link = LinkRequestCoordinator::requesterName();
-    for (const QString& restricted : ShellIntents::kRestrictedToPackageManagerUi)
+    for (const QString& restricted : logos::defaultapps::restrictedIntents())
         QVERIFY2(!registry->requesterAllowed(restricted, link), qPrintable(restricted));
 }
 

@@ -3,7 +3,7 @@
 // hashes. Core-module fixtures are manifest-level only, not loadable binaries.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, cpSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, mkdtempSync, cpSync, chmodSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
@@ -29,7 +29,7 @@ export function platformVariant() {
   return variant;
 }
 
-function manifestFor({ name, displayName, version, type, dependencies, description }) {
+function manifestFor({ name, displayName, version, type, dependencies, optionalDependencies = [], description }) {
   const manifest = {
     author: "",
     category: "testing",
@@ -44,6 +44,7 @@ function manifestFor({ name, displayName, version, type, dependencies, descripti
     version,
   };
   if (type === "ui_qml") manifest.view = "Main.qml";
+  if (optionalDependencies.length > 0) manifest.optional_dependencies = optionalDependencies;
   return manifest;
 }
 
@@ -85,7 +86,15 @@ export function writePayload(payloadDir, spec) {
     writeFileSync(join(payloadDir, "Main.qml"), qmlViewFor(spec));
     writeFileSync(join(payloadDir, "qmldir"),
       `module com.logos.module.${spec.name}\n`);
+  } else {
+    // What lgx names as its main; nothing loads it.
+    writeFileSync(join(payloadDir, mainFileOf(spec)), "placeholder\n");
   }
+}
+
+// A package that isn't a QML app names its plugin file as its main.
+function mainFileOf(spec) {
+  return `${spec.name}_plugin.so`;
 }
 
 export function makeLgx(opts) {
@@ -96,6 +105,7 @@ export function makeLgx(opts) {
     displayName = name,
     type = "ui_qml",
     dependencies = [],
+    optionalDependencies = [],
     description = `basecamp test fixture package (${name})`,
     lgx = LGX_CLI,
     variant = platformVariant(),
@@ -108,7 +118,7 @@ export function makeLgx(opts) {
       `"nix build 'github:logos-co/logos-package#lgx' -o result-lgx" ` +
       `or set LGX_CLI`);
   }
-  const spec = { name, displayName, version, type, dependencies, description };
+  const spec = { name, displayName, version, type, dependencies, optionalDependencies, description };
 
   const work = join(tmpdir(), `lgx-build-${process.pid}-${name}-${version}`);
   const seed = join(work, "seed");
@@ -123,11 +133,32 @@ export function makeLgx(opts) {
   // Plain ustar — the LGX reader doesn't speak pax extended headers.
   execFileSync("tar",
     ["--format", "ustar", "-C", seed, "-czf", outFile, "manifest.json", "variants"]);
-  execFileSync(lgx, ["add", outFile, "--variant", variant, "--files", payload, "-y"]);
+  execFileSync(lgx, ["add", outFile, "--variant", variant, "--files", payload, "-y",
+                    ...(type === "ui_qml" ? [] : ["--main", mainFileOf(spec)])]);
   if (verify) execFileSync(lgx, ["verify", outFile]);
 
   rmSync(work, { recursive: true, force: true });
   return outFile;
+}
+
+// A signing key named `name` in `dir`, as `lgx keygen` makes one: its DID.
+export function makeSigningKey(dir, name, lgx = LGX_CLI) {
+  execFileSync(lgx, ["keygen", "--name", name, "--output-dir", dir], { stdio: "ignore" });
+  return readFileSync(join(dir, `${name}.did`), "utf-8").trim();
+}
+
+// `lgxPath` signed with the key `key` in `keysDir`, by `signer` as it names
+// itself.
+export function signLgx(lgxPath, { keysDir, key, signer, lgx = LGX_CLI }) {
+  execFileSync(lgx, ["sign", lgxPath, "--key", key, "--keys-dir", keysDir, "--name", signer],
+               { stdio: "ignore" });
+  return lgxPath;
+}
+
+// The package's manifest.sig, as a catalog lists it; null when unsigned.
+export function readLgxSignature(lgxPath, lgx = LGX_CLI) {
+  const out = execFileSync(lgx, ["signature", lgxPath], { encoding: "utf-8" });
+  return out.trim() ? JSON.parse(out) : null;
 }
 
 // Valid tar, corrupt manifest — deliberately NOT run through lgx (it would refuse).
@@ -282,7 +313,9 @@ export function installFixture(userDir, manifest, payloadDir, opts = {}) {
     // Plain ustar — the LGX reader doesn't speak pax extended headers.
     execFileSync("tar", ["--format", "ustar", "-C", seed, "-czf", pkg, "manifest.json", "variants"]);
     const add = ["add", pkg, "--variant", variant, "--files", payload, "-y"];
-    const main = Object.values(manifest.main || {})[0];
+    // A package that isn't a QML app names its plugin file, as makeLgx's do.
+    const main = Object.values(manifest.main || {})[0]
+      || (manifest.type === "ui_qml" ? "" : mainFileOf(manifest));
     if (main) add.push("--main", main);
     execFileSync(lgx, add);
     execFileSync(lgx, ["extract", pkg, "-v", variant, "-o", out]);

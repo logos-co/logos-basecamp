@@ -142,4 +142,13 @@ Plan computeImpl(const Input& in, bool composeMode)
 Plan composeFrom(const Input& in) { return computeImpl(in, /*composeMode=*/true); }
 Plan explainOf (const Input& in) { return computeImpl(in, /*composeMode=*/false); }
 
+QStringList irremovable(const Input& in)
+{
+    QStringList out;
+    for (const QString& t : in.targets) {
+        if (in.embedded.contains(t) || in.protectedNames.contains(t)) out << t;
+    }
+    return out;
+}
+
 }  // namespace uninstallplan

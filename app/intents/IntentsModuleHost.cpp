@@ -435,18 +435,27 @@ void IntentsModuleHost::handle(const QJsonObject& item)
     const QString id = item.value(QStringLiteral("id")).toString();
 
     if (kind == QStringLiteral("choose")) {
-        // Basecamp's own request with one app to answer it: the click in
-        // Basecamp was the choice, as on the QML path. Only Basecamp can ask
-        // under its name; a link asks under its own, so it is always shown.
+        // Basecamp's own request with one app to answer it, or with its
+        // default app among them: the click in Basecamp was the choice, as on
+        // the QML path. Only Basecamp can ask under its name; a link asks
+        // under its own, so it is always shown.
         const QJsonArray offered = item.value(QStringLiteral("providers")).toArray();
         const QString shell = m_shell.value(QStringLiteral("name")).toString();
-        if (offered.size() == 1 && !shell.isEmpty()
-            && item.value(QStringLiteral("requester")).toString() == shell) {
-            const QString module = offered.first().toObject().value(QStringLiteral("module")).toString();
+        QString picked;
+        if (!shell.isEmpty() && item.value(QStringLiteral("requester")).toString() == shell) {
+            const QString preferred = m_defaultProvider
+                ? m_defaultProvider(item.value(QStringLiteral("intent")).toString()) : QString();
+            for (const QJsonValue& p : offered) {
+                const QString offeredModule = p.toObject().value(QStringLiteral("module")).toString();
+                if (offered.size() == 1 || (!preferred.isEmpty() && offeredModule == preferred))
+                    picked = offeredModule;
+            }
+        }
+        if (!picked.isEmpty()) {
             const QJsonObject chosen{{QStringLiteral("action"), QStringLiteral("choose")},
-                                     {QStringLiteral("provider"), module}};
+                                     {QStringLiteral("provider"), picked}};
             QPointer<IntentsModuleHost> self(this);
-            start(module, [self, id, chosen]() {
+            start(picked, [self, id, chosen]() {
                 if (self) self->answer(id, chosen);
             });
             return;

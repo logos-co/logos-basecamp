@@ -147,7 +147,10 @@ private slots:
         QVERIFY(p.useUserModules && p.packageCatalog && p.registerUrlScheme && p.singleInstance);
         QVERIFY(!p.devHost);
         QVERIFY(p.enforceDependencyVersions);
-        QVERIFY(p.packageManagerUiIsSection());
+        QCOMPARE(p.sectionOfApp(QStringLiteral("package_manager_ui")), int(ShellSection::PackageManager));
+        QCOMPARE(p.sectionOfApp(QStringLiteral("app_manager_ui")), int(ShellSection::AppManager));
+        QVERIFY(!p.isSectionApp(QStringLiteral("package_manager_ui_backend")));
+        QVERIFY(!p.isSectionApp(QStringLiteral("wallet_ui")));
     }
 
     void standaloneProfileDropsCatalogueAndUserState()
@@ -166,7 +169,8 @@ private slots:
         QCOMPARE(p.applicationName, QStringLiteral("LogosBasecampStandalone"));
         QVERIFY(p.devHost);
         QVERIFY(!p.enforceDependencyVersions);
-        QVERIFY(!p.packageManagerUiIsSection());
+        QVERIFY(!p.isSectionApp(QStringLiteral("package_manager_ui")));
+        QVERIFY(!p.isSectionApp(QStringLiteral("app_manager_ui")));
     }
 
     // package_manager_ui under development keeps its section — and only it.
@@ -178,7 +182,19 @@ private slots:
         QCOMPARE(p.availableSections(),
                  (QList<int>{ShellSection::Workspace, ShellSection::PackageManager,
                              ShellSection::Settings}));
-        QVERIFY(p.packageManagerUiIsSection());
+        QVERIFY(p.isSectionApp(QStringLiteral("package_manager_ui")));
+    }
+
+    // So does app_manager_ui, in the Applications section.
+    void standaloneProfileKeepsAppManagerSectionForIt()
+    {
+        HostProfile p;
+        LogosBasecamp::applyStandaloneCapabilities(p);
+        p.appsToOpen << QStringLiteral("app_manager_ui");
+        QCOMPARE(p.availableSections(),
+                 (QList<int>{ShellSection::Workspace, ShellSection::AppManager, ShellSection::Settings}));
+        QVERIFY(p.isSectionApp(QStringLiteral("app_manager_ui")));
+        QVERIFY(!p.isSectionApp(QStringLiteral("package_manager_ui")));
     }
 
     void qmlSourceNeedsNameAndExistingDir()
