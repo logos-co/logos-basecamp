@@ -1747,6 +1747,60 @@ results.push(await runTest("new dependent: an approval for later is asked again 
          seed: (userDir) => writeInstalledPlugin(userDir, { name: "shared_module", type: "core", version: "0.9.0" }) }));
 if (newDependent.repo) await newDependent.repo.close();
 
+// B24. basecamp#534: Settings → Package Repositories → Refresh fetches every
+// repository's index again. The downloader serves them from a cache until
+// asked, and Refresh used to re-read only the repository list, so a newer
+// release never showed. Now App Manager offers the Upgrade.
+let refreshed = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-refresh-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (file, version) => makeLgx({
+    outFile: join(lgxDir, file), name: "refresh_app", version, variant: process.env.LGX_VARIANT });
+  refreshed = { repo: await serveRepository(join(dir, "repo"), [pkg("refresh_app-1.0.0.lgx", "1.0.0")]),
+                newer: pkg("refresh_app-1.1.0.lgx", "1.1.0") };
+} catch (e) {
+  refreshed = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("refresh: Settings' Refresh fetches the indexes again, so a newer release shows",
+  async ({ app }) => {
+    const { repo, newer } = refreshed;
+    const indexReads = () => repo.requests.filter((path) => path === "/index.json").length;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const tile = await app.requireObject("appManager.app.refresh_app", APP_MANAGER_WAIT_MS);
+    await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+    await clickDetailsInstall(app);
+    const gate = await app.requireObject(INSTALL_GATE);
+    await approveGate(app, gate, "refresh_app");
+    await app.requireObject("sidebar.app.refresh_app", 60000);
+
+    repo.republish(newer);
+    const before = indexReads();
+    await app.click("Settings", sidebarSection);
+    await app.waitFor(async () => { await app.click("Package Repositories", { exact: true, type: "LogosItemDelegate" }); },
+      { timeout: 10000, interval: 500, description: "the Settings sections" });
+    const refresh = await app.requireObject("repositories.refreshButton", 10000);
+    await app.send("callMethod", { objectId: refresh.id, method: "clicked" });
+    const done = await app.requireObject("repositories.refreshedAt", 10000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(done, "visible"), true, "Refresh says when it answered");
+    }, { timeout: 60000, interval: 300, description: "the refresh to finish" });
+    if (indexReads() <= before) throw new Error("Refresh fetched no index");
+
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+    await app.evalOn(await app.requireObject("appManager.app.refresh_app"), "openDetails()");
+    const action = await app.requireObject("appManager.details.action", 30000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(action, "visible ? text : ''"), "Upgrade", "the details page's action");
+    }, { timeout: 60000, interval: 500, description: "the newer release to show as Upgrade" });
+  }, refreshed.skip ? { skip: refreshed.skip } : { env: refreshed.repo.env }));
+if (refreshed.repo) await refreshed.repo.close();
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;

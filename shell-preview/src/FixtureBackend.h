@@ -68,6 +68,7 @@ public:
     Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
     Q_INVOKABLE void refreshUiModules();
     Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void refreshCatalogs();
     Q_INVOKABLE void requestCatalog();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);

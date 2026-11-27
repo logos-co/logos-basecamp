@@ -1401,6 +1401,26 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
     });
 }
 
+// What each repository serves, newest release per package: a refresh that
+// finds no update then says what it saw.
+void PackageCoordinator::logCatalog(const QVariantList& catalog)
+{
+    QMap<QString, QStringList> byRepo;
+    for (const QVariant& v : catalog) {
+        const QVariantMap row = v.toMap();
+        const QString name = row.value(QStringLiteral("name")).toString();
+        if (name.isEmpty()) continue;
+        const QVariantMap newest = row.value(QStringLiteral("versions")).toList().value(0).toMap();
+        QString version = newest.value(QStringLiteral("manifest")).toMap().value(QStringLiteral("version")).toString();
+        if (version.isEmpty()) version = newest.value(QStringLiteral("version")).toString();
+        byRepo[row.value(QStringLiteral("repositoryUrl")).toString()]
+            << (version.isEmpty() ? name : name + QLatin1Char(' ') + version);
+    }
+    for (auto it = byRepo.cbegin(); it != byRepo.cend(); ++it)
+        qInfo().noquote() << "PackageCoordinator: catalog:" << it.key() << "serves"
+                          << it.value().size() << "packages:" << it.value().join(QStringLiteral(", "));
+}
+
 void PackageCoordinator::buildCatalogIndexes(const QVariantList& catalog)
 {
     QHash<QString, QVariantList> versionsByRepoAndName;
@@ -1425,6 +1445,7 @@ void PackageCoordinator::buildCatalogIndexes(const QVariantList& catalog)
     m_versionsByRepoAndName = std::move(versionsByRepoAndName);
     m_repoByName            = std::move(repoByName);
     m_repoDisplayNameByUrl  = std::move(repoDisplayNameByUrl);
+    logCatalog(catalog);
 }
 
 void PackageCoordinator::populateAppsModel(
@@ -1593,6 +1614,48 @@ void PackageCoordinator::refreshRepositories()
                 if (--self->m_repositoriesLoadingCount == 0) emit self->repositoriesLoadingChanged();
             },
             Timeout(kRepositoryReadMs));
+    });
+}
+
+void PackageCoordinator::refreshCatalogs()
+{
+    if (!m_logosAPI) return;
+    LogosAPIClient* dlClient = downloaderClient();
+    if (!dlClient || !dlClient->isConnected()) {
+        emit repositoryOperationCompleted(QStringLiteral("refresh"), QString(), false,
+            QStringLiteral("package_downloader not connected"));
+        return;
+    }
+
+    // Loading until it answers, so Refresh says it is running.
+    const bool wasLoading = m_repositoriesLoadingCount > 0;
+    ++m_repositoriesLoadingCount;
+    if (!wasLoading) emit repositoriesLoadingChanged();
+    qInfo().noquote() << "PackageCoordinator: refreshing the package repositories";
+
+    QPointer<PackageCoordinator> self(this);
+    withDownloaderStarted([self]() {
+        if (!self) return;
+        LogosModules logos(self->m_logosAPI);
+        logos.package_downloader.refreshCatalogAsyncResult([self](logos::AsyncResult<QVariantMap> r) {
+            if (!self) return;
+            // One line per repository that failed, from the downloader.
+            const QString error = !r.ok()
+                ? moduleCallFailure(QStringLiteral("package_downloader"), r.error.code, r.error.message,
+                                    kCatalogRefreshMs)
+                : r.value.value(QStringLiteral("error")).toString().trimmed();
+            if (error.isEmpty())
+                qInfo().noquote() << "PackageCoordinator: refreshed the package repositories";
+            else
+                qWarning().noquote() << "PackageCoordinator: refreshing the package repositories:" << error;
+            const int remaining = --self->m_repositoriesLoadingCount;
+            if (remaining == 0) emit self->repositoriesLoadingChanged();
+            emit self->repositoryOperationCompleted(QStringLiteral("refresh"), QString(),
+                                                    error.isEmpty(), error);
+            // A repository's resolve error may have changed even when its
+            // catalog didn't, which emits no catalogChanged.
+            self->refreshRepositories();
+        }, Timeout(kCatalogRefreshMs));
     });
 }
 

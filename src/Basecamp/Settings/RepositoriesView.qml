@@ -27,6 +27,8 @@ Item {
     function reportOperationResult(operation, url, success, error) {
         // A refused source snaps the selector back to the real one.
         if (operation === "setDownloadSource" && !success) d.pendingDownloadSource = ""
+        if (operation === "refresh")
+            d.refreshedAt = new Date().toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
         if (success) {
             // A read clears only what a read raised, not a refused change.
             if (operation !== "list" || d.lastErrorFromList) d.lastError = ""
@@ -34,7 +36,10 @@ Item {
             return
         }
         d.lastErrorFromList = operation === "list"
-        d.lastError = error.length > 0 ? error : qsTr("Operation failed")
+        if (operation === "refresh" && error.length > 0)
+            d.lastError = qsTr("Some repositories couldn't be refreshed:") + "\n" + error
+        else
+            d.lastError = error.length > 0 ? error : qsTr("Operation failed")
     }
 
     QtObject {
@@ -42,6 +47,8 @@ Item {
         property string newRepoUrl: ""
         property string lastError: ""
         property bool lastErrorFromList: false
+        // When Refresh last answered, as the time of day.
+        property string refreshedAt: ""
         property string pendingRemoveUrl: ""
 
         readonly property var downloadSourceValues: ["any", "logos", "http"]
@@ -130,6 +137,16 @@ Item {
                     implicitHeight: Theme.size.controlMedium
                     onClicked: root.refreshRequested()
                 }
+            }
+
+            LogosText {
+                objectName: "repositories.refreshedAt"
+                Layout.fillWidth: true
+                visible: d.refreshedAt.length > 0 && !root.loading
+                wrapMode: Text.WordWrap
+                text: qsTr("Refreshed at %1.").arg(d.refreshedAt)
+                font.pixelSize: Theme.typography.secondaryText
+                color: Theme.palette.textSecondary
             }
 
             LogosNotice {

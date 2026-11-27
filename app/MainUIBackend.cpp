@@ -1281,6 +1281,7 @@ void MainUIBackend::endModulesLoading()
 }
 
 void MainUIBackend::refreshRepositories()                                  { m_packageCoordinator->refreshRepositories(); }
+void MainUIBackend::refreshCatalogs()                                      { m_packageCoordinator->refreshCatalogs(); }
 void MainUIBackend::requestCatalog()                                       { m_packageCoordinator->requestCatalog(); }
 void MainUIBackend::addRepository(const QString& url)                      { m_packageCoordinator->addRepository(url); }
 void MainUIBackend::removeRepository(const QString& url)                   { m_packageCoordinator->removeRepository(url); }

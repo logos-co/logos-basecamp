@@ -127,6 +127,11 @@ void FixtureBackend::refreshRepositories()
     qInfo() << "FixtureBackend: refreshRepositories — fixture build, no effect";
 }
 
+void FixtureBackend::refreshCatalogs()
+{
+    qInfo() << "FixtureBackend: refreshCatalogs — fixture build, no effect";
+}
+
 // The fixture's catalog is loaded from the start.
 void FixtureBackend::requestCatalog() {}
 
