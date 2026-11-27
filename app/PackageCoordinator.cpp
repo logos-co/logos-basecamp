@@ -724,9 +724,11 @@ void PackageCoordinator::fetchCatalogNow()
     tryFetchCatalog(m_installedVersionByName, /*retriesLeft=*/10);
 }
 
-void PackageCoordinator::catalogFetchFinished()
+void PackageCoordinator::catalogFetchFinished(bool loaded)
 {
-    m_catalogFetched = true;
+    // What waits runs either way; only a read that worked counts as loaded,
+    // so the next one that needs the catalog fetches it again.
+    if (loaded) m_catalogFetched = true;
     m_catalogFetchInFlight = false;
     const QList<std::function<void()>> waiting = std::exchange(m_waitingForCatalog, {});
     for (const auto& then : waiting) then();
@@ -1370,6 +1372,8 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
         // Reload, catalogChanged and the metadata chain can each start a fetch,
         // and their answers can arrive out of order. Only the newest one counts.
         const quint64 generation = ++m_catalogGeneration;
+        // A cold catalog fetches every repository in turn: a minute or two.
+        constexpr int kCatalogIpcDeadlineMs = 3 * 60 * 1000;
         withDownloaderStarted([this, installedByName, generation]() {
             LogosModules logos(m_logosAPI);
             QPointer<PackageCoordinator> self(this);
@@ -1396,8 +1400,9 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
                             emit self->appsLoadingChanged();
                         }
                     }
-                    self->catalogFetchFinished();
-                });
+                    self->catalogFetchFinished(r.ok());
+                },
+                Timeout(kCatalogIpcDeadlineMs));
         });
         return;
     }
@@ -1408,7 +1413,7 @@ void PackageCoordinator::tryFetchCatalog(const QHash<QString, QString>& installe
             m_appsLoading = false;
             emit appsLoadingChanged();
         }
-        catalogFetchFinished();
+        catalogFetchFinished(/*loaded=*/false);
         return;
     }
 

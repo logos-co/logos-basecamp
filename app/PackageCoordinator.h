@@ -738,7 +738,7 @@ private:
     void fetchCatalogNow();
 
     // A catalog fetch ended, found something or not: run what waited on it.
-    void catalogFetchFinished();
+    void catalogFetchFinished(bool loaded);
 
     // openApp's fast path: emits launchAppRequested and returns true when the
     // app's tile is installed and healthy.
