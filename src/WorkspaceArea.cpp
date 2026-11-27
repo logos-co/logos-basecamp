@@ -109,7 +109,7 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);
 
         auto* lay = new QVBoxLayout(this);
-        lay->setContentsMargins(0, 4, 0, 0);   // 4px gap under the tab strip
+        lay->setContentsMargins(0, ThemeColours::metric("spacing.tiny"), 0, 0);   // gap under the tab strip
         lay->setSpacing(0);
         if (pluginWidget) lay->addWidget(pluginWidget);
 
@@ -644,7 +644,7 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
                 background: %2;
                 color: %3;
 
-                padding: 0px 8px 0px 4px;
+                padding: 0px %6px 0px %7px;
                 margin-right: 10px;
 
                 border-top-left-radius: 10px;
@@ -679,7 +679,9 @@ void WorkspaceArea::customizeTabBarStyle(QTabBar* tabBar)
                 ThemeColours::css("backgroundSecondary"),
                 ThemeColours::css("textSecondary"),
                 ThemeColours::css("backgroundSecondary", 0.6),
-                ThemeColours::css("textTertiary")));
+                ThemeColours::css("textTertiary"))
+            .arg(ThemeColours::metric("spacing.small"))
+            .arg(ThemeColours::metric("spacing.tiny")));
     });
 
     connect(tabBar, &QTabBar::tabMoved, this, [this, tabBar](int from, int to) {
@@ -734,14 +736,15 @@ void WorkspaceArea::installTabBarCloseButtons(QTabBar* tabBar)
         if (tabBar->tabButton(i, closeSide)) continue;
         auto* btn = new QToolButton(tabBar);
         btn->setIcon(qApp->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
-        btn->setIconSize(QSize(12, 12));
-        btn->setFixedSize(12, 12);
+        const int closeSize = ThemeColours::metric("size.iconXSmall");
+        btn->setIconSize(QSize(closeSize, closeSize));
+        btn->setFixedSize(closeSize, closeSize);
         btn->setCursor(Qt::PointingHandCursor);
-        ThemeColours::bind(btn, [btn] {
+        ThemeColours::bind(btn, [btn, closeSize] {
             btn->setStyleSheet(QStringLiteral(R"(
                 QToolButton { background: transparent; border: none; }
-                QToolButton:hover { background: %1; border-radius: 6px; }
-            )").arg(ThemeColours::css("text", 0.1)));
+                QToolButton:hover { background: %1; border-radius: %2px; }
+            )").arg(ThemeColours::css("text", 0.1)).arg(closeSize / 2));
         });
         connect(btn, &QToolButton::clicked, this, [tabBar, btn, closeSide]() {
             for (int j = 0; j < tabBar->count(); ++j) {

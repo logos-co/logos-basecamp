@@ -469,7 +469,7 @@ LogosWarningDialog {
     }
 
     body: ColumnLayout {
-        spacing: 12
+        spacing: Theme.spacing.medium
 
         // Who asked. Shown for requests that crossed an app boundary — the
         // package name, never the self-declared display name, so an app cannot
@@ -607,17 +607,17 @@ LogosWarningDialog {
         // report.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(220, Math.max(60, loadErrorText.implicitHeight + 16))
+            Layout.preferredHeight: Math.min(220, Math.max(60, loadErrorText.implicitHeight + 2 * Theme.spacing.small))
             color: Theme.palette.surfaceRecessed
-            radius: 4
+            radius: Theme.spacing.radiusSmall
             border.color: Theme.palette.border
-            border.width: 1
+            border.width: Theme.size.borderWidth
             visible: root.mode === "loadFailed"
 
             ScrollView {
                 id: loadErrorScroll
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.spacing.small
                 clip: true
 
                 TextArea {
@@ -645,19 +645,19 @@ LogosWarningDialog {
             objectName: "confirmationDialog." + root.mode + ".message"
             Layout.fillWidth: true
             color: Theme.palette.surfaceRecessed
-            radius: 4
+            radius: Theme.spacing.radiusSmall
             border.color: Theme.palette.border
-            border.width: 1
-            implicitHeight: errorMessageText.implicitHeight + 16
+            border.width: Theme.size.borderWidth
+            implicitHeight: errorMessageText.implicitHeight + 2 * Theme.spacing.small
             visible: root.mode === "installError" && root.errorMessage.length > 0
 
             LogosText {
                 id: errorMessageText
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.spacing.small
                 text: root.errorMessage
                 color: Theme.palette.text
-                font.pixelSize: 13
+                font.pixelSize: Theme.typography.primaryText
                 wrapMode: Text.Wrap
             }
         }
@@ -665,11 +665,11 @@ LogosWarningDialog {
         // Single-list block — used by missingDeps and unloadCascade.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(150, itemList.contentHeight + 16)
+            Layout.preferredHeight: Math.min(150, itemList.contentHeight + 2 * Theme.spacing.small)
             color: Theme.palette.surfaceRecessed
-            radius: 4
+            radius: Theme.spacing.radiusSmall
             border.color: Theme.palette.border
-            border.width: 1
+            border.width: Theme.size.borderWidth
             visible: root.mode !== "upgradeCascade"
                      && root.mode !== "installGate"
                      && root.items.length > 0
@@ -678,7 +678,7 @@ LogosWarningDialog {
                 id: itemList
                 objectName: "confirmationDialog.items"
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.spacing.small
                 model: root.items
                 clip: true
                 delegate: LogosText {
@@ -691,7 +691,7 @@ LogosWarningDialog {
                     text: "• " + (root.displayNameLookup(_name) || _name)
                           + (_detail.length > 0 ? " — " + _detail : "")
                     color: Theme.palette.text
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.typography.primaryText
                     wrapMode: Text.Wrap
                 }
             }
@@ -705,38 +705,38 @@ LogosWarningDialog {
         // story; this just names them.
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.spacing.small
             visible: d.trustApplies && d.running.length > 0
 
             LogosText {
                 Layout.fillWidth: true
                 text: "Currently running (will be temporarily unloaded):"
                 color: Theme.palette.textSecondary
-                font.pixelSize: 13
+                font.pixelSize: Theme.typography.primaryText
                 font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
             }
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(120, runningList.contentHeight + 16)
+                Layout.preferredHeight: Math.min(120, runningList.contentHeight + 2 * Theme.spacing.small)
                 color: Theme.palette.surfaceRecessed
-                radius: 4
+                radius: Theme.spacing.radiusSmall
                 border.color: Theme.palette.border
-                border.width: 1
+                border.width: Theme.size.borderWidth
 
                 LogosListView {
                     id: runningList
                     objectName: "confirmationDialog.running"
                     anchors.fill: parent
-                    anchors.margins: 8
+                    anchors.margins: Theme.spacing.small
                     model: d.running
                     clip: true
                     delegate: LogosText {
                         width: ListView.view ? ListView.view.width : 0
                         text: "• " + (root.displayNameLookup(modelData) || modelData)
                         color: Theme.palette.text
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.typography.primaryText
                         wrapMode: Text.Wrap
                     }
                 }
@@ -756,10 +756,10 @@ LogosWarningDialog {
 
             LogosText {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
+                Layout.topMargin: Theme.spacing.tiny
                 text: "Dependency changes:"
                 color: Theme.palette.textSecondary
-                font.pixelSize: 13
+                font.pixelSize: Theme.typography.primaryText
                 font.weight: Theme.typography.weightBold
                 wrapMode: Text.Wrap
             }
@@ -767,30 +767,30 @@ LogosWarningDialog {
             Rectangle {
                 Layout.fillWidth: true
                 color: Theme.palette.surfaceRecessed
-                radius: 4
+                radius: Theme.spacing.radiusSmall
                 border.color: Theme.palette.border
-                border.width: 1
-                implicitHeight: depChangeList.implicitHeight + 16
+                border.width: Theme.size.borderWidth
+                implicitHeight: depChangeList.implicitHeight + 2 * Theme.spacing.small
 
                 LogosListView {
                     id: depChangeList
                     anchors.fill: parent
-                    anchors.margins: 8
+                    anchors.margins: Theme.spacing.small
                     model: root.mandatoryChanges
-                    spacing: 4
+                    spacing: Theme.spacing.tiny
                     clip: true
                     interactive: contentHeight > height
                     implicitHeight: Math.min(160, Math.max(contentHeight, 0))
 
                     delegate: RowLayout {
                         width: ListView.view ? ListView.view.width : 0
-                        spacing: 8
+                        spacing: Theme.spacing.small
 
                         // Action chip — colour-keyed like the PMU row pills.
                         Rectangle {
                             Layout.preferredWidth: 76
                             Layout.preferredHeight: 20
-                            radius: 10
+                            radius: Theme.spacing.radiusPill
                             color: {
                                 switch (modelData.action) {
                                 case "install":   return Theme.colors.getColor(Theme.palette.success, 0.18);
@@ -813,7 +813,7 @@ LogosWarningDialog {
                                     default:          return Theme.palette.text;
                                     }
                                 }
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.typography.secondaryText
                                 font.weight: Theme.typography.weightMedium
                             }
                         }
@@ -832,7 +832,7 @@ LogosWarningDialog {
                                 return ver ? (head + "  " + ver) : head;
                             }
                             color: Theme.palette.text
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.typography.primaryText
                             elide: Text.ElideMiddle
                             objectName: "confirmationDialog.change." + (modelData.name || "")
                             Layout.maximumWidth: Math.ceil(implicitWidth)
@@ -897,7 +897,7 @@ LogosWarningDialog {
 
         InstallTrustNotice {
             Layout.fillWidth: true
-            Layout.topMargin: 8
+            Layout.topMargin: Theme.spacing.small
             trust: d.trustApplies ? root.trust : ({})
         }
     }

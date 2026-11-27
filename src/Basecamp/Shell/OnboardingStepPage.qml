@@ -69,12 +69,12 @@ Item {
 
                     Layout.fillWidth: true
                     Layout.preferredWidth: 1
-                    spacing: 4
+                    spacing: Theme.spacing.tiny
 
                     Rectangle {
                         Layout.fillWidth: true
                         height: 4
-                        radius: 2
+                        radius: Theme.spacing.radiusTiny
                         color: railStep.index <= root.stepIndex ? Theme.palette.primary
                                                                 : Theme.palette.border
                     }
@@ -132,7 +132,7 @@ Item {
             LogosButton {
                 objectName: root.objectPrefix + "SecondaryButton"
                 visible: root.secondaryText.length > 0
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: Theme.size.controlXLarge
                 text: root.secondaryText
                 onClicked: root.secondaryRequested()
             }
@@ -140,7 +140,7 @@ Item {
             LogosButton {
                 objectName: root.objectPrefix + "AdvanceButton"
                 variant: LogosButton.Variant.Primary
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: Theme.size.controlXLarge
                 Layout.minimumWidth: 160
                 enabled: root.canAdvance
                 text: root.advanceText

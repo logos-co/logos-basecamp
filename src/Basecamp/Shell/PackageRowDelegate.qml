@@ -69,7 +69,7 @@ ItemDelegate {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
-            height: 1
+            height: Theme.size.borderWidth
             color: Theme.palette.borderSubtle
         }
     }
@@ -87,8 +87,8 @@ ItemDelegate {
             LogosCheckbox {
                 objectName: root.selectionObjectName
                 visible: root.selectable
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
+                Layout.preferredWidth: Theme.size.controlXSmall
+                Layout.preferredHeight: Theme.size.controlXSmall
                 // Installed-only (not in the catalog): kept as installed, nothing to choose.
                 enabled: !d.isError && !(root.appRow && root.appRow.installedOnly)
                 checked: root.selected
@@ -133,7 +133,7 @@ ItemDelegate {
             Layout.preferredWidth: 110
             Layout.minimumWidth: Theme.size.touchTarget * 2
             Layout.maximumWidth: 110
-            Layout.preferredHeight: 32
+            Layout.preferredHeight: Theme.size.controlSmall
 
             LogosComboBox {
                 id: versionCombo

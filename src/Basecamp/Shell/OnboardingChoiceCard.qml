@@ -33,7 +33,7 @@ LogosFrame {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 4
+                spacing: Theme.spacing.tiny
 
                 RowLayout {
                     Layout.fillWidth: true

@@ -283,8 +283,8 @@ LogosWarningDialog {
         color: Theme.palette.background
         radius: Theme.spacing.radiusSmall
         border.color: Theme.palette.borderSubtle
-        border.width: 1
-        implicitHeight: Math.min(120, Math.max(30, listView.contentHeight + 16))
+        border.width: Theme.size.borderWidth
+        implicitHeight: Math.min(120, Math.max(30, listView.contentHeight + 2 * Theme.spacing.small))
 
         LogosListView {
             id: listView

@@ -77,7 +77,7 @@ Item {
             id: reloadBtn
             visible: root.showReload
             Layout.preferredWidth: 130
-            Layout.preferredHeight: 40
+            Layout.preferredHeight: Theme.size.controlLarge
             radius: Theme.spacing.radiusLarge
             text: qsTr("Reload")
             enabled: !root.loading

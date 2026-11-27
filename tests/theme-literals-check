@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Fail on colours and sizes the views hard-code instead of taking from Theme.
+
+usage: theme-literals-check <qml dir> [--skip <dir>]... [--allow <file>]
+
+Flags a hex, rgb/hsl or named colour ("transparent" is fine), a bare
+number on a spacing, margin, padding, radius, font size, border width or icon
+size, and a width, height or size that equals a Theme.size token. 0 is fine.
+A literal with no design-system token goes in the allow file,
+one "<path ending>:<line text>" per line, the reason after " # ".
+"""
+import argparse
+import pathlib
+import re
+import sys
+
+COLOUR = re.compile(
+    r'"#[0-9a-fA-F]{3,8}"'
+    r'|\bQt\.(rgba|rgb|hsla|hsl|hsva|hsv)\('
+    r'|:\s*"(white|black|red|green|blue|yellow|gray|grey|orange|purple)"')
+SIZE = re.compile(
+    r'\b(spacing|rowSpacing|columnSpacing'
+    r'|(anchors\.)?(left|right|top|bottom|horizontalCenterOffset|verticalCenterOffset)?[Mm]argins?'
+    r'|Layout\.(left|right|top|bottom)?[Mm]argins?'
+    r'|(left|right|top|bottom|horizontal|vertical)?[Pp]adding'
+    r'|radius|(\w+\.)*pixelSize|border\.width|iconSize|leadingIcon\.size)'
+    r'\s*:\s*-?(?!0\b)\d+(\.\d+)?\s*(//.*)?$'
+    # A width, height or size equal to a Theme.size token (a control, an icon,
+    # a 1 px border).
+    r'|\b((Layout\.)?(preferred|minimum|maximum|implicit)?([Ww]idth|[Hh]eight)|size)'
+    r'\s*:\s*(1|12|16|20|24|32|36|40|44)\s*(//.*)?$')
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root")
+    ap.add_argument("--skip", action="append", default=[])
+    ap.add_argument("--allow")
+    args = ap.parse_args()
+
+    allowed = set()
+    if args.allow:
+        for line in pathlib.Path(args.allow).read_text().splitlines():
+            line = line.split(" # ", 1)[0].strip()
+            if line and not line.startswith("#"):
+                path, _, text = line.partition(":")
+                allowed.add((path.strip(), text.strip()))
+
+    skips = [pathlib.Path(s) for s in args.skip]
+    found, used = [], set()
+    for f in sorted(pathlib.Path(args.root).rglob("*.qml")):
+        if any(s in f.parents for s in skips):
+            continue
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            text = line.strip()
+            if text.startswith("//") or not (COLOUR.search(text) or SIZE.search(text)):
+                continue
+            hit = next((a for a in allowed if str(f).endswith(a[0]) and a[1] == text), None)
+            if hit:
+                used.add(hit)
+            else:
+                found.append(f"{f}:{n}: {text}")
+
+    for a in sorted(allowed - used):
+        found.append(f"allow file: no longer matches anything: {a[0]}: {a[1]}")
+    if found:
+        print("Hard-coded colours or sizes; use a Theme token, or allow the line "
+              "with the reason no token fits:", *found, sep="\n  ")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

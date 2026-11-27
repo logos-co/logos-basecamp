@@ -1047,6 +1047,15 @@
             --skip src/Basecamp/Installer --allow tests/shared-words-allow.txt
           touch $out
         '';
+        # The shell's QML takes colours and sizes from the design system's
+        # Theme; the few with no token are in tests/theme-literals-allow.txt.
+        theme-literals = pkgs.runCommand "logos-basecamp-theme-literals" {
+          nativeBuildInputs = [ pkgs.python3 ];
+        } ''
+          cd ${./.}
+          python3 tests/theme-literals-check src/Basecamp --allow tests/theme-literals-allow.txt
+          touch $out
+        '';
         smoke-test = self.packages.${system}.smoke-test;
         sandbox-test = self.packages.${system}.sandbox-test;
         unit-tests = self.packages.${system}.unit-tests;

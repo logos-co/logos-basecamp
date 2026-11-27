@@ -174,7 +174,7 @@ Item {
                             objectName: "trustedPublishers.remove." + row.keyName
                             anchors.right: parent.right
                             enabled: !row.busy
-                            size: 32
+                            size: Theme.size.controlSmall
                             iconSize: 18
                             iconSource: LogosIcons.trash
                             flat: true
@@ -192,7 +192,7 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
-                    height: 1
+                    height: Theme.size.borderWidth
                     color: Theme.palette.borderSubtle
                 }
             }
