@@ -25,6 +25,7 @@
 #include "utils/BuiltInApps.h"
 #include "utils/InstalledPlacement.h"
 #include "utils/LogosBasecampPaths.h"
+#include "utils/RevealInFileManager.h"
 
 #include <QDebug>
 #include <QJSValue>
@@ -1304,6 +1305,18 @@ bool         MainUIBackend::isMockBackend() const
     return qEnvironmentVariableIsSet("LOGOS_MOCK_FIXTURE");
 }
 QVariantList MainUIBackend::buildCommits() const    { return LogosBasecampBuildInfo::commits(); }
+
+QString MainUIBackend::userDirectory() const
+{
+    return QDir::toNativeSeparators(LogosBasecampPaths::baseDirectory());
+}
+
+bool MainUIBackend::openUserDirectory() const
+{
+    return LogosBasecamp::revealInFileManager(LogosBasecampPaths::baseDirectory(),
+                                              LogosBasecamp::currentFileManagerPlatform(),
+                                              LogosBasecamp::systemFileManagerLauncher());
+}
 
 
 void MainUIBackend::setLinkRaiseHandler(std::function<void()> raise)

@@ -11,6 +11,16 @@ Item {
     property string buildVersion: ""
     property bool portableBuild: false
     property var buildCommits: []   // [{ name, commit }]
+    property string userDirectory: ""
+
+    signal openUserDirectoryRequested()
+
+    function reportOpenUserDirectoryFailed() { d.openFailed = true }
+
+    QtObject {
+        id: d
+        property bool openFailed: false
+    }
 
     LogosScrollView {
         id: scroll
@@ -64,6 +74,57 @@ Item {
                     text: root.portableBuild ? qsTr("Portable build") : qsTr("Dev build")
                     font.pixelSize: Theme.typography.primaryText
                     color: Theme.palette.textSecondary
+                }
+            }
+
+            // Where this instance keeps its data (logs, modules, module_data):
+            // the default or --user-dir.
+            LogosFrame {
+                Layout.fillWidth: true
+                visible: root.userDirectory.length > 0
+
+                // Its content is a column: title, path, then any failure.
+                LogosItemLayout {
+                    width: parent.width
+
+                    LogosText {
+                        text: qsTr("User directory")
+                        font.pixelSize: Theme.typography.subtitleText
+                        font.weight: Theme.typography.weightBold
+                        color: Theme.palette.text
+                        wrapMode: Text.Wrap
+                    }
+
+                    LogosSelectableText {
+                        objectName: "dashboard.userDirectory"
+                        Layout.topMargin: Theme.spacing.tiny
+                        text: root.userDirectory
+                        color: Theme.palette.textSecondary
+                        font.family: Theme.typography.mono
+                        font.pixelSize: Theme.typography.primaryText
+                        wrapMode: TextEdit.WrapAnywhere
+                    }
+
+                    LogosText {
+                        objectName: "dashboard.openUserDirectoryFailed"
+                        Layout.topMargin: Theme.spacing.small
+                        visible: d.openFailed
+                        text: qsTr("Couldn't open the folder. Copy its path instead.")
+                        font.pixelSize: Theme.typography.secondaryText
+                        color: Theme.palette.error
+                        wrapMode: Text.Wrap
+                    }
+
+                    trailing: LogosButton {
+                        objectName: "dashboard.openUserDirectory"
+                        text: Qt.platform.os === "osx" ? qsTr("Show in Finder")
+                            : Qt.platform.os === "windows" ? qsTr("Show in Explorer")
+                            : qsTr("Open folder")
+                        onClicked: {
+                            d.openFailed = false
+                            root.openUserDirectoryRequested()
+                        }
+                    }
                 }
             }
 

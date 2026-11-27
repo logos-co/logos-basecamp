@@ -150,6 +150,10 @@ Item {
             buildVersion:        backend.buildVersion
             portableBuild:       backend.isPortableBuild
             buildCommits:        backend.buildCommits
+            userDirectory:       backend.userDirectory || ""
+
+            onOpenUserDirectoryRequested: if (!backend.openUserDirectory())
+                                              settingsView.reportOpenUserDirectoryFailed()
 
             onRepositoryRefreshRequested: backend.refreshRepositories()
             onRepositoryAddRequested:     url => backend.addRepository(url)

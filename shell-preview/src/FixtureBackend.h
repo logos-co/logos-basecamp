@@ -26,6 +26,7 @@ class FixtureBackend : public QObject {
     Q_PROPERTY(bool isPortableBuild READ isPortableBuild CONSTANT)
     Q_PROPERTY(bool isMockBackend READ isMockBackend CONSTANT)
     Q_PROPERTY(QVariantList buildCommits READ buildCommits CONSTANT)
+    Q_PROPERTY(QString userDirectory READ userDirectory CONSTANT)
     Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
     Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesLoadingChanged)
     Q_PROPERTY(QString downloadSource READ downloadSource NOTIFY downloadSourceChanged)
@@ -47,6 +48,7 @@ public:
     bool isPortableBuild() const;
     bool isMockBackend() const;
     QVariantList buildCommits() const;
+    QString userDirectory() const;
     QVariantList repositories() const;
     bool repositoriesLoading() const;
     QString downloadSource() const;
@@ -78,6 +80,7 @@ public:
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
     Q_INVOKABLE void refreshDownloadSource();
+    Q_INVOKABLE bool openUserDirectory() const;
     Q_INVOKABLE void setDownloadSource(const QString& source);
 
     // Not QML-bound: the shell reaches this through IShellHost.

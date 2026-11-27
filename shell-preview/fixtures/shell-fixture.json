@@ -9,6 +9,7 @@
   "isPortableBuild": false,
   "isMockBackend": true,
   "buildCommits": [],
+  "userDirectory": "/home/user/.local/share/Logos/LogosBasecampDev",
 
   "currentVisibleApp": "",
   "loadingModules": [],
