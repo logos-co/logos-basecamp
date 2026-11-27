@@ -1,8 +1,8 @@
 //
 // Unit tests for the macOS bundle's Info.plist template (app/macos/Info.plist.in),
-// which both macOS bundles use (flake.nix). macOS ends a process at its first
-// Bluetooth or local-network use when the bundle declares no usage text for it,
-// and modules run as Basecamp's processes, so only Basecamp can declare it (#527).
+// which both macOS bundles use (flake.nix). Without a usage text, macOS ends a
+// process at its first Bluetooth use and blocks its local-network traffic.
+// Modules run as Basecamp's processes, so only Basecamp can declare them (#527).
 //
 // Run: nix build .#unit-tests -L
 

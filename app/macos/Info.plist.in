@@ -30,12 +30,13 @@
     <string>NSApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
-    <!-- Modules run as Basecamp's processes, so macOS asks under Basecamp's name;
-         without these it ends a process at its first Bluetooth/local-network use. -->
+    <!-- Modules run as Basecamp's processes, so macOS asks under Basecamp's name.
+         Without a text, macOS ends a process at its first Bluetooth use and
+         blocks its local-network traffic. -->
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Logos Basecamp modules use Bluetooth to connect to nearby devices.</string>
+    <string>Installed Logos modules may use Bluetooth to discover and communicate with nearby devices.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Logos Basecamp modules connect to devices on your local network.</string>
+    <string>Installed Logos modules may discover and communicate with devices on your local network.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
