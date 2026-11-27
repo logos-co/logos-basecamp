@@ -53,8 +53,8 @@ Item {
     QtObject {
         id: _dialogDeps
         property var displayNameLookup: function(name) { return backend.displayNameFor(name); }
-        // App Manager (ShellSection.AppManager's app).
-        readonly property string appsApp: backend.sectionApps ? backend.sectionApps["1"] || "" : ""
+        readonly property string appsApp: backend.sectionApps
+                                          ? backend.sectionApps[ShellSection.AppManager] || "" : ""
     }
 
     // Each dialog instance carries a mode-derived objectName (matching the
