@@ -881,6 +881,74 @@ results.push(await runTest("pick an optional: the version picked in App Manager 
   }, optional.skip ? { skip: optional.skip } : { env: optional.repo.env }));
 if (optional.repo) await optional.repo.close();
 
+// B9. A confirmation let through the queue is planned on what is installed
+// when it starts: Package Manager's request to remove a package waits behind
+// App Manager installing an app that needs it, and the removal's plan names
+// that app. It used to be planned on the graph from before the install.
+let fresh = null;
+try {
+  const dir = mkdtempSync(join(tmpdir(), "basecamp-lifecycle-fresh-"));
+  const lgxDir = join(dir, "lgx");
+  mkdirSync(lgxDir);
+  const pkg = (name, extra = {}) => makeLgx({
+    outFile: join(lgxDir, `${name}.lgx`), name, version: "1.0.0", variant: process.env.LGX_VARIANT, ...extra });
+  fresh = { repo: await serveRepository(join(dir, "repo"),
+                                        [pkg("dep_lib"), pkg("dep_app", { dependencies: ["dep_lib"] })]) };
+} catch (e) {
+  fresh = { skip: `no local HTTPS repository: ${e.message}` };
+}
+results.push(await runTest("fresh plan: a removal let through after an install is planned on what it installed",
+  async ({ app }) => {
+    const { repo } = fresh;
+    const greeting = await app.requireObject("welcomePage.greeting");
+    await app.evalOn(greeting, `backend.setDownloadSource("http")`);
+    await app.evalOn(greeting, `backend.addRepository(${JSON.stringify(repo.url)})`);
+    await app.evalOn(greeting, `backend.setCurrentActiveSectionIndex(1)`);
+
+    const askToInstall = async (name) => {
+      const tile = await app.requireObject(`appManager.app.${name}`, APP_MANAGER_WAIT_MS);
+      await app.send("callMethod", { objectId: tile.id, method: "clicked" });
+      await clickDetailsInstall(app);
+      const gate = await app.requireObject(INSTALL_GATE);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(gate, "visible ? moduleName : ''"), name, "the install gate");
+      }, { timeout: 30000, interval: 300, description: `the install gate for ${name}` });
+    };
+    const confirm = async () => {
+      const button = await app.requireObject(`${INSTALL_GATE}.confirm`);
+      await app.waitFor(async () => {
+        assertEq(await app.evalOn(button, "enabled"), true, "Install enabled");
+      }, { timeout: 30000, interval: 300, description: "the gate's trust check" });
+      await app.send("callMethod", { objectId: button.id, method: "clicked" });
+    };
+
+    await askToInstall("dep_lib");
+    await confirm();
+    await waitGateHidden(app, 5000);
+    await app.requireObject("sidebar.app.dep_lib", 60000);
+
+    await askToInstall("dep_app");
+    // Package Manager asks to remove dep_lib; it waits behind the install.
+    await openPackageManager(app);
+    const store = await app.requireObject("pmui.BackendStore", APP_MANAGER_WAIT_MS);
+    await app.evalOn(store, '(logos.request("basecamp.packages.confirm_uninstall", ' +
+                            '{ names: ["dep_lib"] }, function () {}), "sent")');
+    await confirm();
+
+    const dialog = await app.requireObject("uninstallDialog", 60000);
+    await app.waitFor(async () => {
+      assertEq(await app.evalOn(dialog, "visible"), true, "uninstallDialog visible");
+      assertEq(await app.evalOn(dialog, "plan.loading === true"), false, "the plan, read");
+    }, { timeout: 60000, interval: 300, description: "the removal's confirmation" });
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.batch)"), JSON.stringify(["dep_lib"]),
+             "what it removes");
+    assertEq(await app.evalOn(dialog, "JSON.stringify(plan.dependents.map(d => d.name))"),
+             JSON.stringify(["dep_app"]), "what needs it");
+    const cancel = await app.requireObject("uninstallDialog.cancelButton");
+    await app.send("callMethod", { objectId: cancel.id, method: "clicked" });
+  }, fresh.skip ? { skip: fresh.skip } : { env: fresh.repo.env }));
+if (fresh.repo) await fresh.repo.close();
+
 const ran = results.filter((r) => r !== null);
 const passed = ran.filter((r) => r === "pass").length;
 const failed = ran.filter((r) => r === "fail").length;

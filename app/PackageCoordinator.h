@@ -242,7 +242,8 @@ signals:
     void launchAppRequested(const QString& name);
     // Not installed, or asked for its details: App Manager shows it.
     void appManagerRequested(const QString& name);
-    // package_manager's installed packages, as each refresh reads them.
+    // package_manager's installed packages, once a refresh has read them and
+    // their dependencies, and every cache holds them.
     void installedPackagesRead(const QVariantList& packages);
     // A package's download moving, or done (package_downloader's events).
     void packageOnItsWay(const QString& name);
@@ -336,6 +337,13 @@ private:
                       const QVariant& data = QVariant(), std::function<void(bool heard)> heard = {});
 
     QVariantList m_pendingOptionalPackages;
+    // Which read of the installed packages is the newest (refreshDependencyInfo()).
+    int m_installedReadGeneration = 0;
+    struct FreshReadWaiter {
+        int generation = 0;
+        std::function<void()> then;
+    };
+    QList<FreshReadWaiter> m_freshReadWaiters;
     QString m_pendingPreviewName, m_pendingPreviewRepo;
     bool m_pendingPreviewNewest = false;
     // What the requester picked: its versions stay fixed while the person
@@ -505,7 +513,15 @@ private:
     // Emits uiModulesChanged +
     // coreModulesChanged + launcherAppsChanged when done so the QML bindings
     // pick up the new installType / missing-deps values.
-    void refreshDependencyInfo();
+    // Reads the installed packages and their dependencies into the caches;
+    // false when package_manager isn't there to ask.
+    bool refreshDependencyInfo();
+    // Runs `then` once a read that started after this call is in the caches
+    // (installedPackagesRead), or failed; at once when no read can start. So a
+    // confirmation is planned on what is installed when it arrived, whatever
+    // let it through the queue.
+    void afterFreshRead(std::function<void()> then);
+    void freshReadDone(int generation);
 
     QVariantList computeDepChanges(const QVariantList& resolved,
                                    const QHash<QString, QString>& installedByName) const;

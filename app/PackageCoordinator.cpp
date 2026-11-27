@@ -853,19 +853,16 @@ void PackageCoordinator::resolveDepChangesThen(const QString& name,
     m_pendingPreviewChoices = choices;
     const int epoch = ++m_gatePreviewEpoch;
     QPointer<PackageCoordinator> self(this);
-    LogosModules logos(m_logosAPI);
-    logos.package_manager.getInstalledPackagesAsync(
-        [self, name, repositoryUrl, newestReleases, choices, epoch, then](QVariantList installed) {
-        if (!self || self->m_gatePreviewEpoch != epoch) return;
-        self->resolveOptionalPreview(name, repositoryUrl, choices.pins, choices.selection, choices.optionalPins,
-            newestReleases ? QString() : logos::installedPackagesJson(installed),
-            [self, epoch]() { return self && self->m_gatePreviewEpoch == epoch; },
-            [self, name, then](QVariantList resolved) {
-                if (!self) return;
-                then(!resolved.isEmpty(), self->gatePreviewChanges(resolved));
-                if (self) self->assessPlanTrust(name, resolved);
-            });
-    });
+    // Called after a fresh read (beginPackageConfirmation()): the caches are
+    // what is installed now.
+    resolveOptionalPreview(name, repositoryUrl, choices.pins, choices.selection, choices.optionalPins,
+        newestReleases ? QString() : logos::installedPackagesJson(m_installedPackagesCache),
+        [self, epoch]() { return self && self->m_gatePreviewEpoch == epoch; },
+        [self, name, then](QVariantList resolved) {
+            if (!self) return;
+            then(!resolved.isEmpty(), self->gatePreviewChanges(resolved));
+            if (self) self->assessPlanTrust(name, resolved);
+        });
 }
 
 bool PackageCoordinator::requesterIsBundled(const QString& requesterName) const
@@ -924,22 +921,29 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
             return;
         }
         // A fresh install unloads nothing, so there is no cascade and no
-        // PendingAction — the dialog's answer is the whole flow.
+        // PendingAction — the dialog's answer is the whole flow. Held at once,
+        // so a cancel or a withdrawal finds it; planned on what is installed
+        // now.
         m_pendingInstallRequestId = dispatchId;
         m_pendingInstallName      = name;
-        const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
-        const bool localFile = logos::trust::requestsLocalFile(params);
-        beginConfirmationTrust(name, version, localFile, params, requesterName);
-        resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
-                              logos::installChoicesFrom(params, name, version),
-            [this, name, version, requesterName, dispatchId](bool resolved,
-                                                                      const QVariantList& changes) {
-                emit installGateConfirmationRequested(name, version, changes, requesterName,
-                                                     requesterIsBundled(requesterName),
-                                                     resolved, dispatchId);
-                // The dialog opens on what is known so far; the rest follows.
-                if (m_gateTrust.name == name) emitTrust();
-            });
+        QPointer<PackageCoordinator> self(this);
+        afterFreshRead([self, name, version, params, requesterName, dispatchId]() {
+            if (!self || self->m_pendingInstallRequestId != dispatchId) return;
+            const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
+            const bool localFile = logos::trust::requestsLocalFile(params);
+            self->beginConfirmationTrust(name, version, localFile, params, requesterName);
+            self->resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
+                                        logos::installChoicesFrom(params, name, version),
+                [self, name, version, requesterName, dispatchId](bool resolved,
+                                                                  const QVariantList& changes) {
+                    if (!self) return;
+                    emit self->installGateConfirmationRequested(name, version, changes, requesterName,
+                                                               self->requesterIsBundled(requesterName),
+                                                               resolved, dispatchId);
+                    // The dialog opens on what is known so far; the rest follows.
+                    if (self->m_gateTrust.name == name) self->emitTrust();
+                });
+        });
         return;
     }
 
@@ -948,25 +952,33 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
             finishIntent(dispatchId, false, logos::intent::errBadRequest());
             return;
         }
-        const int mode = params.value(QStringLiteral("mode")).toInt();
-        const QStringList installedDeps = dependentsOfBatch({name});
-        const QStringList loadedDeps = m_uiPluginManager
-            ? m_uiPluginManager->intersectWithLoaded(installedDeps)
-            : QStringList{};
+        // Held at once, so a cancel or a withdrawal finds it; planned, what
+        // depends on it included, on what is installed now.
         m_pendingAction = {PendingOp::UninstallCascade, name, {}, dispatchId,
                            /*isUpgrade=*/true};
-        const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
-        const bool localFile = logos::trust::requestsLocalFile(params);
-        beginConfirmationTrust(name, version, localFile, params, requesterName);
-        resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
-                              logos::installChoicesFrom(params, name, version),
-            [this, name, version, mode, installedDeps, loadedDeps, requesterName, dispatchId]
-            (bool /*resolved*/, const QVariantList& changes) {
-                emit upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
-                                                        loadedDeps, changes, requesterName,
-                                                        requesterIsBundled(requesterName), dispatchId);
-                if (m_gateTrust.name == name) emitTrust();
-            });
+        QPointer<PackageCoordinator> self(this);
+        afterFreshRead([self, name, version, params, requesterName, dispatchId]() {
+            if (!self || self->m_pendingAction.intentRequestId != dispatchId) return;
+            const int mode = params.value(QStringLiteral("mode")).toInt();
+            const QStringList installedDeps = self->dependentsOfBatch({name});
+            const QStringList loadedDeps = self->m_uiPluginManager
+                ? self->m_uiPluginManager->intersectWithLoaded(installedDeps)
+                : QStringList{};
+            const QString repositoryUrl = params.value(QStringLiteral("repositoryUrl")).toString();
+            const bool localFile = logos::trust::requestsLocalFile(params);
+            self->beginConfirmationTrust(name, version, localFile, params, requesterName);
+            self->resolveDepChangesThen(name, repositoryUrl, localFile, installsNewestReleases(requesterName),
+                                        logos::installChoicesFrom(params, name, version),
+                [self, name, version, mode, installedDeps, loadedDeps, requesterName, dispatchId]
+                (bool /*resolved*/, const QVariantList& changes) {
+                    if (!self) return;
+                    emit self->upgradeCascadeConfirmationRequested(name, version, mode, installedDeps,
+                                                                  loadedDeps, changes, requesterName,
+                                                                  self->requesterIsBundled(requesterName),
+                                                                  dispatchId);
+                    if (self->m_gateTrust.name == name) self->emitTrust();
+                });
+        });
         return;
     }
 
@@ -982,21 +994,15 @@ void PackageCoordinator::beginPackageConfirmation(const QString& dispatchId,
         }
 
         // Held at once, so a cancel or a withdrawal finds it. The plan is read
-        // off the installed packages: until they are known, the dialog waits.
+        // off what is installed now, its dependencies too: until a read made
+        // for it is in, the dialog waits.
         m_pendingAction = {PendingOp::UninstallCascade, names.first(), {}, dispatchId};
-        if (m_dependencyDataReady || !m_logosAPI) {
-            planUninstall(dispatchId, names, requesterName);
-            return;
-        }
         QVariantMap loading = buildLoadingPayload(
             names.first(), removesAnApp(names, requesterName) ? QStringLiteral("app") : QStringLiteral("packages"));
         loading.insert(QStringLiteral("requestId"), dispatchId);
         emit uninstallPlanRequested(loading);
-        auto once = std::make_shared<QMetaObject::Connection>();
         QPointer<PackageCoordinator> self(this);
-        *once = connect(this, &PackageCoordinator::dependencyDataReadyChanged, this,
-                        [self, once, dispatchId, names, requesterName]() {
-            QObject::disconnect(*once);
+        afterFreshRead([self, dispatchId, names, requesterName]() {
             if (self && self->m_pendingAction.intentRequestId == dispatchId)
                 self->planUninstall(dispatchId, names, requesterName);
         });
@@ -1755,26 +1761,55 @@ void PackageCoordinator::releaseStorageIfUnused()
     m_coreModuleManager->unloadModule(QStringLiteral("storage_module"));
 }
 
-void PackageCoordinator::refreshDependencyInfo()
+void PackageCoordinator::afterFreshRead(std::function<void()> then)
 {
-    if (!m_logosAPI) return;
+    const int wanted = m_installedReadGeneration + 1;
+    if (!refreshDependencyInfo()) {
+        then();
+        return;
+    }
+    m_freshReadWaiters.append({wanted, std::move(then)});
+}
+
+void PackageCoordinator::freshReadDone(int generation)
+{
+    const QList<FreshReadWaiter> waiters = std::exchange(m_freshReadWaiters, {});
+    for (const FreshReadWaiter& w : waiters) {
+        if (w.generation <= generation) w.then();
+        else m_freshReadWaiters.append(w);
+    }
+}
+
+bool PackageCoordinator::refreshDependencyInfo()
+{
+    if (!m_logosAPI) return false;
     // Same reasoning as fetchUiPluginMetadata: no package_manager, no
     // dependency info to fetch, and no reason to block on discovering that.
-    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return;
+    if (!moduleIsLoaded(m_coreModuleManager, "package_manager")) return false;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageCoordinator> self(this);
+    // The newest read asked for wins: an older one still answering would mix
+    // its dependency graph into this one's.
+    const int generation = ++m_installedReadGeneration;
 
     // First: refresh installType for every installed package (UI + core).
     // We want the Uninstall button on both tabs to gate correctly, so the
     // map must cover everything — not just UI plugins. fetchUiPluginMetadata
     // already filled installType for its subset; we overwrite with this
     // full-scan so core-only modules pick up their installType too.
-    logos.package_manager.getInstalledPackagesAsync(
-        [self](QVariantList packages) {
-        if (!self) return;
+    logos.package_manager.getInstalledPackagesAsyncResult(
+        [self, generation](logos::AsyncResult<QVariantList> result) {
+        if (!self || self->m_installedReadGeneration != generation) return;
+        if (!result.ok()) {
+            qWarning().noquote() << "PackageCoordinator: couldn't read the installed packages:"
+                                 << QString::fromStdString(result.error.message);
+            // What waits for it goes on with what is known.
+            self->freshReadDone(generation);
+            return;
+        }
+        const QVariantList packages = result.value;
         self->m_installedPackagesCache = packages;
-        emit self->installedPackagesRead(packages);
         QMap<QString, QString>   typeMap;
         QSet<QString>            nameSet;
         QHash<QString, QString>  versionByName;
@@ -1834,6 +1869,8 @@ void PackageCoordinator::refreshDependencyInfo()
             // Sidebar reads from launcherApps (not uiModules) so it needs its
             // own kick whenever hasMissingDeps may have flipped.
             emit self->launcherAppsChanged();
+            emit self->installedPackagesRead(packages);
+            self->freshReadDone(generation);
             return;
         }
 
@@ -1846,9 +1883,11 @@ void PackageCoordinator::refreshDependencyInfo()
         QPointer<PackageCoordinator> selfCopy(self.data());
 
         auto maybeFinish = [selfCopy, missingMap, blockingMap, dependenciesMap,
-                            dependentsMap, remaining]() {
+                            dependentsMap, remaining, generation, packages]() {
             if (!selfCopy) return;
             if (--(*remaining) > 0) return;
+            // Read again since: that read publishes its own, whole.
+            if (selfCopy->m_installedReadGeneration != generation) return;
             selfCopy->m_missingDepsByModule = *missingMap;
             selfCopy->m_blockingDepsByModule = *blockingMap;
             selfCopy->m_dependenciesByModule = *dependenciesMap;
@@ -1868,6 +1907,10 @@ void PackageCoordinator::refreshDependencyInfo()
             // marker only appears on the next side-effect that triggers a
             // launcher refresh (e.g. clicking the plugin to load it).
             emit selfCopy->launcherAppsChanged();
+            // Only now, the graph read too: a confirmation this lets through is
+            // planned on what is installed now. It used to go out first.
+            emit selfCopy->installedPackagesRead(packages);
+            selfCopy->freshReadDone(generation);
         };
 
         for (const QString& name : names) {
@@ -1910,6 +1953,7 @@ void PackageCoordinator::refreshDependencyInfo()
                 });
         }
     });
+    return true;
 }
 
 // ---------------------------------------------------------------------------
