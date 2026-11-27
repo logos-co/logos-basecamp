@@ -478,6 +478,31 @@ async function clickDetailsInstall(app) {
   await app.send("callMethod", { objectId: install.id, method: "clicked" });
 }
 
+// Picks `version` in a details row's version picker (`row`, its
+// appManager.details.package.* object), as the person does: by its place in
+// the list it shows. What the pick sends is App Manager's to say.
+async function pickVersion(app, row, version) {
+  const picked = await app.evalOn(row, `(() => {
+    const find = (node) => {
+      if (!node) return null;
+      if (node.objectName === "packageRow.versionPicker") return node;
+      const kids = node.children;
+      for (let i = 0; kids && i < kids.length; i += 1) {
+        const found = find(kids[i]);
+        if (found) return found;
+      }
+      return null;
+    };
+    let picker = null;
+    for (let i = 0; !picker && i < children.length; i += 1) picker = find(children[i]);
+    const index = picker ? Array.from(picker.model).indexOf(${JSON.stringify(version)}) : -1;
+    if (index < 0) return false;
+    picker.activated(index);
+    return true;
+  })()`);
+  if (picked !== true) throw new Error(`the row's version picker has no ${version}`);
+}
+
 // B2. The first install from App Manager, end to end: its backend asks
 // Basecamp (basecamp.packages.confirm_install, through intents_module), the
 // gate names App Manager as the asker, and on Install the backend downloads
@@ -692,8 +717,7 @@ results.push(await runTest("pick: the version picked in App Manager for what an 
     await app.waitFor(async () => {
       assertEq(await app.evalOn(await pinDep(), "row.version"), "1.1.0", "pin_dep's newest, before a pick");
     }, { timeout: 30000, interval: 300, description: "pin_dep in the details" });
-    // As its version picker does.
-    await app.evalOn(await pinDep(), "versionPicked(row.name, row.repositoryUrl, row.versions.indexOf('1.0.0'))");
+    await pickVersion(app, await pinDep(), "1.0.0");
     await app.waitFor(async () => {
       assertEq(await app.evalOn(await pinDep(), "row.version"), "1.0.0", "pin_dep at the version picked");
     }, { timeout: 30000, interval: 300, description: "the pick to show in the details" });
@@ -828,7 +852,7 @@ results.push(await runTest("pick an optional: the version picked in App Manager 
       assertEq(await app.evalOn(await optDep(), "row.version"), "1.1.0", "opt_dep's newest, before a pick");
       assertEq(await app.evalOn(await optDep(), "row.selected"), true, "opt_dep, ticked");
     }, { timeout: 30000, interval: 300, description: "opt_dep in the details" });
-    await app.evalOn(await optDep(), "versionPicked(row.name, row.repositoryUrl, row.versions.indexOf('1.0.0'))");
+    await pickVersion(app, await optDep(), "1.0.0");
     await app.waitFor(async () => {
       assertEq(await app.evalOn(await optDep(), "row.version"), "1.0.0", "opt_dep at the version picked");
     }, { timeout: 30000, interval: 300, description: "the pick to show in the details" });
