@@ -8,6 +8,8 @@
 // index, which the downloader gives 60 s.
 constexpr int kRepositoryReadMs = 30 * 1000;
 constexpr int kRepositoryChangeMs = 90 * 1000;
+// A refresh fetches every enabled repository's index, all at once.
+constexpr int kCatalogRefreshMs = 5 * 60 * 1000;
 
 // What a failed call to `module` tells the user: a timeout as a timeout, else
 // the module's own words. `code` and `message` are a logos::CallError's.

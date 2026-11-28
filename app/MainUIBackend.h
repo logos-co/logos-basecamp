@@ -335,6 +335,7 @@ public slots:
     Q_INVOKABLE void setOverlayActive(bool active);
 
     Q_INVOKABLE void refreshRepositories();
+    Q_INVOKABLE void refreshCatalogs();
     // Views that read the catalog call this when they show: it is fetched the
     // first time something needs it, not at launch.
     Q_INVOKABLE void requestCatalog();

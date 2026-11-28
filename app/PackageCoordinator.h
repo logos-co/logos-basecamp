@@ -214,6 +214,10 @@ public slots:
     // Package-repository management — thin wrappers around the
     // package_downloader IPC surface
     Q_INVOKABLE void refreshRepositories();
+    // Fetches every enabled repository's logos-repo.json and index again: the
+    // downloader serves them from a cache until asked. What changed arrives
+    // as catalogChanged; the outcome as repositoryOperationCompleted("refresh").
+    Q_INVOKABLE void refreshCatalogs();
     Q_INVOKABLE void addRepository(const QString& url);
     Q_INVOKABLE void removeRepository(const QString& url);
     Q_INVOKABLE void setRepositoryEnabled(const QString& url, bool enabled);
@@ -467,6 +471,7 @@ private:
     void tryFetchCatalog(const QHash<QString, QString>& installedByName, int retriesLeft);
     void fetchValidVariants();
     void buildCatalogIndexes(const QVariantList& catalog);
+    static void logCatalog(const QVariantList& catalog);
     void populateAppsModel(const QVariantList& catalog,
                            const QHash<QString, QString>& installedByName);
 

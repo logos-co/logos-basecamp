@@ -62,8 +62,44 @@ TestCase {
         compare(banner.message, "Not a repository")
     }
 
+    // basecamp#534: Refresh says it is running until it answers, then when it
+    // answered, or which repositories failed.
+    function test_refresh_says_how_it_went() {
+        var view = createTemporaryObject(viewComp, testCase, { repositories: [
+            { url: "https://default/", displayName: "Logos", isDefault: true, enabled: true }] })
+        refreshSpy.target = view
+        refreshSpy.clear()
+        var button = findChild(view, "repositories.refreshButton")
+        var refreshedAt = findChild(view, "repositories.refreshedAt")
+        var banner = findChild(view, "repositories.errorBanner")
+        tryVerify(function() { return button.visible })
+        waitForRendering(view)
+        mouseClick(button)
+        compare(refreshSpy.count, 1)
+
+        view.loading = true
+        compare(button.text, "Refreshing…")
+        compare(button.enabled, false)
+        verify(!refreshedAt.visible)
+
+        view.reportOperationResult("refresh", "", true, "")
+        view.loading = false
+        verify(refreshedAt.visible)
+        verify(refreshedAt.text.indexOf("Refreshed at ") === 0, refreshedAt.text)
+        verify(!banner.shown)
+
+        view.reportOperationResult("refresh", "", false, "https://added/logos-repo.json: index unavailable")
+        verify(banner.shown)
+        compare(banner.message.split("\n"), ["Some repositories couldn't be refreshed:",
+                                              "https://added/logos-repo.json: index unavailable"])
+        // The list read that follows a refresh leaves its error up.
+        view.reportOperationResult("list", "", true, "")
+        verify(banner.message.indexOf("Some repositories couldn't be refreshed:") === 0, banner.message)
+    }
+
     Component { id: viewComp; RepositoriesView { width: 760; height: 600 } }
     SignalSpy { id: removeSpy; signalName: "removeRequested" }
+    SignalSpy { id: refreshSpy; signalName: "refreshRequested" }
 
     property var testCase: this
 }

@@ -91,7 +91,7 @@ Item {
         onOpenUserDirectoryRequested: if (!backend.openUserDirectory())
                                           settingsView.reportOpenUserDirectoryFailed()
 
-        onRepositoryRefreshRequested: backend.refreshRepositories()
+        onRepositoryRefreshRequested: backend.refreshCatalogs()
         onRepositoryAddRequested:     url => backend.addRepository(url)
         onRepositoryRemoveRequested:  url => backend.removeRepository(url)
         onRepositoryEnabledRequested: (url, e) => backend.setRepositoryEnabled(url, e)
