@@ -12,6 +12,7 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
+#include <QPointer>
 #include <QQuickWidget>
 #include <QShortcut>
 #include <QSignalSpy>
@@ -506,6 +507,93 @@ private slots:
         pump();
 
         QCOMPARE(mirrorCount(&host), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // QML replaced without a pane switch (basecamp#581)
+    // -----------------------------------------------------------------
+
+    // A mirror that outlived its QML shortcut used to fall back to firing
+    // itself, which called the bridge again until the stack overflowed: a
+    // hot reload, or a Loader swapping its item, then ⌘K, crashed Basecamp.
+    void aMirrorWhoseQmlShortcutIsGoneDoesNothing()
+    {
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* stack = new QStackedWidget(&host);
+        layout->addWidget(stack);
+
+        auto* pane = makePane(
+            "import QtQuick 2.15\n"
+            "Item {\n"
+            "  Shortcut { objectName: \"sc\"; sequence: \"Ctrl+K\" }\n"
+            "}\n",
+            stack);
+        stack->addWidget(pane);
+        host.show();
+        pump();
+
+        ShortcutBridge bridge(&host, stack);
+        pump();
+
+        QPointer<QShortcut> mirror = host.findChild<QShortcut*>();
+        QVERIFY(mirror);
+        delete findShortcutByObjectName(pane, QStringLiteral("sc"));
+        QVERIFY(mirror);   // still here until the event loop runs
+        emit mirror->activated();
+        pump();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(!mirror);
+        QCOMPARE(mirrorCount(&host), 0);
+    }
+
+    // The QML shortcut that replaced it is mirrored, and fires its own handler.
+    void aReplacedShortcutIsMirroredAgain()
+    {
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* stack = new QStackedWidget(&host);
+        layout->addWidget(stack);
+
+        auto* pane = makePane(
+            "import QtQuick 2.15\n"
+            "Item {\n"
+            "  id: root\n"
+            "  property int hits: 0\n"
+            "  property bool shown: true\n"
+            "  Loader {\n"
+            "    active: root.shown\n"
+            "    sourceComponent: Item {\n"
+            "      Shortcut { sequence: \"Ctrl+K\"; onActivated: root.hits = root.hits + 1 }\n"
+            "    }\n"
+            "  }\n"
+            "}\n",
+            stack);
+        stack->addWidget(pane);
+        host.show();
+        pump();
+
+        ShortcutBridge bridge(&host, stack);
+        pump();
+        QPointer<QShortcut> first = host.findChild<QShortcut*>();
+        QVERIFY(first);
+
+        QObject* root = pane->rootObject();
+        root->setProperty("shown", false);
+        root->setProperty("shown", true);
+        // The Loader's old item, then the mirror, go by deleteLater.
+        for (int i = 0; i < 2; ++i) {
+            pump();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+        pump();
+
+        QVERIFY(!first);
+        QCOMPARE(mirrorCount(&host), 1);
+        emit host.findChild<QShortcut*>()->activated();
+        pump();
+        QCOMPARE(root->property("hits").toInt(), 1);
     }
 };
 

@@ -147,6 +147,11 @@ void ShortcutBridge::mirrorOneShortcut(QObject* obj)
         connect(obj, SIGNAL(enabledChanged()),
                 this, SLOT(onQmlShortcutEnabledChanged()),
                 Qt::UniqueConnection);
+        // A pane can replace its QML (a Loader, a hot reload) without the
+        // stack switching: its mirrors must go with it.
+        connect(obj, &QObject::destroyed,
+                this, &ShortcutBridge::onQmlShortcutDestroyed,
+                Qt::UniqueConnection);
         m_mirrorToQml.insert(mirror, obj);
         m_qmlToMirrors.insert(obj, QPointer<QShortcut>(mirror));
 
@@ -176,6 +181,23 @@ void ShortcutBridge::onQmlShortcutEnabledChanged()
     }
 }
 
+void ShortcutBridge::onQmlShortcutDestroyed(QObject* qml)
+{
+    // Called from its destructor: `qml` is only a key here.
+    if (!m_qmlToMirrors.contains(qml)) return;
+    for (const QPointer<QShortcut>& mirror : m_qmlToMirrors.values(qml)) {
+        if (!mirror) continue;
+        mirror->disconnect(this);
+        m_mirrorToQml.remove(mirror.data());
+        m_mirrors.removeAll(mirror);
+        mirror->deleteLater();
+    }
+    m_qmlToMirrors.remove(qml);
+    m_qmlToPane.remove(qml);
+    // Whatever replaced it gets mirrored.
+    rebindDeferred();
+}
+
 void ShortcutBridge::clearMirrors()
 {
     for (QPointer<QShortcut> sc : m_mirrors) {
@@ -197,10 +219,14 @@ void ShortcutBridge::onWiredShortcut()
     QObject* src = sender();
     if (!src) return;
 
-    // Mirror → its QML target; QML shortcut itself → use directly.
-    QPointer<QObject> qml = m_mirrorToQml.value(src);
-    if (!qml) qml = src;
-    if (!qml) return;
+    // Mirror → its QML target; QML shortcut itself → use directly. A mirror
+    // whose QML shortcut is gone does nothing: firing the mirror itself
+    // would call this again, until the stack overflows (basecamp#581).
+    QPointer<QObject> qml = src;
+    if (qobject_cast<QShortcut*>(src)) {
+        qml = m_mirrorToQml.value(src);
+        if (!qml) return;
+    }
 
     // Check enabled at fire time so `enabled: someBinding` still works.
     if (!qml->property("enabled").toBool()) return;
