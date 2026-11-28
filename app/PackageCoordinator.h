@@ -685,6 +685,8 @@ private:
     bool m_repositoriesWanted   = false;
     bool m_catalogFetched       = false;
     bool m_catalogFetchInFlight = false;
+    // Bumped by each getCatalog call; an answer to an older one is dropped.
+    quint64 m_catalogGeneration = 0;
     QList<std::function<void()>> m_waitingForCatalog;
 
     // Trust at install: the verdict on the install or upgrade on screen,
@@ -746,7 +748,7 @@ private:
     void fetchCatalogNow();
 
     // A catalog fetch ended, found something or not: run what waited on it.
-    void catalogFetchFinished();
+    void catalogFetchFinished(bool loaded);
 
     // openApp's fast path: emits launchAppRequested and returns true when the
     // app's tile is installed and healthy.
