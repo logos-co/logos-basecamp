@@ -1729,7 +1729,7 @@ test("module inspector: unloading a leaf module and reloading it", async (app) =
 // view's own `methods` list by signature — zero-arg only, preferring the
 // first query-style name (get/list/is/has prefix, e.g. package_manager's
 // getInstalledPackages) over the first zero-arg, never by trial — because
-// clicking runs backend.callCoreModuleMethod(name, method, "[]")
+// clicking runs backend.callCoreModuleMethod(name, method, "[]", "[]")
 // synchronously against the real module in the shared instance. The chosen
 // name is logged and carried in every failure message. The call and Back each
 // end with an explicit 2 s inspector round-trip (makeTest's epilogue allows

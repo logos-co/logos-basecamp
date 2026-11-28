@@ -110,9 +110,9 @@ QString FixtureBackend::getCoreModuleEvents(const QString& moduleName)
     return {};
 }
 
-QString FixtureBackend::callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson)
+QString FixtureBackend::callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& parametersJson, const QString& argsJson)
 {
-    Q_UNUSED(moduleName); Q_UNUSED(methodName); Q_UNUSED(argsJson);
+    Q_UNUSED(moduleName); Q_UNUSED(methodName); Q_UNUSED(parametersJson); Q_UNUSED(argsJson);
     qInfo() << "FixtureBackend: callCoreModuleMethod — fixture build, no effect";
     return {};
 }

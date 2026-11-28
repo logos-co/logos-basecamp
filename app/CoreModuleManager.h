@@ -82,6 +82,7 @@ public:
     Q_INVOKABLE QString getEvents(const QString& moduleName);
     Q_INVOKABLE QString callMethod(const QString& moduleName,
                                    const QString& methodName,
+                                   const QString& parametersJson,
                                    const QString& argsJson);
 
 signals:

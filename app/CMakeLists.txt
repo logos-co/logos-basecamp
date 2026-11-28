@@ -358,6 +358,7 @@ set(PROJECT_SOURCES
     PackageCoordinator.cpp
     RepositorySource.cpp
     ModuleCallFailure.cpp
+    InspectorArgs.cpp
     UninstallPlan.cpp
     AppsModel.cpp
     ModuleInstanceModel.cpp

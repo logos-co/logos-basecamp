@@ -65,7 +65,7 @@ public:
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
     Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);
-    Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
+    Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& parametersJson, const QString& argsJson);
     Q_INVOKABLE void refreshUiModules();
     Q_INVOKABLE void refreshRepositories();
     Q_INVOKABLE void refreshCatalogs();
