@@ -9,6 +9,8 @@ Prebuilt binaries for Linux (AppImage) and macOS (DMG):
 
 Release candidates are marked as pre-release, so `/releases/latest` skips them. If the stable release is significantly older than the RCs on the releases page, you probably want an RC.
 
+To check a download, compare its SHA-256 with the one GitHub shows beside the file on the release page: `shasum -a 256 <file>` (macOS) or `sha256sum <file>` (Linux). CI's pre-releases also carry a `SHA256SUMS.txt`: with it in the same folder, `sha256sum -c SHA256SUMS.txt --ignore-missing` checks every file you downloaded.
+
 ## How to Build
 
 ### Using Nix (Recommended)

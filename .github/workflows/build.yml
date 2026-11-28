@@ -401,6 +401,17 @@ jobs:
           name: windows-x86_64
           path: artifacts/
 
+      # So a download can be checked with one command (basecamp#273). Over
+      # what is uploaded; a build that produced no file of a kind is left out.
+      - name: Checksums
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          files=(*.AppImage *.app.tar.gz *-setup.exe)
+          if [ "${#files[@]}" -eq 0 ]; then echo "nothing to checksum"; exit 0; fi
+          sha256sum -- "${files[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Generate tag
         id: tag
         run: echo "tag=pre-release-${GITHUB_SHA::7}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -414,3 +425,4 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.app.tar.gz
             artifacts/*-setup.exe
+            artifacts/SHA256SUMS.txt
