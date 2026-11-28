@@ -1,12 +1,14 @@
-// srcdeps: InspectorArgs.cpp
+// srcdeps: InspectorArgs.cpp ModuleCallFailure.cpp
 #include <QtTest/QtTest>
 
+#include <QJsonDocument>
 #include <QJsonObject>
 
 #include "InspectorArgs.h"
 
 // basecamp#562: the Module Inspector called every method with no arguments,
-// so a method that takes any found no match and every call read the same.
+// so a method that takes any found no match and every call read the same, and
+// it refused more than 3 arguments and showed a failed call as a null result.
 class InspectorArgsTest : public QObject {
     Q_OBJECT
 
@@ -87,6 +89,58 @@ private slots:
                                               {"42", "hello"});
         QCOMPARE(a.values[0].toLongLong(), 42LL);
         QCOMPARE(a.values[1], QVariant(QStringLiteral("hello")));
+    }
+
+    // The call itself, with a fake module that records what reached it.
+    void every_argument_reaches_the_module_as_its_type()
+    {
+        const QJsonArray p = params({{"user_config_path", "QString"}, {"keystore_path", "QString"},
+                                     {"key_type", "QString"}, {"key_hex", "QString"},
+                                     {"key_title", "QString"}});
+        QVariantList received;
+        const QString payload = inspectorCall(
+            "blockchain_module", QString::fromUtf8(QJsonDocument(p).toJson()),
+            R"(["/c/user.yaml", "/c/keys", "ed25519", "ab12", "main"])", 20000,
+            [&](const QVariantList& args) {
+                received = args;
+                return InspectorReply{QJsonObject{{"success", true}}, {}, {}};
+            });
+        QCOMPARE(received, (QVariantList{"/c/user.yaml", "/c/keys", "ed25519", "ab12", "main"}));
+        QCOMPARE(payload, QStringLiteral(R"({"result":{"success":true}})"));
+
+        const QJsonArray range = params({{"from_slot", "qulonglong"}, {"to_slot", "qulonglong"}});
+        inspectorCall("blockchain_module", QString::fromUtf8(QJsonDocument(range).toJson()),
+                      R"(["10", "20"])", 20000, [&](const QVariantList& args) {
+            received = args;
+            return InspectorReply{};
+        });
+        QCOMPARE(received.size(), 2);
+        QCOMPARE(received[0].typeId(), QMetaType::ULongLong);
+        QCOMPARE(received[1].toULongLong(), 20ULL);
+    }
+
+    void nothing_is_called_when_an_argument_cant_be_read()
+    {
+        bool called = false;
+        const QString payload = inspectorCall(
+            "blockchain_module", R"([{"name": "from_slot", "type": "qulonglong"}])",
+            R"(["ten"])", 20000, [&](const QVariantList&) {
+                called = true;
+                return InspectorReply{};
+            });
+        QVERIFY(!called);
+        QCOMPARE(payload,
+                 QStringLiteral(R"({"error":"from_slot: expected a whole number, 0 or more"})"));
+    }
+
+    void a_failed_call_shows_its_error()
+    {
+        const QString payload = inspectorCall(
+            "blockchain_module", "[]", "[]", 20000, [](const QVariantList&) {
+                return InspectorReply{{}, "timeout", "call to 'x' timed out after 20000ms"};
+            });
+        QCOMPARE(payload,
+                 QStringLiteral(R"({"error":"blockchain_module did not answer within 20 s."})"));
     }
 };
 

@@ -1,4 +1,5 @@
 #include "InspectorArgs.h"
+#include "ModuleCallFailure.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -125,4 +126,25 @@ InspectorArgs inspectorArgs(const QJsonArray& parameters, const QStringList& tex
         out.values.append(v);
     }
     return out;
+}
+
+QString inspectorCall(const QString& module, const QString& parametersJson,
+                      const QString& argsJson, int timeoutMs, const InspectorInvoke& invoke)
+{
+    auto payload = [](const char* key, const QJsonValue& value) {
+        return QString::fromUtf8(QJsonDocument(QJsonObject{{key, value}})
+                                     .toJson(QJsonDocument::Compact));
+    };
+
+    QStringList texts;
+    for (const QJsonValue& v : QJsonDocument::fromJson(argsJson.toUtf8()).array())
+        texts.append(v.toString());
+    const InspectorArgs args = inspectorArgs(
+        QJsonDocument::fromJson(parametersJson.toUtf8()).array(), texts);
+    if (!args.error.isEmpty()) return payload("error", args.error);
+
+    const InspectorReply reply = invoke(args.values);
+    if (!reply.code.empty())
+        return payload("error", moduleCallFailure(module, reply.code, reply.message, timeoutMs));
+    return payload("result", reply.result);
 }

@@ -1,6 +1,5 @@
 #include "CoreModuleManager.h"
 #include "InspectorArgs.h"
-#include "ModuleCallFailure.h"
 #include "utils/BuiltInApps.h"
 #include "utils/InstalledIntegrity.h"
 #include "utils/LogosBasecampPaths.h"
@@ -246,27 +245,14 @@ QString CoreModuleManager::callMethod(const QString& moduleName,
         return errorJson(QStringLiteral("Module not connected"));
     }
 
-    QStringList texts;
-    for (const QJsonValue& v : QJsonDocument::fromJson(argsJson.toUtf8()).array())
-        texts.append(v.toString());
-    const InspectorArgs args = inspectorArgs(
-        QJsonDocument::fromJson(parametersJson.toUtf8()).array(), texts);
-    if (!args.error.isEmpty()) {
-        return errorJson(args.error);
-    }
-
-    logos::CallError err;
     const Timeout timeout;
-    const QVariant result = client->invokeRemoteMethod(moduleName, methodName, args.values,
-                                                       timeout, &err);
-    if (!err.ok()) {
-        return errorJson(moduleCallFailure(moduleName, err.code, err.message, timeout.ms));
-    }
-
-    QJsonObject wrapper;
-    wrapper["result"] = variantToJsonValue(result);
-    QJsonDocument resultDoc(wrapper);
-    return resultDoc.toJson(QJsonDocument::Compact);
+    return inspectorCall(moduleName, parametersJson, argsJson, timeout.ms,
+                         [&](const QVariantList& args) {
+        logos::CallError err;
+        const QVariant result = client->invokeRemoteMethod(moduleName, methodName, args,
+                                                           timeout, &err);
+        return InspectorReply{variantToJsonValue(result), err.code, err.message};
+    });
 }
 
 void CoreModuleManager::updateModuleStats()
