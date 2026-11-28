@@ -36,6 +36,7 @@ public:
 private slots:
     void onWiredShortcut();
     void onQmlShortcutEnabledChanged();
+    void onQmlShortcutDestroyed(QObject* qml);
 
 private:
     void rebind();
