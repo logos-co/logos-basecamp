@@ -318,7 +318,10 @@ public slots:
     Q_INVOKABLE void refreshCoreModules();
     Q_INVOKABLE QString getCoreModuleMethods(const QString& moduleName);
     Q_INVOKABLE QString getCoreModuleEvents(const QString& moduleName);
-    Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName, const QString& argsJson);
+    // `parametersJson` is the method's parameter list from getCoreModuleMethods;
+    // `argsJson` a JSON array of what was typed for each, read as its type.
+    Q_INVOKABLE QString callCoreModuleMethod(const QString& moduleName, const QString& methodName,
+                                             const QString& parametersJson, const QString& argsJson);
 
     // UI Modules refresh — forwarded to UIPluginManager which in turn asks
     // PackageCoordinator to rescan the catalog (PackageCoordinator owns the IPC).

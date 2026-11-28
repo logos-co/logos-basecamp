@@ -1,4 +1,5 @@
 #include "CoreModuleManager.h"
+#include "InspectorArgs.h"
 #include "utils/BuiltInApps.h"
 #include "utils/InstalledIntegrity.h"
 #include "utils/LogosBasecampPaths.h"
@@ -227,42 +228,31 @@ QString CoreModuleManager::getEvents(const QString& moduleName)
 
 QString CoreModuleManager::callMethod(const QString& moduleName,
                                       const QString& methodName,
+                                      const QString& parametersJson,
                                       const QString& argsJson)
 {
+    auto errorJson = [](const QString& message) {
+        return QString::fromUtf8(QJsonDocument(QJsonObject{{"error", message}})
+                                     .toJson(QJsonDocument::Compact));
+    };
+
     if (!m_logosAPI) {
-        return "{\"error\": \"LogosAPI not available\"}";
+        return errorJson(QStringLiteral("LogosAPI not available"));
     }
 
     LogosAPIClient* client = m_logosAPI->getClient(moduleName);
     if (!client || !client->isConnected()) {
-        return "{\"error\": \"Module not connected\"}";
+        return errorJson(QStringLiteral("Module not connected"));
     }
 
-    QJsonDocument argsDoc = QJsonDocument::fromJson(argsJson.toUtf8());
-    QJsonArray argsArray = argsDoc.array();
-
-    QVariantList args;
-    for (const QJsonValue& val : argsArray) {
-        args.append(val.toVariant());
-    }
-
-    QVariant result;
-    if (args.isEmpty()) {
-        result = client->invokeRemoteMethod(moduleName, methodName);
-    } else if (args.size() == 1) {
-        result = client->invokeRemoteMethod(moduleName, methodName, args[0]);
-    } else if (args.size() == 2) {
-        result = client->invokeRemoteMethod(moduleName, methodName, args[0], args[1]);
-    } else if (args.size() == 3) {
-        result = client->invokeRemoteMethod(moduleName, methodName, args[0], args[1], args[2]);
-    } else {
-        return "{\"error\": \"Too many arguments\"}";
-    }
-
-    QJsonObject wrapper;
-    wrapper["result"] = variantToJsonValue(result);
-    QJsonDocument resultDoc(wrapper);
-    return resultDoc.toJson(QJsonDocument::Compact);
+    const Timeout timeout;
+    return inspectorCall(moduleName, parametersJson, argsJson, timeout.ms,
+                         [&](const QVariantList& args) {
+        logos::CallError err;
+        const QVariant result = client->invokeRemoteMethod(moduleName, methodName, args,
+                                                           timeout, &err);
+        return InspectorReply{variantToJsonValue(result), err.code, err.message};
+    });
 }
 
 void CoreModuleManager::updateModuleStats()

@@ -1304,7 +1304,8 @@ QString MainUIBackend::getCoreModuleMethods(const QString& n)       { return m_c
 QString MainUIBackend::getCoreModuleEvents(const QString& n)        { return m_coreModuleManager->getEvents(n); }
 QString MainUIBackend::callCoreModuleMethod(const QString& n,
                                              const QString& m,
-                                             const QString& a)      { return m_coreModuleManager->callMethod(n, m, a); }
+                                             const QString& p,
+                                             const QString& a)      { return m_coreModuleManager->callMethod(n, m, p, a); }
 
 // --- Build info -----------------------------------------------------------
 //

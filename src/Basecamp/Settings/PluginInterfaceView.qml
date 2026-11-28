@@ -12,13 +12,15 @@ Item {
     property var methods: []
     property var events: []
     property string resultText: ""
+    // The host's backend; a test gives its own.
+    property var api: typeof backend !== "undefined" ? backend : null
 
     Component.onCompleted: { loadMethods(); loadEvents() }
     onPluginNameChanged: { loadMethods(); loadEvents() }
 
     function loadMethods() {
-        if (pluginName.length > 0) {
-            let methodsJson = backend.getCoreModuleMethods(pluginName)
+        if (pluginName.length > 0 && api) {
+            let methodsJson = root.api.getCoreModuleMethods(pluginName)
             try {
                 methods = JSON.parse(methodsJson)
             } catch (e) {
@@ -31,9 +33,18 @@ Item {
         }
     }
 
+    // An example for a parameter that isn't plain text.
+    function typeHint(type) {
+        if (type === "bool") return "true or false"
+        if (type === "QStringList") return "[\"a\", \"b\"]"
+        if (type === "QVariantList" || type === "QJsonArray" || type.startsWith("QList<")) return "[1, 2]"
+        if (type === "QVariantMap" || type === "QJsonObject" || type.startsWith("QMap<")) return "{\"key\": 1}"
+        return ""
+    }
+
     function loadEvents() {
-        if (pluginName.length > 0) {
-            let eventsJson = backend.getCoreModuleEvents(pluginName)
+        if (pluginName.length > 0 && api) {
+            let eventsJson = root.api.getCoreModuleEvents(pluginName)
             try {
                 events = JSON.parse(eventsJson)
             } catch (e) {
@@ -109,6 +120,7 @@ Item {
 
                                 ColumnLayout {
                                     id: methodColumn
+                                    readonly property string methodName: modelData.name || modelData
                                     anchors.fill: parent
                                     anchors.margins: Theme.spacing.medium
                                     spacing: Theme.spacing.small
@@ -144,14 +156,19 @@ Item {
                                         }
 
                                         LogosButton {
-                                            objectName: "pluginInterface.call." + (modelData.name || modelData)
+                                            objectName: "pluginInterface.call." + methodColumn.methodName
                                             text: "Call"
                                             compact: true
                                             variant: LogosButton.Variant.Primary
 
                                             onClicked: {
-                                                let methodName = modelData.name || modelData
-                                                root.resultText = backend.callCoreModuleMethod(root.pluginName, methodName, "[]")
+                                                let texts = []
+                                                for (let i = 0; i < argRepeater.count; ++i)
+                                                    texts.push(argRepeater.itemAt(i).text)
+                                                root.resultText = root.api.callCoreModuleMethod(
+                                                    root.pluginName, methodColumn.methodName,
+                                                    JSON.stringify(modelData.parameters || []),
+                                                    JSON.stringify(texts))
                                             }
                                         }
                                     }
@@ -163,6 +180,38 @@ Item {
                                         wrapMode: Text.Wrap
                                         Layout.fillWidth: true
                                         visible: modelData.description !== undefined && modelData.description.length > 0
+                                    }
+
+                                    // One field per parameter, read as its type on Call.
+                                    Repeater {
+                                        id: argRepeater
+                                        model: modelData.parameters || []
+
+                                        ColumnLayout {
+                                            id: arg
+                                            required property var modelData
+                                            required property int index
+                                            readonly property string type: String(modelData.type || "")
+                                            readonly property alias text: argField.text
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacing.tiny
+
+                                            LogosText {
+                                                Layout.fillWidth: true
+                                                text: (modelData.name || ("argument " + (index + 1)))
+                                                      + (arg.type ? " · " + arg.type : "")
+                                                font.pixelSize: Theme.typography.secondaryText
+                                                color: Theme.palette.textSecondary
+                                                wrapMode: Text.WrapAnywhere
+                                            }
+
+                                            LogosTextField {
+                                                id: argField
+                                                Layout.fillWidth: true
+                                                objectName: "pluginInterface.arg." + methodColumn.methodName + "." + index
+                                                placeholderText: root.typeHint(arg.type)
+                                            }
+                                        }
                                     }
                                 }
                             }
